@@ -153,9 +153,11 @@ function LoginScreen({ onLogin }) {
   function handleSelectUser(id) {
     setUserId(id);
     const u = USERS.find(u => u.id === id);
-    // Если у пользователя только 1 объект — сразу выбираем его
-    if (u?.objects.length === 1) setObjId(u.objects[0]);
-    else setObjId(null);
+    // Админу выбор объекта не нужен — он сразу попадает в админ-панель.
+    // Объект всё равно подставляем (первый из списка), чтобы session был валиден.
+    if (u?.roles.includes("admin"))      setObjId(u.objects[0] ?? null);
+    else if (u?.objects.length === 1)    setObjId(u.objects[0]);
+    else                                 setObjId(null);
   }
 
   function handleEnter() {
@@ -241,8 +243,8 @@ function LoginScreen({ onLogin }) {
           </div>
         </div>
 
-        {/* Шаг 2 — выбор объекта (если > 1) */}
-        {user && user.objects.length > 1 && (
+        {/* Шаг 2 — выбор объекта (если > 1 и пользователь не админ) */}
+        {user && user.objects.length > 1 && !user.roles.includes("admin") && (
           <div style={{ marginBottom: 20 }}>
             <div style={{ fontSize: 11, color: "#5a7a9a", fontWeight: 700, letterSpacing: 1, marginBottom: 10, textAlign: "center" }}>
               ВЫБЕРИТЕ ОБЪЕКТ
@@ -499,7 +501,9 @@ export default function Portal() {
     const s = { userId, objId };
     setSession(s);
     saveSession(s);
-    setAdminMode(false);
+    // Админы сразу попадают в админ-панель, остальные — на дашборд объекта.
+    const u = USERS.find(x => x.id === userId);
+    setAdminMode(u?.roles.includes("admin") ?? false);
   }
 
   function handleLogout() {
