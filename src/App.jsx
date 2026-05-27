@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 // ─── ИМПОРТ ДАШБОРДОВ ────────────────────────────────────────────────────────
 // Подключи нужные файлы в своём проекте:
@@ -7,11 +7,32 @@ import { useState } from "react";
 // import DomFermeraMarat from "./dom_fermera_marat";
 //
 // Для демо — заглушки (замени на реальные импорты выше)
-function BanyaKiev()       { return <Placeholder name="Баня Олег на Киевке" />; }
-function DomAlekseya()     { return <Placeholder name="Дом Алексея на Дмитрове" />; }
-function DomFermeraMarat() { return <Placeholder name="Дом фермера Марата" />; }
+function BanyaKiev({ storageKey })       { return <Placeholder storageKey={storageKey} name="Баня Олег на Киевке" />; }
+function DomAlekseya({ storageKey })     { return <Placeholder storageKey={storageKey} name="Дом Алексея на Дмитрове" />; }
+function DomFermeraMarat({ storageKey }) { return <Placeholder storageKey={storageKey} name="Дом фермера Марата" />; }
 
-function Placeholder({ name }) {
+function Placeholder({ name, storageKey }) {
+  const [apiState, setApiState] = useState({ status: "loading", count: 0 });
+
+  useEffect(() => {
+    if (!storageKey) return;
+    loadState(storageKey)
+      .then(data => {
+        if (data && Array.isArray(data.items)) {
+          setApiState({ status: "ok", count: data.items.length });
+        } else {
+          setApiState({ status: "empty", count: 0 });
+        }
+      })
+      .catch(() => setApiState({ status: "error", count: 0 }));
+  }, [storageKey]);
+
+  const apiMessage =
+    apiState.status === "loading" ? "⏳ Загрузка состояния из API..." :
+    apiState.status === "ok"      ? `📊 ${apiState.count} работ в API · storage_key: ${storageKey}` :
+    apiState.status === "empty"   ? `📭 Пока нет данных · storage_key: ${storageKey}` :
+                                    "⚠️ API недоступен, показан локальный кеш";
+
   return (
     <div style={{ padding: 40, textAlign: "center", fontFamily: "sans-serif" }}>
       <div style={{ fontSize: 40, marginBottom: 12 }}>🏗️</div>
@@ -19,44 +40,44 @@ function Placeholder({ name }) {
       <div style={{ marginTop: 8, color: "#888", fontSize: 13 }}>
         Подключи файл дашборда через import
       </div>
+      <div style={{
+        marginTop: 24, padding: "12px 18px",
+        background: "#f0f4f8", border: "1px solid #d0dae8",
+        borderRadius: 10, display: "inline-block",
+        fontSize: 13, color: "#5a7a9a",
+      }}>
+        {apiMessage}
+      </div>
     </div>
   );
 }
 
-// ─── КОНФИГ ПОЛЬЗОВАТЕЛЕЙ И ОБЪЕКТОВ ─────────────────────────────────────────
+// ─── КОНФИГ ОБЪЕКТОВ ─────────────────────────────────────────────────────────
+// Реестр всех объектов: storage_key → { name, emoji, component }.
+// USERS ссылаются на ключи отсюда, чтобы метаданные жили в одном месте.
+const OBJECTS = {
+  banya_kiev:        { id: "banya_kiev",        name: "Баня Олег на Киевке",     emoji: "🛁", component: BanyaKiev },
+  dom_alekseya:      { id: "dom_alekseya",      name: "Дом Алексея на Дмитрове", emoji: "🏠", component: DomAlekseya },
+  dom_fermera_marat: { id: "dom_fermera_marat", name: "Дом фермера Марата",      emoji: "🌾", component: DomFermeraMarat },
+};
+
+// ─── РОЛИ ────────────────────────────────────────────────────────────────────
+// Пользователь может носить несколько ролей одновременно (см. USERS.roles).
+const ROLE_LABELS = {
+  worker:    { emoji: "👷",   text: "Рабочий"       },
+  brigadier: { emoji: "🧑‍🏭", text: "Бригадир"      },
+  supply:    { emoji: "📦",   text: "Снабженец"     },
+  admin:     { emoji: "🔑",   text: "Админ"         },
+  escort:    { emoji: "🚛",   text: "Сопровождение" },
+};
+
+// ─── КОНФИГ ПОЛЬЗОВАТЕЛЕЙ ────────────────────────────────────────────────────
 const USERS = [
-  {
-    id: "valera",
-    name: "Валера",
-    avatar: "👷",
-    color: "#e67e22",
-    role: "worker",
-    objects: [
-      { id: "banya_kiev", name: "Баня Олег на Киевке", emoji: "🛁", component: BanyaKiev },
-    ],
-  },
-  {
-    id: "inna",
-    name: "Инна",
-    avatar: "👩‍💼",
-    color: "#9b59b6",
-    role: "supply",
-    objects: [
-      { id: "dom_alekseya",      name: "Дом Алексея на Дмитрове", emoji: "🏠", component: DomAlekseya },
-      { id: "dom_fermera_marat", name: "Дом фермера Марата",       emoji: "🌾", component: DomFermeraMarat },
-    ],
-  },
-  {
-    id: "azis",
-    name: "Азис",
-    avatar: "🧑‍🔧",
-    color: "#2980b9",
-    role: "worker",
-    objects: [
-      { id: "dom_fermera_marat", name: "Дом фермера Марата",       emoji: "🌾", component: DomFermeraMarat },
-      { id: "dom_alekseya",      name: "Дом Алексея на Дмитрове",  emoji: "🏠", component: DomAlekseya },
-    ],
-  },
+  { id:"valera",   name:"Валера",    avatar:"👷",   color:"#e67e22", roles:["brigadier"],      objects:["banya_kiev"] },
+  { id:"inna",     name:"Инна",      avatar:"👩‍💼", color:"#9b59b6", roles:["brigadier"],      objects:["dom_alekseya","dom_fermera_marat"] },
+  { id:"azis",     name:"Азис",      avatar:"🧑‍🔧", color:"#2980b9", roles:["worker"],         objects:["dom_fermera_marat","dom_alekseya"] },
+  { id:"yura",     name:"Юрий",      avatar:"Ю",    color:"#c0392b", roles:["admin","supply"], objects:["banya_kiev","dom_alekseya","dom_fermera_marat"] },
+  { id:"alexandr", name:"Александр", avatar:"Ал",   color:"#7f8c8d", roles:["escort"],         objects:["banya_kiev","dom_alekseya","dom_fermera_marat"] },
 ];
 
 const SESSION_KEY = "portal_session_v1";
@@ -133,14 +154,14 @@ function LoginScreen({ onLogin }) {
     setUserId(id);
     const u = USERS.find(u => u.id === id);
     // Если у пользователя только 1 объект — сразу выбираем его
-    if (u?.objects.length === 1) setObjId(u.objects[0].id);
+    if (u?.objects.length === 1) setObjId(u.objects[0]);
     else setObjId(null);
   }
 
   function handleEnter() {
     if (!user) return;
-    const obj = user.objects.find(o => o.id === objId) || user.objects[0];
-    onLogin({ userId: user.id, objId: obj.id });
+    const objKey = user.objects.includes(objId) ? objId : user.objects[0];
+    onLogin({ userId: user.id, objId: objKey });
   }
 
   return (
@@ -157,10 +178,13 @@ function LoginScreen({ onLogin }) {
         {/* Заголовок */}
         <div style={{ textAlign: "center", marginBottom: 36 }}>
           <div style={{ fontSize: 56, marginBottom: 10 }}>🏗️</div>
-          <div style={{ fontSize: 24, fontWeight: 800, color: "#0d1b2e" }}>
+          <div style={{ fontSize: 40, fontWeight: 900, color: "#0d1b2e", letterSpacing: -0.5, lineHeight: 1 }}>
+            КубрДом
+          </div>
+          <div style={{ fontSize: 16, fontWeight: 600, color: "#3a5a7a", marginTop: 8 }}>
             Производственный портал
           </div>
-          <div style={{ fontSize: 13, color: "#5a7a9a", marginTop: 6 }}>
+          <div style={{ fontSize: 13, color: "#5a7a9a", marginTop: 10 }}>
             Выберите своё имя для входа
           </div>
         </div>
@@ -194,9 +218,13 @@ function LoginScreen({ onLogin }) {
                     {u.name}
                   </div>
                   <div style={{ fontSize: 11, color: "#7a9aaa", marginTop: 3 }}>
-                    {u.role === "worker" ? "👷 Рабочий" : u.role === "supply" ? "📦 Снабженец" : "🔑 Админ"}
+                    {u.roles
+                      .map(r => ROLE_LABELS[r] ? `${ROLE_LABELS[r].emoji} ${ROLE_LABELS[r].text}` : r)
+                      .join(" · ")}
                     {" · "}
-                    {u.objects.map(o => o.emoji + " " + o.name).join("  /  ")}
+                    {u.objects
+                      .map(k => OBJECTS[k] ? `${OBJECTS[k].emoji} ${OBJECTS[k].name}` : k)
+                      .join("  /  ")}
                   </div>
                 </div>
                 {userId === u.id && (
@@ -220,26 +248,30 @@ function LoginScreen({ onLogin }) {
               ВЫБЕРИТЕ ОБЪЕКТ
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {user.objects.map(obj => (
-                <button key={obj.id} onClick={() => setObjId(obj.id)}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 12,
-                    padding: "12px 16px", textAlign: "left",
-                    background: objId === obj.id ? user.color + "15" : "#fff",
-                    border: `2px solid ${objId === obj.id ? user.color : "#dde6f0"}`,
-                    borderRadius: 12, cursor: "pointer", transition: "all 0.15s",
-                  }}>
-                  <span style={{ fontSize: 24 }}>{obj.emoji}</span>
-                  <span style={{ fontSize: 14, fontWeight: 600, color: objId === obj.id ? user.color : "#1a2a3a" }}>
-                    {obj.name}
-                  </span>
-                  {objId === obj.id && (
-                    <div style={{ marginLeft: "auto", width: 20, height: 20, borderRadius: "50%", background: user.color, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <span style={{ color: "#fff", fontSize: 11, fontWeight: 700 }}>✓</span>
-                    </div>
-                  )}
-                </button>
-              ))}
+              {user.objects.map(objKey => {
+                const obj = OBJECTS[objKey];
+                if (!obj) return null;
+                return (
+                  <button key={obj.id} onClick={() => setObjId(obj.id)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 12,
+                      padding: "12px 16px", textAlign: "left",
+                      background: objId === obj.id ? user.color + "15" : "#fff",
+                      border: `2px solid ${objId === obj.id ? user.color : "#dde6f0"}`,
+                      borderRadius: 12, cursor: "pointer", transition: "all 0.15s",
+                    }}>
+                    <span style={{ fontSize: 24 }}>{obj.emoji}</span>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: objId === obj.id ? user.color : "#1a2a3a" }}>
+                      {obj.name}
+                    </span>
+                    {objId === obj.id && (
+                      <div style={{ marginLeft: "auto", width: 20, height: 20, borderRadius: "50%", background: user.color, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <span style={{ color: "#fff", fontSize: 11, fontWeight: 700 }}>✓</span>
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
@@ -260,7 +292,7 @@ function LoginScreen({ onLogin }) {
         )}
 
         <div style={{ textAlign: "center", marginTop: 20, fontSize: 10, color: "#a0b4c8" }}>
-          Данные каждого объекта хранятся отдельно в браузере
+          Данные объектов синхронизируются с сервером
         </div>
       </div>
     </div>
@@ -283,7 +315,7 @@ function DashboardHeader({ user, obj, onLogout }) {
           {obj.name}
         </div>
         <div style={{ fontSize: 11, color: "#7a9aaa" }}>
-          {user.avatar} {user.name} · {user.role === "worker" ? "Рабочий" : user.role === "supply" ? "Снабженец" : "Админ"}
+          {user.avatar} {user.name} · {user.roles.map(r => ROLE_LABELS[r]?.text ?? r).join(" · ")}
         </div>
       </div>
       <button onClick={onLogout}
@@ -320,8 +352,9 @@ export default function Portal() {
     return <LoginScreen onLogin={handleLogin} />;
   }
 
-  const user = USERS.find(u => u.id === session.userId);
-  const obj  = user?.objects.find(o => o.id === session.objId);
+  const user   = USERS.find(u => u.id === session.userId);
+  const objKey = user?.objects.includes(session.objId) ? session.objId : undefined;
+  const obj    = objKey ? OBJECTS[objKey] : undefined;
 
   if (!user || !obj) {
     clearSession();
@@ -333,7 +366,7 @@ export default function Portal() {
   return (
     <div style={{ minHeight: "100vh", fontFamily: "'Segoe UI',system-ui,sans-serif" }}>
       <DashboardHeader user={user} obj={obj} onLogout={handleLogout} />
-      <Dashboard />
+      <Dashboard storageKey={obj.id} />
     </div>
   );
 }
