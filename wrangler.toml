@@ -1,0 +1,9 @@
+name = "kubrdom-portal-api"
+main = "src/worker.js"
+compatibility_date = "2025-05-01"
+
+# Привязка D1: внутри Worker доступна как env.DB
+[[d1_databases]]
+binding       = "DB"
+database_name = "banya-db"
+database_id   = "57254687-7bf1-4bf0-82cb-2e4003ea36c5"
