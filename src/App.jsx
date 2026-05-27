@@ -300,7 +300,7 @@ function LoginScreen({ onLogin }) {
 }
 
 // ─── ШАПКА ВНУТРИ ДАШБОРДА ───────────────────────────────────────────────────
-function DashboardHeader({ user, obj, onLogout }) {
+function DashboardHeader({ user, obj, onLogout, isAdmin, adminMode, onToggleAdmin }) {
   return (
     <div style={{
       background: "linear-gradient(135deg,#fff,#f0f4f8)",
@@ -309,15 +309,30 @@ function DashboardHeader({ user, obj, onLogout }) {
       display: "flex", alignItems: "center", gap: 12,
       position: "sticky", top: 0, zIndex: 200,
     }}>
-      <span style={{ fontSize: 20 }}>{obj.emoji}</span>
+      <span style={{ fontSize: 20 }}>{adminMode ? "🔑" : obj.emoji}</span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: "#0d1b2e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {obj.name}
+          {adminMode ? "Админ-панель" : obj.name}
         </div>
         <div style={{ fontSize: 11, color: "#7a9aaa" }}>
           {user.avatar} {user.name} · {user.roles.map(r => ROLE_LABELS[r]?.text ?? r).join(" · ")}
         </div>
       </div>
+      {isAdmin && (
+        <button onClick={onToggleAdmin}
+          style={{
+            display: "flex", alignItems: "center", gap: 5,
+            padding: "6px 12px",
+            background: adminMode ? "#c0392b" : "transparent",
+            border: `1px solid ${adminMode ? "#c0392b" : "#d0dae8"}`,
+            borderRadius: 20, cursor: "pointer",
+            fontSize: 11, fontWeight: 600,
+            color: adminMode ? "#fff" : "#c0392b",
+            transition: "all 0.15s",
+          }}>
+          {adminMode ? "← Дашборд" : "🔑 Админ"}
+        </button>
+      )}
       <button onClick={onLogout}
         style={{
           display: "flex", alignItems: "center", gap: 5,
@@ -332,18 +347,164 @@ function DashboardHeader({ user, obj, onLogout }) {
   );
 }
 
+// ─── АДМИН-ПАНЕЛЬ ────────────────────────────────────────────────────────────
+// Видна только пользователям с ролью "admin" (см. USERS.roles).
+// Показывает все объекты с количеством работ и кнопкой очистки + список пользователей.
+function AdminPanel() {
+  // storage_key → { loading, count, error }
+  const [objectStats, setObjectStats] = useState({});
+
+  useEffect(() => {
+    let cancelled = false;
+    Object.keys(OBJECTS).forEach(async (sk) => {
+      setObjectStats(s => ({ ...s, [sk]: { loading: true } }));
+      const data = await loadState(sk);
+      if (cancelled) return;
+      setObjectStats(s => ({
+        ...s,
+        [sk]: {
+          loading: false,
+          count: data?.items?.length ?? 0,
+          error:  !data,
+        },
+      }));
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  async function handleClear(storageKey) {
+    const obj = OBJECTS[storageKey];
+    if (!window.confirm(`Очистить все работы у объекта "${obj.name}"?\nЭто действие необратимо.`)) return;
+
+    setObjectStats(s => ({ ...s, [storageKey]: { ...s[storageKey], loading: true } }));
+    const result = await saveState(storageKey, { items: [] });
+
+    if (result.success) {
+      setObjectStats(s => ({ ...s, [storageKey]: { loading: false, count: 0 } }));
+    } else {
+      setObjectStats(s => ({ ...s, [storageKey]: { ...s[storageKey], loading: false } }));
+      window.alert(`Не удалось очистить: ${result.error ?? "неизвестная ошибка"}`);
+    }
+  }
+
+  return (
+    <div style={{ maxWidth: 760, margin: "0 auto", padding: "24px 16px", fontFamily: "'Segoe UI',system-ui,sans-serif" }}>
+      <div style={{ fontSize: 22, fontWeight: 800, color: "#0d1b2e", marginBottom: 6 }}>
+        🔑 Админ-панель
+      </div>
+      <div style={{ fontSize: 13, color: "#5a7a9a", marginBottom: 24 }}>
+        Глобальный обзор объектов и пользователей
+      </div>
+
+      {/* Объекты */}
+      <div style={{ marginBottom: 32 }}>
+        <div style={{ fontSize: 11, color: "#5a7a9a", fontWeight: 700, letterSpacing: 1, marginBottom: 10 }}>
+          ОБЪЕКТЫ ({Object.keys(OBJECTS).length})
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {Object.values(OBJECTS).map(obj => {
+            const stat = objectStats[obj.id] ?? {};
+            return (
+              <div key={obj.id} style={{
+                display: "flex", alignItems: "center", gap: 12,
+                padding: "12px 14px", background: "#fff",
+                border: "1px solid #dde6f0", borderRadius: 12,
+              }}>
+                <span style={{ fontSize: 24 }}>{obj.emoji}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#1a2a3a" }}>
+                    {obj.name}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#7a9aaa", fontFamily: "monospace", marginTop: 2 }}>
+                    {obj.id}
+                  </div>
+                </div>
+                <div style={{ fontSize: 12, color: "#5a7a9a", whiteSpace: "nowrap" }}>
+                  {stat.loading        ? "⏳ ..."              :
+                   stat.error          ? "⚠️ API недоступен"   :
+                   stat.count === 0    ? "📭 0 работ"          :
+                                         `📊 ${stat.count} работ`}
+                </div>
+                <button
+                  onClick={() => handleClear(obj.id)}
+                  disabled={stat.loading || stat.error}
+                  style={{
+                    padding: "6px 12px", fontSize: 11, fontWeight: 600,
+                    background: stat.loading || stat.error ? "#f0f4f8" : "#fff",
+                    border: "1px solid #e08585", color: stat.loading || stat.error ? "#aab8c8" : "#c0392b",
+                    borderRadius: 8, cursor: stat.loading || stat.error ? "not-allowed" : "pointer",
+                    transition: "all 0.15s",
+                  }}>
+                  Очистить
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Пользователи */}
+      <div>
+        <div style={{ fontSize: 11, color: "#5a7a9a", fontWeight: 700, letterSpacing: 1, marginBottom: 10 }}>
+          ПОЛЬЗОВАТЕЛИ ({USERS.length})
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {USERS.map(u => (
+            <div key={u.id} style={{
+              display: "flex", alignItems: "flex-start", gap: 12,
+              padding: "12px 14px", background: "#fff",
+              border: "1px solid #dde6f0", borderRadius: 12,
+            }}>
+              <div style={{
+                width: 40, height: 40, borderRadius: "50%", flexShrink: 0,
+                background: u.color, color: "#fff",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 18, fontWeight: 700,
+              }}>
+                {u.avatar}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#1a2a3a" }}>
+                  {u.name}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+                  {u.roles.map(r => (
+                    <span key={r} style={{
+                      fontSize: 11, padding: "2px 8px",
+                      background: "#f0f4f8", color: "#3a5a7a",
+                      borderRadius: 10, fontWeight: 600,
+                    }}>
+                      {ROLE_LABELS[r] ? `${ROLE_LABELS[r].emoji} ${ROLE_LABELS[r].text}` : r}
+                    </span>
+                  ))}
+                </div>
+                <div style={{ fontSize: 11, color: "#7a9aaa", marginTop: 6 }}>
+                  Доступ: {u.objects.map(k => OBJECTS[k]?.name ?? k).join(" · ")}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── ГЛАВНЫЙ КОМПОНЕНТ ────────────────────────────────────────────────────────
 export default function Portal() {
-  const [session, setSession] = useState(() => loadSession());
+  const [session, setSession]     = useState(() => loadSession());
+  const [adminMode, setAdminMode] = useState(false);
 
   function handleLogin({ userId, objId }) {
     const s = { userId, objId };
     setSession(s);
     saveSession(s);
+    setAdminMode(false);
   }
 
   function handleLogout() {
     setSession(null);
+    setAdminMode(false);
     clearSession();
   }
 
@@ -361,12 +522,19 @@ export default function Portal() {
     return <LoginScreen onLogin={handleLogin} />;
   }
 
+  const isAdmin   = user.roles.includes("admin");
   const Dashboard = obj.component;
 
   return (
     <div style={{ minHeight: "100vh", fontFamily: "'Segoe UI',system-ui,sans-serif" }}>
-      <DashboardHeader user={user} obj={obj} onLogout={handleLogout} />
-      <Dashboard storageKey={obj.id} />
+      <DashboardHeader
+        user={user} obj={obj}
+        onLogout={handleLogout}
+        isAdmin={isAdmin}
+        adminMode={adminMode}
+        onToggleAdmin={() => setAdminMode(m => !m)}
+      />
+      {adminMode ? <AdminPanel /> : <Dashboard storageKey={obj.id} />}
     </div>
   );
 }
