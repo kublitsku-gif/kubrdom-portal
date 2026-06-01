@@ -1,11 +1,12 @@
-name: Deploy to Cloudflare Pages
+name: Deploy to Cloudflare
 
 on:
   push:
     branches: [main]
 
 jobs:
-  deploy:
+  # Фронтенд: Vite-сборка → Cloudflare Pages (проект kubrdom-portal)
+  deploy-pages:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,3 +24,27 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy dist/ --project-name=kubrdom-portal
+
+  # Бэкенд: Worker kubrdom-portal-api (src/worker.js) + D1 banya-db.
+  # Идёт параллельно с deploy-pages — независимый деплоймент-юнит.
+  deploy-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # wrangler читает main/bindings из wrangler.toml; build фронтенда не нужен.
+      # secrets: заливаем ADMIN_TOKEN в Worker (значение из GitHub-секрета через env),
+      # затем deploy. Без секрета Worker fail-closed → 401, поэтому ставим вместе.
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+          secrets: |
+            ADMIN_TOKEN
+        env:
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
