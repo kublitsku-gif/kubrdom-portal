@@ -46,12 +46,12 @@ function writeCache(items){
 }
 
 // ─── АВТОРИЗАЦИЯ: пароль-гейт ───────────────────────────────────────────────
-// Токен (пароль) храним в sessionStorage — НЕ в коде. Шлём заголовком X-Admin-Token
-// на каждый запрос; Worker сверяет с секретом. Секрета в исходнике страницы нет.
+// Токен (пароль) храним в localStorage — НЕ в коде. Вводится один раз на устройстве,
+// дальше вход автоматический. Шлём заголовком X-Admin-Token; Worker сверяет с секретом.
 const TOKEN_KEY = "admin_token";
-function getToken(){ try { return sessionStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; } }
-function setToken(t){ try { sessionStorage.setItem(TOKEN_KEY, t); } catch {} }
-function clearToken(){ try { sessionStorage.removeItem(TOKEN_KEY); } catch {} }
+function getToken(){ try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; } }
+function setToken(t){ try { localStorage.setItem(TOKEN_KEY, t); } catch {} }
+function clearToken(){ try { localStorage.removeItem(TOKEN_KEY); } catch {} }
 function authHeaders(extra){ return Object.assign({ "X-Admin-Token": getToken() }, extra || {}); }
 
 // Экран входа: resolve(пароль) по сабмиту. Блокирует, пока не введут пароль.
