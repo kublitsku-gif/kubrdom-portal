@@ -8,7 +8,7 @@
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Content-Type, X-Admin-Token",
   "Access-Control-Max-Age":       "86400",
 };
 
@@ -17,6 +17,18 @@ function json(body, status = 200) {
     status,
     headers: { "Content-Type": "application/json; charset=utf-8", ...CORS_HEADERS },
   });
+}
+
+function unauthorized() {
+  return json({ success: false, error: "Unauthorized" }, 401);
+}
+
+// Сравнение строк в постоянное время — не сливаем длину/префикс через тайминг.
+function safeEqual(a, b) {
+  if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
 }
 
 // GET /api/state/:storageKey
@@ -108,6 +120,13 @@ export default {
   async fetch(request, env) {
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+
+    // Авторизация: общий секрет в заголовке X-Admin-Token.
+    // Fail-closed: если секрет не сконфигурирован, API закрыт для всех.
+    const token = request.headers.get("X-Admin-Token") || "";
+    if (!env.ADMIN_TOKEN || !safeEqual(token, env.ADMIN_TOKEN)) {
+      return unauthorized();
     }
 
     const url = new URL(request.url);

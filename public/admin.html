@@ -45,6 +45,37 @@ function writeCache(items){
   try { localStorage.setItem(CACHE_KEY, JSON.stringify(items)); } catch {}
 }
 
+// ─── АВТОРИЗАЦИЯ: пароль-гейт ───────────────────────────────────────────────
+// Токен (пароль) храним в sessionStorage — НЕ в коде. Шлём заголовком X-Admin-Token
+// на каждый запрос; Worker сверяет с секретом. Секрета в исходнике страницы нет.
+const TOKEN_KEY = "admin_token";
+function getToken(){ try { return sessionStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; } }
+function setToken(t){ try { sessionStorage.setItem(TOKEN_KEY, t); } catch {} }
+function clearToken(){ try { sessionStorage.removeItem(TOKEN_KEY); } catch {} }
+function authHeaders(extra){ return Object.assign({ "X-Admin-Token": getToken() }, extra || {}); }
+
+// Экран входа: resolve(пароль) по сабмиту. Блокирует, пока не введут пароль.
+function showLogin(message){
+  return new Promise(function(resolve){
+    const app = document.getElementById("app");
+    app.innerHTML =
+      '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:-apple-system,sans-serif">'
+      + '<div style="background:#fff;border-radius:16px;padding:32px;box-shadow:0 8px 30px rgba(0,0,0,.12);width:300px;text-align:center">'
+      +   '<div style="font-size:40px">🔒</div>'
+      +   '<h2 style="margin:10px 0 2px;font-size:18px;color:#243">КубрДом · вход</h2>'
+      +   '<div style="font-size:13px;color:#e23;min-height:18px;margin-bottom:10px">' + (message || "") + '</div>'
+      +   '<input id="login-pw" type="password" placeholder="Пароль" '
+      +     'style="width:100%;padding:10px 12px;border:1px solid #cdd;border-radius:10px;font-size:15px;box-sizing:border-box">'
+      +   '<button id="login-btn" style="margin-top:12px;width:100%;padding:10px;border:0;border-radius:10px;background:#2a5298;color:#fff;font-size:15px;font-weight:600;cursor:pointer">Войти</button>'
+      + '</div></div>';
+    const pw = document.getElementById("login-pw");
+    pw.focus();
+    function submit(){ const v = pw.value.trim(); if (v) resolve(v); }
+    document.getElementById("login-btn").onclick = submit;
+    pw.onkeydown = function(e){ if (e.key === "Enter") submit(); };
+  });
+}
+
 // Состояние панели → формат Worker: [{ work_id, data }, ...]
 function serializeState(){
   return [
@@ -67,15 +98,17 @@ function applyState(items){
 }
 
 async function apiLoad(){
+  let r;
   try {
-    const r = await fetch(API_BASE + "/api/state/" + encodeURIComponent(STORAGE_KEY));
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    const data = await r.json();
-    if (data && Array.isArray(data.items)) { writeCache(data.items); return data.items; }
-    return null;
+    r = await fetch(API_BASE + "/api/state/" + encodeURIComponent(STORAGE_KEY), { headers: authHeaders() });
   } catch {
-    return readCache();
+    return readCache();                       // офлайн/сеть недоступна — отдаём кэш
   }
+  if (r.status === 401) { const e = new Error("unauthorized"); e.unauthorized = true; throw e; }
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  const data = await r.json();
+  if (data && Array.isArray(data.items)) { writeCache(data.items); return data.items; }
+  return null;
 }
 
 async function apiSave(){
@@ -84,9 +117,10 @@ async function apiSave(){
   try {
     const r = await fetch(API_BASE + "/api/state/" + encodeURIComponent(STORAGE_KEY), {
       method:  "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body:    JSON.stringify({ items: items }),
     });
+    if (r.status === 401) { clearToken(); location.reload(); return { success: false, error: "unauthorized" }; }
     if (!r.ok) throw new Error("HTTP " + r.status);
     return await r.json();
   } catch (err) {
@@ -8571,10 +8605,19 @@ function bind(){
   });
 }
 
-// Bootstrap: грузим состояние с сервера (fallback на кэш/демо), потом рендерим.
-(async function hydrate(){
-  const items = await apiLoad();
-  if (items) applyState(items);
+// Bootstrap: сначала авторизация (пароль-гейт), потом загрузка состояния и рендер.
+(async function boot(){
+  while (true){
+    if (!getToken()) setToken(await showLogin(""));
+    try {
+      const items = await apiLoad();
+      if (items) applyState(items);
+      break;                                  // успех (или офлайн-кэш) — выходим из гейта
+    } catch (e){
+      clearToken();
+      setToken(await showLogin(e && e.unauthorized ? "Неверный пароль" : "Ошибка связи, попробуйте снова"));
+    }
+  }
   _hydrated = true;
   render();
 })();
