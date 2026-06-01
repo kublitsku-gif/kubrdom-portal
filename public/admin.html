@@ -28,6 +28,79 @@ body{background:linear-gradient(160deg,#f4f7fa,#edf1f5);min-height:100vh;font-fa
    ============================================================ */
 const OBJ_ICONS=["🛁","🏠","🌾","🏗️","🏡","🏘️","🏢","🔨","⚡","🌊"];
 const AVS=["👷","👩‍💼","🧑‍🔧","👨‍💼","👩‍🔧","👨‍💻","👷‍♀️","🧑‍💻","👔","🦺"];
+
+// ─── СИНХРОНИЗАЦИЯ С CLOUDFLARE WORKER + D1 ─────────────────────────────────
+// Снимок всего состояния панели хранится под одним storage_key="admin_panel"
+// тремя строками: work_id ∈ {objects, templates, estimates}.
+// API-first с graceful fallback на localStorage (паттерн из React-портала).
+const API_BASE    = "https://kubrdom-portal-api.kublitsku.workers.dev";
+const STORAGE_KEY  = "admin_panel";
+const CACHE_KEY    = "state_" + STORAGE_KEY;
+
+function readCache(){
+  try { const r = localStorage.getItem(CACHE_KEY); return r ? JSON.parse(r) : null; }
+  catch { return null; }
+}
+function writeCache(items){
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify(items)); } catch {}
+}
+
+// Состояние панели → формат Worker: [{ work_id, data }, ...]
+function serializeState(){
+  return [
+    { work_id: "objects",   data: objects   },
+    { work_id: "templates", data: templates },
+    { work_id: "estimates", data: estimates },
+  ];
+}
+
+// items с сервера/кэша → живое состояние панели.
+// Перезаписываем только пришедшие ключи: отсутствующий ключ оставляет
+// демо-данные нетронутыми (защита от пустого клоббера на первом запуске).
+function applyState(items){
+  if (!Array.isArray(items)) return;
+  const byId = {};
+  items.forEach(function(it){ byId[it.work_id] = it.data; });
+  if (Array.isArray(byId.objects))   objects   = byId.objects;
+  if (Array.isArray(byId.templates)) templates = byId.templates;
+  if (Array.isArray(byId.estimates)) estimates = byId.estimates;
+}
+
+async function apiLoad(){
+  try {
+    const r = await fetch(API_BASE + "/api/state/" + encodeURIComponent(STORAGE_KEY));
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    if (data && Array.isArray(data.items)) { writeCache(data.items); return data.items; }
+    return null;
+  } catch {
+    return readCache();
+  }
+}
+
+async function apiSave(){
+  const items = serializeState();
+  writeCache(items);                       // optimistic: локально всегда свежо
+  try {
+    const r = await fetch(API_BASE + "/api/state/" + encodeURIComponent(STORAGE_KEY), {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ items: items }),
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return await r.json();
+  } catch (err) {
+    return { success: false, error: String((err && err.message) || err), fallback: "localStorage" };
+  }
+}
+
+// fl() зовётся часто → шлём на сервер не чаще раза в ~800мс.
+let _hydrated = false;
+function scheduleSave(){
+  if (!_hydrated) return;                   // не сохраняем до завершения загрузки
+  clearTimeout(scheduleSave._t);
+  scheduleSave._t = setTimeout(apiSave, 800);
+}
 const COLS=["#e67e22","#c0392b","#2980b9","#27ae60","#9b59b6","#7f8c8d","#16a085","#d35400","#8e44ad","#2c3e50"];
 // Единицы измерения работ (готовый список; можно ввести свою)
 const WORK_UNITS=["шт","м²","м.пог.","м³","компл.","л","кг","т","меш.","рул.","упак."];
@@ -785,6 +858,7 @@ let openTemplate=null,openObject=null;
 
 function fl(){
   render();
+  scheduleSave();
   // Show toast without re-render
   const t=document.getElementById("save-toast");
   if(t){
@@ -8496,7 +8570,14 @@ function bind(){
     };}
   });
 }
-render();
+
+// Bootstrap: грузим состояние с сервера (fallback на кэш/демо), потом рендерим.
+(async function hydrate(){
+  const items = await apiLoad();
+  if (items) applyState(items);
+  _hydrated = true;
+  render();
+})();
 
 </script>
 </body></html>
