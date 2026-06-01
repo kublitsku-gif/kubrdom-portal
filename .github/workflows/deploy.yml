@@ -26,8 +26,13 @@ jobs:
           command: pages deploy dist/ --project-name=kubrdom-portal
 
   # Бэкенд: Worker kubrdom-portal-api (src/worker.js) + D1 banya-db.
-  # Идёт параллельно с deploy-pages — независимый деплоймент-юнит.
+  # ОТКЛЮЧЕНО (if: false): репозиторный CLOUDFLARE_API_TOKEN имеет права только
+  # на Pages. Для авто-деплоя Worker'а нужен токен с правами Workers Scripts:Edit
+  # + D1:Edit — создать его в дашборде и обновить секрет CLOUDFLARE_API_TOKEN
+  # (с сохранением прав Pages), затем убрать `if: false`.
+  # Пока Worker деплоится вручную: CLOUDFLARE_API_TOKEN=<token> wrangler deploy.
   deploy-worker:
+    if: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
