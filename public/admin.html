@@ -143,10 +143,13 @@ async function apiLoad(){
 }
 
 let _lastSavedJson = null;                 // снимок последнего успешного сохранения
+let _saving = false;                       // защита от параллельных сохранений
 async function apiSave(){
+  if (_saving) return { success: true, busy: true };
   const items = serializeState();
   const snap  = JSON.stringify(items);
   if (snap === _lastSavedJson) return { success: true, skipped: true };  // нечего сохранять
+  _saving = true;
   writeCache(items);                       // optimistic: локально всегда свежо
   try {
     const r = await fetch(API_BASE + "/api/state/" + encodeURIComponent(STORAGE_KEY), {
@@ -162,6 +165,8 @@ async function apiSave(){
     return j;
   } catch (err) {
     return { success: false, error: String((err && err.message) || err), fallback: "localStorage" };
+  } finally {
+    _saving = false;
   }
 }
 
@@ -8706,6 +8711,10 @@ function bind(){
   }
   _hydrated = true;
   render();
+
+  // автосейв-страж: ловит ЛЮБЫЕ мутации (вкл. renderEstimates и прямые DOM-правки),
+  // шлёт в D1 только при реальном изменении снимка (dirty-check внутри apiSave).
+  setInterval(apiSave, 2500);
 
   // live-обновление: опрос + мгновенная проверка при возврате на вкладку
   setInterval(pollOnce, POLL_MS);
