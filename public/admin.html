@@ -122,7 +122,9 @@ async function apiSave(){
     });
     if (r.status === 401) { clearToken(); location.reload(); return { success: false, error: "unauthorized" }; }
     if (!r.ok) throw new Error("HTTP " + r.status);
-    return await r.json();
+    const j = await r.json();
+    if (j && j.updated_at) _lastSeen = j.updated_at;   // свой save — не считаем чужой правкой
+    return j;
   } catch (err) {
     return { success: false, error: String((err && err.message) || err), fallback: "localStorage" };
   }
@@ -134,6 +136,53 @@ function scheduleSave(){
   if (!_hydrated) return;                   // не сохраняем до завершения загрузки
   clearTimeout(scheduleSave._t);
   scheduleSave._t = setTimeout(apiSave, 800);
+}
+
+// ─── LIVE-ОБНОВЛЕНИЕ ────────────────────────────────────────────────────────
+// Опрашиваем сервер раз в POLL_MS. Если updated_at вырос (правка с другого
+// устройства) — показываем баннер. Не авто-применяем: applyState заменяет весь
+// стейт и стёр бы несохранённые правки, поэтому решение за пользователем.
+const POLL_MS = 15000;
+let _lastSeen   = 0;       // макс. updated_at, который мы уже знаем/применили
+let _pollPaused = false;   // true пока висит баннер — не плодим уведомления
+
+function maxUpdatedAt(items){
+  return (items || []).reduce(function(m, it){ return Math.max(m, it.updated_at || 0); }, 0);
+}
+
+async function pollOnce(){
+  if (!_hydrated || _pollPaused || document.hidden) return;
+  let r;
+  try { r = await fetch(API_BASE + "/api/state/" + encodeURIComponent(STORAGE_KEY), { headers: authHeaders() }); }
+  catch { return; }                                   // сеть недоступна — тихо, попробуем позже
+  if (r.status === 401) { clearToken(); location.reload(); return; }
+  if (!r.ok) return;
+  const data = await r.json();
+  if (!data || !Array.isArray(data.items)) return;
+  const serverV = maxUpdatedAt(data.items);
+  if (serverV > _lastSeen) showUpdateBanner(data.items, serverV);
+}
+
+function showUpdateBanner(items, version){
+  _pollPaused = true;
+  let b = document.getElementById("live-banner");
+  if (!b){
+    b = document.createElement("div");
+    b.id = "live-banner";
+    b.style.cssText = "position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:9999;"
+      + "background:#243b55;color:#fff;padding:12px 16px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.25);"
+      + "display:flex;align-items:center;gap:12px;font-family:-apple-system,sans-serif;font-size:14px";
+    document.body.appendChild(b);
+  }
+  b.innerHTML = '<span>🔄 Данные изменены на другом устройстве</span>'
+    + '<button id="live-apply" style="border:0;border-radius:8px;padding:6px 12px;background:#4a90d9;color:#fff;font-weight:600;cursor:pointer">Обновить</button>'
+    + '<button id="live-dismiss" style="border:0;background:transparent;color:#9fb3c8;cursor:pointer;font-size:18px;line-height:1">×</button>';
+  document.getElementById("live-apply").onclick = function(){
+    applyState(items); _lastSeen = version; b.remove(); _pollPaused = false; render();
+  };
+  document.getElementById("live-dismiss").onclick = function(){
+    _lastSeen = version; b.remove(); _pollPaused = false;   // версию подтвердили — больше не напоминаем
+  };
 }
 const COLS=["#e67e22","#c0392b","#2980b9","#27ae60","#9b59b6","#7f8c8d","#16a085","#d35400","#8e44ad","#2c3e50"];
 // Единицы измерения работ (готовый список; можно ввести свою)
@@ -8611,7 +8660,7 @@ function bind(){
     if (!getToken()) setToken(await showLogin(""));
     try {
       const items = await apiLoad();
-      if (items) applyState(items);
+      if (items){ applyState(items); _lastSeen = maxUpdatedAt(items); }
       break;                                  // успех (или офлайн-кэш) — выходим из гейта
     } catch (e){
       clearToken();
@@ -8620,6 +8669,10 @@ function bind(){
   }
   _hydrated = true;
   render();
+
+  // live-обновление: опрос + мгновенная проверка при возврате на вкладку
+  setInterval(pollOnce, POLL_MS);
+  document.addEventListener("visibilitychange", function(){ if (!document.hidden) pollOnce(); });
 })();
 
 </script>
