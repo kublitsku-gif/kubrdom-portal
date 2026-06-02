@@ -251,6 +251,8 @@ function matSoldByPack(m){return !!(m&&m.packM2!=null&&!isNaN(m.packM2)&&Number(
 function matConv(m){
   return expConv({mode:m&&m.mode,unitCost:Number(m&&m.cost)||0,packBase:m&&m.packBase,packPer:m&&m.packPer,sheetM2:m&&m.sheetM2,lenPer:m&&m.lenPer});
 }
+// HTML-экранирование пользовательского текста перед вставкой в разметку
+function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");}
 // Красивое число: целое как есть, дробное — с запятой и без лишних нулей
 function numRu(n){
   if(n==null||isNaN(n))return "0";
@@ -3285,6 +3287,8 @@ function expRowHtml(p){
   const big=conv?conv.views[idx].price:uc;
   const bigUnit=conv?conv.views[idx].unit:saleUnit;
   const storeColor=SC[p.store]||"#16a085";
+  // безопасная ссылка: только http(s) + экранирование (защита от javascript:-схемы и брейкаута из атрибута)
+  const safeUrl=(typeof p.url==="string"&&/^https?:\/\//i.test(p.url))?p.url.replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;"):null;
   const grad={piece:"#2980b9,#1f6391",pack:"#16a085,#0d6e5d",mp:"#e67e22,#b8631a",m2:"#8e44ad,#6c3483",sheet:"#0e7490,#0c5e74"}[p.mode]||"#16a085,#0d6e5d";
   return `
   <div data-exp-open="${p.id}" style="background:#fff;border-radius:14px;border:1px solid #e6ecf3;box-shadow:0 2px 8px rgba(20,40,70,0.04);padding:11px 12px;margin-bottom:8px;cursor:pointer">
@@ -3293,7 +3297,7 @@ function expRowHtml(p){
       <div style="flex:1;min-width:0">
         <div style="font-size:13.5px;font-weight:700;color:#0d1b2e;line-height:1.25">${p.name}</div>
         <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:5px;align-items:center">
-          ${p.url?`<a href="${p.url}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:10px;font-weight:700;background:${storeColor};color:#fff;border-radius:5px;padding:1px 7px;text-decoration:none">${p.store} ↗</a>`:`<span style="font-size:10px;font-weight:700;background:${storeColor};color:#fff;border-radius:5px;padding:1px 7px">${p.store}</span>`}
+          ${safeUrl?`<a href="${safeUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:10px;font-weight:700;background:${storeColor};color:#fff;border-radius:5px;padding:1px 7px;text-decoration:none">${esc(p.store)} ↗</a>`:`<span style="font-size:10px;font-weight:700;background:${storeColor};color:#fff;border-radius:5px;padding:1px 7px">${esc(p.store)}</span>`}
           <span style="font-size:10px;font-weight:700;color:#5a7a9a;background:#eef2f7;border-radius:5px;padding:1px 7px">${mode.icon} ${mode.label}</span>
         </div>
       </div>
