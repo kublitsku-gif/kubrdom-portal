@@ -5372,9 +5372,10 @@ function tFinanceContractPnL(cid){
     return a+(raw.plan!=null&&raw.plan!==0?raw.plan:getDefaultSalary(u));
   },0);
 
-  // Materials plan
+  // Materials plan (из материалов объекта) + факт (отмеченные «куплено» снабженцем)
   const objMats=obj.stages.flatMap(function(s){return s.works.flatMap(function(w){return w.mats||[];});});
   const matsPlan=objMats.reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
+  const matsFact=objMats.filter(function(m){return!!purchased[m.id];}).reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
 
   // CRM client
   const crmCl=c.crmClientId?crmClients.find(function(cc){return cc.id===c.crmClientId;}):null;
@@ -5426,9 +5427,10 @@ function tFinanceContractPnL(cid){
       title:"📦 СНАБЖЕНИЕ",
       color:"#2980b9",
       txns:supplyTxns,
-      total:supplySpent,
+      total:supplySpent+matsFact,
       planLabel:"План",
       planAmount:matsPlan,
+      factNote:matsFact>0?"вкл. «куплено» "+matsFact.toLocaleString("ru-RU")+" ₽":"",
       canAdd:canAddSupply,
       addAction:"fin-add-typed",
       addType:"expense",
@@ -5538,7 +5540,7 @@ function renderContractSection(opts){
   const left=Math.max(0,(opts.planAmount||0)-opts.total);
   html+='<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #f0f3f7">'+
     '<div><div style="font-size:9px;color:#9aabbf">ПЛАН</div><div style="font-size:12px;font-weight:700;color:#1a2a3a">'+(opts.planAmount||0).toLocaleString("ru-RU")+'</div></div>'+
-    '<div><div style="font-size:9px;color:#9aabbf">ФАКТ</div><div style="font-size:12px;font-weight:700;color:'+opts.color+'">'+opts.total.toLocaleString("ru-RU")+'</div></div>'+
+    '<div><div style="font-size:9px;color:#9aabbf">ФАКТ</div><div style="font-size:12px;font-weight:700;color:'+opts.color+'">'+opts.total.toLocaleString("ru-RU")+'</div>'+(opts.factNote?'<div style="font-size:8px;color:#9aabbf;margin-top:1px">'+opts.factNote+'</div>':'')+'</div>'+
     '<div><div style="font-size:9px;color:#9aabbf">ОСТАЛОСЬ</div><div style="font-size:12px;font-weight:700;color:'+(left>0?"#f39c12":"#27ae60")+'">'+(left>0?left.toLocaleString("ru-RU"):"✓")+'</div></div>'+
   '</div>';
 
