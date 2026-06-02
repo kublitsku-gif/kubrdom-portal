@@ -6215,7 +6215,7 @@ function tTeam(){
       <select id="nu-av" style="padding:6px;border-radius:7px;border:1px solid #d0dae8;font-size:16px;outline:none">${AVS.map(a=>`<option>${a}</option>`).join("")}</select>
       <input id="nu-name" placeholder="Имя" style="flex:1;padding:7px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;outline:none">
     </div>
-    <input id="nu-phone" placeholder="Телефон (напр. +7 925 123-45-67)" inputmode="tel" style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:8px">
+    <input id="nu-phone" data-phone-mask="1" type="tel" inputmode="tel" placeholder="+7 (___) ___-__-__" style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:8px">
     <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">${COLS.map(c=>`<div data-a="nu-c" data-c="${c}" style="width:22px;height:22px;border-radius:50%;background:${c};cursor:pointer;border:${nu.c===c?"3px solid #0d1b2e":"2px solid transparent"}"></div>`).join("")}</div>
     <div style="font-size:10px;color:#7a9aaa;font-weight:600;margin-bottom:5px">РОЛИ</div>
     <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">${roles.map(r=>{const on=nu.roles.includes(r.id);return`<div data-a="nu-role" data-rid="${r.id}" style="padding:4px 10px;border-radius:16px;cursor:pointer;font-size:11px;font-weight:600;background:${on?r.c:"transparent"};color:${on?"#fff":r.c};border:1.5px solid ${r.c}">${r.n}</div>`;}).join("")}</div>
@@ -6229,7 +6229,7 @@ function tTeam(){
       <select id="eu-av-${u.id}" style="padding:5px;border-radius:7px;border:1px solid #d0dae8;font-size:15px;outline:none">${AVS.map(a=>`<option ${u.av===a?"selected":""}>${a}</option>`).join("")}</select>
       <input id="eu-n-${u.id}" value="${u.name}" style="flex:1;padding:6px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;font-weight:600;outline:none">
     </div>
-    <input id="eu-phone-${u.id}" value="${u.phone||''}" inputmode="tel" placeholder="Телефон (напр. +7 925 123-45-67)" style="width:100%;padding:6px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:8px">
+    <input id="eu-phone-${u.id}" value="${u.phone||''}" data-phone-mask="1" type="tel" inputmode="tel" placeholder="+7 (___) ___-__-__" style="width:100%;padding:6px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:8px">
     <div style="font-size:10px;color:#9aabbf;margin-bottom:8px">PIN для входа = последние 4 цифры телефона</div>
     <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">${COLS.map(c=>`<div data-a="eu-c" data-uid="${u.id}" data-c="${c}" style="width:20px;height:20px;border-radius:50%;background:${c};cursor:pointer;border:${u.c===c?"3px solid #0d1b2e":"2px solid transparent"}"></div>`).join("")}</div>
     <div style="font-size:10px;color:#7a9aaa;font-weight:600;margin-bottom:5px">РОЛИ</div>
