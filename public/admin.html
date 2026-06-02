@@ -10,6 +10,11 @@ body{background:linear-gradient(160deg,#f4f7fa,#edf1f5);min-height:100vh;font-fa
 </style></head>
 <body><div id="app"></div>
 <script>
+// Видимый перехватчик ошибок: вместо белого экрана покажет текст на странице
+window.addEventListener('error',function(e){var d=document.getElementById('app')||document.body;if(d&&!d.getAttribute('data-err')){d.setAttribute('data-err','1');d.innerHTML='<pre style="padding:16px;font:13px monospace;color:#c0392b;white-space:pre-wrap;word-break:break-word;background:#fff;margin:0">⚠ ОШИБКА:\n'+(e.message||(e.error&&e.error.message)||e.error||'?')+'\n'+(e.filename||'')+' :'+(e.lineno||'?')+':'+(e.colno||'?')+'</pre>';}});
+window.addEventListener('unhandledrejection',function(e){var d=document.getElementById('app')||document.body;if(d&&!d.getAttribute('data-err')){d.setAttribute('data-err','1');d.innerHTML='<pre style="padding:16px;font:13px monospace;color:#c0392b;white-space:pre-wrap;background:#fff;margin:0">⚠ PROMISE:\n'+((e.reason&&e.reason.message)||e.reason||'?')+'</pre>';}});
+</script>
+<script id="m">
 /* ============================================================
    КубрДом — Портал управления · admin_panel_v3
    ------------------------------------------------------------

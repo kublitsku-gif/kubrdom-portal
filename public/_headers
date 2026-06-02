@@ -1,0 +1,3 @@
+# HTML всегда перепроверяется (чтобы телефоны не держали старую версию в кэше)
+/*
+  Cache-Control: public, max-age=0, must-revalidate
