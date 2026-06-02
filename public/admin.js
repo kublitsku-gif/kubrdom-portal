@@ -6193,6 +6193,7 @@ function tTeam(){
       <select id="nu-av" style="padding:6px;border-radius:7px;border:1px solid #d0dae8;font-size:16px;outline:none">${AVS.map(a=>`<option>${a}</option>`).join("")}</select>
       <input id="nu-name" placeholder="Имя" style="flex:1;padding:7px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;outline:none">
     </div>
+    <input id="nu-phone" placeholder="Телефон (напр. +7 925 123-45-67)" inputmode="tel" style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:8px">
     <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">${COLS.map(c=>`<div data-a="nu-c" data-c="${c}" style="width:22px;height:22px;border-radius:50%;background:${c};cursor:pointer;border:${nu.c===c?"3px solid #0d1b2e":"2px solid transparent"}"></div>`).join("")}</div>
     <div style="font-size:10px;color:#7a9aaa;font-weight:600;margin-bottom:5px">РОЛИ</div>
     <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">${roles.map(r=>{const on=nu.roles.includes(r.id);return`<div data-a="nu-role" data-rid="${r.id}" style="padding:4px 10px;border-radius:16px;cursor:pointer;font-size:11px;font-weight:600;background:${on?r.c:"transparent"};color:${on?"#fff":r.c};border:1.5px solid ${r.c}">${r.n}</div>`;}).join("")}</div>
@@ -6206,6 +6207,8 @@ function tTeam(){
       <select id="eu-av-${u.id}" style="padding:5px;border-radius:7px;border:1px solid #d0dae8;font-size:15px;outline:none">${AVS.map(a=>`<option ${u.av===a?"selected":""}>${a}</option>`).join("")}</select>
       <input id="eu-n-${u.id}" value="${u.name}" style="flex:1;padding:6px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;font-weight:600;outline:none">
     </div>
+    <input id="eu-phone-${u.id}" value="${u.phone||''}" inputmode="tel" placeholder="Телефон (напр. +7 925 123-45-67)" style="width:100%;padding:6px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:8px">
+    <div style="font-size:10px;color:#9aabbf;margin-bottom:8px">PIN для входа = последние 4 цифры телефона</div>
     <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">${COLS.map(c=>`<div data-a="eu-c" data-uid="${u.id}" data-c="${c}" style="width:20px;height:20px;border-radius:50%;background:${c};cursor:pointer;border:${u.c===c?"3px solid #0d1b2e":"2px solid transparent"}"></div>`).join("")}</div>
     <div style="font-size:10px;color:#7a9aaa;font-weight:600;margin-bottom:5px">РОЛИ</div>
     <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">${roles.map(r=>{const on=u.roles.includes(r.id);return`<div data-a="eu-role" data-uid="${u.id}" data-rid="${r.id}" style="padding:4px 10px;border-radius:16px;cursor:pointer;font-size:11px;font-weight:600;background:${on?r.c:"transparent"};color:${on?"#fff":r.c};border:1.5px solid ${r.c}">${r.n}</div>`;}).join("")}</div>
@@ -6215,7 +6218,7 @@ function tTeam(){
     </div>`:`<div style="display:flex;align-items:center;gap:8px">
       <div style="width:38px;height:38px;border-radius:50%;background:${u.c};display:flex;align-items:center;justify-content:center;font-size:18px;color:#fff;flex-shrink:0">${u.av}</div>
       <div style="flex:1;min-width:0">
-        <div style="font-size:13px;font-weight:700;color:#1a2a3a">${u.name}</div>
+        <div style="font-size:13px;font-weight:700;color:#1a2a3a">${u.name}${u.phone?` <span style="font-weight:600;color:#7a9aaa;font-size:11px">· ${esc(u.phone)}</span>`:''}</div>
         <div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:3px">
           ${u.roles.map(rid=>{const r=roles.find(x=>x.id===rid);return r?`<span style="font-size:10px;background:${r.c}18;color:${r.c};border-radius:10px;padding:1px 6px;border:1px solid ${r.c}33">${r.n}</span>`:""}).join("")}
           ${u.objs.length>0?`<span style="font-size:10px;color:#5a7a9a;background:#e8f0fa;border-radius:10px;padding:1px 6px">${u.objs.map(id=>objects.find(o=>o.id===id)?.icon||"").join("")}</span>`:""}
@@ -7527,12 +7530,12 @@ function bind(){
     else if(a==="cancel-nu"){el.onclick=()=>{showNU=false;render();};}
     else if(a==="nu-c"){el.onclick=()=>{nu.c=el.dataset.c;render();};}
     else if(a==="nu-role"){el.onclick=()=>{const rid=el.dataset.rid;nu.roles=nu.roles.includes(rid)?nu.roles.filter(x=>x!==rid):[...nu.roles,rid];render();};}
-    else if(a==="add-u"){el.onclick=()=>{const n=document.getElementById("nu-name")?.value?.trim();const av=document.getElementById("nu-av")?.value||"👷";if(!n)return;users.push({id:gid(),name:n,av,c:nu.c,roles:[...nu.roles],objs:[]});showNU=false;fl();};}
+    else if(a==="add-u"){el.onclick=()=>{const n=document.getElementById("nu-name")?.value?.trim();const av=document.getElementById("nu-av")?.value||"👷";const phone=(document.getElementById("nu-phone")?.value||"").trim();if(!n)return;const pin=(phone.match(/\d/g)||[]).join("").slice(-4);users.push({id:gid(),name:n,av,c:nu.c,roles:[...nu.roles],objs:[],phone:phone,pin:pin||"1111"});showNU=false;fl();};}
     else if(a==="edit-u"){el.onclick=()=>{editU=el.dataset.uid;render();};}
     else if(a==="cancel-eu"){el.onclick=()=>{editU=null;render();};}
     else if(a==="eu-c"){el.onclick=()=>{users=users.map(u=>u.id===el.dataset.uid?{...u,c:el.dataset.c}:u);render();};}
     else if(a==="eu-role"){el.onclick=()=>{const uid=el.dataset.uid,rid=el.dataset.rid;users=users.map(u=>{if(u.id!==uid)return u;const r=u.roles.includes(rid)?u.roles.filter(x=>x!==rid):[...u.roles,rid];return{...u,roles:r};});render();};}
-    else if(a==="save-u"){el.onclick=()=>{const uid=el.dataset.uid;const n=document.getElementById("eu-n-"+uid)?.value?.trim();const av=document.getElementById("eu-av-"+uid)?.value;if(n)users=users.map(u=>u.id===uid?{...u,name:n,av:av||u.av}:u);editU=null;fl();};}
+    else if(a==="save-u"){el.onclick=()=>{const uid=el.dataset.uid;const n=document.getElementById("eu-n-"+uid)?.value?.trim();const av=document.getElementById("eu-av-"+uid)?.value;const phone=(document.getElementById("eu-phone-"+uid)?.value||"").trim();const pin=(phone.match(/\d/g)||[]).join("").slice(-4);if(n)users=users.map(u=>u.id===uid?{...u,name:n,av:av||u.av,phone:phone,pin:(pin||u.pin||"1111")}:u);editU=null;fl();};}
     else if(a==="del-u"){el.onclick=()=>{users=users.filter(u=>u.id!==el.dataset.uid);fl();};}
     else if(a==="show-nr"){el.onclick=()=>{showNR=true;nr={n:"",c:"#9b59b6",group:"other"};render();};}
     else if(a==="cancel-nr"){el.onclick=()=>{showNR=false;render();};}
