@@ -1523,7 +1523,8 @@ function loginPage(){
           '<div style="font-size:12px;color:#7a9aaa;margin-bottom:16px">Введите PIN для входа</div>'+
           '<input id="login-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="••••" style="width:160px;padding:12px;border-radius:12px;border:1.5px solid '+(loginPinError?"#e74c3c":"#d0dae8")+';font-size:22px;text-align:center;letter-spacing:8px;outline:none;margin:0 auto;display:block;box-sizing:border-box">'+
           (loginPinError?'<div style="font-size:12px;color:#e74c3c;font-weight:600;margin-top:8px">'+loginPinError+'</div>':'')+
-          '<button data-a="login-pin-submit" style="width:100%;margin-top:14px;padding:12px;background:'+u.c+';border:none;border-radius:12px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">Войти</button>'+
+          '<label style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:14px;font-size:13px;color:#5a7a9a;cursor:pointer;user-select:none"><input type="checkbox" id="remember-me" checked style="width:17px;height:17px;cursor:pointer">Запомнить меня</label>'+
+          '<button data-a="login-pin-submit" style="width:100%;margin-top:12px;padding:12px;background:'+u.c+';border:none;border-radius:12px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">Войти</button>'+
           '<button data-a="login-pin-back" style="width:100%;margin-top:8px;padding:10px;background:#f0f4f8;border:1px solid #dde6f0;border-radius:10px;cursor:pointer;font-size:13px;color:#7a9aaa;font-weight:600">← Назад</button>'+
         '</div>';
       return wrap(inner);
@@ -1663,6 +1664,7 @@ function bindLogin(){
         return;
       }
       currentUser=u;
+      try{ const rm=document.getElementById("remember-me"); if(!rm||rm.checked) localStorage.setItem("kubr_remember",u.id); else localStorage.removeItem("kubr_remember"); }catch(e){}
       loginPinFor=null; loginPinError="";
       _setInitialTab();
       render();
@@ -7301,7 +7303,7 @@ function bind(){
   document.querySelectorAll("[data-a]").forEach(el=>{
     const a=el.dataset.a;
     if(a==="login-as"){/* handled by bindLogin */}
-    else if(a==="logout"){el.onclick=()=>{currentUser=null;loginMode=null;loginPinFor=null;loginPinError="";showPinChange=false;tab="assign";render();};}
+    else if(a==="logout"){el.onclick=()=>{try{localStorage.removeItem("kubr_remember");}catch(e){}currentUser=null;loginMode=null;loginPinFor=null;loginPinError="";showPinChange=false;tab="assign";render();};}
     else if(a==="pin-change-open"){el.onclick=()=>{showPinChange=true;render();};}
     else if(a==="pin-change-close"){el.onclick=()=>{showPinChange=false;render();};}
     else if(a==="pin-change-save"){el.onclick=()=>{
@@ -8963,6 +8965,8 @@ function bind(){
       setToken(await showLogin(e && e.unauthorized ? "Неверный пароль" : "Ошибка связи, попробуйте снова"));
     }
   }
+  // авто-вход «Запомнить меня»: восстанавливаем сотрудника из localStorage (данные уже загружены)
+  try{ const rid=localStorage.getItem("kubr_remember"); if(rid && !currentUser){ const u=users.find(function(x){return x.id===rid;}); if(u){ currentUser=u; _setInitialTab(); } } }catch(e){}
   _hydrated = true;
   render();
 
