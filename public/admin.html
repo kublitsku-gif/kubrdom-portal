@@ -5848,6 +5848,7 @@ function tSupplySelect(sel){
   return html+'</div>';
 }
 
+let supplyEditMid=null;   // id материала, открытого на редактирование в снабжении
 function tSupplyDetail(sel, sortBy){
   const STORECOL={"Озон":"#005bff","Белка":"#d68910","pechki.su":"#c0392b","Егорьевск":"#8e44ad","Лемана":"#e30613","Авито":"#00aaff","Нижний Новгород":"#27ae60"};
   const sortBy2=sortBy||"stage";
@@ -5969,6 +5970,7 @@ function tSupplyDetail(sel, sortBy){
           (m.note?'<span style="font-size:10px;color:#9aabbf;font-style:italic">'+m.note+'</span>':'')+
           (!done&&m.url?'<a href="'+m.url+'" target="_blank" style="font-size:10px;color:#fff;background:#2980b9;border-radius:4px;padding:1px 7px;text-decoration:none;font-weight:600" onclick="event.stopPropagation()">🔗 купить</a>':'')+
           (done?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>':'')+
+          '<button data-a="supply-edit-mat" data-mid="'+m.id+'" style="font-size:10px;color:#7a9aaa;background:#fff;border:1px solid #d0dae8;border-radius:5px;padding:1px 7px;cursor:pointer" onclick="event.stopPropagation()">✏️ изм.</button>'+
         '</div>'+
         (conv?'<div style="display:flex;align-items:center;gap:6px;margin-top:5px;flex-wrap:wrap">'+
           '<span style="font-size:10px;font-weight:700;color:#e67e22;background:#fff3e0;border-radius:6px;padding:2px 8px">🛒 Купить: '+conv.altTotal(qty)+'</span>'+
@@ -6020,6 +6022,34 @@ function tSupplyDetail(sel, sortBy){
         '<div style="padding:8px 12px">'+sm.map(matRow).join("")+'</div>'+
       '</div>';
     });
+  }
+
+  // Модалка редактирования материала (запись обратно в исходную работу объекта)
+  if(supplyEditMid){
+    let em=null; objects.forEach(function(o){(o.stages||[]).forEach(function(s){(s.works||[]).forEach(function(w){(w.mats||[]).forEach(function(m){if(m.id===supplyEditMid)em=m;});});});});
+    if(em){
+      const opts=EXP_MODES.map(function(o){return '<option value="'+o.k+'"'+(o.k===(em.mode||"piece")?' selected':'')+'>'+o.icon+' '+o.label+'</option>';}).join("");
+      const inp="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box";
+      html+='<div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:flex-start;justify-content:center;padding:50px 16px;z-index:300">'+
+        '<div style="background:#fff;border-radius:16px;width:100%;max-width:420px;padding:20px">'+
+          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">'+
+            '<div style="font-size:15px;font-weight:700;color:#0d1b2e">✏️ Материал</div>'+
+            '<button data-a="supply-mat-close" style="width:30px;height:30px;border-radius:50%;background:#f0f4f8;border:none;cursor:pointer;font-size:16px">✕</button>'+
+          '</div>'+
+          '<input id="sem-n" value="'+(em.n||"").replace(/"/g,"&quot;")+'" placeholder="Название" style="'+inp+';margin-bottom:8px">'+
+          '<div style="display:flex;gap:8px;margin-bottom:8px">'+
+            '<select id="sem-mode" style="'+inp+';flex:1">'+opts+'</select>'+
+            '<input id="sem-qty" type="number" step="any" value="'+(em.qty||1)+'" placeholder="Кол-во" style="'+inp+';flex:1">'+
+          '</div>'+
+          '<div style="display:flex;gap:8px;margin-bottom:8px">'+
+            '<input id="sem-cost" type="number" value="'+(Number(em.cost)||0)+'" placeholder="Цена ₽/ед" style="'+inp+';flex:1">'+
+            '<input id="sem-store" value="'+(em.store||"").replace(/"/g,"&quot;")+'" placeholder="Магазин" style="'+inp+';flex:1">'+
+          '</div>'+
+          '<input id="sem-note" value="'+(em.note||"").replace(/"/g,"&quot;")+'" placeholder="Заметка" style="'+inp+';margin-bottom:12px">'+
+          '<button data-a="supply-mat-save" style="width:100%;padding:10px;background:#2980b9;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">Сохранить</button>'+
+        '</div>'+
+      '</div>';
+    }
   }
 
   return html+'</div>';
@@ -7335,6 +7365,21 @@ function bind(){
       render();
     };}
     else if(a==="supply-sort"){el.onclick=()=>{window._supplySort=el.dataset.s;render();};}
+    else if(a==="supply-edit-mat"){el.onclick=(ev)=>{ev&&ev.stopPropagation();supplyEditMid=el.dataset.mid;render();};}
+    else if(a==="supply-mat-close"){el.onclick=()=>{supplyEditMid=null;render();};}
+    else if(a==="supply-mat-save"){el.onclick=()=>{
+      const mid=supplyEditMid; if(!mid)return;
+      const patch={
+        n:(document.getElementById("sem-n")?.value||"").trim(),
+        mode:document.getElementById("sem-mode")?.value||"piece",
+        qty:parseFloat(document.getElementById("sem-qty")?.value)||0,
+        cost:parseInt(document.getElementById("sem-cost")?.value)||0,
+        store:(document.getElementById("sem-store")?.value||"").trim(),
+        note:(document.getElementById("sem-note")?.value||"").trim(),
+      };
+      objects=objects.map(o=>({...o,stages:(o.stages||[]).map(s=>({...s,works:(s.works||[]).map(w=>({...w,mats:(w.mats||[]).map(m=>m.id===mid?{...m,...patch}:m)}))}))}));
+      supplyEditMid=null; render();
+    };}
     else if(a==="show-nu"){el.onclick=()=>{showNU=true;nu={name:"",av:"👷",c:"#e67e22",roles:[],objs:[]};render();};}
     else if(a==="cancel-nu"){el.onclick=()=>{showNU=false;render();};}
     else if(a==="nu-c"){el.onclick=()=>{nu.c=el.dataset.c;render();};}
