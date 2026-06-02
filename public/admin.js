@@ -665,6 +665,7 @@ let currentUser=null; // null = show login page
 let loginMode=null;   // null = выбор Сотрудник/Клиент; "employee" = список профилей; "client" = заглушка
 let loginPinFor=null; // id сотрудника, у которого запрашиваем PIN при входе
 let loginPinError=""; // текст ошибки ввода PIN
+let empPhoneError=""; // ошибка входа сотрудника по телефону
 let showPinChange=false; // открыт диалог смены своего PIN
 // === КЛИЕНТСКИЙ ВХОД ===
 let clientLoginStep="find";   // "find" (ввод номера/фамилии) | "pin"
@@ -1433,10 +1434,13 @@ function effectiveClientPin(c){
 function findClientContract(query){
   const q=(query||"").trim().toLowerCase();
   if(!q) return null;
+  const qd=q.replace(/\D/g,""); // цифры запроса — для поиска по телефону
   return contractDocs.find(function(c){
     const nm=(c.name||"").toLowerCase();
     const cl=(c.client||"").toLowerCase();
-    return nm.indexOf(q)>=0 || cl.indexOf(q)>=0;
+    const cm=crmClients.find(function(x){return x.id===c.crmClientId;});
+    const ph=((cm&&cm.phone)?cm.phone:"").replace(/\D/g,"");
+    return nm.indexOf(q)>=0 || cl.indexOf(q)>=0 || (qd.length>=4 && ph.indexOf(qd)>=0);
   })||null;
 }
 
@@ -1548,7 +1552,11 @@ function loginPage(){
         '<button data-a="login-back" style="width:28px;height:28px;background:#f0f4f8;border:1px solid #dde6f0;border-radius:8px;cursor:pointer;font-size:13px;color:#7a9aaa;flex-shrink:0">←</button>'+
         '<div style="font-size:14px;font-weight:700;color:#1a2a3a">Выберите свой профиль</div>'+
       '</div>'+
-      '<div style="font-size:12px;color:#7a9aaa;margin:4px 0 18px 36px">Вход для сотрудников</div>'+
+      '<div style="font-size:12px;color:#7a9aaa;margin:4px 0 14px 36px">Вход для сотрудников</div>'+
+      '<input id="emp-phone" inputmode="tel" autocomplete="off" placeholder="Номер телефона" style="width:100%;padding:12px;border-radius:12px;border:1.5px solid '+(empPhoneError?"#e74c3c":"#d0dae8")+';font-size:15px;outline:none;box-sizing:border-box">'+
+      (empPhoneError?'<div style="font-size:12px;color:#e74c3c;font-weight:600;margin-top:6px">'+empPhoneError+'</div>':'')+
+      '<button data-a="emp-phone-go" style="width:100%;margin-top:10px;padding:12px;background:#2980b9;border:none;border-radius:12px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">Войти по телефону</button>'+
+      '<div style="text-align:center;font-size:11px;color:#9aabbf;margin:16px 0 10px">или выберите профиль из списка</div>'+
       '<div style="display:flex;flex-direction:column;gap:8px">'+membersHtml+'</div>'+
     '</div>';
   return wrap(inner);
@@ -1614,6 +1622,21 @@ function bindLogin(){
   const cpin=document.getElementById("client-pin");
   if(cpin){ cpin.focus(); cpin.onkeydown=function(e){ if(e.key==="Enter"){ const b=document.querySelector("[data-a='client-pin-submit']"); if(b)b.click(); } }; }
   // Сотрудник: выбор профиля -> экран ввода PIN
+  document.querySelectorAll("[data-a='emp-phone-go']").forEach(function(el){
+    const go=function(){
+      const inp=document.getElementById("emp-phone");
+      const qd=((inp?inp.value:"")||"").replace(/\D/g,"");
+      if(qd.length<4){ empPhoneError="Введите номер телефона"; render(); return; }
+      const norm=function(s){return (s||"").replace(/\D/g,"").slice(-10);};
+      const u=users.find(function(x){return x.phone && norm(x.phone)===norm(qd);});
+      if(!u){ empPhoneError="Сотрудник с таким номером не найден. Телефон задаёт админ во вкладке «Команда»."; render(); return; }
+      empPhoneError=""; loginPinFor=u.id; loginPinError=""; render();
+    };
+    el.onclick=go;
+  });
+  const _ep=document.getElementById("emp-phone");
+  if(_ep){ _ep.onkeydown=function(e){ if(e.key==="Enter"){ const b=document.querySelector("[data-a='emp-phone-go']"); if(b)b.click(); } }; }
+
   document.querySelectorAll("[data-a='login-as']").forEach(function(el){
     const c=el.dataset.color;
     el.onmouseenter=function(){this.style.borderColor=c;this.style.background=c+'10';};
