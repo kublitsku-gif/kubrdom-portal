@@ -4491,22 +4491,8 @@ function tFinance(){
 }
 
 function tFinanceMode(){
-  // Header with mode tabs
-  let html='<div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;padding:6px;margin-bottom:14px;display:flex;gap:4px;box-shadow:0 2px 6px rgba(0,0,0,0.04)">'+
-    '<button data-a="fin-mode" data-mode="bdds" style="flex:1;padding:10px 8px;background:'+(finMode==="bdds"?"#2980b9":"transparent")+';border:none;border-radius:10px;cursor:pointer;color:'+(finMode==="bdds"?"#fff":"#5a7080")+';font-size:13px;font-weight:700;transition:all 0.15s">💰 БДДС</button>'+
-    '<button data-a="fin-mode" data-mode="pnl" style="flex:1;padding:10px 8px;background:'+(finMode==="pnl"?"#27ae60":"transparent")+';border:none;border-radius:10px;cursor:pointer;color:'+(finMode==="pnl"?"#fff":"#5a7080")+';font-size:13px;font-weight:700;transition:all 0.15s">📈 P&L</button>'+
-    '<button data-a="fin-mode" data-mode="experiment" style="flex:1;padding:10px 8px;background:'+(finMode==="experiment"?"#16a085":"transparent")+';border:none;border-radius:10px;cursor:pointer;color:'+(finMode==="experiment"?"#fff":"#5a7080")+';font-size:13px;font-weight:700;transition:all 0.15s">✏️ Эксперимент</button>'+
-  '</div>';
-  // Sub-header explaining the modes
-  html+='<div style="font-size:10px;color:#9aabbf;text-align:center;margin-bottom:10px;letter-spacing:0.3px">'+
-    (finMode==="bdds"?"Движение денег · приход и расход во времени":finMode==="experiment"?"Корректные P&L и БДДС · прибыль отдельно от денег":"Прибыль по договорам · доходы минус расходы")+
-  '</div>';
-
-  if(finMode==="bdds") html+=tFinanceBDDS();
-  else if(finMode==="experiment") html+=tFinanceExperiment();
-  else html+=tFinanceList();
-
-  return html;
+  // Оставлен только «Эксперимент» (под-вкладки БДДС и P&L удалены).
+  return tFinanceExperiment();
 }
 
 
