@@ -2898,11 +2898,34 @@ ${objMatModal?`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);di
       <button data-a="close-obj-mm" style="width:30px;height:30px;border-radius:50%;background:#f0f4f8;border:none;cursor:pointer;font-size:16px">✕</button>
     </div>
     ${(()=>{const o=objects.find(x=>x.id===objMatModal.oid);const work=o?.stages.flatMap(s=>s.works).find(w=>w.id===objMatModal.wid);const wMats=work?.mats||[];
-    return wMats.map(m=>`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;margin-bottom:5px;background:#f8fafc;border:1px solid #dde6f0">
-      <div style="flex:1"><div style="font-size:13px;font-weight:600;color:#1a2a3a">${m.n}</div>
-      <div style="display:flex;gap:5px;margin-top:2px">${m.store?`<span style="font-size:10px;font-weight:700;background:${SC[m.store]||"#666"};color:#fff;border-radius:4px;padding:1px 5px">${m.store}</span>`:""}${m.cost>0?`<span style="font-size:11px;color:#7a9aaa">${fmt(m.cost*(m.qty||1))}</span>`:""}</div></div>
-      <button data-a="obj-del-mat" data-oid="${objMatModal.oid}" data-wid="${objMatModal.wid}" data-mid="${m.id}" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button>
-    </div>`).join("")+`${wMats.length===0?`<div style="text-align:center;color:#aaa;font-size:13px;padding:12px">Нет материалов</div>`:""}<div style="margin-top:10px;background:#f0f4f8;border-radius:10px;padding:12px">
+    return wMats.map(function(m){
+      const mode=EXP_MODES.find(function(x){return x.k===(m.mode||"piece");})||EXP_MODES[0];
+      const conv=matConv(m);
+      const idx=conv?(expView[m.id]==="1"?1:(expView[m.id]==="0"?0:conv.def)):0;
+      const price=conv?conv.views[idx].price:(Number(m.cost)||0);
+      const unit=conv?conv.views[idx].unit:mode.unit;
+      const qty=m.qty||1;
+      const on="background:#2a3142;color:#fff", off="background:transparent;color:#7a9aaa";
+      return `<div style="padding:8px 10px;border-radius:8px;margin-bottom:5px;background:#f8fafc;border:1px solid #dde6f0">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:#1a2a3a">${m.n}</div>
+          <div style="display:flex;align-items:center;gap:5px;margin-top:3px;flex-wrap:wrap">
+            ${m.store?`<span style="font-size:10px;font-weight:700;background:${SC[m.store]||"#666"};color:#fff;border-radius:4px;padding:1px 5px">${m.store}</span>`:""}
+            <span style="font-size:10px;font-weight:700;color:#5a7a9a;background:#eef2f7;border-radius:4px;padding:1px 6px">${mode.icon} ${mode.unit}</span>
+            ${m.cost>0?`<span style="font-size:11px;color:#7a9aaa">${price.toLocaleString("ru-RU")} ₽/${unit} × ${numRu(qty)} = <b style="color:#0d1b2e">${fmt((Number(m.cost)||0)*qty)}</b></span>`:""}
+          </div>
+        </div>
+        <button data-a="obj-del-mat" data-oid="${objMatModal.oid}" data-wid="${objMatModal.wid}" data-mid="${m.id}" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>
+      </div>
+      ${conv?`<div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap">
+        <div style="display:inline-flex;background:#e9eef4;border-radius:20px;padding:2px">
+          <button data-a="objmat-view" data-mid="${m.id}" data-v="0" style="border:none;cursor:pointer;font-size:10px;font-weight:700;padding:3px 9px;border-radius:18px;${idx===0?on:off}">${conv.views[0].unit}</button>
+          <button data-a="objmat-view" data-mid="${m.id}" data-v="1" style="border:none;cursor:pointer;font-size:10px;font-weight:700;padding:3px 9px;border-radius:18px;${idx===1?on:off}">${conv.views[1].unit}</button>
+        </div>
+        <span style="font-size:10px;color:#9aabbf">${conv.footer}</span>
+      </div>`:""}
+    </div>`;}).join("")+`${wMats.length===0?`<div style="text-align:center;color:#aaa;font-size:13px;padding:12px">Нет материалов</div>`:""}<div style="margin-top:10px;background:#f0f4f8;border-radius:10px;padding:12px">
       <input id="opm-n" placeholder="Название" style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;margin-bottom:5px;outline:none;box-sizing:border-box">
       <div style="display:flex;gap:5px;margin-bottom:7px">
         <input id="opm-cost" placeholder="Цена ₽" type="number" style="flex:1;padding:7px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none">
@@ -8678,6 +8701,7 @@ function bind(){
     };}
     else if(a==="obj-open-mats"){el.onclick=()=>{objMatModal={oid:el.dataset.oid,wid:el.dataset.wid,wn:el.dataset.wn};render();};}
     else if(a==="close-obj-mm"){el.onclick=()=>{objMatModal=null;render();};}
+    else if(a==="objmat-view"){el.onclick=()=>{expView[el.dataset.mid]=el.dataset.v;render();};}
     else if(a==="obj-del-mat"){el.onclick=()=>{
       const {oid,wid,mid}=el.dataset;
       objects=objects.map(o=>o.id===oid?{...o,stages:o.stages.map(s=>({...s,works:s.works.map(w=>w.id===wid?{...w,mats:(w.mats||[]).filter(m=>m.id!==mid)}:w)}))}:o);
