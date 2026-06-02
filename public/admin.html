@@ -8,7 +8,7 @@
 *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,sans-serif}
 body{background:linear-gradient(160deg,#f4f7fa,#edf1f5);min-height:100vh;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 </style></head>
-<body><div id="app" style="min-height:100vh;display:flex;align-items:center;justify-content:center;font:15px -apple-system,sans-serif;color:#9aabbf">Загрузка…</div>
+<body><div id="app"><div style="min-height:100vh;display:flex;align-items:center;justify-content:center;font:15px -apple-system,sans-serif;color:#9aabbf">Загрузка…</div></div>
 <script>
 // Видимый перехватчик ошибок: вместо белого экрана покажет текст на странице
 window.addEventListener('error',function(e){var d=document.getElementById('app')||document.body;if(d&&!d.getAttribute('data-err')){d.setAttribute('data-err','1');d.innerHTML='<pre style="padding:16px;font:13px monospace;color:#c0392b;white-space:pre-wrap;word-break:break-word;background:#fff;margin:0">⚠ ОШИБКА:\n'+(e.message||(e.error&&e.error.message)||e.error||'?')+'\n'+(e.filename||'')+' :'+(e.lineno||'?')+':'+(e.colno||'?')+'</pre>';}});
