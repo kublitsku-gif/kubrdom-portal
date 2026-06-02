@@ -5944,6 +5944,14 @@ function tSupplyDetail(sel, sortBy){
   function matRow(m){
     const sc=STORECOL[m.store||""]||"#555";
     const done=!!purchased[m.id];
+    const mode=EXP_MODES.find(function(x){return x.k===(m.mode||"piece");})||EXP_MODES[0];
+    const conv=matConv(m);
+    const idx=conv?(expView[m.id]==="1"?1:(expView[m.id]==="0"?0:conv.def)):0;
+    const price=conv?conv.views[idx].price:(Number(m.cost)||0);
+    const unit=conv?conv.views[idx].unit:mode.unit;
+    const qty=m.qty||1;
+    const on="background:#2a3142;color:#fff",off="background:transparent;color:#7a9aaa";
+    const lineTotal=((Number(m.cost)||0)*qty).toLocaleString("ru-RU");
     return '<div data-a="supply-check" data-mid="'+m.id+'" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;margin-bottom:6px;background:'+(done?'#f0fdf4':'#f8fafc')+';border:1.5px solid '+(done?'#27ae60':'#dde6f0')+';cursor:pointer;transition:all 0.15s">'+
       '<div style="flex-shrink:0;margin-top:1px">'+
         '<div style="width:22px;height:22px;border-radius:6px;border:2px solid '+(done?'#27ae60':'#c8d8e8')+';background:'+(done?'#27ae60':'#fff')+';display:flex;align-items:center;justify-content:center;transition:all 0.15s">'+
@@ -5956,11 +5964,19 @@ function tSupplyDetail(sel, sortBy){
           (multiMode?'<span style="font-size:10px;background:#e8f0fa;color:#2a5298;border-radius:4px;padding:1px 6px">'+m.objIcon+' '+m.objName+'</span>':'')+
           '<span style="font-size:10px;color:#9aabbf">↳ '+m.wn+'</span>'+
           (m.store?'<span style="font-size:10px;font-weight:700;background:'+sc+';color:#fff;border-radius:4px;padding:1px 6px;opacity:'+(done?'0.5':'1')+'">'+m.store+'</span>':'')+
-          (m.cost>0?'<span style="font-size:11px;color:'+(done?'#b0c8b0':'#7a9aaa')+'">'+m.cost.toLocaleString("ru-RU")+' ₽</span>':'')+
+          '<span style="font-size:10px;font-weight:700;color:#5a7a9a;background:#eef2f7;border-radius:4px;padding:1px 6px">'+mode.icon+' '+mode.unit+'</span>'+
+          (m.cost>0?'<span style="font-size:11px;color:'+(done?'#b0c8b0':'#7a9aaa')+'">'+price.toLocaleString("ru-RU")+' ₽/'+unit+' × '+numRu(qty)+' = <b style="color:'+(done?'#b0c8b0':'#0d1b2e')+'">'+lineTotal+' ₽</b></span>':'')+
           (m.note?'<span style="font-size:10px;color:#9aabbf;font-style:italic">'+m.note+'</span>':'')+
           (!done&&m.url?'<a href="'+m.url+'" target="_blank" style="font-size:10px;color:#fff;background:#2980b9;border-radius:4px;padding:1px 7px;text-decoration:none;font-weight:600" onclick="event.stopPropagation()">🔗 купить</a>':'')+
           (done?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>':'')+
         '</div>'+
+        (conv?'<div style="display:flex;align-items:center;gap:6px;margin-top:5px;flex-wrap:wrap">'+
+          '<span style="font-size:10px;font-weight:700;color:#e67e22;background:#fff3e0;border-radius:6px;padding:2px 8px">🛒 Купить: '+conv.altTotal(qty)+'</span>'+
+          '<div style="display:inline-flex;background:#e9eef4;border-radius:20px;padding:2px" onclick="event.stopPropagation()">'+
+            '<button data-a="objmat-view" data-mid="'+m.id+'" data-v="0" style="border:none;cursor:pointer;font-size:10px;font-weight:700;padding:3px 9px;border-radius:18px;'+(idx===0?on:off)+'">'+conv.views[0].unit+'</button>'+
+            '<button data-a="objmat-view" data-mid="'+m.id+'" data-v="1" style="border:none;cursor:pointer;font-size:10px;font-weight:700;padding:3px 9px;border-radius:18px;'+(idx===1?on:off)+'">'+conv.views[1].unit+'</button>'+
+          '</div>'+
+        '</div>':'')+
       '</div>'+
     '</div>';
   }
@@ -8701,7 +8717,7 @@ function bind(){
     };}
     else if(a==="obj-open-mats"){el.onclick=()=>{objMatModal={oid:el.dataset.oid,wid:el.dataset.wid,wn:el.dataset.wn};render();};}
     else if(a==="close-obj-mm"){el.onclick=()=>{objMatModal=null;render();};}
-    else if(a==="objmat-view"){el.onclick=()=>{expView[el.dataset.mid]=el.dataset.v;render();};}
+    else if(a==="objmat-view"){el.onclick=(ev)=>{ev&&ev.stopPropagation();expView[el.dataset.mid]=el.dataset.v;render();};}
     else if(a==="obj-del-mat"){el.onclick=()=>{
       const {oid,wid,mid}=el.dataset;
       objects=objects.map(o=>o.id===oid?{...o,stages:o.stages.map(s=>({...s,works:s.works.map(w=>w.id===wid?{...w,mats:(w.mats||[]).filter(m=>m.id!==mid)}:w)}))}:o);
