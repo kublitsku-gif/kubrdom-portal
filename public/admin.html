@@ -5849,6 +5849,7 @@ function tSupplySelect(sel){
 }
 
 let supplyEditMid=null;   // id материала, открытого на редактирование в снабжении
+let supplyAddOpen=false;  // открыта ли форма добавления материала в снабжении
 function tSupplyDetail(sel, sortBy){
   const STORECOL={"Озон":"#005bff","Белка":"#d68910","pechki.su":"#c0392b","Егорьевск":"#8e44ad","Лемана":"#e30613","Авито":"#00aaff","Нижний Новгород":"#27ae60"};
   const sortBy2=sortBy||"stage";
@@ -5877,6 +5878,7 @@ function tSupplyDetail(sel, sortBy){
         '<div style="font-size:15px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+title+'</div>'+
         '<div style="font-size:12px;color:#7a9aaa">'+allMats.length+' материалов · '+totalCost.toLocaleString("ru-RU")+' ₽</div>'+
       '</div>'+
+      '<button data-a="supply-add-open" style="padding:6px 12px;background:#27ae60;border:none;border-radius:20px;cursor:pointer;font-size:12px;color:#fff;font-weight:700;white-space:nowrap;flex-shrink:0">+ Материал</button>'+
     '</div>';
 
   // Search
@@ -6050,6 +6052,41 @@ function tSupplyDetail(sel, sortBy){
         '</div>'+
       '</div>';
     }
+  }
+
+  // Модалка добавления материала: один список «Объект — Работа» → пишем в выбранную работу
+  if(supplyAddOpen){
+    const inp="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box";
+    let tgtOpts="";
+    (targetObjs.length?targetObjs:objects).forEach(function(o){
+      (o.stages||[]).forEach(function(s){
+        (s.works||[]).forEach(function(w){
+          tgtOpts+='<option value="'+o.id+'|'+w.id+'">'+(o.icon||"")+' '+o.name+' — '+w.n+'</option>';
+        });
+      });
+    });
+    const opts=EXP_MODES.map(function(o){return '<option value="'+o.k+'">'+o.icon+' '+o.label+'</option>';}).join("");
+    html+='<div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:flex-start;justify-content:center;padding:50px 16px;z-index:300">'+
+      '<div style="background:#fff;border-radius:16px;width:100%;max-width:420px;padding:20px">'+
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">'+
+          '<div style="font-size:15px;font-weight:700;color:#0d1b2e">➕ Новый материал</div>'+
+          '<button data-a="supply-add-close" style="width:30px;height:30px;border-radius:50%;background:#f0f4f8;border:none;cursor:pointer;font-size:16px">✕</button>'+
+        '</div>'+
+        '<div style="font-size:11px;color:#7a9aaa;font-weight:700;margin-bottom:4px">КУДА (объект · работа)</div>'+
+        '<select id="sao-target" style="'+inp+';margin-bottom:10px">'+tgtOpts+'</select>'+
+        '<input id="sao-n" placeholder="Название материала" style="'+inp+';margin-bottom:8px">'+
+        '<div style="display:flex;gap:8px;margin-bottom:8px">'+
+          '<select id="sao-mode" style="'+inp+';flex:1">'+opts+'</select>'+
+          '<input id="sao-qty" type="number" step="any" value="1" placeholder="Кол-во" style="'+inp+';flex:1">'+
+        '</div>'+
+        '<div style="display:flex;gap:8px;margin-bottom:8px">'+
+          '<input id="sao-cost" type="number" placeholder="Цена ₽/ед" style="'+inp+';flex:1">'+
+          '<input id="sao-store" placeholder="Магазин" style="'+inp+';flex:1">'+
+        '</div>'+
+        '<input id="sao-note" placeholder="Заметка" style="'+inp+';margin-bottom:12px">'+
+        '<button data-a="supply-add-save" style="width:100%;padding:10px;background:#27ae60;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">Добавить в объект</button>'+
+      '</div>'+
+    '</div>';
   }
 
   return html+'</div>';
@@ -7379,6 +7416,24 @@ function bind(){
       };
       objects=objects.map(o=>({...o,stages:(o.stages||[]).map(s=>({...s,works:(s.works||[]).map(w=>({...w,mats:(w.mats||[]).map(m=>m.id===mid?{...m,...patch}:m)}))}))}));
       supplyEditMid=null; render();
+    };}
+    else if(a==="supply-add-open"){el.onclick=()=>{supplyAddOpen=true;render();};}
+    else if(a==="supply-add-close"){el.onclick=()=>{supplyAddOpen=false;render();};}
+    else if(a==="supply-add-save"){el.onclick=()=>{
+      const tgt=(document.getElementById("sao-target")?.value||"").split("|");
+      const oid=tgt[0], wid=tgt[1];
+      const n=(document.getElementById("sao-n")?.value||"").trim();
+      if(!oid||!wid||!n)return;
+      const newMat={
+        id:gid(), n:n,
+        mode:document.getElementById("sao-mode")?.value||"piece",
+        qty:parseFloat(document.getElementById("sao-qty")?.value)||1,
+        cost:parseInt(document.getElementById("sao-cost")?.value)||0,
+        store:(document.getElementById("sao-store")?.value||"").trim(),
+        note:(document.getElementById("sao-note")?.value||"").trim(),
+      };
+      objects=objects.map(o=>o.id!==oid?o:{...o,stages:o.stages.map(s=>({...s,works:s.works.map(w=>w.id!==wid?w:{...w,mats:[...(w.mats||[]),newMat]})}))});
+      supplyAddOpen=false; render();
     };}
     else if(a==="show-nu"){el.onclick=()=>{showNU=true;nu={name:"",av:"👷",c:"#e67e22",roles:[],objs:[]};render();};}
     else if(a==="cancel-nu"){el.onclick=()=>{showNU=false;render();};}
