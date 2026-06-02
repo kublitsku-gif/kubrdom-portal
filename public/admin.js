@@ -1513,50 +1513,18 @@ function loginPage(){
     return wrap(inner);
   }
 
-  // Экран — ввод PIN выбранного сотрудника
-  if(loginMode==="employee"&&loginPinFor){
-    const u=users.find(function(x){return x.id===loginPinFor;});
-    if(u){
-      const inner='<div style="background:#fff;border-radius:20px;padding:24px;box-shadow:0 4px 24px rgba(0,0,0,0.08);border:1px solid #e8eef5;text-align:center">'+
-          '<div style="width:56px;height:56px;border-radius:14px;background:'+u.c+';display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto 10px">'+u.av+'</div>'+
-          '<div style="font-size:16px;font-weight:700;color:#0d1b2e;margin-bottom:2px">'+u.name+'</div>'+
-          '<div style="font-size:12px;color:#7a9aaa;margin-bottom:16px">Введите PIN для входа</div>'+
-          '<input id="login-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="••••" style="width:160px;padding:12px;border-radius:12px;border:1.5px solid '+(loginPinError?"#e74c3c":"#d0dae8")+';font-size:22px;text-align:center;letter-spacing:8px;outline:none;margin:0 auto;display:block;box-sizing:border-box">'+
-          (loginPinError?'<div style="font-size:12px;color:#e74c3c;font-weight:600;margin-top:8px">'+loginPinError+'</div>':'')+
-          '<label style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:14px;font-size:13px;color:#5a7a9a;cursor:pointer;user-select:none"><input type="checkbox" id="remember-me" checked style="width:17px;height:17px;cursor:pointer">Запомнить меня</label>'+
-          '<button data-a="login-pin-submit" style="width:100%;margin-top:12px;padding:12px;background:'+u.c+';border:none;border-radius:12px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">Войти</button>'+
-          '<button data-a="login-pin-back" style="width:100%;margin-top:8px;padding:10px;background:#f0f4f8;border:1px solid #dde6f0;border-radius:10px;cursor:pointer;font-size:13px;color:#7a9aaa;font-weight:600">← Назад</button>'+
-        '</div>';
-      return wrap(inner);
-    }
-  }
-
-  // Экран — список сотрудников
-  let membersHtml='';
-  users.forEach(function(u){
-    const rolePills=u.roles.map(function(rid){
-      const r=roles.find(function(x){return x.id===rid;});
-      return r?'<span style="font-size:10px;font-weight:600;color:'+r.c+';background:'+r.c+'15;border-radius:6px;padding:1px 6px">'+r.n+'</span>':"";
-    }).join("");
-    membersHtml+=
-      '<button data-a="login-as" data-uid="'+u.id+'" data-color="'+u.c+'" style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:12px;border:1.5px solid #e8eef5;background:#fff;cursor:pointer;text-align:left;width:100%;box-sizing:border-box;transition:border-color 0.15s">'+
-        '<div style="width:44px;height:44px;border-radius:12px;background:'+u.c+';display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">'+u.av+'</div>'+
-        '<div style="flex:1;min-width:0">'+
-          '<div style="font-size:14px;font-weight:700;color:#0d1b2e">'+u.name+'</div>'+
-          '<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:3px">'+rolePills+'</div>'+
-        '</div>'+
-        '<span style="font-size:18px;color:#c8d8e8">›</span>'+
-      '</button>';
-  });
+  // Экран входа сотрудника — телефон + PIN на одном экране
   const inner='<div style="background:#fff;border-radius:20px;padding:24px;box-shadow:0 4px 24px rgba(0,0,0,0.08);border:1px solid #e8eef5">'+
       '<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">'+
         '<button data-a="login-back" style="width:28px;height:28px;background:#f0f4f8;border:1px solid #dde6f0;border-radius:8px;cursor:pointer;font-size:13px;color:#7a9aaa;flex-shrink:0">←</button>'+
-        '<div style="font-size:14px;font-weight:700;color:#1a2a3a">Выберите свой профиль</div>'+
+        '<div style="font-size:14px;font-weight:700;color:#1a2a3a">Вход для сотрудников</div>'+
       '</div>'+
-      '<div style="font-size:12px;color:#7a9aaa;margin:4px 0 14px 36px">Вход для сотрудников</div>'+
-      '<input id="emp-phone" data-phone-mask="1" type="tel" inputmode="tel" autocomplete="off" placeholder="+7 (___) ___-__-__" style="width:100%;padding:12px;border-radius:12px;border:1.5px solid '+(empPhoneError?"#e74c3c":"#d0dae8")+';font-size:16px;outline:none;box-sizing:border-box">'+
-      (empPhoneError?'<div style="font-size:12px;color:#e74c3c;font-weight:600;margin-top:6px">'+empPhoneError+'</div>':'')+
-      '<button data-a="emp-phone-go" style="width:100%;margin-top:12px;padding:12px;background:#2980b9;border:none;border-radius:12px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">Войти</button>'+
+      '<div style="font-size:12px;color:#7a9aaa;margin:4px 0 14px 36px">Телефон и PIN (последние 4 цифры номера)</div>'+
+      '<input id="emp-phone" data-phone-mask="1" type="tel" inputmode="tel" autocomplete="off" placeholder="+7 (___) ___-__-__" style="width:100%;padding:12px;border-radius:12px;border:1.5px solid '+(empPhoneError?"#e74c3c":"#d0dae8")+';font-size:16px;outline:none;box-sizing:border-box;margin-bottom:10px">'+
+      '<input id="login-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="PIN" style="width:100%;padding:12px;border-radius:12px;border:1.5px solid '+(empPhoneError?"#e74c3c":"#d0dae8")+';font-size:18px;text-align:center;letter-spacing:6px;outline:none;box-sizing:border-box">'+
+      (empPhoneError?'<div style="font-size:12px;color:#e74c3c;font-weight:600;margin-top:8px">'+empPhoneError+'</div>':'')+
+      '<label style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:14px;font-size:13px;color:#5a7a9a;cursor:pointer;user-select:none"><input type="checkbox" id="remember-me" checked style="width:17px;height:17px;cursor:pointer">Запомнить меня</label>'+
+      '<button data-a="emp-login-go" style="width:100%;margin-top:12px;padding:13px;background:#2980b9;border:none;border-radius:12px;cursor:pointer;color:#fff;font-size:15px;font-weight:700">Войти</button>'+
     '</div>';
   return wrap(inner);
 }
@@ -1621,20 +1589,22 @@ function bindLogin(){
   const cpin=document.getElementById("client-pin");
   if(cpin){ cpin.focus(); cpin.onkeydown=function(e){ if(e.key==="Enter"){ const b=document.querySelector("[data-a='client-pin-submit']"); if(b)b.click(); } }; }
   // Сотрудник: выбор профиля -> экран ввода PIN
-  document.querySelectorAll("[data-a='emp-phone-go']").forEach(function(el){
+  document.querySelectorAll("[data-a='emp-login-go']").forEach(function(el){
     const go=function(){
-      const inp=document.getElementById("emp-phone");
-      const qd=((inp?inp.value:"")||"").replace(/\D/g,"");
-      if(qd.length<4){ empPhoneError="Введите номер телефона"; render(); return; }
+      const pinp=document.getElementById("emp-phone");
+      const qd=((pinp?pinp.value:"")||"").replace(/\D/g,"");
       const norm=function(s){return (s||"").replace(/\D/g,"").slice(-10);};
-      const u=users.find(function(x){return x.phone && norm(x.phone)===norm(qd);});
+      const u=qd.length>=4?users.find(function(x){return x.phone && norm(x.phone)===norm(qd);}):null;
       if(!u){ empPhoneError="Сотрудник с таким номером не найден. Телефон задаёт админ во вкладке «Команда»."; render(); return; }
-      empPhoneError=""; loginPinFor=u.id; loginPinError=""; render();
+      const pin=((document.getElementById("login-pin")||{}).value||"").trim();
+      if(pin!==(u.pin||"1111")){ empPhoneError="Неверный PIN (последние 4 цифры телефона)"; render(); return; }
+      const rm=document.getElementById("remember-me");
+      try{ if(!rm||rm.checked) localStorage.setItem("kubr_remember",u.id); else localStorage.removeItem("kubr_remember"); }catch(e){}
+      empPhoneError=""; currentUser=u; loginPinFor=null; _setInitialTab(); render();
     };
     el.onclick=go;
   });
-  const _ep=document.getElementById("emp-phone");
-  if(_ep){ _ep.onkeydown=function(e){ if(e.key==="Enter"){ const b=document.querySelector("[data-a='emp-phone-go']"); if(b)b.click(); } }; }
+  ["emp-phone","login-pin"].forEach(function(id){ const f=document.getElementById(id); if(f) f.onkeydown=function(e){ if(e.key==="Enter"){ const b=document.querySelector("[data-a='emp-login-go']"); if(b)b.click(); } }; });
   if(window._bindPhoneInputs)window._bindPhoneInputs(); // маска телефона на экране входа (как в CRM)
 
   document.querySelectorAll("[data-a='login-as']").forEach(function(el){
