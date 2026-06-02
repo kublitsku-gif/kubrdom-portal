@@ -4467,18 +4467,111 @@ function tFinanceMode(){
   let html='<div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;padding:6px;margin-bottom:14px;display:flex;gap:4px;box-shadow:0 2px 6px rgba(0,0,0,0.04)">'+
     '<button data-a="fin-mode" data-mode="bdds" style="flex:1;padding:10px 8px;background:'+(finMode==="bdds"?"#2980b9":"transparent")+';border:none;border-radius:10px;cursor:pointer;color:'+(finMode==="bdds"?"#fff":"#5a7080")+';font-size:13px;font-weight:700;transition:all 0.15s">💰 БДДС</button>'+
     '<button data-a="fin-mode" data-mode="pnl" style="flex:1;padding:10px 8px;background:'+(finMode==="pnl"?"#27ae60":"transparent")+';border:none;border-radius:10px;cursor:pointer;color:'+(finMode==="pnl"?"#fff":"#5a7080")+';font-size:13px;font-weight:700;transition:all 0.15s">📈 P&L</button>'+
+    '<button data-a="fin-mode" data-mode="experiment" style="flex:1;padding:10px 8px;background:'+(finMode==="experiment"?"#16a085":"transparent")+';border:none;border-radius:10px;cursor:pointer;color:'+(finMode==="experiment"?"#fff":"#5a7080")+';font-size:13px;font-weight:700;transition:all 0.15s">✏️ Эксперимент</button>'+
   '</div>';
   // Sub-header explaining the modes
   html+='<div style="font-size:10px;color:#9aabbf;text-align:center;margin-bottom:10px;letter-spacing:0.3px">'+
-    (finMode==="bdds"?"Движение денег · приход и расход во времени":"Прибыль по договорам · доходы минус расходы")+
+    (finMode==="bdds"?"Движение денег · приход и расход во времени":finMode==="experiment"?"Корректные P&L и БДДС · прибыль отдельно от денег":"Прибыль по договорам · доходы минус расходы")+
   '</div>';
 
   if(finMode==="bdds") html+=tFinanceBDDS();
+  else if(finMode==="experiment") html+=tFinanceExperiment();
   else html+=tFinanceList();
 
   return html;
 }
 
+
+function tFinanceExperiment(){
+  const signed=contractDocs.filter(function(c){return c.status==="signed"||c.status==="closed";});
+  function objMaterials(oid){
+    const o=objects.find(function(x){return x.id===oid;}); if(!o)return 0;
+    return o.stages.flatMap(function(s){return s.works.flatMap(function(w){return w.mats||[];});})
+      .reduce(function(a,m){return a+(Number(m.cost)||0)*(m.qty||1);},0);
+  }
+  function objLabor(c){
+    let s=0;
+    users.filter(function(u){return (c.responsible||[]).includes(u.id);}).forEach(function(u){
+      const sal=(c.salaries||{})[u.id]||{};
+      s+=(sal.plan!=null&&sal.plan!==0?sal.plan:getDefaultSalary(u));
+    });
+    s+=(c.extraWorksPlan||[]).reduce(function(a,w){return a+(w.amount||0);},0);
+    return s;
+  }
+  // ── Итоги (P&L) ──
+  let revenue=0,materials=0,labor=0;
+  signed.forEach(function(c){ revenue+=getObjectContractAmount(c.objId); materials+=objMaterials(c.objId); labor+=objLabor(c); });
+  const cogs=materials+labor, gross=revenue-cogs, margin=revenue>0?Math.round(gross/revenue*100):0;
+  // ── БДДС (живые деньги) ──
+  let factIn=0,factOut=0;
+  finTxns.forEach(function(t){ if(t.type==="income")factIn+=t.amount||0; else if(t.type==="expense")factOut+=t.amount||0; });
+  const flow=factIn-factOut, toReceive=revenue-factIn;
+  const RP=function(n){return (n>=0?"+":"−")+Math.abs(n).toLocaleString("ru-RU")+" ₽";};
+  const RU=function(n){return n.toLocaleString("ru-RU")+" ₽";};
+
+  let html='';
+  // Пояснение
+  html+='<div style="background:#fff7ec;border:1px solid #f5d9a8;border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:12px;color:#7a5a2a;line-height:1.55">'+
+    '<b>✏️ Эксперимент.</b> Два разных отчёта. <b>P&L</b> — прибыль: выручка по договору минус себестоимость (материалы + работа); показывает, заработаем ли. '+
+    '<b>БДДС</b> — живые деньги: сколько поступило и оплачено сейчас. Можно иметь прибыль на бумаге и при этом кассовый разрыв.'+
+  '</div>';
+  // P&L карта
+  html+='<div style="background:linear-gradient(135deg,#1e7e5a,#13603e);border-radius:16px;padding:16px;color:#fff;margin-bottom:12px">'+
+    '<div style="font-size:11px;font-weight:700;letter-spacing:0.5px;color:#bfe9d4;margin-bottom:12px">📈 P&L · ПРИБЫЛЬ ПО ВСЕМ ДОГОВОРАМ</div>'+
+    '<div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:14px">'+
+      '<div><div style="font-size:11px;color:#bfe9d4">Валовая прибыль</div><div style="font-size:26px;font-weight:800;line-height:1.1">'+RP(gross)+'</div></div>'+
+      '<div style="text-align:right"><div style="font-size:11px;color:#bfe9d4">Маржа</div><div style="font-size:22px;font-weight:800">'+margin+'%</div></div>'+
+    '</div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">'+
+      '<div style="background:rgba(255,255,255,0.12);border-radius:10px;padding:10px"><div style="font-size:10px;color:#bfe9d4">ВЫРУЧКА (договоры)</div><div style="font-size:15px;font-weight:700">'+RU(revenue)+'</div></div>'+
+      '<div style="background:rgba(0,0,0,0.18);border-radius:10px;padding:10px"><div style="font-size:10px;color:#bfe9d4">СЕБЕСТОИМОСТЬ</div><div style="font-size:15px;font-weight:700">−'+RU(cogs)+'</div></div>'+
+    '</div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px;color:#cfeede">'+
+      '<div>материалы<div style="font-size:13px;color:#fff;font-weight:700">−'+RU(materials)+'</div></div>'+
+      '<div>работа (ФОТ)<div style="font-size:13px;color:#fff;font-weight:700">−'+RU(labor)+'</div></div>'+
+    '</div>'+
+  '</div>';
+  // БДДС карта
+  html+='<div style="background:linear-gradient(135deg,#1f4a6e,#14324b);border-radius:16px;padding:16px;color:#fff;margin-bottom:18px">'+
+    '<div style="font-size:11px;font-weight:700;letter-spacing:0.5px;color:#a9c7e0;margin-bottom:12px">💰 БДДС · ЖИВЫЕ ДЕНЬГИ</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">'+
+      '<div><div style="font-size:10px;color:#a9c7e0">ПОСТУПИЛО</div><div style="font-size:15px;font-weight:700;color:#5fd99a">+'+RU(factIn)+'</div></div>'+
+      '<div><div style="font-size:10px;color:#a9c7e0">ОПЛАЧЕНО</div><div style="font-size:15px;font-weight:700;color:#f1948a">−'+RU(factOut)+'</div></div>'+
+      '<div><div style="font-size:10px;color:#a9c7e0">ПОТОК</div><div style="font-size:15px;font-weight:700;color:'+(flow>=0?"#5fd99a":"#f1948a")+'">'+RP(flow)+'</div></div>'+
+    '</div>'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid rgba(255,255,255,0.12);margin-top:12px;padding-top:11px">'+
+      '<span style="font-size:12px;color:#a9c7e0">Осталось получить по договорам</span>'+
+      '<span style="font-size:16px;font-weight:800;color:#f0b94a">'+RU(toReceive)+'</span>'+
+    '</div>'+
+  '</div>';
+  // По объектам
+  html+='<div style="font-size:12px;font-weight:700;color:#7a9aaa;letter-spacing:0.5px;margin-bottom:10px">ПО ОБЪЕКТАМ</div>';
+  signed.forEach(function(c){
+    const o=objects.find(function(x){return x.id===c.objId;}); if(!o)return;
+    const rev=getObjectContractAmount(c.objId), mat=objMaterials(c.objId), lab=objLabor(c);
+    const profit=rev-mat-lab, pct=rev>0?Math.round(profit/rev*100):0;
+    const oin=finTxns.filter(function(t){return t.objId===c.objId&&t.type==="income";}).reduce(function(a,t){return a+(t.amount||0);},0);
+    const oout=finTxns.filter(function(t){return t.objId===c.objId&&t.type==="expense";}).reduce(function(a,t){return a+(t.amount||0);},0);
+    const toRecv=rev-oin;
+    html+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:14px;padding:14px;margin-bottom:10px">'+
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">'+
+        '<div style="font-size:15px;font-weight:700;color:#0d1b2e">'+(o.icon||"")+' '+o.name+'</div>'+
+        '<div style="text-align:right"><div style="font-size:17px;font-weight:800;color:'+(profit>=0?"#27ae60":"#e74c3c")+'">'+RP(profit)+'</div><div style="font-size:10px;color:#9aabbf">прибыль · '+pct+'%</div></div>'+
+      '</div>'+
+      '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:11px;margin-bottom:8px">'+
+        '<div><div style="color:#9aabbf">ВЫРУЧКА</div><b style="color:#2980b9">'+RU(rev)+'</b></div>'+
+        '<div><div style="color:#9aabbf">МАТЕРИАЛЫ</div><b style="color:#1a2a3a">'+RU(mat)+'</b></div>'+
+        '<div><div style="color:#9aabbf">РАБОТА</div><b style="color:#1a2a3a">'+RU(lab)+'</b></div>'+
+      '</div>'+
+      '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:11px;border-top:1px solid #eef2f7;padding-top:8px">'+
+        '<div><div style="color:#9aabbf">ПОСТУПИЛО</div><b style="color:#27ae60">'+RU(oin)+'</b></div>'+
+        '<div><div style="color:#9aabbf">ОПЛАЧЕНО</div><b style="color:#e74c3c">'+RU(oout)+'</b></div>'+
+        '<div><div style="color:#9aabbf">К ПОЛУЧЕНИЮ</div><b style="color:#f0a020">'+RU(toRecv)+'</b></div>'+
+      '</div>'+
+    '</div>';
+  });
+  return html;
+}
 
 function tFinanceBDDS(){
   // ===== BDDS: Cash Flow Movement =====
