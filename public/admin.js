@@ -1553,11 +1553,9 @@ function loginPage(){
         '<div style="font-size:14px;font-weight:700;color:#1a2a3a">Выберите свой профиль</div>'+
       '</div>'+
       '<div style="font-size:12px;color:#7a9aaa;margin:4px 0 14px 36px">Вход для сотрудников</div>'+
-      '<input id="emp-phone" inputmode="tel" autocomplete="off" placeholder="Номер телефона" style="width:100%;padding:12px;border-radius:12px;border:1.5px solid '+(empPhoneError?"#e74c3c":"#d0dae8")+';font-size:15px;outline:none;box-sizing:border-box">'+
+      '<input id="emp-phone" data-phone-mask="1" type="tel" inputmode="tel" autocomplete="off" placeholder="+7 (___) ___-__-__" style="width:100%;padding:12px;border-radius:12px;border:1.5px solid '+(empPhoneError?"#e74c3c":"#d0dae8")+';font-size:16px;outline:none;box-sizing:border-box">'+
       (empPhoneError?'<div style="font-size:12px;color:#e74c3c;font-weight:600;margin-top:6px">'+empPhoneError+'</div>':'')+
-      '<button data-a="emp-phone-go" style="width:100%;margin-top:10px;padding:12px;background:#2980b9;border:none;border-radius:12px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">Войти по телефону</button>'+
-      '<div style="text-align:center;font-size:11px;color:#9aabbf;margin:16px 0 10px">или выберите профиль из списка</div>'+
-      '<div style="display:flex;flex-direction:column;gap:8px">'+membersHtml+'</div>'+
+      '<button data-a="emp-phone-go" style="width:100%;margin-top:12px;padding:12px;background:#2980b9;border:none;border-radius:12px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">Войти</button>'+
     '</div>';
   return wrap(inner);
 }
@@ -1636,6 +1634,7 @@ function bindLogin(){
   });
   const _ep=document.getElementById("emp-phone");
   if(_ep){ _ep.onkeydown=function(e){ if(e.key==="Enter"){ const b=document.querySelector("[data-a='emp-phone-go']"); if(b)b.click(); } }; }
+  if(window._bindPhoneInputs)window._bindPhoneInputs(); // маска телефона на экране входа (как в CRM)
 
   document.querySelectorAll("[data-a='login-as']").forEach(function(el){
     const c=el.dataset.color;
