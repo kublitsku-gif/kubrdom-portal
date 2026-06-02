@@ -108,7 +108,8 @@ function applyState(items){
   items.forEach(function(it){ byId[it.work_id] = it.data; });
   // Перезаписываем только пришедшие ключи (отсутствующий ключ оставляет
   // сид нетронутым). arr — для массивов, obj — для map-объектов.
-  const arr = function(k, cur){ return Array.isArray(byId[k]) ? byId[k] : cur; };
+  // отсеиваем null/undefined-элементы — один битый элемент иначе роняет рендер вкладки
+  const arr = function(k, cur){ return Array.isArray(byId[k]) ? byId[k].filter(function(x){ return x != null; }) : cur; };
   const obj = function(k, cur){ return (byId[k] && typeof byId[k] === "object" && !Array.isArray(byId[k])) ? byId[k] : cur; };
   objects         = arr("objects",         objects);
   templates       = arr("templates",       templates);
