@@ -4568,6 +4568,28 @@ function tFinanceExperiment(){
         '<div><div style="color:#9aabbf">ОПЛАЧЕНО</div><b style="color:#e74c3c">'+RU(oout)+'</b></div>'+
         '<div><div style="color:#9aabbf">К ПОЛУЧЕНИЮ</div><b style="color:#f0a020">'+RU(toRecv)+'</b></div>'+
       '</div>'+
+      (function(){
+        if(expAddOid!==c.objId) return '<button data-a="exp-txn-open" data-oid="'+c.objId+'" style="margin-top:10px;width:100%;padding:8px;background:#2980b9;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">+ Транзакция</button>';
+        const isInc=expAddType==="income";
+        const cats=isInc?FIN_INCOME_CATS:FIN_EXPENSE_CATS;
+        const inp="width:100%;padding:7px 9px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;box-sizing:border-box;outline:none";
+        return '<div style="margin-top:10px;background:#f0f4f8;border-radius:10px;padding:10px">'+
+          '<div style="display:flex;gap:6px;margin-bottom:7px">'+
+            '<button data-a="exp-txn-type" data-t="income" style="flex:1;padding:7px;border-radius:7px;border:none;cursor:pointer;font-size:12px;font-weight:700;background:'+(isInc?"#27ae60":"#e8edf2")+';color:'+(isInc?"#fff":"#7a9aaa")+'">↑ Приход</button>'+
+            '<button data-a="exp-txn-type" data-t="expense" style="flex:1;padding:7px;border-radius:7px;border:none;cursor:pointer;font-size:12px;font-weight:700;background:'+(!isInc?"#e74c3c":"#e8edf2")+';color:'+(!isInc?"#fff":"#7a9aaa")+'">↓ Расход</button>'+
+          '</div>'+
+          '<select id="exp-cat" style="'+inp+';margin-bottom:6px">'+cats.map(function(x){return '<option>'+x+'</option>';}).join("")+'</select>'+
+          '<div style="display:flex;gap:6px;margin-bottom:6px">'+
+            '<input id="exp-amt" type="number" placeholder="Сумма ₽" style="'+inp+';flex:1">'+
+            '<input id="exp-date" type="date" value="'+new Date().toISOString().slice(0,10)+'" style="'+inp+';flex:1">'+
+          '</div>'+
+          '<input id="exp-note" placeholder="Заметка (необязательно)" style="'+inp+';margin-bottom:8px">'+
+          '<div style="display:flex;gap:6px">'+
+            '<button data-a="exp-txn-save" data-oid="'+c.objId+'" data-cid="'+c.id+'" style="flex:1;padding:8px;background:#27ae60;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">💾 Сохранить</button>'+
+            '<button data-a="exp-txn-cancel" style="padding:8px 12px;background:transparent;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;font-size:12px;color:#7a9aaa">Отмена</button>'+
+          '</div>'+
+        '</div>';
+      })()+
     '</div>';
   });
   return html;
@@ -6415,7 +6437,9 @@ let openTimeWid=null; // {wid} of work with open time-log form
 let openTimeOid=null;
 let openTimeSid=null;
 let newTimeLog={hours:1,date:""}; // staged values for new time entry
-let finMode="pnl"; // "bdds" or "pnl"
+let finMode="pnl"; // "bdds" | "pnl" | "experiment"
+let expAddOid=null;        // объект, для которого открыта форма +Транзакция в «Эксперименте»
+let expAddType="income";   // тип новой транзакции в форме «Эксперимента»
 let bddsView="month"; // "month" or "contract"
 let finTxns=[
   // Баня на Киевке — sample data
@@ -7593,6 +7617,19 @@ function bind(){
       fl();
     };}
     else if(a==="fin-mode"){el.onclick=()=>{finMode=el.dataset.mode;render();};}
+    else if(a==="exp-txn-open"){el.onclick=()=>{expAddOid=el.dataset.oid;expAddType="income";render();};}
+    else if(a==="exp-txn-type"){el.onclick=()=>{expAddType=el.dataset.t;render();};}
+    else if(a==="exp-txn-cancel"){el.onclick=()=>{expAddOid=null;render();};}
+    else if(a==="exp-txn-save"){el.onclick=()=>{
+      const oid=el.dataset.oid, cid=el.dataset.cid;
+      const cat=document.getElementById("exp-cat")?.value||"";
+      const amt=parseInt(document.getElementById("exp-amt")?.value)||0;
+      const date=document.getElementById("exp-date")?.value||new Date().toISOString().slice(0,10);
+      const note=(document.getElementById("exp-note")?.value||"").trim();
+      if(!amt){return;}
+      finTxns.push({id:gid(),type:expAddType,category:cat,amount:amt,date:date,note:note,objId:oid,contractId:cid,method:expAddType==="income"?"transfer":undefined});
+      expAddOid=null; render();
+    };}
     else if(a==="bdds-view"){el.onclick=()=>{bddsView=el.dataset.v;render();};}
     else if(a==="fin-open"){el.onclick=()=>{
       finOpenContractId=el.dataset.cid||null;
