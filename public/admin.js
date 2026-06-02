@@ -3293,7 +3293,7 @@ function expRowHtml(p){
       <div style="flex:1;min-width:0">
         <div style="font-size:13.5px;font-weight:700;color:#0d1b2e;line-height:1.25">${p.name}</div>
         <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:5px;align-items:center">
-          <span style="font-size:10px;font-weight:700;background:${storeColor};color:#fff;border-radius:5px;padding:1px 7px">${p.store}</span>
+          ${p.url?`<a href="${p.url}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:10px;font-weight:700;background:${storeColor};color:#fff;border-radius:5px;padding:1px 7px;text-decoration:none">${p.store} ↗</a>`:`<span style="font-size:10px;font-weight:700;background:${storeColor};color:#fff;border-radius:5px;padding:1px 7px">${p.store}</span>`}
           <span style="font-size:10px;font-weight:700;color:#5a7a9a;background:#eef2f7;border-radius:5px;padding:1px 7px">${mode.icon} ${mode.label}</span>
         </div>
       </div>
