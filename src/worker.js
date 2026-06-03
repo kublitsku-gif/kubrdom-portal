@@ -116,27 +116,36 @@ async function postState(env, storageKey, request) {
   return json({ success: true, written: batch.length, updated_at: now });
 }
 
+// Разрешённые типы изображений (тип задаём САМИ по расширению, не доверяя клиенту —
+// иначе можно залить text/html или svg и получить XSS при отдаче).
+const IMG_TYPES = { png:"image/png", jpg:"image/jpeg", jpeg:"image/jpeg", webp:"image/webp", gif:"image/gif", heic:"image/heic", heif:"image/heif" };
+
 // GET /api/file/<key> — публичная отдача файла из R2 (для <img>, без токена).
 async function getFile(env, key) {
   if (!env.FILES) return json({ success: false, error: "R2 not configured" }, 500);
   const obj = await env.FILES.get(key);
   if (!obj) return new Response("Not found", { status: 404, headers: CORS_HEADERS });
+  const ct = (obj.httpMetadata && obj.httpMetadata.contentType) || "application/octet-stream";
   const headers = new Headers(CORS_HEADERS);
-  headers.set("Content-Type", (obj.httpMetadata && obj.httpMetadata.contentType) || "application/octet-stream");
+  headers.set("Content-Type", ct);
   headers.set("Cache-Control", "public, max-age=31536000, immutable");
+  // Защита: не угадывать тип, не исполнять как страницу.
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("Content-Security-Policy", "default-src 'none'; sandbox");
   return new Response(obj.body, { headers });
 }
 
-// POST /api/file?name=... — загрузка файла в R2 (тело = бинарные данные). Требует токен.
+// POST /api/file?name=... — загрузка изображения в R2 (тело = бинарные данные). Требует токен.
 async function putFile(env, request, url) {
   if (!env.FILES) return json({ success: false, error: "R2 not configured" }, 500);
+  const name = url.searchParams.get("name") || "";
+  const ext = (name.split(".").pop() || "").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 8);
+  const ct = IMG_TYPES[ext];
+  if (!ct) return json({ success: false, error: "Можно загружать только изображения (png, jpg, webp, gif, heic)" }, 415);
   const body = await request.arrayBuffer();
   if (body.byteLength === 0) return json({ success: false, error: "Пустой файл" }, 400);
   if (body.byteLength > 15 * 1024 * 1024) return json({ success: false, error: "Файл больше 15 МБ" }, 413);
-  const name = url.searchParams.get("name") || "";
-  const ext = (name.split(".").pop() || "").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 8);
-  const ct = request.headers.get("Content-Type") || "application/octet-stream";
-  const key = "plans/" + crypto.randomUUID() + (ext ? ("." + ext) : "");
+  const key = "plans/" + crypto.randomUUID() + "." + ext;
   await env.FILES.put(key, body, { httpMetadata: { contentType: ct } });
   return json({ success: true, key, url: url.origin + "/api/file/" + key });
 }
