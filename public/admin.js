@@ -9201,7 +9201,39 @@ function bind(){
 }
 
 // Bootstrap: сначала авторизация (пароль-гейт), потом загрузка состояния и рендер.
+function _autoLogin(){
+  // авто-вход «Запомнить меня»: восстанавливаем сотрудника из localStorage (данные уже подняты)
+  try{ const rid=localStorage.getItem("kubr_remember"); if(rid && !currentUser){ const u=users.find(function(x){return x.id===rid;}); if(u){ currentUser=u; _setInitialTab(); } } }catch(e){}
+}
+
 (async function boot(){
+  const cached = readCache();
+  if (cached){ try{ applyState(cached); _lastSeen = maxUpdatedAt(cached); }catch(e){} }
+
+  if (cached && getToken()){
+    // Вернувшийся пользователь: показываем интерфейс СРАЗУ из кэша (работает и без VPN),
+    // а сервер опрашиваем в фоне.
+    _autoLogin();
+    _lastSavedJson = JSON.stringify(serializeState());
+    _hydrated = true;
+    render();
+    apiLoad().then(function(items){
+      if (!items) return;
+      if (JSON.stringify(serializeState()) === _lastSavedJson){
+        // локальных правок нет — тихо подменяем на свежие серверные
+        applyState(items); _lastSeen = maxUpdatedAt(items); _lastSavedJson = JSON.stringify(serializeState()); render();
+      } else {
+        // есть несохранённое — не затираем, предлагаем обновить баннером
+        const v = maxUpdatedAt(items); if (v > _lastSeen) showUpdateBanner(items, v);
+      }
+    }).catch(function(){});
+    setInterval(apiSave, 2500);
+    setInterval(pollOnce, POLL_MS);
+    document.addEventListener("visibilitychange", function(){ if (!document.hidden) pollOnce(); });
+    return;
+  }
+
+  // Первый запуск / нет кэша или токена — обычный путь с ожиданием загрузки.
   while (true){
     if (!getToken()) setToken(await showLogin(""));
     try {
@@ -9214,8 +9246,7 @@ function bind(){
       setToken(await showLogin(e && e.unauthorized ? "Неверный пароль" : "Ошибка связи, попробуйте снова"));
     }
   }
-  // авто-вход «Запомнить меня»: восстанавливаем сотрудника из localStorage (данные уже загружены)
-  try{ const rid=localStorage.getItem("kubr_remember"); if(rid && !currentUser){ const u=users.find(function(x){return x.id===rid;}); if(u){ currentUser=u; _setInitialTab(); } } }catch(e){}
+  _autoLogin();
   _hydrated = true;
   render();
 
