@@ -84,6 +84,7 @@ function serializeState(){
     { work_id: "finExtraWorks",   data: finExtraWorks   },
     { work_id: "contractDocs",    data: contractDocs    },
     { work_id: "crmClients",      data: crmClients      },
+    { work_id: "settings",        data: settings        },
   ];
 }
 
@@ -115,6 +116,7 @@ function applyState(items){
   finSalaries     = obj("finSalaries",     finSalaries);
   finContracts    = obj("finContracts",    finContracts);
   finExtraWorks   = obj("finExtraWorks",   finExtraWorks);
+  settings        = obj("settings",        settings);
 }
 
 async function apiLoad(){
@@ -193,6 +195,22 @@ async function mirrorPhotosToTelegram(objId, files){
     objects=objects.map(function(x){ return x.id!==objId?x:Object.assign({},x,{tgTopicId:topicId}); });
     apiSave().catch(function(){});
   }
+}
+
+// Дублируем планировку в общую Telegram-ветку «Планировки» (бэкап). Тема одна на всю базу планов.
+// id ветки храним в settings.plansTopicId (синхронизируется между устройствами). Best-effort.
+async function mirrorPlanToTelegram(file, caption){
+  if(!file) return;
+  try{
+    const r=await fetch(API_BASE+"/api/photo?objName="+encodeURIComponent(PLANS_TOPIC_NAME)+"&topicId="+(settings.plansTopicId||0)+"&name="+encodeURIComponent(file.name)+"&caption="+encodeURIComponent(caption||"Планировка"),{
+      method:"POST", headers:authHeaders({ "Content-Type": file.type||"image/jpeg" }), body:file
+    });
+    const j=await r.json();
+    if(j&&j.success&&j.topicId && j.topicId!==(settings.plansTopicId||0)){
+      settings=Object.assign({},settings,{plansTopicId:j.topicId});
+      apiSave().catch(function(){});
+    }
+  }catch(e){ /* план уже в R2 — Telegram-дубль не критичен */ }
 }
 
 let _lastSavedJson = null;                 // снимок последнего успешного сохранения
@@ -1021,6 +1039,9 @@ let dbPlans=[];
 let showNDBPlan=false;            // открыта форма добавления планировки
 let dbPlanNew={name:"",img:"",cat:"house"};   // буфер новой планировки
 let dbPlanTab="house";            // активный подраздел планировок: house | banya
+// Глобальные настройки (синхронизируются как единый объект). Сейчас: plansTopicId — id общей Telegram-ветки «Планировки».
+let settings={};
+const PLANS_TOPIC_NAME="📐 Планировки";
 let crmPlanPickerFor=null;        // id клиента, для которого открыт выбор планировки
 let newDBWork={n:"",cost:""};
 let newDBMat={n:"",cost:"",store:""};
@@ -7401,7 +7422,11 @@ function bind(){
           const nm=document.getElementById("ndbplan-n");
           if(nm)dbPlanNew.name=nm.value;
           dbPlanNew.img="__uploading__"; render();   // индикатор загрузки
-          try{ dbPlanNew.img=await uploadFileR2(f); }
+          try{
+            let c=f; try{ c=await compressImage(f,1024*1024); }catch(e){}
+            dbPlanNew.img=await uploadFileR2(c,true);
+            mirrorPlanToTelegram(c, dbPlanNew.name||"Планировка");
+          }
           catch(e){ dbPlanNew.img=""; alert("Ошибка загрузки: "+((e&&e.message)||e)); }
           inp._bound=false; render();
         });
