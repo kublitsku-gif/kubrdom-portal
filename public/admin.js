@@ -131,6 +131,16 @@ async function apiLoad(){
   return null;
 }
 
+// Загрузка файла в R2 через Worker → публичная ссылка (для фото работ/уборки/планировок).
+async function uploadFileR2(file){
+  const r=await fetch(API_BASE+"/api/file?name="+encodeURIComponent(file.name),{
+    method:"POST", headers:authHeaders({ "Content-Type": file.type||"application/octet-stream" }), body:file
+  });
+  const j=await r.json();
+  if(j&&j.success&&j.url) return j.url;
+  throw new Error((j&&j.error)||("HTTP "+r.status));
+}
+
 let _lastSavedJson = null;                 // снимок последнего успешного сохранения
 let _saving = false;                       // защита от параллельных сохранений
 async function apiSave(){
@@ -8508,73 +8518,58 @@ function bind(){
       const inp=document.getElementById("dr-cleanup-inp-"+oid+"-"+uid);
       if(inp&&!inp._bound){
         inp._bound=true;
-        inp.addEventListener("change",function(){
+        inp.addEventListener("change",async function(){
           const files=Array.from(inp.files||[]);
           if(!files.length)return;
-          let processed=0;
           const newPhotos=[];
-          files.forEach(function(f){
-            const reader=new FileReader();
-            reader.onload=function(e){
+          for(const f of files){
+            try{
+              const url=await uploadFileR2(f);
               newPhotos.push({
                 id:gid(),
-                data:e.target.result,
+                data:url,
                 date:new Date().toISOString().slice(0,16).replace("T"," "),
                 uploader:(users.find(u=>u.id===uid)||{}).name||"—",
                 size:f.size,
                 name:f.name
               });
-              processed++;
-              if(processed===files.length){
-                // Update or create day report
-                let wasEmpty=false;
-                objects=objects.map(function(o){
-                  if(o.id!==oid)return o;
-                  const reports=(o.dayReports||[]).slice();
-                  let idx=reports.findIndex(function(r){return r.userId===uid&&r.date===date;});
-                  if(idx<0){
-                    wasEmpty=true;
-                    reports.push({id:gid(),userId:uid,date:date,cleanupPhotos:newPhotos,dayOff:false});
-                  } else {
-                    const existing=reports[idx];
-                    wasEmpty=(existing.cleanupPhotos||[]).length===0;
-                    reports[idx]=Object.assign({},existing,{cleanupPhotos:(existing.cleanupPhotos||[]).concat(newPhotos),dayOff:false});
-                  }
-                  return Object.assign({},o,{dayReports:reports});
-                });
-                
-                // Auto-create bonus transaction (only first time bonus is earned for this day on this object)
-                const obj=objects.find(o=>o.id===oid);
-                const u=users.find(x=>x.id===uid);
-                const existingBonus=getCleanupBonusPaid(oid,uid,date);
-                if(existingBonus===0&&u){
-                  // Find any active contract on this object for transaction binding
-                  const objC=contractDocs.filter(d=>d.objId===oid&&(d.status==="signed"||d.status==="closed"))[0];
-                  finTxns.push({
-                    id:gid(),
-                    type:"expense",
-                    category:"🧹 Премия за уборку",
-                    amount:CLEANUP_BONUS,
-                    date:date,
-                    objId:oid,
-                    contractId:objC?objC.id:null,
-                    userId:uid,
-                    note:"Уборка рабочего места · "+(obj?obj.name:"")+" · "+u.name
-                  });
-                }
-                
-                try{
-                  const toast=document.createElement("div");
-                  toast.textContent=existingBonus===0?"🎉 Премия +"+CLEANUP_BONUS+" ₽ начислена!":"📷 Фото добавлены";
-                  toast.style.cssText="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#27ae60;color:#fff;padding:12px 18px;border-radius:10px;font-size:13px;font-weight:700;z-index:9999;box-shadow:0 4px 16px rgba(39,174,96,0.4)";
-                  document.body.appendChild(toast);
-                  setTimeout(function(){try{document.body.removeChild(toast);}catch(e){}},2500);
-                }catch(e){}
-                fl();
-              }
-            };
-            reader.readAsDataURL(f);
+            }catch(err){ alert("Ошибка загрузки фото: "+((err&&err.message)||err)); }
+          }
+          inp._bound=false;
+          if(!newPhotos.length){ render(); return; }
+          // Update or create day report
+          objects=objects.map(function(o){
+            if(o.id!==oid)return o;
+            const reports=(o.dayReports||[]).slice();
+            let idx=reports.findIndex(function(r){return r.userId===uid&&r.date===date;});
+            if(idx<0){
+              reports.push({id:gid(),userId:uid,date:date,cleanupPhotos:newPhotos,dayOff:false});
+            } else {
+              const existing=reports[idx];
+              reports[idx]=Object.assign({},existing,{cleanupPhotos:(existing.cleanupPhotos||[]).concat(newPhotos),dayOff:false});
+            }
+            return Object.assign({},o,{dayReports:reports});
           });
+          // Auto-create bonus transaction (only first time bonus is earned for this day on this object)
+          const obj=objects.find(o=>o.id===oid);
+          const u=users.find(x=>x.id===uid);
+          const existingBonus=getCleanupBonusPaid(oid,uid,date);
+          if(existingBonus===0&&u){
+            const objC=contractDocs.filter(d=>d.objId===oid&&(d.status==="signed"||d.status==="closed"))[0];
+            finTxns.push({
+              id:gid(), type:"expense", category:"🧹 Премия за уборку", amount:CLEANUP_BONUS,
+              date:date, objId:oid, contractId:objC?objC.id:null, userId:uid,
+              note:"Уборка рабочего места · "+(obj?obj.name:"")+" · "+u.name
+            });
+          }
+          try{
+            const toast=document.createElement("div");
+            toast.textContent=existingBonus===0?"🎉 Премия +"+CLEANUP_BONUS+" ₽ начислена!":"📷 Фото добавлены";
+            toast.style.cssText="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#27ae60;color:#fff;padding:12px 18px;border-radius:10px;font-size:13px;font-weight:700;z-index:9999;box-shadow:0 4px 16px rgba(39,174,96,0.4)";
+            document.body.appendChild(toast);
+            setTimeout(function(){try{document.body.removeChild(toast);}catch(e){}},2500);
+          }catch(e){}
+          fl();
         });
       }
     }
@@ -8730,47 +8725,44 @@ function bind(){
       const inp=document.getElementById("photo-inp-"+wid);
       if(inp&&!inp._bound){
         inp._bound=true;
-        inp.addEventListener("change",function(ev){
+        inp.addEventListener("change",async function(ev){
           const files=Array.from(inp.files||[]);
           if(!files.length)return;
-          let processed=0;
           const newPhotos=[];
-          files.forEach(function(f){
-            const reader=new FileReader();
-            reader.onload=function(e){
+          for(const f of files){
+            try{
+              const url=await uploadFileR2(f);
               newPhotos.push({
                 id:gid(),
-                data:e.target.result,
+                data:url,
                 date:new Date().toISOString().slice(0,16).replace("T"," "),
                 uploader:(users.find(u=>u.id===(currentUser?currentUser.id:""))||{}).name||"—",
                 uploaderId:currentUser?currentUser.id:"",
                 size:f.size,
                 name:f.name
               });
-              processed++;
-              if(processed===files.length){
-                objects=objects.map(function(o){
-                  if(o.id!==oid)return o;
-                  return Object.assign({},o,{stages:o.stages.map(function(st){
-                    if(st.id!==sid)return st;
-                    return Object.assign({},st,{works:st.works.map(function(w){
-                      if(w.id!==wid)return w;
-                      return Object.assign({},w,{photos:(w.photos||[]).concat(newPhotos)});
-                    })});
-                  })});
-                });
-                try{
-                  const toast=document.createElement("div");
-                  toast.textContent="📷 Загружено "+newPhotos.length+" фото";
-                  toast.style.cssText="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#3498db;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:600;z-index:9999";
-                  document.body.appendChild(toast);
-                  setTimeout(function(){try{document.body.removeChild(toast);}catch(e){}},2000);
-                }catch(e){}
-                fl();
-              }
-            };
-            reader.readAsDataURL(f);
+            }catch(err){ alert("Ошибка загрузки фото: "+((err&&err.message)||err)); }
+          }
+          inp._bound=false;
+          if(!newPhotos.length){ render(); return; }
+          objects=objects.map(function(o){
+            if(o.id!==oid)return o;
+            return Object.assign({},o,{stages:o.stages.map(function(st){
+              if(st.id!==sid)return st;
+              return Object.assign({},st,{works:st.works.map(function(w){
+                if(w.id!==wid)return w;
+                return Object.assign({},w,{photos:(w.photos||[]).concat(newPhotos)});
+              })});
+            })});
           });
+          try{
+            const toast=document.createElement("div");
+            toast.textContent="📷 Загружено "+newPhotos.length+" фото";
+            toast.style.cssText="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#3498db;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:600;z-index:9999";
+            document.body.appendChild(toast);
+            setTimeout(function(){try{document.body.removeChild(toast);}catch(e){}},2000);
+          }catch(e){}
+          fl();
         });
       }
     }
