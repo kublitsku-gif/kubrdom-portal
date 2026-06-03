@@ -150,6 +150,16 @@ async function putFile(env, request, url) {
   return json({ success: true, key, url: url.origin + "/api/file/" + key });
 }
 
+// Гарантирует наличие темы объекта в Telegram: вернёт { topicId } или { error }.
+// topicId > 0 — тема уже есть; 0 — создаём новую по имени объекта.
+async function ensureTopic(env, tg, objName, topicId) {
+  if (topicId) return { topicId };
+  const r = await fetch(tg + "/createForumTopic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: env.TG_CHAT_ID, name: (objName || "Объект").slice(0, 128) }) });
+  const j = await r.json();
+  if (!j.ok) return { error: "Тема: " + j.description };
+  return { topicId: j.result.message_thread_id };
+}
+
 // POST /api/video?objName=...&topicId=...&name=... — видео в Telegram-тему объекта (≤50 МБ). Требует токен.
 async function postVideo(env, request, url) {
   if (!env.TG_BOT_TOKEN || !env.TG_CHAT_ID) return json({ success: false, error: "Telegram не настроен" }, 500);
@@ -158,14 +168,9 @@ async function postVideo(env, request, url) {
   if (body.byteLength > 50 * 1024 * 1024) return json({ success: false, error: "Видео больше 50 МБ" }, 413);
   const tg = "https://api.telegram.org/bot" + env.TG_BOT_TOKEN;
   const objName = (url.searchParams.get("objName") || "Объект").slice(0, 120);
-  let topicId = parseInt(url.searchParams.get("topicId") || "0", 10) || 0;
-  // создать тему объекта, если ещё нет
-  if (!topicId) {
-    const r = await fetch(tg + "/createForumTopic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: env.TG_CHAT_ID, name: objName.slice(0, 128) }) });
-    const j = await r.json();
-    if (!j.ok) return json({ success: false, error: "Тема: " + j.description }, 502);
-    topicId = j.result.message_thread_id;
-  }
+  const topic = await ensureTopic(env, tg, objName, parseInt(url.searchParams.get("topicId") || "0", 10) || 0);
+  if (topic.error) return json({ success: false, error: topic.error }, 502);
+  const topicId = topic.topicId;
   // отправить видео в тему
   const fd = new FormData();
   fd.append("chat_id", String(env.TG_CHAT_ID));
@@ -178,6 +183,30 @@ async function postVideo(env, request, url) {
   const msg = j2.result;
   const fileId = (msg.video && msg.video.file_id) || (msg.document && msg.document.file_id) || "";
   return json({ success: true, topicId, messageId: msg.message_id, fileId });
+}
+
+// POST /api/photo?objName=...&topicId=...&name=...&caption=... — фото (бэкап) в Telegram-тему объекта. Требует токен.
+// Фото на клиенте уже ужато до ≤1 МБ; Telegram показывает его инлайн в ветке объекта.
+async function postPhoto(env, request, url) {
+  if (!env.TG_BOT_TOKEN || !env.TG_CHAT_ID) return json({ success: false, error: "Telegram не настроен" }, 500);
+  const body = await request.arrayBuffer();
+  if (body.byteLength === 0) return json({ success: false, error: "Пустой файл" }, 400);
+  if (body.byteLength > 10 * 1024 * 1024) return json({ success: false, error: "Фото больше 10 МБ" }, 413);
+  const tg = "https://api.telegram.org/bot" + env.TG_BOT_TOKEN;
+  const objName = (url.searchParams.get("objName") || "Объект").slice(0, 120);
+  const topic = await ensureTopic(env, tg, objName, parseInt(url.searchParams.get("topicId") || "0", 10) || 0);
+  if (topic.error) return json({ success: false, error: topic.error }, 502);
+  const topicId = topic.topicId;
+  const fd = new FormData();
+  fd.append("chat_id", String(env.TG_CHAT_ID));
+  fd.append("message_thread_id", String(topicId));
+  fd.append("photo", new Blob([body], { type: request.headers.get("Content-Type") || "image/jpeg" }), url.searchParams.get("name") || "photo.jpg");
+  const caption = url.searchParams.get("caption");
+  if (caption) fd.append("caption", caption.slice(0, 1024));
+  const r2 = await fetch(tg + "/sendPhoto", { method: "POST", body: fd });
+  const j2 = await r2.json();
+  if (!j2.ok) return json({ success: false, error: "Отправка: " + j2.description, topicId }, 502);
+  return json({ success: true, topicId, messageId: j2.result.message_id });
 }
 
 // POST /api/topic-rename?topicId=...&name=... — переименовать тему объекта в Telegram. Требует токен.
@@ -246,6 +275,12 @@ export default {
     // Загрузка видео в Telegram-тему объекта (с токеном).
     if (url.pathname === "/api/video" && request.method === "POST") {
       try { return await postVideo(env, request, url); }
+      catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+
+    // Дублирование фото в Telegram-тему объекта (с токеном).
+    if (url.pathname === "/api/photo" && request.method === "POST") {
+      try { return await postPhoto(env, request, url); }
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
 

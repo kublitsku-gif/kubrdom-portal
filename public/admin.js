@@ -161,15 +161,38 @@ async function compressImage(file, maxBytes){
 }
 
 // Загрузка файла в R2 через Worker → публичная ссылка (для фото работ/уборки/планировок).
-// Перед отправкой сжимаем картинки до <= 1 МБ.
-async function uploadFileR2(file){
-  try{ file=await compressImage(file, 1024*1024); }catch(e){ /* не удалось сжать — грузим оригинал */ }
+// Перед отправкой сжимаем картинки до <= 1 МБ. Если файл уже сжат (alreadyCompressed) — пропускаем.
+async function uploadFileR2(file, alreadyCompressed){
+  if(!alreadyCompressed){ try{ file=await compressImage(file, 1024*1024); }catch(e){ /* не удалось сжать — грузим оригинал */ } }
   const r=await fetch(API_BASE+"/api/file?name="+encodeURIComponent(file.name),{
     method:"POST", headers:authHeaders({ "Content-Type": file.type||"application/octet-stream" }), body:file
   });
   const j=await r.json();
   if(j&&j.success&&j.url) return j.url;
   throw new Error((j&&j.error)||("HTTP "+r.status));
+}
+
+// Дублируем фото объекта в его Telegram-тему (бэкап, чтобы всё по клиенту лежало в одном месте).
+// Best-effort: ошибки не мешают основной загрузке в R2. Файлы уже сжаты (≤1 МБ).
+// Шлём по очереди, пронося topicId, — чтобы пачка фото не наплодила лишних тем.
+async function mirrorPhotosToTelegram(objId, files){
+  const o=objects.find(function(x){return x.id===objId;});
+  if(!o || !files || !files.length) return;
+  let topicId=o.tgTopicId||0;
+  for(const f of files){
+    try{
+      const r=await fetch(API_BASE+"/api/photo?objName="+encodeURIComponent(o.name)+"&topicId="+topicId+"&name="+encodeURIComponent(f.name)+"&caption="+encodeURIComponent(o.name),{
+        method:"POST", headers:authHeaders({ "Content-Type": f.type||"image/jpeg" }), body:f
+      });
+      const j=await r.json();
+      if(j&&j.success&&j.topicId) topicId=j.topicId;
+    }catch(e){ /* фото уже в R2 — Telegram-дубль не критичен */ }
+  }
+  // если тему только что создали — сохраняем её id на объекте
+  if(topicId && topicId!==(o.tgTopicId||0)){
+    objects=objects.map(function(x){ return x.id!==objId?x:Object.assign({},x,{tgTopicId:topicId}); });
+    apiSave().catch(function(){});
+  }
 }
 
 let _lastSavedJson = null;                 // снимок последнего успешного сохранения
@@ -8574,9 +8597,12 @@ function bind(){
           const files=Array.from(inp.files||[]);
           if(!files.length)return;
           const newPhotos=[];
+          const tgFiles=[];
           for(const f of files){
             try{
-              const url=await uploadFileR2(f);
+              let c=f; try{ c=await compressImage(f,1024*1024); }catch(e){}
+              const url=await uploadFileR2(c,true);
+              tgFiles.push(c);
               newPhotos.push({
                 id:gid(),
                 data:url,
@@ -8588,6 +8614,7 @@ function bind(){
             }catch(err){ alert("Ошибка загрузки фото: "+((err&&err.message)||err)); }
           }
           inp._bound=false;
+          mirrorPhotosToTelegram(oid, tgFiles);
           if(!newPhotos.length){ render(); return; }
           // Update or create day report
           objects=objects.map(function(o){
@@ -8781,9 +8808,12 @@ function bind(){
           const files=Array.from(inp.files||[]);
           if(!files.length)return;
           const newPhotos=[];
+          const tgFiles=[];
           for(const f of files){
             try{
-              const url=await uploadFileR2(f);
+              let c=f; try{ c=await compressImage(f,1024*1024); }catch(e){}
+              const url=await uploadFileR2(c,true);
+              tgFiles.push(c);
               newPhotos.push({
                 id:gid(),
                 data:url,
@@ -8796,6 +8826,7 @@ function bind(){
             }catch(err){ alert("Ошибка загрузки фото: "+((err&&err.message)||err)); }
           }
           inp._bound=false;
+          mirrorPhotosToTelegram(oid, tgFiles);
           if(!newPhotos.length){ render(); return; }
           objects=objects.map(function(o){
             if(o.id!==oid)return o;
