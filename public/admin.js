@@ -876,11 +876,29 @@ let expOpenId=null; // id товара, открытого в редакторе
 let expContainer="dbexp-card"; // контейнер, в который рендерится список/редактор (Материалы или Эксперимент)
 // ── СМЕТЫ: собираются из материалов каталога (expProducts) ──
 const EST_STAGES=[
-  {n:1, label:"Подготовительный", short:"Этап 1", color:"#e67e22"},
-  {n:2, label:"Черновые работы",  short:"Этап 2", color:"#2980b9"},
-  {n:3, label:"Чистовые работы",  short:"Этап 3", color:"#16a085"}
+  {n:1, label:"Подготовительный", short:"Этап 1", color:"#e67e22", emoji:"🏗️"},
+  {n:2, label:"Черновые работы",  short:"Этап 2", color:"#2980b9", emoji:"🔧"},
+  {n:3, label:"Чистовые работы",  short:"Этап 3", color:"#16a085", emoji:"✨"}
 ];
+// Эмодзи карточки сметы по ключевым словам названия; фолбэк — эмодзи этапа, затем 🧾.
+const EST_EMOJI_RULES=[
+  [/контейнер|модул/,"📦"],[/двер|окн/,"🚪"],[/аренд|площад/,"🏗️"],
+  [/тёплый пол|теплый пол/,"♨️"],[/подвес|обрешёт|обрешет|каркас|брус|рейк/,"🪜"],
+  [/усилен|проём|проем/,"🔩"],[/электр|розетк|выключ|кабел|щит|автомат/,"⚡"],
+  [/вод|сантех|канализ|труб|гидроизол/,"🚰"],[/пол|стяжк|осп|наливн/,"🪵"],
+  [/утепл|эппс|ппу|изоляц|вата/,"🧊"],[/плитк|spc|кафел/,"🟫"],
+  [/краск|фасад|покрас|грунт/,"🎨"],[/вентил|клапан|вытяж/,"🌬️"],
+  [/потол|вагонк/,"🪚"],[/перегород|стен/,"🧱"],[/парн|сауна|печ|камин/,"🔥"],
+  [/кровл|крыш/,"🏠"],[/свет|освещ|люстр/,"💡"],[/мебел|шкаф/,"🪑"],[/доставк/,"🚚"]
+];
+function estEmoji(e){
+  var s=((e&&e.name)||"").toLowerCase();
+  for(var i=0;i<EST_EMOJI_RULES.length;i++){ if(EST_EMOJI_RULES[i][0].test(s)) return EST_EMOJI_RULES[i][1]; }
+  var st=EST_STAGES.find(function(x){return x.n===Number(e&&e.stage);});
+  return st?st.emoji:"🧾";
+}
 let estOpenId=null;       // открытая смета (null = список)
+let estDrag=null;         // id перетаскиваемой карточки сметы (drag-and-drop по этапам)
 let estSearch="";         // поиск по сметам (по названию работы)
 let estKind="banya";      // активный вид смет: banya | house
 let estPicking=false;     // открыт ли выбор материала для добавления
@@ -3601,10 +3619,10 @@ function renderEstimates(){
   }
   var _q=(estSearch||"").trim().toLowerCase();
   var _fl=estimates.filter(function(e){return (e.kind||"banya")===estKind;}).filter(function(e){return !_q||(e.name||"").toLowerCase().indexOf(_q)>=0;});
-  function estCardHtml(e){var t=estTotal(e),n=(e.lines||[]).length;
-    return '<div class="est-card" data-id="'+e.id+'" style="background:#fff;border-radius:14px;border:1px solid #e6ecf3;box-shadow:0 2px 8px rgba(20,40,70,0.04);padding:13px 14px;margin-bottom:8px;cursor:pointer;display:flex;align-items:center;gap:10px">'+
-      '<div style="width:40px;height:40px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:20px;background:linear-gradient(135deg,#16a085,#0d6e5d)">🧾</div>'+
-      '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700;color:#0d1b2e;line-height:1.25">'+e.name+'</div>'+
+  function estCardHtml(e,st){var t=estTotal(e),n=(e.lines||[]).length;var col=st?st.color:"#94a3b8";
+    return '<div class="est-card" draggable="true" data-id="'+e.id+'" style="background:#fff;border-radius:14px;border:1px solid #e6ecf3;border-left:5px solid '+col+';box-shadow:0 2px 8px rgba(20,40,70,0.04);padding:13px 14px;margin-bottom:8px;cursor:grab;display:flex;align-items:center;gap:10px">'+
+      '<div style="width:40px;height:40px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:20px;background:'+col+'22">'+estEmoji(e)+'</div>'+
+      '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700;color:#0d1b2e;line-height:1.25">'+esc(e.name)+'</div>'+
       '<div style="font-size:11px;color:#9aabbf;margin-top:2px">'+n+' поз.</div></div>'+
       '<div style="font-size:16px;font-weight:800;color:#0d1b2e;white-space:nowrap">'+t.toLocaleString("ru-RU")+' ₽</div>'+
     '</div>';
@@ -3622,15 +3640,44 @@ function renderEstimates(){
     '<button id="est-new" style="width:100%;margin-bottom:6px;padding:11px;background:#16a085;border:none;border-radius:11px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">+ Новая смета</button>'+
     (_fl.length?_groups.map(function(g){
       var head=g.st
-        ? '<div style="display:flex;align-items:center;gap:7px;margin:16px 2px 8px"><span style="width:9px;height:9px;border-radius:50%;background:'+g.st.color+';flex-shrink:0"></span><span style="font-size:11px;font-weight:800;letter-spacing:0.5px;color:'+g.st.color+'">'+g.st.short.toUpperCase()+' · '+g.st.label.toUpperCase()+'</span><span style="font-size:10px;color:#9aabbf">· '+g.items.length+'</span></div>'
-        : '<div style="margin:16px 2px 8px;font-size:11px;font-weight:800;letter-spacing:0.5px;color:#9aabbf">БЕЗ ЭТАПА · '+g.items.length+'</div>';
-      return head+g.items.map(estCardHtml).join("");
+        ? '<div class="est-stagehead" data-st="'+g.st.n+'" style="display:flex;align-items:center;gap:7px;margin:16px 2px 8px;padding:4px 4px;border-radius:8px"><span style="font-size:14px">'+g.st.emoji+'</span><span style="width:9px;height:9px;border-radius:50%;background:'+g.st.color+';flex-shrink:0"></span><span style="font-size:11px;font-weight:800;letter-spacing:0.5px;color:'+g.st.color+'">'+g.st.short.toUpperCase()+' · '+g.st.label.toUpperCase()+'</span><span style="font-size:10px;color:#9aabbf">· '+g.items.length+'</span></div>'
+        : '<div class="est-stagehead" data-st="0" style="margin:16px 2px 8px;padding:4px 4px;border-radius:8px;font-size:11px;font-weight:800;letter-spacing:0.5px;color:#9aabbf">БЕЗ ЭТАПА · '+g.items.length+'</div>';
+      return head+g.items.map(function(it){return estCardHtml(it,g.st);}).join("");
     }).join(""):'<div style="text-align:center;color:#aaa;font-size:13px;padding:20px">'+(_q?'Ничего не найдено':'Смет пока нет')+'</div>');
   el.querySelectorAll(".est-kind").forEach(function(b){b.onclick=function(){estKind=b.dataset.k;estSearch="";renderEstimates();};});
   var es=document.getElementById("est-search");
   if(es){ es.oninput=function(){estSearch=this.value;renderEstimates();}; if(_act==="est-search"){es.focus();var L2=es.value.length;try{es.setSelectionRange(L2,L2);}catch(_e){}} }
   var nw=document.getElementById("est-new"); if(nw)nw.onclick=function(){var ne={id:gid(),kind:estKind,name:"Новая смета",lines:[]};estimates.unshift(ne);estOpenId=ne.id;renderEstimates();};
-  el.querySelectorAll(".est-card").forEach(function(c){c.onclick=function(){estOpenId=c.dataset.id;renderEstimates();};});
+  el.querySelectorAll(".est-card").forEach(function(c){
+    c.onclick=function(){ estOpenId=c.dataset.id; renderEstimates(); };
+    c.addEventListener("dragstart",function(ev){ estDrag=c.dataset.id; ev.dataTransfer.effectAllowed="move"; c.style.opacity="0.4"; });
+    c.addEventListener("dragend",function(){ estDrag=null; c.style.opacity="1"; c.style.outline=""; });
+    c.addEventListener("dragover",function(ev){ if(estDrag&&estDrag!==c.dataset.id){ ev.preventDefault(); c.style.outline="2px dashed #16a085"; } });
+    c.addEventListener("dragleave",function(){ c.style.outline=""; });
+    c.addEventListener("drop",function(ev){ ev.preventDefault(); c.style.outline="";
+      if(!estDrag||estDrag===c.dataset.id){ estDrag=null; return; }
+      var from=estimates.findIndex(function(x){return x.id===estDrag;});
+      var toI=estimates.findIndex(function(x){return x.id===c.dataset.id;});
+      if(from<0||toI<0){ estDrag=null; return; }
+      var moved=estimates[from];
+      moved.stage=Number(estimates[toI].stage)||0;          // перенимаем этап карточки-цели
+      estimates.splice(from,1);
+      var toI2=estimates.findIndex(function(x){return x.id===c.dataset.id;});
+      estimates.splice(toI2,0,moved);                       // вставляем перед целью
+      estDrag=null; renderEstimates();
+    });
+  });
+  // заголовок этапа — drop-таргет: бросок карточки сюда переносит её в этот этап
+  el.querySelectorAll(".est-stagehead").forEach(function(h){
+    h.addEventListener("dragover",function(ev){ if(estDrag){ ev.preventDefault(); h.style.background="#eef6f4"; } });
+    h.addEventListener("dragleave",function(){ h.style.background=""; });
+    h.addEventListener("drop",function(ev){ ev.preventDefault(); h.style.background="";
+      if(!estDrag){ return; }
+      var m=estimates.find(function(x){return x.id===estDrag;});
+      if(m){ m.stage=Number(h.dataset.st)||0; }
+      estDrag=null; renderEstimates();
+    });
+  });
 }
 function renderExpCard(containerId){
   if(containerId)expContainer=containerId;
