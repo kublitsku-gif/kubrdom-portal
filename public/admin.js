@@ -229,16 +229,40 @@ async function apiSave(){
       body:    JSON.stringify({ items: items }),
     });
     if (r.status === 401) { clearToken(); location.reload(); return { success: false, error: "unauthorized" }; }
-    if (!r.ok) throw new Error("HTTP " + r.status);
+    if (!r.ok) {
+      let detail = "HTTP " + r.status;
+      try { const e = await r.json(); if (e && e.error) detail = e.error; } catch (_) {}
+      throw new Error(detail);
+    }
     const j = await r.json();
     if (j && j.updated_at) _lastSeen = j.updated_at;   // свой save — не считаем чужой правкой
     _lastSavedJson = snap;                             // запомнили, что отправили
+    clearSaveError();                                  // успех — убираем баннер ошибки, если был
     return j;
   } catch (err) {
+    showSaveError(String((err && err.message) || err), snap.length);  // НЕ глотаем: показываем пользователю
     return { success: false, error: String((err && err.message) || err), fallback: "localStorage" };
   } finally {
     _saving = false;
   }
+}
+
+// Заметный баннер: данные не уходят в облако. Не глотаем ошибки сохранения молча.
+function showSaveError(detail, snapLen){
+  let b = document.getElementById("save-error-banner");
+  if (!b){
+    b = document.createElement("div");
+    b.id = "save-error-banner";
+    b.style.cssText = "position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:10000;max-width:92%;background:#c0392b;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.3);font-size:13px;font-weight:600;text-align:center;line-height:1.4";
+    document.body.appendChild(b);
+  }
+  const tooBig = /large|big|413|exceed|too\s|D1_|SQLITE|размер|велик/i.test(detail) || (snapLen && snapLen > 1500000);
+  b.innerHTML = "⚠️ Изменения НЕ сохраняются в облако!<br><span style='font-weight:400;font-size:12px'>" + esc(detail)
+    + (tooBig ? "<br>Снимок слишком большой (тяжёлые фото в base64). Обновите страницу (Cmd+Shift+R) — новая версия хранит фото отдельно в облаке." : "") + "</span>";
+}
+function clearSaveError(){
+  const b = document.getElementById("save-error-banner");
+  if (b){ try { b.parentNode.removeChild(b); } catch (e) {} }
 }
 
 // fl() зовётся часто → шлём на сервер не чаще раза в ~800мс.
