@@ -1064,6 +1064,7 @@ let showNDBPlan=false;            // открыта форма добавлен�
 let dbPlanNew={name:"",img:"",cat:"house"};   // буфер новой планировки
 let dbPlanTab="house";            // активный подраздел планировок: house | banya
 let dbPlanEditId=null;            // id планировки, у которой сейчас редактируем название
+let planImgUploading=null;        // id планировки, у которой сейчас грузится новое фото
 // Глобальные настройки (синхронизируются как единый объект). Сейчас: plansTopicId — id общей Telegram-ветки «Планировки».
 let settings={};
 const PLANS_TOPIC_NAME="📐 Планировки";
@@ -3342,13 +3343,20 @@ ${showNDBPlan?`<div style="background:#fff;border-radius:12px;border:2px solid #
 </div>`:""}
 ${(function(){
   function planCard(p){
+    const uploading = planImgUploading===p.id;
+    // Действия прямо на превью (тап-дружелюбные, всегда видимы): заменить фото, переименовать, открыть.
+    const overlay = plansOnly ? "" : `<div style="position:absolute;top:6px;right:6px;display:flex;gap:5px;z-index:2">
+        <label data-a="plan-replace-label" data-pid="${p.id}" title="Заменить фото" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);border-radius:7px;cursor:pointer;color:#fff;font-size:13px">🔄<input id="plan-img-inp-${p.id}" type="file" accept="image/*" style="display:none"></label>
+        <button data-a="db-edit-plan" data-pid="${p.id}" title="Переименовать" style="width:30px;height:30px;background:rgba(0,0,0,.55);border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:12px">✏️</button>
+        ${p.img?`<button data-a="plan-view" data-pid="${p.id}" title="Открыть полностью" style="width:30px;height:30px;background:rgba(0,0,0,.55);border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:13px">🔍</button>`:""}
+      </div>`;
     // Превью: 📐-плейсхолдер всегда позади; картинка сверху, при ошибке загрузки прячется (виден плейсхолдер).
-    const preview = p.img
-      ? `<a href="${p.img}" target="_blank" rel="noopener" style="display:block;position:relative;height:200px;background:#f8fafc">
-           <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#c8d8e8;font-size:30px">📐</div>
-           <img src="${p.img}" onerror="this.style.display='none'" style="position:relative;width:100%;height:100%;object-fit:contain;display:block">
-         </a>`
-      : `<div style="padding:34px;text-align:center;color:#c8d8e8;font-size:30px;background:#f8fafc">📐</div>`;
+    const preview = `<div style="position:relative;height:200px;background:#f8fafc;overflow:hidden">
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#c8d8e8;font-size:30px">📐</div>
+        ${p.img?`<img src="${p.img}" onerror="this.style.display='none'" style="position:relative;width:100%;height:100%;object-fit:contain;display:block">`:""}
+        ${uploading?`<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.78);color:#8e44ad;font-size:13px;font-weight:700">⏳ Загрузка…</div>`:""}
+        ${overlay}
+      </div>`;
     const titleRow = dbPlanEditId===p.id
       ? `<div style="display:flex;align-items:center;gap:6px;padding:10px 12px">
            <input id="plan-name-${p.id}" value="${(p.name||"").replace(/"/g,"&quot;")}" placeholder="Название планировки" style="flex:1;min-width:0;padding:7px 9px;border-radius:7px;border:1px solid #8e44ad;font-size:13px;outline:none;box-sizing:border-box">
@@ -3357,7 +3365,6 @@ ${(function(){
          </div>`
       : `<div style="display:flex;align-items:center;gap:8px;padding:10px 12px">
            <div style="flex:1;min-width:0;font-size:13px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name||"Без названия")}</div>
-           ${plansOnly?"":`<button data-a="db-edit-plan" data-pid="${p.id}" style="width:28px;height:28px;background:transparent;border:1px solid #8e44ad44;border-radius:6px;cursor:pointer;color:#8e44ad;font-size:12px;flex-shrink:0" title="Переименовать">✏️</button>`}
            ${plansOnly?"":`<button data-a="db-del-plan" data-pid="${p.id}" style="width:28px;height:28px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:12px;flex-shrink:0">✕</button>`}
          </div>`;
     return `<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;overflow:hidden">${preview}${titleRow}</div>`;
@@ -7488,6 +7495,26 @@ function bind(){
       showNDBPlan=false;dbPlanNew={name:"",img:"",cat:dbPlanTab};fl();
     };}
     else if(a==="db-edit-plan"){el.onclick=()=>{ dbPlanEditId=el.dataset.pid; render(); };}
+    else if(a==="plan-view"){el.onclick=()=>{ const p=dbPlans.find(function(x){return x.id===el.dataset.pid;}); if(p&&p.img) window.open(p.img,"_blank","noopener"); };}
+    else if(a==="plan-replace-label"){
+      const pid=el.dataset.pid;
+      const inp=document.getElementById("plan-img-inp-"+pid);
+      if(inp&&!inp._bound){
+        inp._bound=true;
+        inp.addEventListener("change",async function(){
+          const f=(inp.files||[])[0]; if(!f){inp._bound=false;return;}
+          const p0=dbPlans.find(function(x){return x.id===pid;});
+          planImgUploading=pid; render();
+          try{
+            let c=f; try{ c=await compressImage(f,1024*1024); }catch(e){}
+            const url=await uploadFileR2(c,true);
+            dbPlans=dbPlans.map(function(x){return x.id===pid?Object.assign({},x,{img:url}):x;});
+            mirrorPlanToTelegram(c, (p0&&p0.name)||"Планировка");
+          }catch(e){ alert("Ошибка загрузки: "+((e&&e.message)||e)); }
+          planImgUploading=null; inp._bound=false; fl();
+        });
+      }
+    }
     else if(a==="db-cancel-plan-name"){el.onclick=()=>{ dbPlanEditId=null; render(); };}
     else if(a==="db-save-plan-name"){el.onclick=()=>{
       const pid=el.dataset.pid;
