@@ -3301,6 +3301,7 @@ ${(function(){
     tabBtn("banya","🛁","Бани",nB,"#e67e22")+
   '</div>';
 })()}
+${settings.plansTopicId?`<a href="https://t.me/c/${TG_CHAT_LINK}/${settings.plansTopicId}" target="_blank" rel="noopener" style="display:flex;align-items:center;justify-content:center;gap:6px;padding:9px;margin-bottom:14px;background:#0088cc;border-radius:10px;color:#fff;font-size:12px;font-weight:700;text-decoration:none">📐 Открыть ветку «Планировки» в Telegram</a>`:""}
 ${showNDBPlan?`<div style="background:#fff;border-radius:12px;border:2px solid #8e44ad;padding:14px;margin-bottom:12px">
   <div style="font-size:9px;color:#7a9aaa;font-weight:700;letter-spacing:0.5px;margin-bottom:6px">НОВАЯ ПЛАНИРОВКА · ${dbPlanNew.cat==="banya"?"🛁 БАНИ":"🏠 ДОМА"}</div>
   <input id="ndbplan-n" value="${(dbPlanNew.name||"").replace(/"/g,"&quot;")}" placeholder="Название планировки (напр. Дом 40 футов, 1 спальня)" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:8px">
