@@ -150,6 +150,52 @@ async function putFile(env, request, url) {
   return json({ success: true, key, url: url.origin + "/api/file/" + key });
 }
 
+// POST /api/video?objName=...&topicId=...&name=... — видео в Telegram-тему объекта (≤50 МБ). Требует токен.
+async function postVideo(env, request, url) {
+  if (!env.TG_BOT_TOKEN || !env.TG_CHAT_ID) return json({ success: false, error: "Telegram не настроен" }, 500);
+  const body = await request.arrayBuffer();
+  if (body.byteLength === 0) return json({ success: false, error: "Пустой файл" }, 400);
+  if (body.byteLength > 50 * 1024 * 1024) return json({ success: false, error: "Видео больше 50 МБ" }, 413);
+  const tg = "https://api.telegram.org/bot" + env.TG_BOT_TOKEN;
+  const objName = (url.searchParams.get("objName") || "Объект").slice(0, 120);
+  let topicId = parseInt(url.searchParams.get("topicId") || "0", 10) || 0;
+  // создать тему объекта, если ещё нет
+  if (!topicId) {
+    const r = await fetch(tg + "/createForumTopic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: env.TG_CHAT_ID, name: objName.slice(0, 128) }) });
+    const j = await r.json();
+    if (!j.ok) return json({ success: false, error: "Тема: " + j.description }, 502);
+    topicId = j.result.message_thread_id;
+  }
+  // отправить видео в тему
+  const fd = new FormData();
+  fd.append("chat_id", String(env.TG_CHAT_ID));
+  fd.append("message_thread_id", String(topicId));
+  fd.append("video", new Blob([body], { type: request.headers.get("Content-Type") || "video/mp4" }), url.searchParams.get("name") || "video.mp4");
+  fd.append("caption", objName);
+  const r2 = await fetch(tg + "/sendVideo", { method: "POST", body: fd });
+  const j2 = await r2.json();
+  if (!j2.ok) return json({ success: false, error: "Отправка: " + j2.description, topicId }, 502);
+  const msg = j2.result;
+  const fileId = (msg.video && msg.video.file_id) || (msg.document && msg.document.file_id) || "";
+  return json({ success: true, topicId, messageId: msg.message_id, fileId });
+}
+
+// GET /api/tg-video/<fileId> — проксируем просмотр из Telegram (Bot API лимит скачивания 20 МБ).
+async function getTgVideo(env, fileId) {
+  if (!env.TG_BOT_TOKEN) return new Response("not configured", { status: 500, headers: CORS_HEADERS });
+  const tg = "https://api.telegram.org/bot" + env.TG_BOT_TOKEN;
+  const r = await fetch(tg + "/getFile?file_id=" + encodeURIComponent(fileId));
+  const j = await r.json();
+  if (!j.ok || !j.result || !j.result.file_path) return new Response("not found (или больше 20 МБ — смотрите в Telegram)", { status: 404, headers: CORS_HEADERS });
+  const fr = await fetch("https://api.telegram.org/file/bot" + env.TG_BOT_TOKEN + "/" + j.result.file_path);
+  if (!fr.ok) return new Response("fetch failed", { status: 502, headers: CORS_HEADERS });
+  const headers = new Headers(CORS_HEADERS);
+  headers.set("Content-Type", fr.headers.get("Content-Type") || "video/mp4");
+  headers.set("Cache-Control", "public, max-age=3600");
+  headers.set("X-Content-Type-Options", "nosniff");
+  return new Response(fr.body, { headers });
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === "OPTIONS") {
@@ -165,6 +211,13 @@ export default {
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
 
+    // Публичный просмотр видео из Telegram (для <video src>) — ДО авторизации.
+    const tgMatch = url.pathname.match(/^\/api\/tg-video\/(.+)$/);
+    if (tgMatch && request.method === "GET") {
+      try { return await getTgVideo(env, decodeURIComponent(tgMatch[1])); }
+      catch (err) { return new Response(String(err), { status: 500, headers: CORS_HEADERS }); }
+    }
+
     // Авторизация для всего остального. Fail-closed.
     const token = request.headers.get("X-Admin-Token") || "";
     if (!env.ADMIN_TOKEN || !safeEqual(token, env.ADMIN_TOKEN)) {
@@ -174,6 +227,12 @@ export default {
     // Загрузка файла в R2 (с токеном).
     if (url.pathname === "/api/file" && request.method === "POST") {
       try { return await putFile(env, request, url); }
+      catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+
+    // Загрузка видео в Telegram-тему объекта (с токеном).
+    if (url.pathname === "/api/video" && request.method === "POST") {
+      try { return await postVideo(env, request, url); }
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
 

@@ -1003,6 +1003,8 @@ let newDBWork={n:"",cost:""};
 let newDBMat={n:"",cost:"",store:""};
 let showNObjStageTid="",newObjStage={n:"",c:"#e67e22"};
 let showNObjWorkSid="",objMatModal=null;
+let objVideoUploading=null;   // id объекта, для которого сейчас грузится видео в Telegram
+const TG_CHAT_LINK="3606281018"; // chat_id -1003606281018 без префикса -100 (для ссылок t.me/c/)
 let nu={name:"",av:"👷",c:"#e67e22",roles:[],objs:[]};
 let nr={n:"",c:"#9b59b6",group:"other"};
 let nt={name:"",icon:"🛁",kind:"banya"};
@@ -2786,6 +2788,26 @@ ${showNObjStageTid===obj.id?`<div style="background:#fff;border-radius:12px;bord
     <button data-a="cancel-ons" style="padding:7px 12px;background:transparent;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:12px;color:#7a9aaa">✕</button>
   </div>
 </div>`:""}
+
+<!-- Видео объекта (Telegram) -->
+<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:10px">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+    <div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:0.8px">🎬 ВИДЕО ОБЪЕКТА · ${(obj.videos||[]).length}</div>
+    <label data-a="obj-video-label" data-oid="${obj.id}" style="padding:5px 12px;background:#0088cc;border-radius:7px;cursor:${objVideoUploading===obj.id?"default":"pointer"};color:#fff;font-size:11px;font-weight:700;opacity:${objVideoUploading===obj.id?"0.7":"1"}">${objVideoUploading===obj.id?"⏳ Загрузка…":"+ Видео"}<input id="obj-video-inp-${obj.id}" type="file" accept="video/*" style="display:none"></label>
+  </div>
+  ${(obj.videos||[]).length?(obj.videos||[]).slice().reverse().map(v=>{
+    const link="https://t.me/c/"+TG_CHAT_LINK+"/"+(v.topicId||obj.tgTopicId||"")+"/"+v.messageId;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;margin-bottom:5px;background:#f8fafc;border:1px solid #dde6f0">
+      <span style="font-size:18px">🎬</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(v.name||"Видео")}</div>
+        <div style="font-size:10px;color:#9aabbf">${v.date||""}${v.uploader?" · "+esc(v.uploader):""}${v.size?" · "+(v.size/1048576).toFixed(1)+" МБ":""}</div>
+      </div>
+      <a href="${link}" target="_blank" rel="noopener" style="font-size:10px;font-weight:700;color:#fff;background:#0088cc;border-radius:6px;padding:4px 9px;text-decoration:none;flex-shrink:0">▶ Telegram</a>
+      <button data-a="obj-del-video" data-oid="${obj.id}" data-vid="${v.id}" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>
+    </div>`;
+  }).join(""):`<div style="text-align:center;color:#9aabbf;font-size:11px;padding:10px">Видео по объекту попадают в отдельную тему в Telegram (до 50 МБ)</div>`}
+</div>
 
 ${obj.stages.map(s=>`<div style="background:#fff;border-radius:12px;border:1px solid ${s.c}44;margin-bottom:10px;overflow:hidden">
   <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:linear-gradient(135deg,${s.c}15,transparent);border-bottom:1px solid ${s.c}22">
@@ -8915,6 +8937,33 @@ function bind(){
     };}
     else if(a==="obj-open-mats"){el.onclick=()=>{objMatModal={oid:el.dataset.oid,wid:el.dataset.wid,wn:el.dataset.wn};render();};}
     else if(a==="close-obj-mm"){el.onclick=()=>{objMatModal=null;render();};}
+    else if(a==="obj-video-label"){
+      const oid=el.dataset.oid;
+      const inp=document.getElementById("obj-video-inp-"+oid);
+      if(inp&&!inp._bound){
+        inp._bound=true;
+        inp.addEventListener("change",async function(){
+          const f=(inp.files||[])[0]; if(!f){return;}
+          if(f.size>50*1024*1024){ alert("Видео больше 50 МБ. Telegram принимает до 50 МБ — сними короче или в 720p."); inp._bound=false; return; }
+          const o=objects.find(x=>x.id===oid); if(!o){inp._bound=false;return;}
+          objVideoUploading=oid; render();
+          try{
+            const r=await fetch(API_BASE+"/api/video?objName="+encodeURIComponent(o.name)+"&topicId="+(o.tgTopicId||0)+"&name="+encodeURIComponent(f.name),{
+              method:"POST", headers:authHeaders({ "Content-Type": f.type||"video/mp4" }), body:f
+            });
+            const j=await r.json();
+            if(j&&j.success){
+              objects=objects.map(x=>x.id!==oid?x:Object.assign({},x,{
+                tgTopicId:j.topicId,
+                videos:(x.videos||[]).concat([{id:gid(),topicId:j.topicId,messageId:j.messageId,fileId:j.fileId,name:f.name,size:f.size,date:new Date().toISOString().slice(0,16).replace("T"," "),uploader:(currentUser&&currentUser.name)||""}])
+              }));
+            } else { alert("Ошибка загрузки видео: "+((j&&j.error)||("HTTP "+r.status))); }
+          }catch(e){ alert("Ошибка загрузки видео: "+((e&&e.message)||e)); }
+          objVideoUploading=null; inp._bound=false; render();
+        });
+      }
+    }
+    else if(a==="obj-del-video"){el.onclick=()=>{const oid=el.dataset.oid,vid=el.dataset.vid;objects=objects.map(x=>x.id!==oid?x:Object.assign({},x,{videos:(x.videos||[]).filter(v=>v.id!==vid)}));fl();};}
     else if(a==="objmat-view"){el.onclick=(ev)=>{ev&&ev.stopPropagation();expView[el.dataset.mid]=el.dataset.v;render();};}
     else if(a==="obj-del-mat"){el.onclick=()=>{
       const {oid,wid,mid}=el.dataset;

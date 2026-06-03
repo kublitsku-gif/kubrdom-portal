@@ -12,3 +12,7 @@ database_id   = "57254687-7bf1-4bf0-82cb-2e4003ea36c5"
 [[r2_buckets]]
 binding     = "FILES"
 bucket_name = "kubrdom-files"
+
+# Telegram: chat_id супергруппы (не секрет). Токен бота — в секрете TG_BOT_TOKEN.
+[vars]
+TG_CHAT_ID = "-1003606281018"
