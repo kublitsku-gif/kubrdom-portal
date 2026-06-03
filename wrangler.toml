@@ -7,3 +7,8 @@ compatibility_date = "2025-05-01"
 binding       = "DB"
 database_name = "banya-db"
 database_id   = "57254687-7bf1-4bf0-82cb-2e4003ea36c5"
+
+# Привязка R2 (файлы планировок): внутри Worker доступна как env.FILES
+[[r2_buckets]]
+binding     = "FILES"
+bucket_name = "kubrdom-files"

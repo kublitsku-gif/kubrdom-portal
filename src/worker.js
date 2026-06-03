@@ -116,22 +116,59 @@ async function postState(env, storageKey, request) {
   return json({ success: true, written: batch.length, updated_at: now });
 }
 
+// GET /api/file/<key> — публичная отдача файла из R2 (для <img>, без токена).
+async function getFile(env, key) {
+  if (!env.FILES) return json({ success: false, error: "R2 not configured" }, 500);
+  const obj = await env.FILES.get(key);
+  if (!obj) return new Response("Not found", { status: 404, headers: CORS_HEADERS });
+  const headers = new Headers(CORS_HEADERS);
+  headers.set("Content-Type", (obj.httpMetadata && obj.httpMetadata.contentType) || "application/octet-stream");
+  headers.set("Cache-Control", "public, max-age=31536000, immutable");
+  return new Response(obj.body, { headers });
+}
+
+// POST /api/file?name=... — загрузка файла в R2 (тело = бинарные данные). Требует токен.
+async function putFile(env, request, url) {
+  if (!env.FILES) return json({ success: false, error: "R2 not configured" }, 500);
+  const body = await request.arrayBuffer();
+  if (body.byteLength === 0) return json({ success: false, error: "Пустой файл" }, 400);
+  if (body.byteLength > 15 * 1024 * 1024) return json({ success: false, error: "Файл больше 15 МБ" }, 413);
+  const name = url.searchParams.get("name") || "";
+  const ext = (name.split(".").pop() || "").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 8);
+  const ct = request.headers.get("Content-Type") || "application/octet-stream";
+  const key = "plans/" + crypto.randomUUID() + (ext ? ("." + ext) : "");
+  await env.FILES.put(key, body, { httpMetadata: { contentType: ct } });
+  return json({ success: true, key, url: url.origin + "/api/file/" + key });
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
 
-    // Авторизация: общий секрет в заголовке X-Admin-Token.
-    // Fail-closed: если секрет не сконфигурирован, API закрыт для всех.
+    const url = new URL(request.url);
+
+    // Публичная отдача файлов из R2 (для <img src>) — ДО авторизации, т.к. <img> не шлёт заголовки.
+    const fileMatch = url.pathname.match(/^\/api\/file\/(.+)$/);
+    if (fileMatch && request.method === "GET") {
+      try { return await getFile(env, decodeURIComponent(fileMatch[1])); }
+      catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+
+    // Авторизация для всего остального. Fail-closed.
     const token = request.headers.get("X-Admin-Token") || "";
     if (!env.ADMIN_TOKEN || !safeEqual(token, env.ADMIN_TOKEN)) {
       return unauthorized();
     }
 
-    const url = new URL(request.url);
-    const match = url.pathname.match(/^\/api\/state\/([^\/]+)\/?$/);
+    // Загрузка файла в R2 (с токеном).
+    if (url.pathname === "/api/file" && request.method === "POST") {
+      try { return await putFile(env, request, url); }
+      catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
 
+    const match = url.pathname.match(/^\/api\/state\/([^\/]+)\/?$/);
     if (!match) {
       return json({ success: false, error: "Not found" }, 404);
     }

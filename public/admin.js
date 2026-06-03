@@ -3197,7 +3197,9 @@ ${(function(){
 ${showNDBPlan?`<div style="background:#fff;border-radius:12px;border:2px solid #8e44ad;padding:14px;margin-bottom:12px">
   <div style="font-size:9px;color:#7a9aaa;font-weight:700;letter-spacing:0.5px;margin-bottom:6px">НОВАЯ ПЛАНИРОВКА · ${dbPlanNew.cat==="banya"?"🛁 БАНИ":"🏠 ДОМА"}</div>
   <input id="ndbplan-n" value="${(dbPlanNew.name||"").replace(/"/g,"&quot;")}" placeholder="Название планировки (напр. Дом 40 футов, 1 спальня)" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:8px">
-  ${dbPlanNew.img
+  ${dbPlanNew.img==="__uploading__"
+    ? `<div style="text-align:center;padding:22px;border:2px dashed #8e44ad55;border-radius:10px;color:#8e44ad;font-size:13px;font-weight:700;margin-bottom:8px">⏳ Загрузка в облако…</div>`
+    : dbPlanNew.img
     ? `<div style="position:relative;margin-bottom:8px"><img src="${dbPlanNew.img}" style="width:100%;border-radius:8px;border:1px solid #e0e6ee;max-height:220px;object-fit:contain;background:#f8fafc"><button data-a="db-plan-img-clear" style="position:absolute;top:6px;right:6px;width:28px;height:28px;background:rgba(0,0,0,0.55);border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:13px">✕</button></div>`
     : `<label data-a="db-plan-img-label" style="display:block;text-align:center;padding:22px;border:2px dashed #8e44ad55;border-radius:10px;cursor:pointer;color:#8e44ad;font-size:13px;font-weight:600;margin-bottom:8px">🖼 Загрузить изображение планировки<input id="ndbplan-img" type="file" accept="image/*" style="display:none"></label>`}
   <div style="display:flex;gap:6px">
@@ -7307,18 +7309,28 @@ function bind(){
       const inp=document.getElementById("ndbplan-img");
       if(inp&&!inp._bound){
         inp._bound=true;
-        inp.addEventListener("change",function(){
+        inp.addEventListener("change",async function(){
           const f=(inp.files||[])[0];
           if(!f)return;
           const nm=document.getElementById("ndbplan-n");
           if(nm)dbPlanNew.name=nm.value;
-          const reader=new FileReader();
-          reader.onload=function(e){ dbPlanNew.img=e.target.result; render(); };
-          reader.readAsDataURL(f);
+          dbPlanNew.img="__uploading__"; render();   // индикатор загрузки
+          try{
+            const r=await fetch(API_BASE+"/api/file?name="+encodeURIComponent(f.name),{
+              method:"POST",
+              headers:authHeaders({ "Content-Type": f.type||"application/octet-stream" }),
+              body:f
+            });
+            const j=await r.json();
+            if(j&&j.success&&j.url){ dbPlanNew.img=j.url; }
+            else { dbPlanNew.img=""; alert("Ошибка загрузки: "+((j&&j.error)||("HTTP "+r.status))); }
+          }catch(e){ dbPlanNew.img=""; alert("Ошибка загрузки: "+((e&&e.message)||e)); }
+          inp._bound=false; render();
         });
       }
     }
     else if(a==="db-save-plan"){el.onclick=()=>{
+      if(dbPlanNew.img==="__uploading__"){ alert("Дождитесь окончания загрузки изображения"); return; }
       const name=(document.getElementById("ndbplan-n")||{}).value||dbPlanNew.name||"";
       if(!dbPlanNew.img){
         try{
