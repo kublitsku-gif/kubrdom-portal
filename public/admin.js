@@ -1,3 +1,8 @@
+// Полифиллы для старых Safari (macOS/iOS): Array.flat/flatMap появились только в Safari 12.
+// Объявляем non-enumerable (как нативные), чтобы не влиять на for...in. Синтаксис ES5 — парсится везде.
+if(!Array.prototype.flat){Object.defineProperty(Array.prototype,"flat",{configurable:true,writable:true,value:function(depth){var d=depth===undefined?1:Number(depth)||0;return d<1?Array.prototype.slice.call(this):Array.prototype.reduce.call(this,function(acc,val){return acc.concat(Array.isArray(val)&&d>1?val.flat(d-1):[val]);},[]);}});}
+if(!Array.prototype.flatMap){Object.defineProperty(Array.prototype,"flatMap",{configurable:true,writable:true,value:function(fn,thisArg){return Array.prototype.map.call(this,fn,thisArg).flat();}});}
+
 /* ============================================================
    КубрДом — Портал управления · admin_panel_v3
    ------------------------------------------------------------
