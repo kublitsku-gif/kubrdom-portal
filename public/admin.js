@@ -1063,6 +1063,7 @@ let dbPlans=[];
 let showNDBPlan=false;            // открыта форма добавления планировки
 let dbPlanNew={name:"",img:"",cat:"house"};   // буфер новой планировки
 let dbPlanTab="house";            // активный подраздел планировок: house | banya
+let dbPlanEditId=null;            // id планировки, у которой сейчас редактируем название
 // Глобальные настройки (синхронизируются как единый объект). Сейчас: plansTopicId — id общей Telegram-ветки «Планировки».
 let settings={};
 const PLANS_TOPIC_NAME="📐 Планировки";
@@ -3341,13 +3342,25 @@ ${showNDBPlan?`<div style="background:#fff;border-radius:12px;border:2px solid #
 </div>`:""}
 ${(function(){
   function planCard(p){
-    return `<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;overflow:hidden">
-      ${p.img?`<a href="${p.img}" target="_blank" rel="noopener" style="display:block"><img src="${p.img}" style="width:100%;max-height:240px;object-fit:contain;background:#f8fafc;display:block"></a>`:`<div style="padding:30px;text-align:center;color:#c8d8e8;font-size:30px;background:#f8fafc">📐</div>`}
-      <div style="display:flex;align-items:center;gap:8px;padding:10px 12px">
-        <div style="flex:1;min-width:0;font-size:13px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name||"Без названия"}</div>
-        ${plansOnly?"":`<button data-a="db-del-plan" data-pid="${p.id}" style="width:28px;height:28px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:12px;flex-shrink:0">✕</button>`}
-      </div>
-    </div>`;
+    // Превью: 📐-плейсхолдер всегда позади; картинка сверху, при ошибке загрузки прячется (виден плейсхолдер).
+    const preview = p.img
+      ? `<a href="${p.img}" target="_blank" rel="noopener" style="display:block;position:relative;height:200px;background:#f8fafc">
+           <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#c8d8e8;font-size:30px">📐</div>
+           <img src="${p.img}" onerror="this.style.display='none'" style="position:relative;width:100%;height:100%;object-fit:contain;display:block">
+         </a>`
+      : `<div style="padding:34px;text-align:center;color:#c8d8e8;font-size:30px;background:#f8fafc">📐</div>`;
+    const titleRow = dbPlanEditId===p.id
+      ? `<div style="display:flex;align-items:center;gap:6px;padding:10px 12px">
+           <input id="plan-name-${p.id}" value="${(p.name||"").replace(/"/g,"&quot;")}" placeholder="Название планировки" style="flex:1;min-width:0;padding:7px 9px;border-radius:7px;border:1px solid #8e44ad;font-size:13px;outline:none;box-sizing:border-box">
+           <button data-a="db-save-plan-name" data-pid="${p.id}" style="width:30px;height:30px;background:#27ae60;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:13px;flex-shrink:0">✓</button>
+           <button data-a="db-cancel-plan-name" style="width:30px;height:30px;background:transparent;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;color:#7a9aaa;font-size:12px;flex-shrink:0">✕</button>
+         </div>`
+      : `<div style="display:flex;align-items:center;gap:8px;padding:10px 12px">
+           <div style="flex:1;min-width:0;font-size:13px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name||"Без названия")}</div>
+           ${plansOnly?"":`<button data-a="db-edit-plan" data-pid="${p.id}" style="width:28px;height:28px;background:transparent;border:1px solid #8e44ad44;border-radius:6px;cursor:pointer;color:#8e44ad;font-size:12px;flex-shrink:0" title="Переименовать">✏️</button>`}
+           ${plansOnly?"":`<button data-a="db-del-plan" data-pid="${p.id}" style="width:28px;height:28px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:12px;flex-shrink:0">✕</button>`}
+         </div>`;
+    return `<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;overflow:hidden">${preview}${titleRow}</div>`;
   }
   const items=dbPlans.filter(function(p){return (p.cat||"house")===dbPlanTab;});
   if(!items.length){
@@ -7473,6 +7486,14 @@ function bind(){
       dbPlans.push({id:gid(),name:name.trim()||"Планировка",img:dbPlanNew.img,cat:dbPlanNew.cat||"house"});
       dbPlanTab=dbPlanNew.cat||"house";
       showNDBPlan=false;dbPlanNew={name:"",img:"",cat:dbPlanTab};fl();
+    };}
+    else if(a==="db-edit-plan"){el.onclick=()=>{ dbPlanEditId=el.dataset.pid; render(); };}
+    else if(a==="db-cancel-plan-name"){el.onclick=()=>{ dbPlanEditId=null; render(); };}
+    else if(a==="db-save-plan-name"){el.onclick=()=>{
+      const pid=el.dataset.pid;
+      const v=(((document.getElementById("plan-name-"+pid)||{}).value)||"").trim();
+      if(v){ dbPlans=dbPlans.map(function(p){return p.id===pid?Object.assign({},p,{name:v}):p;}); }
+      dbPlanEditId=null; fl();
     };}
     else if(a==="db-del-plan"){el.onclick=()=>{
       if(!confirm("Удалить планировку?"))return;
