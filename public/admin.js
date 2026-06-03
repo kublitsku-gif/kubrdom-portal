@@ -126,12 +126,23 @@ function applyState(items){
   settings        = obj("settings",        settings);
 }
 
+// fetch с таймаутом (AbortController): на «подвисшем» соединении (throttle Cloudflare без VPN)
+// не ждём вечно — рвём по таймауту, ловим в catch и отдаём localStorage-кэш. По умолчанию 9с.
+function fetchT(url, opts, ms){
+  opts = opts || {};
+  const ctrl = new AbortController();
+  const t = setTimeout(function(){ try{ ctrl.abort(); }catch(e){} }, ms || 9000);
+  const p = fetch(url, Object.assign({}, opts, { signal: ctrl.signal }));
+  p.then(function(){ clearTimeout(t); }, function(){ clearTimeout(t); });
+  return p;
+}
+
 async function apiLoad(){
   let r;
   try {
-    r = await fetch(API_BASE + "/api/state/" + encodeURIComponent(STORAGE_KEY), { headers: authHeaders() });
+    r = await fetchT(API_BASE + "/api/state/" + encodeURIComponent(STORAGE_KEY), { headers: authHeaders() }, 9000);
   } catch {
-    return readCache();                       // офлайн/сеть недоступна — отдаём кэш
+    return readCache();                       // офлайн/сеть/таймаут — отдаём кэш
   }
   if (r.status === 401) { const e = new Error("unauthorized"); e.unauthorized = true; throw e; }
   if (!r.ok) throw new Error("HTTP " + r.status);
@@ -242,11 +253,11 @@ async function apiSave(){
   _saving = true;
   writeCache(items);                       // optimistic: локально всегда свежо
   try {
-    const r = await fetch(API_BASE + "/api/state/" + encodeURIComponent(STORAGE_KEY), {
+    const r = await fetchT(API_BASE + "/api/state/" + encodeURIComponent(STORAGE_KEY), {
       method:  "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
       body:    JSON.stringify({ items: items }),
-    });
+    }, 15000);
     if (r.status === 401) { clearToken(); location.reload(); return { success: false, error: "unauthorized" }; }
     if (!r.ok) {
       let detail = "HTTP " + r.status;
@@ -307,8 +318,8 @@ function maxUpdatedAt(items){
 async function pollOnce(){
   if (!_hydrated || _pollPaused || document.hidden) return;
   let r;
-  try { r = await fetch(API_BASE + "/api/state/" + encodeURIComponent(STORAGE_KEY), { headers: authHeaders() }); }
-  catch { return; }                                   // сеть недоступна — тихо, попробуем позже
+  try { r = await fetchT(API_BASE + "/api/state/" + encodeURIComponent(STORAGE_KEY), { headers: authHeaders() }, 9000); }
+  catch { return; }                                   // сеть/таймаут — тихо, попробуем позже
   if (r.status === 401) { clearToken(); location.reload(); return; }
   if (!r.ok) return;
   const data = await r.json();
