@@ -131,8 +131,39 @@ async function apiLoad(){
   return null;
 }
 
+function _canvasToBlob(canvas,q){ return new Promise(function(res){ canvas.toBlob(res,"image/jpeg",q); }); }
+
+// Сжатие изображения до <= maxBytes (по умолчанию 1 МБ): уменьшаем сторону и качество JPEG.
+// Не-картинки, gif и уже маленькие файлы возвращаем как есть.
+async function compressImage(file, maxBytes){
+  maxBytes = maxBytes || 1024*1024;
+  if(!file || !/^image\//.test(file.type||"") || (file.type||"")==="image/gif") return file;
+  if(file.size && file.size<=maxBytes) return file;
+  // загрузить картинку
+  const dataUrl=await new Promise(function(res,rej){ const r=new FileReader(); r.onload=function(){res(r.result);}; r.onerror=rej; r.readAsDataURL(file); });
+  const img=await new Promise(function(res,rej){ const i=new Image(); i.onload=function(){res(i);}; i.onerror=rej; i.src=dataUrl; });
+  let w=img.width||1, h=img.height||1;
+  const MAXDIM=2200;
+  if(Math.max(w,h)>MAXDIM){ const k=MAXDIM/Math.max(w,h); w=Math.round(w*k); h=Math.round(h*k); }
+  const canvas=document.createElement("canvas"); canvas.width=w; canvas.height=h;
+  function draw(){ const c=canvas.getContext("2d"); c.clearRect(0,0,canvas.width,canvas.height); c.drawImage(img,0,0,canvas.width,canvas.height); }
+  draw();
+  let q=0.85, blob=await _canvasToBlob(canvas,q);
+  while(blob && blob.size>maxBytes && q>0.4){ q-=0.1; blob=await _canvasToBlob(canvas,q); }
+  // если всё ещё велико — уменьшаем размер картинки и пробуем снова
+  while(blob && blob.size>maxBytes && Math.max(canvas.width,canvas.height)>900){
+    canvas.width=Math.round(canvas.width*0.8); canvas.height=Math.round(canvas.height*0.8);
+    draw(); blob=await _canvasToBlob(canvas,0.75);
+  }
+  if(!blob || (file.size && blob.size>=file.size)) return file; // не вышло ужать — оставляем оригинал
+  const base=(file.name||"photo").replace(/\.[^.]+$/,"")||"photo";
+  return new File([blob], base+".jpg", { type:"image/jpeg" });
+}
+
 // Загрузка файла в R2 через Worker → публичная ссылка (для фото работ/уборки/планировок).
+// Перед отправкой сжимаем картинки до <= 1 МБ.
 async function uploadFileR2(file){
+  try{ file=await compressImage(file, 1024*1024); }catch(e){ /* не удалось сжать — грузим оригинал */ }
   const r=await fetch(API_BASE+"/api/file?name="+encodeURIComponent(file.name),{
     method:"POST", headers:authHeaders({ "Content-Type": file.type||"application/octet-stream" }), body:file
   });
@@ -7325,16 +7356,8 @@ function bind(){
           const nm=document.getElementById("ndbplan-n");
           if(nm)dbPlanNew.name=nm.value;
           dbPlanNew.img="__uploading__"; render();   // индикатор загрузки
-          try{
-            const r=await fetch(API_BASE+"/api/file?name="+encodeURIComponent(f.name),{
-              method:"POST",
-              headers:authHeaders({ "Content-Type": f.type||"application/octet-stream" }),
-              body:f
-            });
-            const j=await r.json();
-            if(j&&j.success&&j.url){ dbPlanNew.img=j.url; }
-            else { dbPlanNew.img=""; alert("Ошибка загрузки: "+((j&&j.error)||("HTTP "+r.status))); }
-          }catch(e){ dbPlanNew.img=""; alert("Ошибка загрузки: "+((e&&e.message)||e)); }
+          try{ dbPlanNew.img=await uploadFileR2(f); }
+          catch(e){ dbPlanNew.img=""; alert("Ошибка загрузки: "+((e&&e.message)||e)); }
           inp._bound=false; render();
         });
       }
