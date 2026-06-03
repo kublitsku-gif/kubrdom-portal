@@ -147,7 +147,9 @@ async function putFile(env, request, url) {
   if (body.byteLength > 15 * 1024 * 1024) return json({ success: false, error: "Файл больше 15 МБ" }, 413);
   const key = "plans/" + crypto.randomUUID() + "." + ext;
   await env.FILES.put(key, body, { httpMetadata: { contentType: ct } });
-  return json({ success: true, key, url: url.origin + "/api/file/" + key });
+  // Относительный URL: рендерится как <img src="/api/file/..."> на любом домене (same-origin
+  // через прокси). Иначе бы зашили *.workers.dev — а его режут в РФ.
+  return json({ success: true, key, url: "/api/file/" + key });
 }
 
 // Гарантирует наличие темы объекта в Telegram: вернёт { topicId } или { error }.
