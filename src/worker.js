@@ -209,6 +209,20 @@ async function postPhoto(env, request, url) {
   return json({ success: true, topicId, messageId: j2.result.message_id });
 }
 
+// POST /api/photo-delete?msgId=... — удалить сообщение (фото планировки) из Telegram. Требует токен.
+// Портал — главный: удалили планировку → удаляем её фото в Telegram.
+async function deletePhoto(env, url) {
+  if (!env.TG_BOT_TOKEN || !env.TG_CHAT_ID) return json({ success: false, error: "Telegram не настроен" }, 500);
+  const msgId = parseInt(url.searchParams.get("msgId") || "0", 10) || 0;
+  if (!msgId) return json({ success: false, error: "need msgId" }, 400);
+  const tg = "https://api.telegram.org/bot" + env.TG_BOT_TOKEN;
+  const r = await fetch(tg + "/deleteMessage", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: env.TG_CHAT_ID, message_id: msgId }) });
+  const j = await r.json();
+  // ok:false бывает если сообщение уже удалено/недоступно — для портала это не критично
+  if (!j.ok) return json({ success: false, error: j.description }, 502);
+  return json({ success: true });
+}
+
 // POST /api/topic-rename?topicId=...&name=... — переименовать тему объекта в Telegram. Требует токен.
 async function renameTopic(env, url) {
   if (!env.TG_BOT_TOKEN || !env.TG_CHAT_ID) return json({ success: false, error: "Telegram не настроен" }, 500);
@@ -281,6 +295,12 @@ export default {
     // Дублирование фото в Telegram-тему объекта (с токеном).
     if (url.pathname === "/api/photo" && request.method === "POST") {
       try { return await postPhoto(env, request, url); }
+      catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+
+    // Удаление фото планировки из Telegram (с токеном).
+    if (url.pathname === "/api/photo-delete" && request.method === "POST") {
+      try { return await deletePhoto(env, url); }
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
 

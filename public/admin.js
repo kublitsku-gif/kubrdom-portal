@@ -199,18 +199,30 @@ async function mirrorPhotosToTelegram(objId, files){
 
 // Дублируем планировку в общую Telegram-ветку «Планировки» (бэкап). Тема одна на всю базу планов.
 // id ветки храним в settings.plansTopicId (синхронизируется между устройствами). Best-effort.
+// Возвращает { topicId, messageId } или null. messageId сохраняем на планировке (p.tgMsgId)
+// — он нужен, чтобы при удалении планировки в портале удалить её фото и в Telegram.
 async function mirrorPlanToTelegram(file, caption){
-  if(!file) return;
+  if(!file) return null;
   try{
     const r=await fetch(API_BASE+"/api/photo?objName="+encodeURIComponent(PLANS_TOPIC_NAME)+"&topicId="+(settings.plansTopicId||0)+"&name="+encodeURIComponent(file.name)+"&caption="+encodeURIComponent(caption||"Планировка"),{
       method:"POST", headers:authHeaders({ "Content-Type": file.type||"image/jpeg" }), body:file
     });
     const j=await r.json();
-    if(j&&j.success&&j.topicId && j.topicId!==(settings.plansTopicId||0)){
-      settings=Object.assign({},settings,{plansTopicId:j.topicId});
-      apiSave().catch(function(){});
+    if(j&&j.success){
+      if(j.topicId && j.topicId!==(settings.plansTopicId||0)){
+        settings=Object.assign({},settings,{plansTopicId:j.topicId});
+        apiSave().catch(function(){});
+      }
+      return { topicId:j.topicId, messageId:j.messageId };
     }
   }catch(e){ /* план уже в R2 — Telegram-дубль не критичен */ }
+  return null;
+}
+
+// Портал — главный: удалить фото планировки из Telegram-ветки. Best-effort (фото могло быть уже удалено).
+function deletePlanFromTelegram(msgId){
+  if(!msgId || !settings.plansTopicId) return;
+  fetch(API_BASE+"/api/photo-delete?msgId="+encodeURIComponent(msgId),{ method:"POST", headers:authHeaders() }).catch(function(){});
 }
 
 let _lastSavedJson = null;                 // снимок последнего успешного сохранения
@@ -7470,7 +7482,8 @@ function bind(){
           try{
             let c=f; try{ c=await compressImage(f,1024*1024); }catch(e){}
             dbPlanNew.img=await uploadFileR2(c,true);
-            mirrorPlanToTelegram(c, dbPlanNew.name||"Планировка");
+            const m=await mirrorPlanToTelegram(c, dbPlanNew.name||"Планировка");
+            dbPlanNew.tgMsgId=(m&&m.messageId)||null;   // запоминаем id фото в Telegram для будущего удаления
           }
           catch(e){ dbPlanNew.img=""; alert("Ошибка загрузки: "+((e&&e.message)||e)); }
           inp._bound=false; render();
@@ -7490,7 +7503,7 @@ function bind(){
         }catch(e){}
         return;
       }
-      dbPlans.push({id:gid(),name:name.trim()||"Планировка",img:dbPlanNew.img,cat:dbPlanNew.cat||"house"});
+      dbPlans.push({id:gid(),name:name.trim()||"Планировка",img:dbPlanNew.img,cat:dbPlanNew.cat||"house",tgMsgId:dbPlanNew.tgMsgId||null});
       dbPlanTab=dbPlanNew.cat||"house";
       showNDBPlan=false;dbPlanNew={name:"",img:"",cat:dbPlanTab};fl();
     };}
@@ -7508,8 +7521,9 @@ function bind(){
           try{
             let c=f; try{ c=await compressImage(f,1024*1024); }catch(e){}
             const url=await uploadFileR2(c,true);
-            dbPlans=dbPlans.map(function(x){return x.id===pid?Object.assign({},x,{img:url}):x;});
-            mirrorPlanToTelegram(c, (p0&&p0.name)||"Планировка");
+            if(p0&&p0.tgMsgId) deletePlanFromTelegram(p0.tgMsgId);   // убираем старое фото из Telegram
+            const m=await mirrorPlanToTelegram(c, (p0&&p0.name)||"Планировка");
+            dbPlans=dbPlans.map(function(x){return x.id===pid?Object.assign({},x,{img:url,tgMsgId:(m&&m.messageId)||null}):x;});
           }catch(e){ alert("Ошибка загрузки: "+((e&&e.message)||e)); }
           planImgUploading=null; inp._bound=false; fl();
         });
@@ -7523,8 +7537,10 @@ function bind(){
       dbPlanEditId=null; fl();
     };}
     else if(a==="db-del-plan"){el.onclick=()=>{
-      if(!confirm("Удалить планировку?"))return;
+      if(!confirm("Удалить планировку? Она удалится и из Telegram-ветки."))return;
       const pid=el.dataset.pid;
+      const p0=dbPlans.find(function(p){return p.id===pid;});
+      if(p0&&p0.tgMsgId) deletePlanFromTelegram(p0.tgMsgId);   // портал главный: удаляем фото и в Telegram
       dbPlans=dbPlans.filter(function(p){return p.id!==pid;});
       // также убрать из прикреплённых у клиентов
       crmClients=crmClients.map(function(c){return Object.assign({},c,{planIds:(c.planIds||[]).filter(function(x){return x!==pid;})});});
