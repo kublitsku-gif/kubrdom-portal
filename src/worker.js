@@ -180,6 +180,19 @@ async function postVideo(env, request, url) {
   return json({ success: true, topicId, messageId: msg.message_id, fileId });
 }
 
+// POST /api/topic-rename?topicId=...&name=... — переименовать тему объекта в Telegram. Требует токен.
+async function renameTopic(env, url) {
+  if (!env.TG_BOT_TOKEN || !env.TG_CHAT_ID) return json({ success: false, error: "Telegram не настроен" }, 500);
+  const topicId = parseInt(url.searchParams.get("topicId") || "0", 10) || 0;
+  const name = (url.searchParams.get("name") || "").slice(0, 128);
+  if (!topicId || !name) return json({ success: false, error: "need topicId+name" }, 400);
+  const tg = "https://api.telegram.org/bot" + env.TG_BOT_TOKEN;
+  const r = await fetch(tg + "/editForumTopic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: env.TG_CHAT_ID, message_thread_id: topicId, name: name }) });
+  const j = await r.json();
+  if (!j.ok) return json({ success: false, error: j.description }, 502);
+  return json({ success: true });
+}
+
 // GET /api/tg-video/<fileId> — проксируем просмотр из Telegram (Bot API лимит скачивания 20 МБ).
 async function getTgVideo(env, fileId) {
   if (!env.TG_BOT_TOKEN) return new Response("not configured", { status: 500, headers: CORS_HEADERS });
@@ -233,6 +246,12 @@ export default {
     // Загрузка видео в Telegram-тему объекта (с токеном).
     if (url.pathname === "/api/video" && request.method === "POST") {
       try { return await postVideo(env, request, url); }
+      catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+
+    // Переименование темы объекта (с токеном).
+    if (url.pathname === "/api/topic-rename" && request.method === "POST") {
+      try { return await renameTopic(env, url); }
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
 

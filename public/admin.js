@@ -8402,7 +8402,14 @@ function bind(){
       const oid=el.dataset.oid;
       const name=document.getElementById("obj-name-"+oid)?.value?.trim();
       const icon=document.getElementById("obj-icon-"+oid)?.value;
-      if(name)objects=objects.map(o=>o.id===oid?{...o,name,icon:icon||o.icon}:o);
+      const o0=objects.find(x=>x.id===oid);
+      if(name){
+        const needRename = o0 && o0.tgTopicId && o0.name!==name;
+        objects=objects.map(o=>o.id===oid?{...o,name,icon:icon||o.icon}:o);
+        if(needRename){ // авто-синк: переименовать тему объекта в Telegram
+          fetch(API_BASE+"/api/topic-rename?topicId="+o0.tgTopicId+"&name="+encodeURIComponent(name),{method:"POST",headers:authHeaders()}).catch(function(){});
+        }
+      }
       fl();
     };}
     else if(a==="save-tpl-info"){el.onclick=()=>{
