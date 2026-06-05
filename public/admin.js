@@ -7023,19 +7023,43 @@ let crmVisibleIds=[];         // id клиентов, показанных в т
 let crmChats=null;            // диалоги нейропродавца (Avito) для привязки к карточкам CRM
 let crmChatsLoading=false;
 let crmLinkPickerFor=null;    // id клиента, для которого открыт выбор Avito-диалога
-// Авто-привязка: под каждый НЕпривязанный Avito-диалог заводим лид в воронке (этап «Входящие»).
-// Делает панель (владелец crmClients) — без конфликта с автосейвом. Возвращает true, если что-то добавили.
+// Телефон → канонические последние 10 цифр (для сравнения 8/+7).
+function normPhone(p){ var d=(p||"").replace(/\D/g,""); return d.length>=10?d.slice(-10):""; }
+// Вытащить телефон из сообщений клиента (Avito не отдаёт его сам — только если клиент написал в чате).
+function extractPhoneFromChat(ch){
+  var msgs=(ch&&ch.messages)||[];
+  for(var i=msgs.length-1;i>=0;i--){
+    if(msgs[i].role!=="user") continue;
+    var m=(msgs[i].text||"").match(/(?:\+?7|8)[\s\-(]*\d{3}[\s\-)]*\d{3}[\s\-]*\d{2}[\s\-]*\d{2}/);
+    if(m) return normPhone(m[0]);
+  }
+  return "";
+}
+// Авто-привязка + авто-матч по телефону. Делает панель (владелец crmClients) — без конфликта с автосейвом.
+// Если телефон из диалога совпал с существующим клиентом без привязки — склеиваем; иначе новый лид. Возвращает true при изменениях.
 function crmAutoLinkAvito(){
   if(!crmChats) return false;
-  var linked={}; crmClients.forEach(function(x){ if(x.avitoKey)linked[x.avitoKey]=true; });
-  var added=0; var today=new Date().toISOString().slice(0,10);
+  var linked={}, byPhone={};
+  crmClients.forEach(function(x){
+    if(x.avitoKey){ linked[x.avitoKey]=true; }
+    else { var np=normPhone(x.phone); if(np && !byPhone[np]) byPhone[np]=x.id; }   // кандидаты для матча — без привязки
+  });
+  var changed=false; var today=new Date().toISOString().slice(0,10);
   Object.keys(crmChats).forEach(function(k){
     var ch=crmChats[k]; if(!ch||ch.source!=="avito"||linked[k]) return;
+    var phone=extractPhoneFromChat(ch);
+    if(phone && byPhone[phone]){
+      // авто-матч: склеиваем диалог с существующим клиентом
+      var cid=byPhone[phone]; delete byPhone[phone];
+      crmClients=crmClients.map(function(x){ return x.id===cid?Object.assign({},x,{avitoKey:k}):x; });
+      linked[k]=true; changed=true; return;
+    }
+    // новый лид (с телефоном, если нашёлся в переписке)
     var firstUser=(ch.messages||[]).filter(function(m){return m.role==="user";})[0];
-    crmClients.push({ id:gid(), name:(ch.name||"Avito клиент"), phone:"", source:"Авито", stage:"new", msg:(firstUser&&firstUser.text)||"", date:today, notes:"", avitoKey:k });
-    linked[k]=true; added++;
+    crmClients.push({ id:gid(), name:(ch.name||"Avito клиент"), phone:(phone?"+7"+phone:""), source:"Авито", stage:"new", msg:(firstUser&&firstUser.text)||"", date:today, notes:"", avitoKey:k });
+    linked[k]=true; changed=true;
   });
-  return added>0;
+  return changed;
 }
 // Лениво подгружаем Avito-диалоги один раз при входе в CRM (для подсветки/карточек + авто-привязки).
 function crmEnsureChats(){
