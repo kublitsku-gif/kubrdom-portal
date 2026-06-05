@@ -285,22 +285,33 @@ async function avitoChats(env) {
 
 // ─── AI (нейропродавец, OpenAI-совместимый коннектор) ───────────────
 // Один и тот же код для DeepSeek/GigaChat/OpenAI/Qwen — отличается base_url+key+model.
+// Какой провайдер выбран в портале (settings.aiProvider): "deepseek" (по умолчанию) | "kimi".
+async function aiProvider(env) {
+  try { const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind("admin_panel", "settings").first(); if (row && row.data) { const s = JSON.parse(row.data); if (s && s.aiProvider === "kimi") return "kimi"; } } catch (e) {}
+  return "deepseek";
+}
+// Доступы провайдера (OpenAI-совместимые): ключ + base_url + модель.
+function aiResolve(env, provider) {
+  if (provider === "kimi") return { key: env.KIMI_API_KEY, base: env.KIMI_BASE_URL || "https://api.moonshot.ai/v1", model: env.KIMI_MODEL || "kimi-k2-0905-preview", name: "Kimi" };
+  return { key: env.AI_API_KEY, base: env.AI_BASE_URL || "https://api.deepseek.com", model: env.AI_MODEL || "deepseek-chat", name: "DeepSeek" };
+}
 async function aiChat(env, messages, opts) {
   opts = opts || {};
-  if (!env.AI_API_KEY) throw new Error("AI ключ не настроен");
-  const base = (env.AI_BASE_URL || "https://api.deepseek.com").replace(/\/+$/, "");
+  const pr = aiResolve(env, opts.provider);
+  if (!pr.key) throw new Error(pr.name + ": ключ не настроен");
+  const base = pr.base.replace(/\/+$/, "");
   const r = await fetch(base + "/chat/completions", {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: "Bearer " + env.AI_API_KEY },
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + pr.key },
     body: JSON.stringify(Object.assign({
-      model: opts.model || env.AI_MODEL || "deepseek-chat",
+      model: opts.model || pr.model,
       messages: messages,
       temperature: opts.temperature != null ? opts.temperature : 0.4,
       max_tokens: opts.max_tokens || 600
     }, opts.response_format ? { response_format: opts.response_format } : {}))
   });
   const j = await r.json();
-  if (!r.ok || !j.choices) throw new Error("AI: " + JSON.stringify(j.error || j).slice(0, 200));
+  if (!r.ok || !j.choices) throw new Error(pr.name + ": " + JSON.stringify(j.error || j).slice(0, 200));
   return { text: ((j.choices[0].message && j.choices[0].message.content) || "").trim(), usage: j.usage || null };
 }
 // Системная роль нейропродавца КубрДом.
@@ -337,10 +348,11 @@ const JSON_INSTRUCTION = "\n\nВажно: верни СТРОГО JSON {\"reply\
 // Нейроответ продавца с гибрид-классификацией (нужно ли одобрение). sel — выбор инструкции (item/kind).
 async function aiSellerReply(env, history, sel) {
   const sys = await aiSellerPrompt(env, sel);
+  const provider = await aiProvider(env);
   const messages = [
     { role: "system", content: sys + JSON_INSTRUCTION }
   ].concat(history);
-  const out = await aiChat(env, messages, { max_tokens: 500, response_format: { type: "json_object" } });
+  const out = await aiChat(env, messages, { max_tokens: 500, response_format: { type: "json_object" }, provider: provider });
   let p; try { p = JSON.parse(out.text); } catch (e) { p = { reply: out.text, needsApproval: true, reason: "json parse fail" }; }
   let reply = (p.reply || out.text || "").trim();
   if (!reply) reply = "Здравствуйте! Уточните, пожалуйста, детали — подскажу по размерам, комплектации и расчёту.";
@@ -531,7 +543,7 @@ async function aiTest(env, request) {
   const out = await aiChat(env, [
     { role: "system", content: SELLER_SYSTEM },
     { role: "user", content: q }
-  ], { max_tokens: 250 });
+  ], { max_tokens: 250, provider: await aiProvider(env) });
   return json({ success: true, reply: out.text, usage: out.usage });
 }
 

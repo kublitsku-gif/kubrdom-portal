@@ -27,3 +27,6 @@ TG_SALES_CHAT_ID = "-1004235156261"
 # AI-провайдер (OpenAI-совместимый). Ключ — секрет AI_API_KEY. Сменить провайдера = поменять эти 2 + секрет.
 AI_BASE_URL = "https://api.deepseek.com"
 AI_MODEL = "deepseek-chat"
+# Kimi (Moonshot), OpenAI-совместимый. Ключ — секрет KIMI_API_KEY. Переключатель провайдера — settings.aiProvider.
+KIMI_BASE_URL = "https://api.moonshot.ai/v1"
+KIMI_MODEL = "kimi-k2-0905-preview"
