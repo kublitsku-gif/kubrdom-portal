@@ -350,17 +350,18 @@ function findClientByTopic(chats, topicId) {
 }
 
 // POST /api/ai/incoming {clientKey,clientName,text,source} — входящее сообщение (симулятор/Avito).
-async function aiIncoming(env, request) {
-  let body = {}; try { body = await request.json(); } catch (_) {}
-  const clientName = (body.clientName || "Клиент").toString().slice(0, 80);
-  const clientKey = (body.clientKey || "").toString().trim() || ("manual:" + clientName);
-  const text = (body.text || "").toString().slice(0, 2000);
-  const source = (body.source || "manual").toString();
-  if (!text) return json({ success: false, error: "empty text" }, 400);
-  if (!env.TG_SALES_BOT_TOKEN || !env.TG_SALES_CHAT_ID) return json({ success: false, error: "sales-бот не настроен" }, 500);
+// Общий конвейер входящего (вызывается и симулятором, и вебхуком Avito).
+async function aiProcessIncoming(env, opt) {
+  const clientName = (opt.clientName || "Клиент").toString().slice(0, 80);
+  const clientKey = (opt.clientKey || "").toString().trim() || ("manual:" + clientName);
+  const text = (opt.text || "").toString().slice(0, 2000);
+  const source = (opt.source || "manual").toString();
+  if (!text) return { success: false, error: "empty text" };
+  if (!env.TG_SALES_BOT_TOKEN || !env.TG_SALES_CHAT_ID) return { success: false, error: "sales-бот не настроен" };
   const chats = await aiLoadChats(env);
   const c = await ensureClientTopic(env, chats, clientKey, clientName);
   c.source = source;
+  if (opt.avitoChatId) c.avitoChatId = opt.avitoChatId;
   c.messages.push({ role: "user", text: text, status: "in", ts: Date.now() });
   await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "👤 Клиент:\n" + text });
   const history = c.messages.filter(function (m) { return m.role === "user" || m.role === "assistant"; }).slice(-12)
@@ -370,7 +371,7 @@ async function aiIncoming(env, request) {
   catch (e) {
     await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "⚠️ Ошибка ИИ: " + (e.message || e) });
     await aiSaveChats(env, chats);
-    return json({ success: false, error: String(e) }, 502);
+    return { success: false, error: String(e) };
   }
   const idx = c.messages.length;
   c.messages.push({ role: "assistant", text: ai.reply, status: "draft", needsApproval: ai.needsApproval, ts: Date.now() });
@@ -383,7 +384,13 @@ async function aiIncoming(env, request) {
   if (sent && sent.ok && sent.result) c.messages[idx].tgMsgId = sent.result.message_id;
   c.updatedAt = Date.now();
   await aiSaveChats(env, chats);
-  return json({ success: true, topicId: c.topicId, reply: ai.reply, needsApproval: ai.needsApproval });
+  return { success: true, topicId: c.topicId, reply: ai.reply, needsApproval: ai.needsApproval };
+}
+// POST /api/ai/incoming — тонкая обёртка симулятора над общим конвейером.
+async function aiIncoming(env, request) {
+  let body = {}; try { body = await request.json(); } catch (_) {}
+  const out = await aiProcessIncoming(env, body || {});
+  return json(out, out.success ? 200 : 500);
 }
 
 // POST /api/ai/webhook — вебхук sales-бота (кнопки + ручные ответы в ветке). Публичный, проверка по секрет-токену.
@@ -399,9 +406,14 @@ async function aiWebhook(env, request) {
     if (key && chats[key].messages[idx]) {
       const c = chats[key], m = c.messages[idx];
       if (act === "send") {
+        let note = " (демо — это не Avito-чат)";
+        if (c.avitoChatId) {
+          try { const sr = await avitoSend(env, c.avitoChatId, m.text); note = (sr && sr.id) ? " клиенту в Avito ✅" : ("\n⚠️ Avito: " + JSON.stringify(sr).slice(0, 140)); }
+          catch (e) { note = "\n⚠️ Avito ошибка: " + (e.message || e); }
+        }
         m.status = "sent"; c.updatedAt = Date.now(); await aiSaveChats(env, chats);
         await salesTg(env, "editMessageReplyMarkup", { chat_id: cq.message.chat.id, message_id: cq.message.message_id, reply_markup: { inline_keyboard: [] } });
-        await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: topicId, text: "✅ Ответ помечен отправленным.\n(отправка в Avito подключится после подписки мессенджера)" });
+        await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: topicId, text: "✅ Ответ отправлен" + note });
         await salesTg(env, "answerCallbackQuery", { callback_query_id: cq.id, text: "Отправлено" });
       } else if (act === "edit") {
         await salesTg(env, "answerCallbackQuery", { callback_query_id: cq.id, text: "Напишите свой вариант ответом в этой ветке" });
@@ -418,10 +430,15 @@ async function aiWebhook(env, request) {
     const chats = await aiLoadChats(env);
     const key = findClientByTopic(chats, msg.message_thread_id);
     if (key) {
+      let note = " (записан; это не Avito-чат)";
+      if (chats[key].avitoChatId) {
+        try { const sr = await avitoSend(env, chats[key].avitoChatId, msg.text); note = (sr && sr.id) ? " клиенту в Avito ✅" : ("\n⚠️ Avito: " + JSON.stringify(sr).slice(0, 140)); }
+        catch (e) { note = "\n⚠️ Avito ошибка: " + (e.message || e); }
+      }
       chats[key].messages.push({ role: "assistant", text: msg.text, status: "sent", manual: true, ts: Date.now() });
       chats[key].updatedAt = Date.now();
       await aiSaveChats(env, chats);
-      await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: msg.message_thread_id, text: "✅ Ваш ответ записан как отправленный клиенту." });
+      await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: msg.message_thread_id, text: "✅ Ваш ответ отправлен" + note });
     }
   }
   return json({ ok: true });
@@ -442,6 +459,28 @@ async function aiTest(env, request) {
     { role: "user", content: q }
   ], { max_tokens: 250 });
   return json({ success: true, reply: out.text, usage: out.usage });
+}
+
+// Отправка текста в чат Avito (вызывается по кнопке «Отправить» — действие пользователя).
+async function avitoSend(env, chatId, text) {
+  const t = await avitoToken(env);
+  const r = await fetch("https://api.avito.ru/messenger/v1/accounts/" + env.AVITO_USER_ID + "/chats/" + chatId + "/messages", {
+    method: "POST", headers: { Authorization: "Bearer " + t, "Content-Type": "application/json" },
+    body: JSON.stringify({ message: { text: text }, type: "text" })
+  });
+  return r.json();
+}
+// Вебхук Avito: новое сообщение клиента → общий конвейер. Фильтруем свои/системные/не-текст.
+async function avitoWebhook(env, request) {
+  const upd = await request.json().catch(function () { return {}; });
+  const v = upd && upd.payload && upd.payload.value;
+  if (!v || (upd.payload.type && upd.payload.type !== "message")) return json({ ok: true });
+  if (v.type && v.type !== "text") return json({ ok: true });
+  if (String(v.author_id) === String(env.AVITO_USER_ID)) return json({ ok: true });  // наше исходящее — игнор
+  const text = (v.content && v.content.text) || "";
+  if (!text) return json({ ok: true });
+  await aiProcessIncoming(env, { clientKey: "avito:" + v.chat_id, clientName: "Avito · " + (v.author_id || v.chat_id), text: text, source: "avito", avitoChatId: v.chat_id });
+  return json({ ok: true });
 }
 
 export default {
@@ -472,6 +511,13 @@ export default {
       if (request.headers.get("X-Telegram-Bot-Api-Secret-Token") !== env.ADMIN_TOKEN) return unauthorized();
       try { return await aiWebhook(env, request); }
       catch (err) { return json({ ok: false, error: String(err) }, 200); }   // 200 — чтобы Telegram не ретраил вечно
+    }
+
+    // Вебхук Avito (входящие сообщения клиентов) — ДО авторизации. Защита: ?s=<ADMIN_TOKEN> в URL подписки.
+    if (url.pathname === "/api/avito/webhook" && request.method === "POST") {
+      if (url.searchParams.get("s") !== env.ADMIN_TOKEN) return unauthorized();
+      try { return await avitoWebhook(env, request); }
+      catch (err) { return json({ ok: false, error: String(err) }, 200); }
     }
 
     // Авторизация для всего остального. Fail-closed.
