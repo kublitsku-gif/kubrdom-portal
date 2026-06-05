@@ -7016,6 +7016,9 @@ let crmAddForm=false;
 let crmStageFilter=null; // filter by stage id
 let crmClientSearch=""; // search by name/phone
 let crmStagePickerOpen=false; // expanded stage selector
+let crmSelectMode=false;      // режим выбора клиентов для массового удаления
+let crmSelected={};           // { [cid]: true } — выбранные клиенты
+let crmVisibleIds=[];         // id клиентов, показанных в текущем рендере (для «Все/снять»)
 let crmNewClient={name:"",phone:"",msg:"",notes:""};
 
 const CRM_STAGES=[
@@ -7042,6 +7045,7 @@ function tCRMFunnel(){
   CRM_STAGES.forEach(function(s){byStage[s.id]=crmClients.filter(function(c){return c.stage===s.id;});});
 
   let html='<div>';
+  crmVisibleIds=[];   // собираем id показанных клиентов по ходу рендера
   // Header
   html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">'+
     '<div>'+
@@ -7049,10 +7053,19 @@ function tCRMFunnel(){
       '<div style="font-size:12px;color:#5a7a9a;margin-top:2px">'+total+' клиентов в работе</div>'+
     '</div>'+
     '<div style="display:flex;gap:6px">'+
-      
+      ((currentUser&&currentUser.roles&&currentUser.roles.includes("admin"))?'<button data-a="crm-select-toggle" style="padding:6px 12px;background:'+(crmSelectMode?"#e74c3c":"#fff")+';border:1px solid '+(crmSelectMode?"#e74c3c":"#d0dae8")+';border-radius:8px;cursor:pointer;font-size:11px;color:'+(crmSelectMode?"#fff":"#7a9aaa")+';font-weight:700">'+(crmSelectMode?"✕ Отмена":"☑ Выбрать")+'</button>':'')+
       '<button data-a="crm-add" style="padding:6px 12px;background:#2980b9;border:none;border-radius:8px;cursor:pointer;font-size:11px;color:#fff;font-weight:700">+ Клиент</button>'+
     '</div>'+
   '</div>';
+  // Панель массового удаления (режим выбора)
+  if(crmSelectMode){
+    const _nsel=Object.keys(crmSelected).filter(function(k){return crmSelected[k];}).length;
+    html+='<div style="display:flex;align-items:center;gap:8px;background:#fff5f5;border:1px solid #e74c3c44;border-radius:10px;padding:10px 12px;margin-bottom:12px">'+
+      '<span style="font-size:12px;font-weight:700;color:#1a2a3a;flex:1">Выбрано: '+_nsel+'</span>'+
+      '<button data-a="crm-select-all" style="padding:5px 10px;background:#fff;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:11px;color:#5a7a9a;font-weight:700">Все/снять</button>'+
+      '<button data-a="crm-del-selected" style="padding:5px 12px;background:'+(_nsel?"#e74c3c":"#e0a8a8")+';border:none;border-radius:7px;cursor:'+(_nsel?"pointer":"default")+';font-size:11px;color:#fff;font-weight:700">🗑 Удалить ('+_nsel+')</button>'+
+    '</div>';
+  }
 
   // Pipeline — horizontal bar funnel with icons
   const totalClients=crmClients.length;
@@ -7213,8 +7226,11 @@ function tCRMFunnel(){
       const prevStage=sIdx>0?CRM_STAGES[sIdx-1]:null;
       const nextStage=sIdx<CRM_STAGES.length-1?CRM_STAGES[sIdx+1]:null;
 
-      html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:8px;border-left:3px solid '+s.color+'">'+
-        '<div data-a="crm-open" data-cid="'+c.id+'" style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">'+
+      crmVisibleIds.push(c.id);
+      const _sel=!!crmSelected[c.id];
+      html+='<div style="background:#fff;border-radius:12px;border:1px solid '+(crmSelectMode&&_sel?"#e74c3c":"#dde6f0")+';padding:12px 14px;margin-bottom:8px;border-left:3px solid '+s.color+'">'+
+        '<div data-a="'+(crmSelectMode?"crm-select-one":"crm-open")+'" data-cid="'+c.id+'" style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">'+
+          (crmSelectMode?'<div style="font-size:22px;flex-shrink:0;pointer-events:none">'+(_sel?"☑️":"⬜")+'</div>':'')+
           '<div style="width:38px;height:38px;border-radius:10px;background:'+s.color+'18;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;pointer-events:none">👤</div>'+
           '<div style="flex:1;min-width:0;pointer-events:none">'+
             '<div style="font-size:13px;font-weight:700;color:#1a2a3a">'+c.name+'</div>'+
@@ -8391,6 +8407,24 @@ function bind(){
     else if(a==="crm-clear-filter"){el.onclick=()=>{crmStageFilter=null;render();};}
     else if(a==="crm-search-clear"){el.onclick=()=>{crmClientSearch="";render();};}
     else if(a==="crm-add"){el.onclick=()=>{crmAddForm=!crmAddForm;render();};}
+    else if(a==="crm-select-toggle"){el.onclick=()=>{ crmSelectMode=!crmSelectMode; if(!crmSelectMode)crmSelected={}; render(); };}
+    else if(a==="crm-select-one"){el.onclick=()=>{ const id=el.dataset.cid; const n=Object.assign({},crmSelected); if(n[id])delete n[id]; else n[id]=true; crmSelected=n; render(); };}
+    else if(a==="crm-select-all"){el.onclick=()=>{
+      const allSel=crmVisibleIds.length>0&&crmVisibleIds.every(function(id){return crmSelected[id];});
+      const n={}; if(!allSel)crmVisibleIds.forEach(function(id){n[id]=true;});
+      crmSelected=n; render();
+    };}
+    else if(a==="crm-del-selected"){el.onclick=()=>{
+      if(!currentUser||!currentUser.roles||!currentUser.roles.includes("admin"))return;
+      const ids=Object.keys(crmSelected).filter(function(k){return crmSelected[k];});
+      if(!ids.length)return;
+      if(!confirm("Удалить выбранных клиентов: "+ids.length+"?\nДействие необратимо."))return;
+      const idset={}; ids.forEach(function(id){idset[id]=true;});
+      crmClients=crmClients.filter(function(x){return !idset[x.id];});
+      crmSelected={}; crmSelectMode=false;
+      try{ const t=document.createElement("div"); t.textContent="🗑 Удалено клиентов: "+ids.length; t.style.cssText="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a2a3a;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:600;z-index:9999"; document.body.appendChild(t); setTimeout(function(){try{document.body.removeChild(t);}catch(e){}},2500);}catch(e){}
+      fl();
+    };}
     else if(a==="crm-cancel-new"){el.onclick=()=>{crmAddForm=false;render();};}
     else if(a==="crm-save-new"){el.onclick=()=>{
       const name=(document.getElementById("crm-n")||{}).value||"";
