@@ -7022,12 +7022,27 @@ let crmVisibleIds=[];         // id клиентов, показанных в т
 let crmChats=null;            // диалоги нейропродавца (Avito) для привязки к карточкам CRM
 let crmChatsLoading=false;
 let crmLinkPickerFor=null;    // id клиента, для которого открыт выбор Avito-диалога
-// Лениво подгружаем Avito-диалоги один раз при входе в CRM (для подсветки/карточек).
+// Авто-привязка: под каждый НЕпривязанный Avito-диалог заводим лид в воронке (этап «Входящие»).
+// Делает панель (владелец crmClients) — без конфликта с автосейвом. Возвращает true, если что-то добавили.
+function crmAutoLinkAvito(){
+  if(!crmChats) return false;
+  var linked={}; crmClients.forEach(function(x){ if(x.avitoKey)linked[x.avitoKey]=true; });
+  var added=0; var today=new Date().toISOString().slice(0,10);
+  Object.keys(crmChats).forEach(function(k){
+    var ch=crmChats[k]; if(!ch||ch.source!=="avito"||linked[k]) return;
+    var firstUser=(ch.messages||[]).filter(function(m){return m.role==="user";})[0];
+    crmClients.push({ id:gid(), name:(ch.name||"Avito клиент"), phone:"", source:"Авито", stage:"new", msg:(firstUser&&firstUser.text)||"", date:today, notes:"", avitoKey:k });
+    linked[k]=true; added++;
+  });
+  return added>0;
+}
+// Лениво подгружаем Avito-диалоги один раз при входе в CRM (для подсветки/карточек + авто-привязки).
 function crmEnsureChats(){
   if(crmChats!==null||crmChatsLoading)return;
   crmChatsLoading=true;
   fetch(API_BASE+"/api/ai/chats",{headers:authHeaders()}).then(function(r){return r.json();}).then(function(j){
-    crmChats=(j&&j.success)?(j.chats||{}):{}; crmChatsLoading=false; render();
+    crmChats=(j&&j.success)?(j.chats||{}):{}; crmChatsLoading=false;
+    if(crmAutoLinkAvito()) fl(); else render();
   }).catch(function(){ crmChats={}; crmChatsLoading=false; });
 }
 // Привязанный к клиенту Avito-диалог (по c.avitoKey).
@@ -8511,7 +8526,7 @@ function bind(){
     else if(a==="crm-link-cancel"){el.onclick=()=>{ crmLinkPickerFor=null; render(); };}
     else if(a==="crm-link-pick"){el.onclick=()=>{ const cid=el.dataset.cid,key=el.dataset.key; crmClients=crmClients.map(function(x){return x.id===cid?Object.assign({},x,{avitoKey:key}):x;}); crmLinkPickerFor=null; fl(); };}
     else if(a==="crm-unlink-avito"){el.onclick=()=>{ const cid=el.dataset.cid; crmClients=crmClients.map(function(x){return x.id===cid?Object.assign({},x,{avitoKey:null}):x;}); fl(); };}
-    else if(a==="crm-chat-refresh"){el.onclick=async()=>{ el.textContent="⏳"; try{ const r=await fetch(API_BASE+"/api/ai/chats",{headers:authHeaders()}); const j=await r.json(); crmChats=(j&&j.success)?(j.chats||{}):crmChats; }catch(e){} render(); };}
+    else if(a==="crm-chat-refresh"){el.onclick=async()=>{ el.textContent="⏳"; try{ const r=await fetch(API_BASE+"/api/ai/chats",{headers:authHeaders()}); const j=await r.json(); crmChats=(j&&j.success)?(j.chats||{}):crmChats; }catch(e){} if(crmAutoLinkAvito())fl(); else render(); };}
     else if(a==="crm-send-avito"){el.onclick=async()=>{
       const cid=el.dataset.cid,key=el.dataset.key;
       const ta=document.getElementById("crm-reply-"+cid); const text=(ta&&ta.value||"").trim();
