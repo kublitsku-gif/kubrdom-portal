@@ -254,6 +254,35 @@ async function getTgVideo(env, fileId) {
   return new Response(fr.body, { headers });
 }
 
+// ─── Avito (нейропродавец) ──────────────────────────────────────────
+// OAuth-токен Avito (client_credentials), кэшируем в изоляте (живёт ~24ч).
+let _avitoTok = null, _avitoExp = 0;
+async function avitoToken(env) {
+  const now = Date.now();
+  if (_avitoTok && now < _avitoExp) return _avitoTok;
+  if (!env.AVITO_CLIENT_ID || !env.AVITO_CLIENT_SECRET) throw new Error("Avito не настроен");
+  const body = new URLSearchParams({ grant_type: "client_credentials", client_id: env.AVITO_CLIENT_ID, client_secret: env.AVITO_CLIENT_SECRET });
+  const r = await fetch("https://api.avito.ru/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
+  const j = await r.json();
+  if (!j.access_token) throw new Error("Avito token: " + JSON.stringify(j).slice(0, 160));
+  _avitoTok = j.access_token;
+  _avitoExp = now + ((j.expires_in || 3600) - 120) * 1000;   // -2 мин запас
+  return _avitoTok;
+}
+// GET /api/avito/chats — список чатов аккаунта (для проверки связи). Требует токен.
+async function avitoChats(env) {
+  const t = await avitoToken(env);
+  const r = await fetch("https://api.avito.ru/messenger/v2/accounts/" + env.AVITO_USER_ID + "/chats?limit=30", { headers: { Authorization: "Bearer " + t } });
+  const j = await r.json();
+  if (!r.ok) return json({ success: false, error: "Avito chats: " + JSON.stringify(j).slice(0, 160) }, 502);
+  const chats = (j.chats || []).map(function (c) {
+    const ctx = (c.context && c.context.value) || {};
+    const lm = c.last_message || {};
+    return { id: c.id, title: ctx.title || "", price: ctx.price_string || "", lastText: (lm.content && lm.content.text) || "", lastAt: lm.created || 0 };
+  });
+  return json({ success: true, count: chats.length, chats });
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === "OPTIONS") {
@@ -291,6 +320,12 @@ export default {
     // Загрузка видео в Telegram-тему объекта (с токеном).
     if (url.pathname === "/api/video" && request.method === "POST") {
       try { return await postVideo(env, request, url); }
+      catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+
+    // Avito: список чатов (проверка связи, с токеном).
+    if (url.pathname === "/api/avito/chats" && request.method === "GET") {
+      try { return await avitoChats(env); }
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
 
