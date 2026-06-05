@@ -6536,6 +6536,7 @@ function tTeam(){
 }
 
 
+let mktChats=null;   // загруженные диалоги нейропродавца (null = ещё не грузили)
 function tMarketing(){
   const instView=window._mktInstView||false;
   if(instView) return tMarketingInstruction();
@@ -6554,7 +6555,7 @@ function tMarketingMain(){
         '<div style="font-size:14px;font-weight:700;color:#1a2a3a">Авито → Telegram → Нейропродавец</div>'+
         '<div style="font-size:11px;color:#5a7a9a;margin-top:2px">Автоматизированная обработка входящих лидов</div>'+
       '</div>'+
-      '<span style="font-size:10px;font-weight:700;color:#f39c12;background:#fff9e6;border-radius:6px;padding:2px 8px;border:1px solid #f39c1244">В разработке</span>'+
+      '<span style="font-size:10px;font-weight:700;color:#27ae60;background:#eafaf0;border-radius:6px;padding:2px 8px;border:1px solid #27ae6044">🟢 Активно</span>'+
     '</div>'+
     // Flow
     '<div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;flex-wrap:wrap">'+
@@ -6585,11 +6586,33 @@ function tMarketingMain(){
     '<button data-a="mkt-instruction" style="width:100%;padding:9px;background:#fff;border:1px solid #005bff44;border-radius:9px;cursor:pointer;font-size:12px;color:#005bff;font-weight:700">📋 Инструкция нейропродавца →</button>'+
   '</div>';
 
-  // Placeholder sections
-  html+='<div style="background:#fff;border-radius:14px;border:2px dashed #dde6f0;padding:24px;text-align:center">'+
-    '<div style="font-size:36px;margin-bottom:8px">📣</div>'+
-    '<div style="font-size:14px;font-weight:700;color:#1a2a3a;margin-bottom:6px">Рекламные кампании</div>'+
-    '<div style="font-size:12px;color:#7a9aaa">Авито, ВКонтакте, Яндекс.Директ — аналитика и управление</div>'+
+  // Диалоги нейропродавца
+  html+='<div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;padding:14px;margin-bottom:12px">'+
+    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">'+
+      '<div style="font-size:13px;font-weight:700;color:#1a2a3a;flex:1">💬 Диалоги с клиентами</div>'+
+      '<button data-a="mkt-load-chats" style="padding:5px 12px;background:#005bff;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">⟳ Обновить</button>'+
+    '</div>'+
+    (mktChats===null
+      ? '<div style="font-size:12px;color:#9aabbf;text-align:center;padding:12px">Нажмите «Обновить», чтобы загрузить диалоги</div>'
+      : (Object.keys(mktChats).length===0
+        ? '<div style="font-size:12px;color:#9aabbf;text-align:center;padding:12px">Диалогов пока нет</div>'
+        : Object.keys(mktChats).sort(function(a,b){return (mktChats[b].updatedAt||0)-(mktChats[a].updatedAt||0);}).map(function(k){
+            var c=mktChats[k]||{}; var msgs=c.messages||[]; var last=msgs[msgs.length-1]||{};
+            return '<div style="border:1px solid #eef2f7;border-radius:10px;padding:10px;margin-bottom:6px">'+
+              '<div style="display:flex;align-items:center;gap:6px"><span style="font-size:13px;font-weight:700;color:#0d1b2e;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.name||k)+'</span>'+
+                (c.source==="avito"?'<span style="font-size:9px;font-weight:700;color:#fff;background:#005bff;border-radius:5px;padding:1px 6px">Avito</span>':'')+
+                '<span style="font-size:9px;color:#9aabbf">'+msgs.length+' сообщ.</span></div>'+
+              '<div style="font-size:11px;color:#5a7a9a;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(last.role==="assistant"?"🤖 ":"👤 ")+esc((last.text||"").slice(0,120))+'</div>'+
+            '</div>';
+          }).join("")))+
+  '</div>';
+
+  // Тест-симулятор входящего
+  html+='<div style="background:#fff;border-radius:14px;border:1px dashed #8e44ad55;padding:14px;margin-bottom:12px">'+
+    '<div style="font-size:12px;font-weight:700;color:#1a2a3a;margin-bottom:8px">🧪 Тест: сообщение «от клиента»</div>'+
+    '<input id="mkt-sim-text" placeholder="Напр.: Сколько стоит баня из контейнера?" style="width:100%;padding:9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;margin-bottom:6px">'+
+    '<button data-a="mkt-sim" style="width:100%;padding:9px;background:#8e44ad;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Отправить → черновик в Telegram</button>'+
+    '<div style="font-size:10px;color:#9aabbf;margin-top:6px">Создаст ветку в Telegram-группе с черновиком ответа ИИ. Реальные клиенты с Авито приходят сюда же автоматически.</div>'+
   '</div>';
 
   html+='</div>';
@@ -6606,7 +6629,8 @@ function tMarketingInstruction(){
   // Editable instruction
   html+='<div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;padding:14px;margin-bottom:12px">'+
     '<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">ТЕКСТ ИНСТРУКЦИИ</div>'+
-    '<textarea id="mkt-inst-text" style="width:100%;padding:10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;line-height:1.7;outline:none;box-sizing:border-box;height:380px;resize:vertical;background:#fafbfc;font-family:inherit">'+AI_INSTRUCTION.replace(/</g,"&lt;").replace(/>/g,"&gt;")+'</textarea>'+
+    '<textarea id="mkt-inst-text" style="width:100%;padding:10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;line-height:1.7;outline:none;box-sizing:border-box;height:380px;resize:vertical;background:#fafbfc;font-family:inherit">'+(settings.aiSellerPrompt||AI_INSTRUCTION).replace(/</g,"&lt;").replace(/>/g,"&gt;")+'</textarea>'+
+    '<div style="font-size:10px;color:#9aabbf;margin-top:6px;line-height:1.4">Это текст, по которому отвечает нейропродавец. Меняй роль, скрипт, оффер — сохрани, и ИИ сразу будет отвечать по-новому. Требование цен через одобрение добавляется автоматически.</div>'+
     '<button data-a="mkt-save-inst" style="width:100%;margin-top:8px;padding:9px;background:#27ae60;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">💾 Сохранить инструкцию</button>'+
   '</div>';
 
@@ -7403,7 +7427,7 @@ function tCRMInstruction(){
     '<button data-a="crm-back" style="padding:6px 14px;background:transparent;border:1px solid #d0dae8;border-radius:20px;cursor:pointer;font-size:12px;color:#7a9aaa">← CRM</button>'+
     '<div style="font-size:14px;font-weight:700;color:#0d1b2e;flex:1">📋 Инструкция нейропродавца</div>'+
   '</div>';
-  html+='<div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;padding:16px;white-space:pre-wrap;font-size:12px;line-height:1.7;color:#2a3a4a;font-family:inherit">'+AI_INSTRUCTION.replace(/</g,'&lt;').replace(/>/g,'&gt;')+'</div>';
+  html+='<div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;padding:16px;white-space:pre-wrap;font-size:12px;line-height:1.7;color:#2a3a4a;font-family:inherit">'+(settings.aiSellerPrompt||AI_INSTRUCTION).replace(/</g,'&lt;').replace(/>/g,'&gt;')+'</div>';
   html+='</div>';
   return html;
 }
@@ -8490,11 +8514,25 @@ function bind(){
     else if(a==="crm-instruction"){el.onclick=()=>{crmView="instruction";render();};}
     // ── МАРКЕТИНГ ──────────────────────────────────────────────
     else if(a==="mkt-instruction"){el.onclick=()=>{window._mktInstView=true;render();};}
+    else if(a==="mkt-load-chats"){el.onclick=async()=>{
+      el.textContent="⏳";
+      try{ const r=await fetch(API_BASE+"/api/ai/chats",{headers:authHeaders()}); const j=await r.json(); mktChats=(j&&j.success)?(j.chats||{}):{}; }catch(e){ mktChats={}; }
+      render();
+    };}
+    else if(a==="mkt-sim"){el.onclick=async()=>{
+      const inp=document.getElementById("mkt-sim-text"); const t=(inp&&inp.value||"").trim();
+      if(!t){ if(inp)inp.focus(); return; }
+      el.textContent="⏳ Отправка…";
+      try{ await fetch(API_BASE+"/api/ai/incoming",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({clientName:"Тест из портала",clientKey:"manual:portal-test",text:t,source:"manual"})}); }catch(e){}
+      try{ const r=await fetch(API_BASE+"/api/ai/chats",{headers:authHeaders()}); const j=await r.json(); mktChats=(j&&j.success)?(j.chats||{}):{}; }catch(e){}
+      render();
+    };}
     else if(a==="mkt-back"){el.onclick=()=>{window._mktInstView=false;render();};}
     else if(a==="mkt-save-inst"){el.onclick=()=>{
       const v=(document.getElementById("mkt-inst-text")||{}).value;
-      if(v!==undefined)AI_INSTRUCTION=v;
+      if(v!==undefined){ AI_INSTRUCTION=v; settings=Object.assign({},settings,{aiSellerPrompt:v}); }
       fl();
+      try{ const t=document.createElement("div"); t.textContent="💾 Инструкция сохранена — нейропродавец отвечает по ней"; t.style.cssText="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#27ae60;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:600;z-index:9999"; document.body.appendChild(t); setTimeout(function(){try{document.body.removeChild(t);}catch(e){}},2500); }catch(e){}
     };}
     // ── TAB DRAG (admin) ──────────────────────────────────────────
     else if(a==="tab-drag"){
