@@ -512,7 +512,45 @@ async function avitoWebhook(env, request) {
   return json({ ok: true });
 }
 
+// «Дожим»: раз в сутки (cron) напоминаем молчащим Avito-клиентам.
+async function aiNudge(env) {
+  if (!env.TG_SALES_BOT_TOKEN || !env.TG_SALES_CHAT_ID) return;
+  const chats = await aiLoadChats(env);
+  const now = Date.now(), DAY = 86400000, SILENCE = 2 * DAY, SPACING = 2 * DAY, MAX = 2;
+  let changed = false, autoOn = false;
+  try { autoOn = await aiAutoSendEnabled(env); } catch (e) {}
+  for (const k in chats) {
+    const c = chats[k]; if (!c || !c.avitoChatId) continue;
+    const msgs = c.messages || []; const last = msgs[msgs.length - 1];
+    if (!last || last.role !== "assistant") continue;          // ждём ответа клиента
+    if ((now - (c.updatedAt || 0)) < SILENCE) continue;        // ещё рано
+    if ((c.nudgeCount || 0) >= MAX) continue;                  // лимит напоминаний
+    if (c.lastNudge && (now - c.lastNudge) < SPACING) continue;
+    const silentDays = Math.max(1, Math.round((now - (c.updatedAt || now)) / DAY));
+    const history = msgs.filter(function (m) { return m.role === "user" || m.role === "assistant"; }).slice(-8)
+      .map(function (m) { return { role: m.role === "assistant" ? "assistant" : "user", content: m.text }; });
+    history.push({ role: "user", content: "[Система] Клиент молчит " + silentDays + " дн. Напиши короткое вежливое напоминание-дожим: верни клиента в диалог, мягко подведи к следующему шагу (звонок/замер). Без навязчивости, 1-2 предложения." });
+    let ai; try { ai = await aiSellerReply(env, history); } catch (e) { continue; }
+    c.nudgeCount = (c.nudgeCount || 0) + 1; c.lastNudge = now; c.updatedAt = now;
+    const idx = c.messages.length; let autoOk = false;
+    if (!ai.needsApproval && autoOn) { try { const sr = await avitoSend(env, c.avitoChatId, ai.reply); autoOk = !!(sr && sr.id); } catch (e) {} }
+    if (autoOk) {
+      c.messages.push({ role: "assistant", text: ai.reply, status: "sent", auto: true, nudge: true, ts: now });
+      await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "⏰🟢 Авто-дожим отправлен (молчал " + silentDays + " дн.):\n\n" + ai.reply });
+    } else {
+      c.messages.push({ role: "assistant", text: ai.reply, status: "draft", nudge: true, needsApproval: ai.needsApproval, ts: now });
+      const sent = await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "⏰ Клиент молчит " + silentDays + " дн. — напоминание (черновик):\n\n" + ai.reply, reply_markup: { inline_keyboard: [[{ text: "✅ Отправить", callback_data: "send:" + idx }, { text: "✏️ Изменить", callback_data: "edit:" + idx }]] } });
+      if (sent && sent.ok && sent.result) c.messages[idx].tgMsgId = sent.result.message_id;
+    }
+    changed = true;
+  }
+  if (changed) await aiSaveChats(env, chats);
+}
+
 export default {
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(aiNudge(env));
+  },
   async fetch(request, env) {
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS_HEADERS });

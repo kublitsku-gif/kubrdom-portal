@@ -6537,6 +6537,7 @@ function tTeam(){
 
 
 let mktChats=null;   // загруженные диалоги нейропродавца (null = ещё не грузили)
+let mktOpenChat=null; // ключ открытого диалога (раскрытие переписки во вкладке)
 function tMarketing(){
   const instView=window._mktInstView||false;
   if(instView) return tMarketingInstruction();
@@ -6591,26 +6592,49 @@ function tMarketingMain(){
     '<button data-a="mkt-instruction" style="width:100%;padding:9px;background:#fff;border:1px solid #005bff44;border-radius:9px;cursor:pointer;font-size:12px;color:#005bff;font-weight:700">📋 Инструкция нейропродавца →</button>'+
   '</div>';
 
-  // Диалоги нейропродавца
-  html+='<div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;padding:14px;margin-bottom:12px">'+
-    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">'+
-      '<div style="font-size:13px;font-weight:700;color:#1a2a3a;flex:1">💬 Диалоги с клиентами</div>'+
-      '<button data-a="mkt-load-chats" style="padding:5px 12px;background:#005bff;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">⟳ Обновить</button>'+
-    '</div>'+
-    (mktChats===null
-      ? '<div style="font-size:12px;color:#9aabbf;text-align:center;padding:12px">Нажмите «Обновить», чтобы загрузить диалоги</div>'
-      : (Object.keys(mktChats).length===0
-        ? '<div style="font-size:12px;color:#9aabbf;text-align:center;padding:12px">Диалогов пока нет</div>'
-        : Object.keys(mktChats).sort(function(a,b){return (mktChats[b].updatedAt||0)-(mktChats[a].updatedAt||0);}).map(function(k){
-            var c=mktChats[k]||{}; var msgs=c.messages||[]; var last=msgs[msgs.length-1]||{};
-            return '<div style="border:1px solid #eef2f7;border-radius:10px;padding:10px;margin-bottom:6px">'+
-              '<div style="display:flex;align-items:center;gap:6px"><span style="font-size:13px;font-weight:700;color:#0d1b2e;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.name||k)+'</span>'+
-                (c.source==="avito"?'<span style="font-size:9px;font-weight:700;color:#fff;background:#005bff;border-radius:5px;padding:1px 6px">Avito</span>':'')+
-                '<span style="font-size:9px;color:#9aabbf">'+msgs.length+' сообщ.</span></div>'+
-              '<div style="font-size:11px;color:#5a7a9a;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(last.role==="assistant"?"🤖 ":"👤 ")+esc((last.text||"").slice(0,120))+'</div>'+
-            '</div>';
-          }).join("")))+
-  '</div>';
+  // Диалоги нейропродавца — список или раскрытый диалог
+  if(mktOpenChat && mktChats && mktChats[mktOpenChat]){
+    var oc=mktChats[mktOpenChat]; var omsgs=oc.messages||[];
+    function msgRow(m){
+      var mine=m.role==="assistant";
+      var who = !mine ? "👤 Клиент" : (m.auto?"🟢 Авто-ИИ":(m.manual?"🙋 Вы":"🤖 ИИ"));
+      var st = m.status==="draft"?" · черновик":(m.status==="sent"?" · отправлено":"");
+      var bg = mine?"#eef6f4":"#f4f7fb"; var al=mine?"margin-left:24px":"margin-right:24px";
+      return '<div style="background:'+bg+';border-radius:10px;padding:8px 10px;margin-bottom:6px;'+al+'">'+
+        '<div style="font-size:9px;color:#7a9aaa;font-weight:700;margin-bottom:3px">'+who+st+'</div>'+
+        '<div style="font-size:12px;color:#1a2a3a;line-height:1.45;white-space:pre-wrap">'+esc(m.text||"")+'</div>'+
+      '</div>';
+    }
+    html+='<div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;padding:14px;margin-bottom:12px">'+
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">'+
+        '<button data-a="mkt-close-chat" style="padding:5px 12px;background:transparent;border:1px solid #d0dae8;border-radius:18px;cursor:pointer;font-size:12px;color:#7a9aaa">← Диалоги</button>'+
+        '<span style="font-size:13px;font-weight:700;color:#0d1b2e;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(oc.name||mktOpenChat)+'</span>'+
+        (oc.source==="avito"?'<span style="font-size:9px;font-weight:700;color:#fff;background:#005bff;border-radius:5px;padding:1px 6px">Avito</span>':'')+
+      '</div>'+
+      (omsgs.length?omsgs.map(msgRow).join(""):'<div style="font-size:12px;color:#9aabbf;text-align:center;padding:10px">Пусто</div>')+
+      '<div style="font-size:10px;color:#9aabbf;margin-top:8px">Отвечать клиенту удобнее из Telegram-ветки (кнопки/текст). Здесь — просмотр и история.</div>'+
+    '</div>';
+  } else {
+    html+='<div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;padding:14px;margin-bottom:12px">'+
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">'+
+        '<div style="font-size:13px;font-weight:700;color:#1a2a3a;flex:1">💬 Диалоги с клиентами</div>'+
+        '<button data-a="mkt-load-chats" style="padding:5px 12px;background:#005bff;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">⟳ Обновить</button>'+
+      '</div>'+
+      (mktChats===null
+        ? '<div style="font-size:12px;color:#9aabbf;text-align:center;padding:12px">Нажмите «Обновить», чтобы загрузить диалоги</div>'
+        : (Object.keys(mktChats).length===0
+          ? '<div style="font-size:12px;color:#9aabbf;text-align:center;padding:12px">Диалогов пока нет</div>'
+          : Object.keys(mktChats).sort(function(a,b){return (mktChats[b].updatedAt||0)-(mktChats[a].updatedAt||0);}).map(function(k){
+              var c=mktChats[k]||{}; var msgs=c.messages||[]; var last=msgs[msgs.length-1]||{};
+              return '<div data-a="mkt-open-chat" data-k="'+esc(k)+'" style="border:1px solid #eef2f7;border-radius:10px;padding:10px;margin-bottom:6px;cursor:pointer">'+
+                '<div style="display:flex;align-items:center;gap:6px"><span style="font-size:13px;font-weight:700;color:#0d1b2e;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.name||k)+'</span>'+
+                  (c.source==="avito"?'<span style="font-size:9px;font-weight:700;color:#fff;background:#005bff;border-radius:5px;padding:1px 6px">Avito</span>':'')+
+                  '<span style="font-size:9px;color:#9aabbf">'+msgs.length+' сообщ. ›</span></div>'+
+                '<div style="font-size:11px;color:#5a7a9a;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(last.role==="assistant"?"🤖 ":"👤 ")+esc((last.text||"").slice(0,120))+'</div>'+
+              '</div>';
+            }).join("")))+
+    '</div>';
+  }
 
   // Тест-симулятор входящего
   html+='<div style="background:#fff;border-radius:14px;border:1px dashed #8e44ad55;padding:14px;margin-bottom:12px">'+
@@ -8520,6 +8544,8 @@ function bind(){
     // ── МАРКЕТИНГ ──────────────────────────────────────────────
     else if(a==="mkt-instruction"){el.onclick=()=>{window._mktInstView=true;render();};}
     else if(a==="mkt-toggle-auto"){el.onclick=()=>{ settings=Object.assign({},settings,{aiAutoSend:!settings.aiAutoSend}); fl(); };}
+    else if(a==="mkt-open-chat"){el.onclick=()=>{ mktOpenChat=el.dataset.k; render(); };}
+    else if(a==="mkt-close-chat"){el.onclick=()=>{ mktOpenChat=null; render(); };}
     else if(a==="mkt-load-chats"){el.onclick=async()=>{
       el.textContent="⏳";
       try{ const r=await fetch(API_BASE+"/api/ai/chats",{headers:authHeaders()}); const j=await r.json(); mktChats=(j&&j.success)?(j.chats||{}):{}; }catch(e){ mktChats={}; }

@@ -15,6 +15,10 @@ bucket_name = "kubrdom-files"
 
 # Telegram: chat_id супергруппы (не секрет). Токен бота — в секрете TG_BOT_TOKEN.
 # Avito: id аккаунта «Светлица» (не секрет). Ключи — в секретах AVITO_CLIENT_ID/SECRET.
+# Cron: «дожим» молчащих клиентов нейропродавца — раз в сутки 06:00 UTC (~09:00 МСК).
+[triggers]
+crons = ["0 6 * * *"]
+
 [vars]
 TG_CHAT_ID = "-1003606281018"
 AVITO_USER_ID = "401020763"
