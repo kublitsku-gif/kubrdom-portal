@@ -29,4 +29,5 @@ AI_BASE_URL = "https://api.deepseek.com"
 AI_MODEL = "deepseek-chat"
 # Kimi (Moonshot), OpenAI-совместимый. Ключ — секрет KIMI_API_KEY. Переключатель провайдера — settings.aiProvider.
 KIMI_BASE_URL = "https://api.moonshot.ai/v1"
-KIMI_MODEL = "kimi-k2-0905-preview"
+# moonshot-v1-32k — не-reasoning, работает с нашим temp/JSON (k2.6/k2.5 — reasoning, ответ пустой при нашем лимите токенов).
+KIMI_MODEL = "moonshot-v1-32k"
