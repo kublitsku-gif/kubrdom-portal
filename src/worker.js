@@ -508,14 +508,14 @@ export default {
     // Вебхук sales-бота (Telegram) — ДО авторизации (Telegram не шлёт X-Admin-Token).
     // Защита: секрет-токен в заголовке (ставим его при setWebhook = ADMIN_TOKEN).
     if (url.pathname === "/api/ai/webhook" && request.method === "POST") {
-      if (request.headers.get("X-Telegram-Bot-Api-Secret-Token") !== env.ADMIN_TOKEN) return unauthorized();
+      if (request.headers.get("X-Telegram-Bot-Api-Secret-Token") !== env.WEBHOOK_SECRET) return unauthorized();
       try { return await aiWebhook(env, request); }
       catch (err) { return json({ ok: false, error: String(err) }, 200); }   // 200 — чтобы Telegram не ретраил вечно
     }
 
     // Вебхук Avito (входящие сообщения клиентов) — ДО авторизации. Защита: ?s=<ADMIN_TOKEN> в URL подписки.
     if (url.pathname === "/api/avito/webhook" && request.method === "POST") {
-      if (url.searchParams.get("s") !== env.ADMIN_TOKEN) return unauthorized();
+      if (url.searchParams.get("s") !== env.WEBHOOK_SECRET) return unauthorized();
       try { return await avitoWebhook(env, request); }
       catch (err) { return json({ ok: false, error: String(err) }, 200); }
     }
