@@ -287,13 +287,14 @@ async function avitoChats(env) {
 // Один и тот же код для DeepSeek/GigaChat/OpenAI/Qwen — отличается base_url+key+model.
 // Какой провайдер выбран в портале (settings.aiProvider): "deepseek" (по умолчанию) | "kimi" | "claude".
 async function aiProvider(env) {
-  try { const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind("admin_panel", "settings").first(); if (row && row.data) { const s = JSON.parse(row.data); if (s && (s.aiProvider === "kimi" || s.aiProvider === "claude")) return s.aiProvider; } } catch (e) {}
+  try { const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind("admin_panel", "settings").first(); if (row && row.data) { const s = JSON.parse(row.data); if (s && (s.aiProvider === "kimi" || s.aiProvider === "claude" || s.aiProvider === "gpt")) return s.aiProvider; } } catch (e) {}
   return "deepseek";
 }
 // Доступы провайдера. kind:"anthropic" — нативный Messages API; иначе OpenAI-совместимый.
 function aiResolve(env, provider) {
   if (provider === "kimi") return { key: env.KIMI_API_KEY, base: env.KIMI_BASE_URL || "https://api.moonshot.ai/v1", model: env.KIMI_MODEL || "moonshot-v1-32k", name: "Kimi" };
   if (provider === "claude") return { key: env.CLAUDE_API_KEY, base: "https://api.anthropic.com", model: env.CLAUDE_MODEL || "claude-sonnet-4-6", name: "Claude", kind: "anthropic" };
+  if (provider === "gpt") return { key: env.OPENAI_API_KEY, base: env.OPENAI_BASE_URL || "https://api.openai.com/v1", model: env.OPENAI_MODEL || "gpt-4o-mini", name: "GPT" };
   return { key: env.AI_API_KEY, base: env.AI_BASE_URL || "https://api.deepseek.com", model: env.AI_MODEL || "deepseek-chat", name: "DeepSeek" };
 }
 async function aiChat(env, messages, opts) {
