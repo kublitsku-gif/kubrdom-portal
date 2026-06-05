@@ -334,7 +334,9 @@ async function aiSellerReply(env, history) {
   ].concat(history);
   const out = await aiChat(env, messages, { max_tokens: 500, response_format: { type: "json_object" } });
   let p; try { p = JSON.parse(out.text); } catch (e) { p = { reply: out.text, needsApproval: true, reason: "json parse fail" }; }
-  return { reply: p.reply || out.text, needsApproval: p.needsApproval !== false, reason: p.reason || "", usage: out.usage };
+  let reply = (p.reply || out.text || "").trim();
+  if (!reply) reply = "Здравствуйте! Уточните, пожалуйста, детали — подскажу по размерам, комплектации и расчёту.";
+  return { reply: reply, needsApproval: p.needsApproval !== false, reason: p.reason || "", usage: out.usage };
 }
 
 // ── Telegram sales-бот (отдельный от видео-бота) ──
