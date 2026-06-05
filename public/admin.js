@@ -6583,6 +6583,11 @@ function tMarketingMain(){
         '<div style="font-size:9px;color:rgba(255,255,255,0.7)">Лид в воронке</div>'+
       '</div>'+
     '</div>'+
+    '<div data-a="mkt-toggle-auto" style="display:flex;align-items:center;gap:10px;padding:9px 11px;background:#fff;border:1px solid '+(settings.aiAutoSend?"#27ae6066":"#dde6f0")+';border-radius:9px;cursor:pointer;margin-bottom:8px">'+
+      '<div style="flex:1"><div style="font-size:12px;font-weight:700;color:#1a2a3a">Авто-режим '+(settings.aiAutoSend?"🟢 ВКЛ":"⚪ выкл")+'</div>'+
+        '<div style="font-size:10px;color:#7a9aaa;margin-top:2px">🟢 простые ответы уходят клиенту сами · 🟠 цены/сделки — всегда через тебя</div></div>'+
+      '<div style="width:40px;height:23px;border-radius:12px;background:'+(settings.aiAutoSend?"#27ae60":"#cdd6e0")+';position:relative;flex-shrink:0"><div style="width:19px;height:19px;border-radius:50%;background:#fff;position:absolute;top:2px;left:'+(settings.aiAutoSend?"19px":"2px")+'"></div></div>'+
+    '</div>'+
     '<button data-a="mkt-instruction" style="width:100%;padding:9px;background:#fff;border:1px solid #005bff44;border-radius:9px;cursor:pointer;font-size:12px;color:#005bff;font-weight:700">📋 Инструкция нейропродавца →</button>'+
   '</div>';
 
@@ -8514,6 +8519,7 @@ function bind(){
     else if(a==="crm-instruction"){el.onclick=()=>{crmView="instruction";render();};}
     // ── МАРКЕТИНГ ──────────────────────────────────────────────
     else if(a==="mkt-instruction"){el.onclick=()=>{window._mktInstView=true;render();};}
+    else if(a==="mkt-toggle-auto"){el.onclick=()=>{ settings=Object.assign({},settings,{aiAutoSend:!settings.aiAutoSend}); fl(); };}
     else if(a==="mkt-load-chats"){el.onclick=async()=>{
       el.textContent="⏳";
       try{ const r=await fetch(API_BASE+"/api/ai/chats",{headers:authHeaders()}); const j=await r.json(); mktChats=(j&&j.success)?(j.chats||{}):{}; }catch(e){ mktChats={}; }

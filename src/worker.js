@@ -316,6 +316,14 @@ async function aiSellerPrompt(env) {
   } catch (e) {}
   return SELLER_SYSTEM + "\n\n" + SELLER_FACTS;
 }
+// Авто-режим включён? (settings.aiAutoSend) — простые 🟢-ответы уходят клиенту без кнопки.
+async function aiAutoSendEnabled(env) {
+  try {
+    const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind("admin_panel", "settings").first();
+    if (row && row.data) { const s = JSON.parse(row.data); return !!(s && s.aiAutoSend); }
+  } catch (e) {}
+  return false;
+}
 // Структурная часть (НЕ редактируется пользователем — иначе сломается гибрид-логика).
 const JSON_INSTRUCTION = "\n\nВажно: верни СТРОГО JSON {\"reply\":\"текст ответа клиенту\",\"needsApproval\":true|false,\"reason\":\"кратко\"}. needsApproval=true, если ответ касается конкретной цены, скидки, сроков, договора, предоплаты или обязательств; иначе false.";
 // Нейроответ продавца с гибрид-классификацией (нужно ли одобрение).
@@ -385,14 +393,24 @@ async function aiProcessIncoming(env, opt) {
     return { success: false, error: String(e) };
   }
   const idx = c.messages.length;
-  c.messages.push({ role: "assistant", text: ai.reply, status: "draft", needsApproval: ai.needsApproval, ts: Date.now() });
-  const tag = ai.needsApproval ? "🟠 нужно одобрение" : "🟢 можно авто";
-  const sent = await salesTg(env, "sendMessage", {
-    chat_id: env.TG_SALES_CHAT_ID, message_thread_id: c.topicId,
-    text: "🤖 Черновик (" + tag + "):\n\n" + ai.reply + (ai.reason ? ("\n\n— " + ai.reason) : ""),
-    reply_markup: { inline_keyboard: [[{ text: "✅ Отправить", callback_data: "send:" + idx }, { text: "✏️ Изменить", callback_data: "edit:" + idx }]] }
-  });
-  if (sent && sent.ok && sent.result) c.messages[idx].tgMsgId = sent.result.message_id;
+  // Авто-режим: простой ответ (🟢) + реальный Avito-чат → отправляем клиенту сразу.
+  let autoOk = false;
+  if (!ai.needsApproval && c.avitoChatId && await aiAutoSendEnabled(env)) {
+    try { const sr = await avitoSend(env, c.avitoChatId, ai.reply); autoOk = !!(sr && sr.id); } catch (e) {}
+  }
+  if (autoOk) {
+    c.messages.push({ role: "assistant", text: ai.reply, status: "sent", auto: true, needsApproval: false, ts: Date.now() });
+    await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "🟢 Автоответ отправлен клиенту:\n\n" + ai.reply + (ai.reason ? ("\n\n— " + ai.reason) : "") });
+  } else {
+    c.messages.push({ role: "assistant", text: ai.reply, status: "draft", needsApproval: ai.needsApproval, ts: Date.now() });
+    const tag = ai.needsApproval ? "🟠 нужно одобрение" : "🟢 можно авто";
+    const sent = await salesTg(env, "sendMessage", {
+      chat_id: env.TG_SALES_CHAT_ID, message_thread_id: c.topicId,
+      text: "🤖 Черновик (" + tag + "):\n\n" + ai.reply + (ai.reason ? ("\n\n— " + ai.reason) : ""),
+      reply_markup: { inline_keyboard: [[{ text: "✅ Отправить", callback_data: "send:" + idx }, { text: "✏️ Изменить", callback_data: "edit:" + idx }]] }
+    });
+    if (sent && sent.ok && sent.result) c.messages[idx].tgMsgId = sent.result.message_id;
+  }
   c.updatedAt = Date.now();
   await aiSaveChats(env, chats);
   return { success: true, topicId: c.topicId, reply: ai.reply, needsApproval: ai.needsApproval };
