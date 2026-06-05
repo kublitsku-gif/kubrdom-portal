@@ -283,6 +283,39 @@ async function avitoChats(env) {
   return json({ success: true, count: chats.length, chats });
 }
 
+// ─── AI (нейропродавец, OpenAI-совместимый коннектор) ───────────────
+// Один и тот же код для DeepSeek/GigaChat/OpenAI/Qwen — отличается base_url+key+model.
+async function aiChat(env, messages, opts) {
+  opts = opts || {};
+  if (!env.AI_API_KEY) throw new Error("AI ключ не настроен");
+  const base = (env.AI_BASE_URL || "https://api.deepseek.com").replace(/\/+$/, "");
+  const r = await fetch(base + "/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + env.AI_API_KEY },
+    body: JSON.stringify({
+      model: opts.model || env.AI_MODEL || "deepseek-chat",
+      messages: messages,
+      temperature: opts.temperature != null ? opts.temperature : 0.4,
+      max_tokens: opts.max_tokens || 600
+    })
+  });
+  const j = await r.json();
+  if (!r.ok || !j.choices) throw new Error("AI: " + JSON.stringify(j.error || j).slice(0, 200));
+  return { text: ((j.choices[0].message && j.choices[0].message.content) || "").trim(), usage: j.usage || null };
+}
+// Системная роль нейропродавца КубрДом.
+const SELLER_SYSTEM = "Ты — вежливый и толковый менеджер по продажам компании «КубрДом»: строим бани и дома из морских контейнеров под ключ. Отвечай кратко, по-русски, дружелюбно и по делу, веди клиента к замеру/расчёту. Не выдумывай цены и сроки — если не уверен, предложи уточнить у специалиста.";
+// POST /api/ai/test {q} — проверка мозга. Требует токен.
+async function aiTest(env, request) {
+  let body = {}; try { body = await request.json(); } catch (_) {}
+  const q = (body.q || "Здравствуйте, сколько стоит баня?").toString().slice(0, 500);
+  const out = await aiChat(env, [
+    { role: "system", content: SELLER_SYSTEM },
+    { role: "user", content: q }
+  ], { max_tokens: 250 });
+  return json({ success: true, reply: out.text, usage: out.usage });
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === "OPTIONS") {
@@ -320,6 +353,12 @@ export default {
     // Загрузка видео в Telegram-тему объекта (с токеном).
     if (url.pathname === "/api/video" && request.method === "POST") {
       try { return await postVideo(env, request, url); }
+      catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+
+    // AI: проверка мозга нейропродавца (с токеном).
+    if (url.pathname === "/api/ai/test" && request.method === "POST") {
+      try { return await aiTest(env, request); }
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
 

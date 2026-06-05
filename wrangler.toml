@@ -18,3 +18,8 @@ bucket_name = "kubrdom-files"
 [vars]
 TG_CHAT_ID = "-1003606281018"
 AVITO_USER_ID = "401020763"
+# Telegram-бот клиентских диалогов (Avito) + группа с темами. Токен — секрет TG_SALES_BOT_TOKEN.
+TG_SALES_CHAT_ID = "-1004235156261"
+# AI-провайдер (OpenAI-совместимый). Ключ — секрет AI_API_KEY. Сменить провайдера = поменять эти 2 + секрет.
+AI_BASE_URL = "https://api.deepseek.com"
+AI_MODEL = "deepseek-chat"
