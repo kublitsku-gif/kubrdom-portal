@@ -285,20 +285,36 @@ async function avitoChats(env) {
 
 // ─── AI (нейропродавец, OpenAI-совместимый коннектор) ───────────────
 // Один и тот же код для DeepSeek/GigaChat/OpenAI/Qwen — отличается base_url+key+model.
-// Какой провайдер выбран в портале (settings.aiProvider): "deepseek" (по умолчанию) | "kimi".
+// Какой провайдер выбран в портале (settings.aiProvider): "deepseek" (по умолчанию) | "kimi" | "claude".
 async function aiProvider(env) {
-  try { const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind("admin_panel", "settings").first(); if (row && row.data) { const s = JSON.parse(row.data); if (s && s.aiProvider === "kimi") return "kimi"; } } catch (e) {}
+  try { const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind("admin_panel", "settings").first(); if (row && row.data) { const s = JSON.parse(row.data); if (s && (s.aiProvider === "kimi" || s.aiProvider === "claude")) return s.aiProvider; } } catch (e) {}
   return "deepseek";
 }
-// Доступы провайдера (OpenAI-совместимые): ключ + base_url + модель.
+// Доступы провайдера. kind:"anthropic" — нативный Messages API; иначе OpenAI-совместимый.
 function aiResolve(env, provider) {
-  if (provider === "kimi") return { key: env.KIMI_API_KEY, base: env.KIMI_BASE_URL || "https://api.moonshot.ai/v1", model: env.KIMI_MODEL || "kimi-k2-0905-preview", name: "Kimi" };
+  if (provider === "kimi") return { key: env.KIMI_API_KEY, base: env.KIMI_BASE_URL || "https://api.moonshot.ai/v1", model: env.KIMI_MODEL || "moonshot-v1-32k", name: "Kimi" };
+  if (provider === "claude") return { key: env.CLAUDE_API_KEY, base: "https://api.anthropic.com", model: env.CLAUDE_MODEL || "claude-sonnet-4-6", name: "Claude", kind: "anthropic" };
   return { key: env.AI_API_KEY, base: env.AI_BASE_URL || "https://api.deepseek.com", model: env.AI_MODEL || "deepseek-chat", name: "DeepSeek" };
 }
 async function aiChat(env, messages, opts) {
   opts = opts || {};
   const pr = aiResolve(env, opts.provider);
   if (!pr.key) throw new Error(pr.name + ": ключ не настроен");
+  // Anthropic (Claude): свой формат — system отдельным полем, x-api-key, без response_format.
+  if (pr.kind === "anthropic") {
+    let sys = "", msgs = [];
+    messages.forEach(function (m) { if (m.role === "system") sys += (sys ? "\n\n" : "") + m.content; else msgs.push({ role: m.role, content: m.content }); });
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": pr.key, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model: opts.model || pr.model, max_tokens: opts.max_tokens || 700, temperature: opts.temperature != null ? opts.temperature : 0.4, system: sys, messages: msgs })
+    });
+    const j = await r.json();
+    if (!r.ok || !j.content) throw new Error(pr.name + ": " + JSON.stringify(j.error || j).slice(0, 200));
+    const text = (j.content || []).filter(function (b) { return b.type === "text"; }).map(function (b) { return b.text; }).join("").trim();
+    return { text: text, usage: j.usage || null };
+  }
+  // OpenAI-совместимые (DeepSeek/Kimi)
   const base = pr.base.replace(/\/+$/, "");
   const r = await fetch(base + "/chat/completions", {
     method: "POST",
@@ -353,7 +369,10 @@ async function aiSellerReply(env, history, sel) {
     { role: "system", content: sys + JSON_INSTRUCTION }
   ].concat(history);
   const out = await aiChat(env, messages, { max_tokens: 500, response_format: { type: "json_object" }, provider: provider });
-  let p; try { p = JSON.parse(out.text); } catch (e) { p = { reply: out.text, needsApproval: true, reason: "json parse fail" }; }
+  let p = null;
+  try { p = JSON.parse(out.text); }
+  catch (e) { try { const mm = out.text.match(/\{[\s\S]*\}/); if (mm) p = JSON.parse(mm[0]); } catch (_) {} }
+  if (!p) p = { reply: out.text, needsApproval: true, reason: "json parse fail" };
   let reply = (p.reply || out.text || "").trim();
   if (!reply) reply = "Здравствуйте! Уточните, пожалуйста, детали — подскажу по размерам, комплектации и расчёту.";
   return { reply: reply, needsApproval: p.needsApproval !== false, reason: p.reason || "", usage: out.usage };

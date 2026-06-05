@@ -52,6 +52,7 @@ jobs:
             AVITO_CLIENT_SECRET
             AI_API_KEY
             KIMI_API_KEY
+            CLAUDE_API_KEY
             TG_SALES_BOT_TOKEN
             WEBHOOK_SECRET
         env:
@@ -60,5 +61,6 @@ jobs:
           AVITO_CLIENT_SECRET: ${{ secrets.AVITO_CLIENT_SECRET }}
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+          CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
           TG_SALES_BOT_TOKEN: ${{ secrets.TG_SALES_BOT_TOKEN }}
           WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
