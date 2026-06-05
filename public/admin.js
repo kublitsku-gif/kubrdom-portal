@@ -6541,6 +6541,9 @@ let mktChats=null;   // загруженные диалоги нейропрод
 let mktOpenChat=null; // ключ открытого диалога (раскрытие переписки во вкладке)
 let mktTest=[];       // тест-диалог-песочница: [{role:"user"|"assistant", text, needsApproval}]
 let mktTestBusy=false;
+let mktTestKind="banya"; // какую инструкцию тестировать (баня/дом)
+let mktListings=null; // объявления Avito (для привязки инструкций)
+let mktListingsLoading=false;
 function tMarketing(){
   const instView=window._mktInstView||false;
   if(instView) return tMarketingInstruction();
@@ -6595,6 +6598,27 @@ function tMarketingMain(){
     '<button data-a="mkt-instruction" style="width:100%;padding:9px;background:#fff;border:1px solid #005bff44;border-radius:9px;cursor:pointer;font-size:12px;color:#005bff;font-weight:700">📋 Инструкция нейропродавца →</button>'+
   '</div>';
 
+  // Объявления Avito → какая инструкция (баня/дом)
+  html+='<div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;padding:14px;margin-bottom:12px">'+
+    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">'+
+      '<div style="font-size:13px;font-weight:700;color:#1a2a3a;flex:1">📋 Объявления → инструкция</div>'+
+      '<button data-a="mkt-load-listings" style="padding:5px 12px;background:#005bff;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">⟳ Загрузить</button>'+
+    '</div>'+
+    (mktListings===null
+      ? '<div style="font-size:12px;color:#9aabbf;text-align:center;padding:12px">Нажмите «Загрузить» — подтянем объявления с Avito и отметите, где баня, где дом.</div>'
+      : (mktListings.length===0
+        ? '<div style="font-size:12px;color:#9aabbf;text-align:center;padding:12px">Объявлений не найдено</div>'
+        : mktListings.map(function(L){
+            var kind=(settings.listingKind&&settings.listingKind[String(L.id)])||"";
+            function kbtn(k,lbl,col){var on=kind===k;return '<button data-a="mkt-set-listing-kind" data-id="'+L.id+'" data-kind="'+k+'" style="padding:5px 10px;border-radius:7px;cursor:pointer;font-size:10px;font-weight:700;border:1.5px solid '+(on?col:"#dde6f0")+';background:'+(on?col:"#fff")+';color:'+(on?"#fff":"#7a9aaa")+'">'+lbl+'</button>';}
+            return '<div style="border:1px solid #eef2f7;border-radius:10px;padding:9px 10px;margin-bottom:6px">'+
+              '<div style="font-size:12px;font-weight:600;color:#1a2a3a;margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(L.title||("#"+L.id))+(L.price?' · '+Number(L.price).toLocaleString("ru-RU")+' ₽':'')+'</div>'+
+              '<div style="display:flex;gap:5px">'+kbtn("banya","🛁 Баня","#8e44ad")+kbtn("house","🏠 Дом","#2980b9")+'</div>'+
+            '</div>';
+          }).join("")))+
+    '<div style="font-size:10px;color:#9aabbf;margin-top:4px">Не отмеченные объявления используют общую инструкцию. Нажми ещё раз, чтобы снять отметку.</div>'+
+  '</div>';
+
   // Диалоги нейропродавца — список или раскрытый диалог
   if(mktOpenChat && mktChats && mktChats[mktOpenChat]){
     var oc=mktChats[mktOpenChat]; var omsgs=oc.messages||[];
@@ -6645,6 +6669,10 @@ function tMarketingMain(){
       '<div style="font-size:12px;font-weight:700;color:#1a2a3a;flex:1">🧪 Тест-диалог · вы клиент, отвечает ИИ</div>'+
       (mktTest.length?'<button data-a="mkt-test-clear" style="padding:4px 10px;background:#f0f4f8;border:none;border-radius:7px;cursor:pointer;font-size:11px;color:#7a9aaa;font-weight:700">Очистить</button>':'')+
     '</div>'+
+    '<div style="display:flex;gap:6px;margin-bottom:8px">'+
+      '<button data-a="mkt-test-kind" data-kind="banya" style="flex:1;padding:6px;border-radius:7px;cursor:pointer;font-size:11px;font-weight:700;border:1.5px solid '+(mktTestKind==="banya"?"#8e44ad":"#dde6f0")+';background:'+(mktTestKind==="banya"?"#8e44ad":"#fff")+';color:'+(mktTestKind==="banya"?"#fff":"#7a9aaa")+'">🛁 инструкция бань</button>'+
+      '<button data-a="mkt-test-kind" data-kind="house" style="flex:1;padding:6px;border-radius:7px;cursor:pointer;font-size:11px;font-weight:700;border:1.5px solid '+(mktTestKind==="house"?"#2980b9":"#dde6f0")+';background:'+(mktTestKind==="house"?"#2980b9":"#fff")+';color:'+(mktTestKind==="house"?"#fff":"#7a9aaa")+'">🏠 инструкция домов</button>'+
+    '</div>'+
     (mktTest.length?'<div style="max-height:340px;overflow-y:auto;margin-bottom:8px;padding:2px">'+
       mktTest.map(function(m,i){
         var mine=m.role==="user";
@@ -6686,20 +6714,22 @@ function tMarketingMain(){
 }
 
 function tMarketingInstruction(){
+  var kind=window._mktInstKind||"banya";
+  var key=kind==="banya"?"aiSellerPromptBanya":"aiSellerPromptHouse";
+  var cur=(settings[key]||settings.aiSellerPrompt||AI_INSTRUCTION);
+  function kb(k,lbl){ var on=kind===k; return '<button data-a="mkt-inst-kind" data-kind="'+k+'" style="flex:1;padding:9px 6px;border-radius:9px;cursor:pointer;font-size:13px;font-weight:700;border:2px solid '+(on?"#8e44ad":"#dde6f0")+';background:'+(on?"#8e44ad":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+'">'+lbl+'</button>'; }
   let html='<div>';
   html+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">'+
     '<button data-a="mkt-back" style="padding:6px 14px;background:transparent;border:1px solid #d0dae8;border-radius:20px;cursor:pointer;font-size:12px;color:#7a9aaa">← Маркетинг</button>'+
-    '<div style="font-size:14px;font-weight:700;color:#0d1b2e;flex:1">📋 Инструкция нейропродавца</div>'+
+    '<div style="font-size:14px;font-weight:700;color:#0d1b2e;flex:1">📋 Инструкции нейропродавца</div>'+
   '</div>';
-
-  // Editable instruction
+  html+='<div style="display:flex;gap:8px;margin-bottom:10px">'+kb("banya","🛁 Баня")+kb("house","🏠 Дом")+'</div>';
   html+='<div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;padding:14px;margin-bottom:12px">'+
-    '<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">ТЕКСТ ИНСТРУКЦИИ</div>'+
-    '<textarea id="mkt-inst-text" style="width:100%;padding:10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;line-height:1.7;outline:none;box-sizing:border-box;height:380px;resize:vertical;background:#fafbfc;font-family:inherit">'+(settings.aiSellerPrompt||AI_INSTRUCTION).replace(/</g,"&lt;").replace(/>/g,"&gt;")+'</textarea>'+
-    '<div style="font-size:10px;color:#9aabbf;margin-top:6px;line-height:1.4">Это текст, по которому отвечает нейропродавец. Меняй роль, скрипт, оффер — сохрани, и ИИ сразу будет отвечать по-новому. Требование цен через одобрение добавляется автоматически.</div>'+
-    '<button data-a="mkt-save-inst" style="width:100%;margin-top:8px;padding:9px;background:#27ae60;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">💾 Сохранить инструкцию</button>'+
+    '<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">ИНСТРУКЦИЯ ДЛЯ '+(kind==="banya"?"БАНЬ 🛁":"ДОМОВ 🏠")+'</div>'+
+    '<textarea id="mkt-inst-text" style="width:100%;padding:10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;line-height:1.7;outline:none;box-sizing:border-box;height:360px;resize:vertical;background:#fafbfc;font-family:inherit">'+cur.replace(/</g,"&lt;").replace(/>/g,"&gt;")+'</textarea>'+
+    '<div style="font-size:10px;color:#9aabbf;margin-top:6px;line-height:1.4">Отдельный скрипт для '+(kind==="banya"?"бань":"домов")+'. Какие объявления к какой инструкции относятся — отмечается в разделе «Объявления» во вкладке Маркетинг. Требование цен через одобрение добавляется автоматически.</div>'+
+    '<button data-a="mkt-save-inst" data-kind="'+kind+'" style="width:100%;margin-top:8px;padding:9px;background:#27ae60;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">💾 Сохранить инструкцию ('+(kind==="banya"?"баня":"дом")+')</button>'+
   '</div>';
-
   html+='</div>';
   return html;
 }
@@ -8756,7 +8786,7 @@ function bind(){
       mktTest=mktTest.concat([{role:"user",text:t}]); mktTestBusy=true; render();
       try{
         const hist=mktTest.map(function(m){return {role:m.role,content:m.text};});
-        const r=await fetch(API_BASE+"/api/ai/test-chat",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({history:hist})});
+        const r=await fetch(API_BASE+"/api/ai/test-chat",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({history:hist,kind:mktTestKind})});
         const j=await r.json();
         mktTest=mktTest.concat([(j&&j.success)?{role:"assistant",text:j.reply,needsApproval:j.needsApproval}:{role:"assistant",text:"⚠️ "+((j&&j.error)||"ошибка"),needsApproval:false}]);
       }catch(e){ mktTest=mktTest.concat([{role:"assistant",text:"⚠️ "+((e&&e.message)||e),needsApproval:false}]); }
@@ -8764,6 +8794,19 @@ function bind(){
       setTimeout(function(){var el2=document.getElementById("mkt-test-text"); if(el2)el2.focus();},0);
     };}
     else if(a==="mkt-test-clear"){el.onclick=()=>{ mktTest=[]; mktTestBusy=false; render(); };}
+    else if(a==="mkt-test-kind"){el.onclick=()=>{ mktTestKind=el.dataset.kind; render(); };}
+    else if(a==="mkt-load-listings"){el.onclick=async()=>{
+      el.textContent="⏳";
+      try{ const r=await fetch(API_BASE+"/api/avito/listings",{headers:authHeaders()}); const j=await r.json(); mktListings=(j&&j.success)?(j.listings||[]):[]; }catch(e){ mktListings=[]; }
+      render();
+    };}
+    else if(a==="mkt-set-listing-kind"){el.onclick=()=>{
+      const id=el.dataset.id, k=el.dataset.kind;
+      const lk=Object.assign({},settings.listingKind||{});
+      if(lk[id]===k) delete lk[id]; else lk[id]=k;
+      settings=Object.assign({},settings,{listingKind:lk});
+      fl();
+    };}
     else if(a==="mkt-test-approve"){el.onclick=()=>{ const i=+el.dataset.i; if(mktTest[i]){mktTest[i].approved=true;mktTest[i].editing=false;} render(); };}
     else if(a==="mkt-test-edit"){el.onclick=()=>{ const i=+el.dataset.i; if(mktTest[i])mktTest[i].editing=true; render(); };}
     else if(a==="mkt-test-edit-cancel"){el.onclick=()=>{ const i=+el.dataset.i; if(mktTest[i])mktTest[i].editing=false; render(); };}
@@ -8773,11 +8816,14 @@ function bind(){
       render();
     };}
     else if(a==="mkt-back"){el.onclick=()=>{window._mktInstView=false;render();};}
+    else if(a==="mkt-inst-kind"){el.onclick=()=>{ window._mktInstKind=el.dataset.kind; render(); };}
     else if(a==="mkt-save-inst"){el.onclick=()=>{
       const v=(document.getElementById("mkt-inst-text")||{}).value;
-      if(v!==undefined){ AI_INSTRUCTION=v; settings=Object.assign({},settings,{aiSellerPrompt:v}); }
+      const kind=el.dataset.kind||window._mktInstKind||"banya";
+      const key=kind==="banya"?"aiSellerPromptBanya":"aiSellerPromptHouse";
+      if(v!==undefined){ const patch={}; patch[key]=v; settings=Object.assign({},settings,patch); }
       fl();
-      try{ const t=document.createElement("div"); t.textContent="💾 Инструкция сохранена — нейропродавец отвечает по ней"; t.style.cssText="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#27ae60;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:600;z-index:9999"; document.body.appendChild(t); setTimeout(function(){try{document.body.removeChild(t);}catch(e){}},2500); }catch(e){}
+      try{ const t=document.createElement("div"); t.textContent="💾 Инструкция ("+(kind==="banya"?"баня":"дом")+") сохранена"; t.style.cssText="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#27ae60;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:600;z-index:9999"; document.body.appendChild(t); setTimeout(function(){try{document.body.removeChild(t);}catch(e){}},2500); }catch(e){}
     };}
     // ── TAB DRAG (admin) ──────────────────────────────────────────
     else if(a==="tab-drag"){
