@@ -6646,11 +6646,31 @@ function tMarketingMain(){
       (mktTest.length?'<button data-a="mkt-test-clear" style="padding:4px 10px;background:#f0f4f8;border:none;border-radius:7px;cursor:pointer;font-size:11px;color:#7a9aaa;font-weight:700">Очистить</button>':'')+
     '</div>'+
     (mktTest.length?'<div style="max-height:340px;overflow-y:auto;margin-bottom:8px;padding:2px">'+
-      mktTest.map(function(m){
+      mktTest.map(function(m,i){
         var mine=m.role==="user";
-        var tag=(!mine&&m.needsApproval!==undefined)?('<span style="font-size:9px;font-weight:700;margin-left:6px;color:'+(m.needsApproval?"#e67e22":"#27ae60")+'">'+(m.needsApproval?"🟠 одобрение":"🟢 авто")+'</span>'):'';
-        return '<div style="background:'+(mine?"#8e44ad":"#f4f7fb")+';color:'+(mine?"#fff":"#1a2a3a")+';border-radius:12px;padding:8px 11px;margin-bottom:6px;max-width:85%;'+(mine?"margin-left:auto":"margin-right:auto")+';white-space:pre-wrap;font-size:12px;line-height:1.45">'+
-          '<div style="font-size:9px;font-weight:700;opacity:0.65;margin-bottom:2px">'+(mine?"👤 Вы (клиент)":"🤖 Нейропродавец"+tag)+'</div>'+esc(m.text||"")+'</div>';
+        if(mine){
+          return '<div style="background:#8e44ad;color:#fff;border-radius:12px;padding:8px 11px;margin-bottom:6px;max-width:85%;margin-left:auto;white-space:pre-wrap;font-size:12px;line-height:1.45">'+
+            '<div style="font-size:9px;font-weight:700;opacity:0.65;margin-bottom:2px">👤 Вы (клиент)</div>'+esc(m.text||"")+'</div>';
+        }
+        var st = m.needsApproval ? (m.approved?{t:"✅ отправлено",c:"#27ae60"}:{t:"🟠 ждёт одобрения",c:"#e67e22"}) : {t:"🟢 авто-отправлено",c:"#27ae60"};
+        var bubble='<div style="background:#f4f7fb;color:#1a2a3a;border-radius:12px;padding:8px 11px;margin-bottom:6px;max-width:85%;margin-right:auto;white-space:pre-wrap;font-size:12px;line-height:1.45">'+
+          '<div style="font-size:9px;font-weight:700;margin-bottom:2px;color:#7a9aaa">🤖 Нейропродавец <span style="color:'+st.c+'">'+st.t+'</span></div>'+esc(m.text||"")+'</div>';
+        var ctrl='';
+        if(m.needsApproval&&!m.approved){
+          if(m.editing){
+            ctrl='<div style="max-width:85%;margin-right:auto;margin-bottom:8px"><textarea id="mkt-edit-'+i+'" style="width:100%;padding:8px;border-radius:8px;border:1px solid #8e44ad;font-size:12px;box-sizing:border-box;height:70px;resize:vertical">'+esc(m.text||"")+'</textarea>'+
+              '<div style="display:flex;gap:6px;margin-top:4px">'+
+                '<button data-a="mkt-test-edit-save" data-i="'+i+'" style="flex:1;padding:7px;background:#27ae60;border:none;border-radius:7px;color:#fff;font-size:12px;font-weight:700;cursor:pointer">✓ Сохранить и отправить</button>'+
+                '<button data-a="mkt-test-edit-cancel" data-i="'+i+'" style="padding:7px 12px;background:transparent;border:1px solid #d0dae8;border-radius:7px;color:#7a9aaa;font-size:12px;cursor:pointer">✕</button>'+
+              '</div></div>';
+          } else {
+            ctrl='<div style="display:flex;gap:6px;max-width:85%;margin-right:auto;margin-bottom:8px">'+
+              '<button data-a="mkt-test-approve" data-i="'+i+'" style="flex:1;padding:7px;background:#27ae60;border:none;border-radius:7px;color:#fff;font-size:12px;font-weight:700;cursor:pointer">✅ Отправить</button>'+
+              '<button data-a="mkt-test-edit" data-i="'+i+'" style="flex:1;padding:7px;background:#fff;border:1px solid #8e44ad;border-radius:7px;color:#8e44ad;font-size:12px;font-weight:700;cursor:pointer">✏️ Изменить</button>'+
+            '</div>';
+          }
+        }
+        return bubble+ctrl;
       }).join("")+
       (mktTestBusy?'<div style="font-size:11px;color:#8e44ad;padding:4px 8px">🤖 печатает…</div>':'')+
     '</div>':'<div style="font-size:11px;color:#9aabbf;text-align:center;padding:14px">Напишите первое сообщение как клиент — ИИ ответит по текущей инструкции.</div>')+
@@ -8744,6 +8764,14 @@ function bind(){
       setTimeout(function(){var el2=document.getElementById("mkt-test-text"); if(el2)el2.focus();},0);
     };}
     else if(a==="mkt-test-clear"){el.onclick=()=>{ mktTest=[]; mktTestBusy=false; render(); };}
+    else if(a==="mkt-test-approve"){el.onclick=()=>{ const i=+el.dataset.i; if(mktTest[i]){mktTest[i].approved=true;mktTest[i].editing=false;} render(); };}
+    else if(a==="mkt-test-edit"){el.onclick=()=>{ const i=+el.dataset.i; if(mktTest[i])mktTest[i].editing=true; render(); };}
+    else if(a==="mkt-test-edit-cancel"){el.onclick=()=>{ const i=+el.dataset.i; if(mktTest[i])mktTest[i].editing=false; render(); };}
+    else if(a==="mkt-test-edit-save"){el.onclick=()=>{
+      const i=+el.dataset.i; const ta=document.getElementById("mkt-edit-"+i); const v=(ta&&ta.value||"").trim();
+      if(mktTest[i]){ if(v)mktTest[i].text=v; mktTest[i].approved=true; mktTest[i].editing=false; }
+      render();
+    };}
     else if(a==="mkt-back"){el.onclick=()=>{window._mktInstView=false;render();};}
     else if(a==="mkt-save-inst"){el.onclick=()=>{
       const v=(document.getElementById("mkt-inst-text")||{}).value;
