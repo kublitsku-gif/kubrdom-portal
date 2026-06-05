@@ -500,6 +500,18 @@ async function aiChatsList(env) {
   return json({ success: true, chats });
 }
 
+// POST /api/ai/test-chat {history:[{role,content}]} — песочница диалога (вы клиент, отвечает ИИ).
+// Ничего не сохраняет и не шлёт — только ответ по текущей инструкции. Требует токен.
+async function aiTestChat(env, request) {
+  let body = {}; try { body = await request.json(); } catch (_) {}
+  const hist = Array.isArray(body.history) ? body.history.slice(-16).map(function (m) {
+    return { role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || m.text || "").slice(0, 2000) };
+  }) : [];
+  if (!hist.length) return json({ success: false, error: "empty" }, 400);
+  const out = await aiSellerReply(env, hist);
+  return json({ success: true, reply: out.reply, needsApproval: out.needsApproval, reason: out.reason });
+}
+
 // POST /api/ai/test {q} — проверка мозга. Требует токен.
 async function aiTest(env, request) {
   let body = {}; try { body = await request.json(); } catch (_) {}
@@ -628,6 +640,11 @@ export default {
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
 
+    // AI: тест-диалог (песочница, с токеном).
+    if (url.pathname === "/api/ai/test-chat" && request.method === "POST") {
+      try { return await aiTestChat(env, request); }
+      catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
     // AI: проверка мозга нейропродавца (с токеном).
     if (url.pathname === "/api/ai/test" && request.method === "POST") {
       try { return await aiTest(env, request); }

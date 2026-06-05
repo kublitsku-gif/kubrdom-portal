@@ -6539,6 +6539,8 @@ function tTeam(){
 
 let mktChats=null;   // загруженные диалоги нейропродавца (null = ещё не грузили)
 let mktOpenChat=null; // ключ открытого диалога (раскрытие переписки во вкладке)
+let mktTest=[];       // тест-диалог-песочница: [{role:"user"|"assistant", text, needsApproval}]
+let mktTestBusy=false;
 function tMarketing(){
   const instView=window._mktInstView||false;
   if(instView) return tMarketingInstruction();
@@ -6637,12 +6639,26 @@ function tMarketingMain(){
     '</div>';
   }
 
-  // Тест-симулятор входящего
+  // Тест-диалог (песочница): вы — клиент, отвечает ИИ-продавец
   html+='<div style="background:#fff;border-radius:14px;border:1px dashed #8e44ad55;padding:14px;margin-bottom:12px">'+
-    '<div style="font-size:12px;font-weight:700;color:#1a2a3a;margin-bottom:8px">🧪 Тест: сообщение «от клиента»</div>'+
-    '<input id="mkt-sim-text" placeholder="Напр.: Сколько стоит баня из контейнера?" style="width:100%;padding:9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;margin-bottom:6px">'+
-    '<button data-a="mkt-sim" style="width:100%;padding:9px;background:#8e44ad;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Отправить → черновик в Telegram</button>'+
-    '<div style="font-size:10px;color:#9aabbf;margin-top:6px">Создаст ветку в Telegram-группе с черновиком ответа ИИ. Реальные клиенты с Авито приходят сюда же автоматически.</div>'+
+    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
+      '<div style="font-size:12px;font-weight:700;color:#1a2a3a;flex:1">🧪 Тест-диалог · вы клиент, отвечает ИИ</div>'+
+      (mktTest.length?'<button data-a="mkt-test-clear" style="padding:4px 10px;background:#f0f4f8;border:none;border-radius:7px;cursor:pointer;font-size:11px;color:#7a9aaa;font-weight:700">Очистить</button>':'')+
+    '</div>'+
+    (mktTest.length?'<div style="max-height:340px;overflow-y:auto;margin-bottom:8px;padding:2px">'+
+      mktTest.map(function(m){
+        var mine=m.role==="user";
+        var tag=(!mine&&m.needsApproval!==undefined)?('<span style="font-size:9px;font-weight:700;margin-left:6px;color:'+(m.needsApproval?"#e67e22":"#27ae60")+'">'+(m.needsApproval?"🟠 одобрение":"🟢 авто")+'</span>'):'';
+        return '<div style="background:'+(mine?"#8e44ad":"#f4f7fb")+';color:'+(mine?"#fff":"#1a2a3a")+';border-radius:12px;padding:8px 11px;margin-bottom:6px;max-width:85%;'+(mine?"margin-left:auto":"margin-right:auto")+';white-space:pre-wrap;font-size:12px;line-height:1.45">'+
+          '<div style="font-size:9px;font-weight:700;opacity:0.65;margin-bottom:2px">'+(mine?"👤 Вы (клиент)":"🤖 Нейропродавец"+tag)+'</div>'+esc(m.text||"")+'</div>';
+      }).join("")+
+      (mktTestBusy?'<div style="font-size:11px;color:#8e44ad;padding:4px 8px">🤖 печатает…</div>':'')+
+    '</div>':'<div style="font-size:11px;color:#9aabbf;text-align:center;padding:14px">Напишите первое сообщение как клиент — ИИ ответит по текущей инструкции.</div>')+
+    '<div style="display:flex;gap:6px">'+
+      '<input id="mkt-test-text" placeholder="Напишите как клиент…" '+(mktTestBusy?"disabled ":"")+'style="flex:1;padding:9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box">'+
+      '<button data-a="mkt-test-send" '+(mktTestBusy?"disabled ":"")+'style="padding:9px 16px;background:'+(mktTestBusy?"#c8b3da":"#8e44ad")+';border:none;border-radius:8px;cursor:'+(mktTestBusy?"default":"pointer")+';color:#fff;font-size:13px;font-weight:700">➤</button>'+
+    '</div>'+
+    '<div style="font-size:10px;color:#9aabbf;margin-top:6px">Песочница: проверяет ответы по текущей инструкции. Клиентам и в Telegram ничего не уходит.</div>'+
   '</div>';
 
   html+='</div>';
@@ -8713,14 +8729,21 @@ function bind(){
       try{ const r=await fetch(API_BASE+"/api/ai/chats",{headers:authHeaders()}); const j=await r.json(); mktChats=(j&&j.success)?(j.chats||{}):{}; }catch(e){ mktChats={}; }
       render();
     };}
-    else if(a==="mkt-sim"){el.onclick=async()=>{
-      const inp=document.getElementById("mkt-sim-text"); const t=(inp&&inp.value||"").trim();
+    else if(a==="mkt-test-send"){el.onclick=async()=>{
+      if(mktTestBusy)return;
+      const inp=document.getElementById("mkt-test-text"); const t=(inp&&inp.value||"").trim();
       if(!t){ if(inp)inp.focus(); return; }
-      el.textContent="⏳ Отправка…";
-      try{ await fetch(API_BASE+"/api/ai/incoming",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({clientName:"Тест из портала",clientKey:"manual:portal-test",text:t,source:"manual"})}); }catch(e){}
-      try{ const r=await fetch(API_BASE+"/api/ai/chats",{headers:authHeaders()}); const j=await r.json(); mktChats=(j&&j.success)?(j.chats||{}):{}; }catch(e){}
-      render();
+      mktTest=mktTest.concat([{role:"user",text:t}]); mktTestBusy=true; render();
+      try{
+        const hist=mktTest.map(function(m){return {role:m.role,content:m.text};});
+        const r=await fetch(API_BASE+"/api/ai/test-chat",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({history:hist})});
+        const j=await r.json();
+        mktTest=mktTest.concat([(j&&j.success)?{role:"assistant",text:j.reply,needsApproval:j.needsApproval}:{role:"assistant",text:"⚠️ "+((j&&j.error)||"ошибка"),needsApproval:false}]);
+      }catch(e){ mktTest=mktTest.concat([{role:"assistant",text:"⚠️ "+((e&&e.message)||e),needsApproval:false}]); }
+      mktTestBusy=false; render();
+      setTimeout(function(){var el2=document.getElementById("mkt-test-text"); if(el2)el2.focus();},0);
     };}
+    else if(a==="mkt-test-clear"){el.onclick=()=>{ mktTest=[]; mktTestBusy=false; render(); };}
     else if(a==="mkt-back"){el.onclick=()=>{window._mktInstView=false;render();};}
     else if(a==="mkt-save-inst"){el.onclick=()=>{
       const v=(document.getElementById("mkt-inst-text")||{}).value;
