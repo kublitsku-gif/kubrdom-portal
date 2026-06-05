@@ -292,12 +292,12 @@ async function aiChat(env, messages, opts) {
   const r = await fetch(base + "/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: "Bearer " + env.AI_API_KEY },
-    body: JSON.stringify({
+    body: JSON.stringify(Object.assign({
       model: opts.model || env.AI_MODEL || "deepseek-chat",
       messages: messages,
       temperature: opts.temperature != null ? opts.temperature : 0.4,
       max_tokens: opts.max_tokens || 600
-    })
+    }, opts.response_format ? { response_format: opts.response_format } : {}))
   });
   const j = await r.json();
   if (!r.ok || !j.choices) throw new Error("AI: " + JSON.stringify(j.error || j).slice(0, 200));
@@ -305,6 +305,134 @@ async function aiChat(env, messages, opts) {
 }
 // Системная роль нейропродавца КубрДом.
 const SELLER_SYSTEM = "Ты — вежливый и толковый менеджер по продажам компании «КубрДом»: строим бани и дома из морских контейнеров под ключ. Отвечай кратко, по-русски, дружелюбно и по делу, веди клиента к замеру/расчёту. Не выдумывай цены и сроки — если не уверен, предложи уточнить у специалиста.";
+// Факты для нейропродавца — чтобы не выдумывал цены.
+const SELLER_FACTS = "Факты о КубрДом:\n- Строим бани и дома из морских контейнеров под ключ.\n- Баня из контейнера под ключ — ориентир 1 300 000–1 390 000 ₽ (по текущим объявлениям), точная цена зависит от планировки, комплектации и отделки.\n- Цену НЕ называй как окончательную — это ориентир, точную считает специалист после уточнения деталей и замера.\n- Всегда веди клиента к следующему шагу: уточнить детали, договориться о звонке/замере, попросить телефон.";
+
+// Нейроответ продавца с гибрид-классификацией (нужно ли одобрение).
+async function aiSellerReply(env, history) {
+  const messages = [
+    { role: "system", content: SELLER_SYSTEM + "\n\n" + SELLER_FACTS + "\n\nВерни СТРОГО JSON: {\"reply\":\"текст ответа клиенту\",\"needsApproval\":true|false,\"reason\":\"кратко\"}. needsApproval=true, если ответ касается конкретной цены, скидки, сроков, договора, предоплаты или обязательств; иначе false." }
+  ].concat(history);
+  const out = await aiChat(env, messages, { max_tokens: 500, response_format: { type: "json_object" } });
+  let p; try { p = JSON.parse(out.text); } catch (e) { p = { reply: out.text, needsApproval: true, reason: "json parse fail" }; }
+  return { reply: p.reply || out.text, needsApproval: p.needsApproval !== false, reason: p.reason || "", usage: out.usage };
+}
+
+// ── Telegram sales-бот (отдельный от видео-бота) ──
+function salesTg(env, method, payload) {
+  return fetch("https://api.telegram.org/bot" + env.TG_SALES_BOT_TOKEN + "/" + method, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+  }).then(function (r) { return r.json(); });
+}
+// Диалоги ИИ-продавца храним в work_states под work_id=aiChats (владеет Worker; панель не перезаписывает).
+async function aiLoadChats(env) {
+  const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind("admin_panel", "aiChats").first();
+  if (!row || !row.data) return {};
+  try { return JSON.parse(row.data) || {}; } catch (e) { return {}; }
+}
+async function aiSaveChats(env, chats) {
+  await env.DB.prepare("INSERT INTO work_states (storage_key, work_id, data, updated_at) VALUES (?,?,?,?) ON CONFLICT(storage_key, work_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at")
+    .bind("admin_panel", "aiChats", JSON.stringify(chats), Date.now()).run();
+}
+async function ensureClientTopic(env, chats, clientKey, name) {
+  let c = chats[clientKey];
+  if (c && c.topicId) return c;
+  const j = await salesTg(env, "createForumTopic", { chat_id: env.TG_SALES_CHAT_ID, name: (name || clientKey).slice(0, 128) });
+  if (!j.ok) throw new Error("createForumTopic: " + j.description);
+  c = c || { name: name || clientKey, source: "manual", messages: [] };
+  c.topicId = j.result.message_thread_id; c.name = name || c.name;
+  chats[clientKey] = c;
+  return c;
+}
+function findClientByTopic(chats, topicId) {
+  for (const k in chats) { if (chats[k] && chats[k].topicId === topicId) return k; }
+  return null;
+}
+
+// POST /api/ai/incoming {clientKey,clientName,text,source} — входящее сообщение (симулятор/Avito).
+async function aiIncoming(env, request) {
+  let body = {}; try { body = await request.json(); } catch (_) {}
+  const clientName = (body.clientName || "Клиент").toString().slice(0, 80);
+  const clientKey = (body.clientKey || "").toString().trim() || ("manual:" + clientName);
+  const text = (body.text || "").toString().slice(0, 2000);
+  const source = (body.source || "manual").toString();
+  if (!text) return json({ success: false, error: "empty text" }, 400);
+  if (!env.TG_SALES_BOT_TOKEN || !env.TG_SALES_CHAT_ID) return json({ success: false, error: "sales-бот не настроен" }, 500);
+  const chats = await aiLoadChats(env);
+  const c = await ensureClientTopic(env, chats, clientKey, clientName);
+  c.source = source;
+  c.messages.push({ role: "user", text: text, status: "in", ts: Date.now() });
+  await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "👤 Клиент:\n" + text });
+  const history = c.messages.filter(function (m) { return m.role === "user" || m.role === "assistant"; }).slice(-12)
+    .map(function (m) { return { role: m.role === "assistant" ? "assistant" : "user", content: m.text }; });
+  let ai;
+  try { ai = await aiSellerReply(env, history); }
+  catch (e) {
+    await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "⚠️ Ошибка ИИ: " + (e.message || e) });
+    await aiSaveChats(env, chats);
+    return json({ success: false, error: String(e) }, 502);
+  }
+  const idx = c.messages.length;
+  c.messages.push({ role: "assistant", text: ai.reply, status: "draft", needsApproval: ai.needsApproval, ts: Date.now() });
+  const tag = ai.needsApproval ? "🟠 нужно одобрение" : "🟢 можно авто";
+  const sent = await salesTg(env, "sendMessage", {
+    chat_id: env.TG_SALES_CHAT_ID, message_thread_id: c.topicId,
+    text: "🤖 Черновик (" + tag + "):\n\n" + ai.reply + (ai.reason ? ("\n\n— " + ai.reason) : ""),
+    reply_markup: { inline_keyboard: [[{ text: "✅ Отправить", callback_data: "send:" + idx }, { text: "✏️ Изменить", callback_data: "edit:" + idx }]] }
+  });
+  if (sent && sent.ok && sent.result) c.messages[idx].tgMsgId = sent.result.message_id;
+  c.updatedAt = Date.now();
+  await aiSaveChats(env, chats);
+  return json({ success: true, topicId: c.topicId, reply: ai.reply, needsApproval: ai.needsApproval });
+}
+
+// POST /api/ai/webhook — вебхук sales-бота (кнопки + ручные ответы в ветке). Публичный, проверка по секрет-токену.
+async function aiWebhook(env, request) {
+  const upd = await request.json().catch(function () { return {}; });
+  // нажатие кнопки
+  if (upd.callback_query) {
+    const cq = upd.callback_query;
+    const topicId = (cq.message && cq.message.message_thread_id) || 0;
+    const chats = await aiLoadChats(env);
+    const key = findClientByTopic(chats, topicId);
+    const parts = (cq.data || "").split(":"); const act = parts[0]; const idx = parseInt(parts[1] || "-1", 10);
+    if (key && chats[key].messages[idx]) {
+      const c = chats[key], m = c.messages[idx];
+      if (act === "send") {
+        m.status = "sent"; c.updatedAt = Date.now(); await aiSaveChats(env, chats);
+        await salesTg(env, "editMessageReplyMarkup", { chat_id: cq.message.chat.id, message_id: cq.message.message_id, reply_markup: { inline_keyboard: [] } });
+        await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: topicId, text: "✅ Ответ помечен отправленным.\n(отправка в Avito подключится после подписки мессенджера)" });
+        await salesTg(env, "answerCallbackQuery", { callback_query_id: cq.id, text: "Отправлено" });
+      } else if (act === "edit") {
+        await salesTg(env, "answerCallbackQuery", { callback_query_id: cq.id, text: "Напишите свой вариант ответом в этой ветке" });
+        await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: topicId, text: "✏️ Напишите свой вариант ответа сообщением в этой ветке — он заменит черновик." });
+      }
+    } else {
+      await salesTg(env, "answerCallbackQuery", { callback_query_id: cq.id, text: "Диалог не найден" });
+    }
+    return json({ ok: true });
+  }
+  // обычное сообщение в ветке от человека = ответ клиенту (ручной/правка)
+  const msg = upd.message;
+  if (msg && msg.message_thread_id && msg.text && !(msg.from && msg.from.is_bot)) {
+    const chats = await aiLoadChats(env);
+    const key = findClientByTopic(chats, msg.message_thread_id);
+    if (key) {
+      chats[key].messages.push({ role: "assistant", text: msg.text, status: "sent", manual: true, ts: Date.now() });
+      chats[key].updatedAt = Date.now();
+      await aiSaveChats(env, chats);
+      await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: msg.message_thread_id, text: "✅ Ваш ответ записан как отправленный клиенту." });
+    }
+  }
+  return json({ ok: true });
+}
+
+// GET /api/ai/chats — диалоги для CRM (с токеном).
+async function aiChatsList(env) {
+  const chats = await aiLoadChats(env);
+  return json({ success: true, chats });
+}
+
 // POST /api/ai/test {q} — проверка мозга. Требует токен.
 async function aiTest(env, request) {
   let body = {}; try { body = await request.json(); } catch (_) {}
@@ -338,6 +466,14 @@ export default {
       catch (err) { return new Response(String(err), { status: 500, headers: CORS_HEADERS }); }
     }
 
+    // Вебхук sales-бота (Telegram) — ДО авторизации (Telegram не шлёт X-Admin-Token).
+    // Защита: секрет-токен в заголовке (ставим его при setWebhook = ADMIN_TOKEN).
+    if (url.pathname === "/api/ai/webhook" && request.method === "POST") {
+      if (request.headers.get("X-Telegram-Bot-Api-Secret-Token") !== env.ADMIN_TOKEN) return unauthorized();
+      try { return await aiWebhook(env, request); }
+      catch (err) { return json({ ok: false, error: String(err) }, 200); }   // 200 — чтобы Telegram не ретраил вечно
+    }
+
     // Авторизация для всего остального. Fail-closed.
     const token = request.headers.get("X-Admin-Token") || "";
     if (!env.ADMIN_TOKEN || !safeEqual(token, env.ADMIN_TOKEN)) {
@@ -359,6 +495,16 @@ export default {
     // AI: проверка мозга нейропродавца (с токеном).
     if (url.pathname === "/api/ai/test" && request.method === "POST") {
       try { return await aiTest(env, request); }
+      catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+    // AI: входящее сообщение (симулятор/Avito) → черновик в Telegram-ветку (с токеном).
+    if (url.pathname === "/api/ai/incoming" && request.method === "POST") {
+      try { return await aiIncoming(env, request); }
+      catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+    // AI: список диалогов для CRM (с токеном).
+    if (url.pathname === "/api/ai/chats" && request.method === "GET") {
+      try { return await aiChatsList(env); }
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
 
