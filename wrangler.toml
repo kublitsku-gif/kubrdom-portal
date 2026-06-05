@@ -29,8 +29,9 @@ AI_BASE_URL = "https://api.deepseek.com"
 AI_MODEL = "deepseek-chat"
 # Kimi (Moonshot), OpenAI-совместимый. Ключ — секрет KIMI_API_KEY. Переключатель провайдера — settings.aiProvider.
 KIMI_BASE_URL = "https://api.moonshot.ai/v1"
-# moonshot-v1-32k — не-reasoning, работает с нашим temp/JSON (k2.6/k2.5 — reasoning, ответ пустой при нашем лимите токенов).
-KIMI_MODEL = "moonshot-v1-32k"
+# kimi-k2.6 — флагман (reasoning): Worker для kimi-k2* форсит temperature=1, max_tokens≥4000, без response_format
+# (иначе ответ пустой). Медленнее (~15-20с), но самая мощная. Можно вернуть moonshot-v1-32k для скорости.
+KIMI_MODEL = "kimi-k2.6"
 # Claude (Anthropic, нативный Messages API). Ключ — секрет CLAUDE_API_KEY.
 CLAUDE_MODEL = "claude-sonnet-4-6"
 # GPT (OpenAI, OpenAI-совместимый). Ключ — секрет OPENAI_API_KEY.

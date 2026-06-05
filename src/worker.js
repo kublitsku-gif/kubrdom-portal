@@ -317,15 +317,16 @@ async function aiChat(env, messages, opts) {
   }
   // OpenAI-совместимые (DeepSeek/Kimi)
   const base = pr.base.replace(/\/+$/, "");
+  const model = opts.model || pr.model;
+  let temperature = opts.temperature != null ? opts.temperature : 0.4;
+  let max_tokens = opts.max_tokens || 600;
+  let useJson = !!opts.response_format;
+  // Kimi K2 — «думающая»: разрешена только temperature=1, нужен большой бюджет токенов (reasoning+ответ), без response_format.
+  if (opts.provider === "kimi" && /^kimi-k2/i.test(model)) { temperature = 1; if (max_tokens < 4000) max_tokens = 4000; useJson = false; }
   const r = await fetch(base + "/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: "Bearer " + pr.key },
-    body: JSON.stringify(Object.assign({
-      model: opts.model || pr.model,
-      messages: messages,
-      temperature: opts.temperature != null ? opts.temperature : 0.4,
-      max_tokens: opts.max_tokens || 600
-    }, opts.response_format ? { response_format: opts.response_format } : {}))
+    body: JSON.stringify(Object.assign({ model: model, messages: messages, temperature: temperature, max_tokens: max_tokens }, useJson ? { response_format: opts.response_format } : {}))
   });
   const j = await r.json();
   if (!r.ok || !j.choices) throw new Error(pr.name + ": " + JSON.stringify(j.error || j).slice(0, 200));
