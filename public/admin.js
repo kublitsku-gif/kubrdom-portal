@@ -2386,7 +2386,8 @@ ${showPinChange?`<div style="background:#fff;border-bottom:1px solid #eef2f7;pad
   <div style="display:flex;overflow-x:auto;padding:0 10px;scrollbar-width:none;-webkit-overflow-scrolling:touch;gap:6px" id="tabs-scroll">
   ${TABS.map(([k,n],i)=>{
     const active=tab===k;
-    const tabBtn=`<button data-a="tab" data-k="${k}" style="flex-shrink:0;padding:9px 14px;border:none;border-radius:10px;background:${active?"#2980b9":"#f0f4f8"};cursor:pointer;font-size:12.5px;font-weight:${active?700:600};color:${active?"#fff":"#5a7080"};white-space:nowrap;box-shadow:${active?"0 2px 8px rgba(41,128,185,0.3)":"none"};transition:all 0.15s;letter-spacing:0.2px">${n}</button>`;
+    const _crmBadge=(k==="crm"&&crmUnansweredCount()>0)?`<span style="margin-left:6px;background:#e74c3c;color:#fff;border-radius:9px;padding:1px 6px;font-size:10px;font-weight:800">${crmUnansweredCount()}</span>`:"";
+    const tabBtn=`<button data-a="tab" data-k="${k}" style="flex-shrink:0;padding:9px 14px;border:none;border-radius:10px;background:${active?"#2980b9":"#f0f4f8"};cursor:pointer;font-size:12.5px;font-weight:${active?700:600};color:${active?"#fff":"#5a7080"};white-space:nowrap;box-shadow:${active?"0 2px 8px rgba(41,128,185,0.3)":"none"};transition:all 0.15s;letter-spacing:0.2px">${n}${_crmBadge}</button>`;
     return isAdmin
       ? `<div draggable="true" data-a="tab-drag" data-k="${k}" data-i="${i}" style="flex-shrink:0;cursor:grab">${tabBtn}</div>`
       : tabBtn;
@@ -7049,6 +7050,20 @@ function crmEnsureChats(){
 function crmChatFor(c){ return (c&&c.avitoKey&&crmChats&&crmChats[c.avitoKey])?crmChats[c.avitoKey]:null; }
 // Диалог не отвечён, если последнее сообщение — от клиента.
 function chatUnanswered(ch){ var m=ch&&ch.messages&&ch.messages[ch.messages.length-1]; return !!(m&&m.role==="user"); }
+// Кол-во неотвеченных Avito-диалогов (для бейджа на вкладке CRM).
+function crmUnansweredCount(){ var n=0; if(crmChats)for(var k in crmChats){ var ch=crmChats[k]; if(ch&&ch.source==="avito"&&chatUnanswered(ch))n++; } return n; }
+// Фоновое обновление диалогов (для живого бейджа); не дёргаем render при наборе текста.
+function crmPollBadge(){
+  if(!_hydrated||!getToken())return;
+  fetch(API_BASE+"/api/ai/chats",{headers:authHeaders()}).then(function(r){return r.json();}).then(function(j){
+    if(!j||!j.success)return;
+    var before=crmUnansweredCount();
+    crmChats=j.chats||{};
+    crmAutoLinkAvito();                  // новые Avito-диалоги → лиды (автосейв сохранит)
+    var ae=document.activeElement; var typing=ae&&(ae.tagName==="INPUT"||ae.tagName==="TEXTAREA");
+    if(!typing && crmUnansweredCount()!==before) render();
+  }).catch(function(){});
+}
 let crmNewClient={name:"",phone:"",msg:"",notes:""};
 
 const CRM_STAGES=[
@@ -9422,6 +9437,7 @@ function _autoLogin(){
     }).catch(function(){});
     setInterval(apiSave, 2500);
     setInterval(pollOnce, POLL_MS);
+    crmEnsureChats(); setInterval(crmPollBadge, 45000);   // счётчик неотвеченных CRM
     document.addEventListener("visibilitychange", function(){ if (!document.hidden) pollOnce(); });
     return;
   }
@@ -9449,5 +9465,6 @@ function _autoLogin(){
 
   // live-обновление: опрос + мгновенная проверка при возврате на вкладку
   setInterval(pollOnce, POLL_MS);
+  crmEnsureChats(); setInterval(crmPollBadge, 45000);   // счётчик неотвеченных CRM
   document.addEventListener("visibilitychange", function(){ if (!document.hidden) pollOnce(); });
 })();
