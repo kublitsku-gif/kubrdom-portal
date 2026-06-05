@@ -7019,6 +7019,21 @@ let crmStagePickerOpen=false; // expanded stage selector
 let crmSelectMode=false;      // режим выбора клиентов для массового удаления
 let crmSelected={};           // { [cid]: true } — выбранные клиенты
 let crmVisibleIds=[];         // id клиентов, показанных в текущем рендере (для «Все/снять»)
+let crmChats=null;            // диалоги нейропродавца (Avito) для привязки к карточкам CRM
+let crmChatsLoading=false;
+let crmLinkPickerFor=null;    // id клиента, для которого открыт выбор Avito-диалога
+// Лениво подгружаем Avito-диалоги один раз при входе в CRM (для подсветки/карточек).
+function crmEnsureChats(){
+  if(crmChats!==null||crmChatsLoading)return;
+  crmChatsLoading=true;
+  fetch(API_BASE+"/api/ai/chats",{headers:authHeaders()}).then(function(r){return r.json();}).then(function(j){
+    crmChats=(j&&j.success)?(j.chats||{}):{}; crmChatsLoading=false; render();
+  }).catch(function(){ crmChats={}; crmChatsLoading=false; });
+}
+// Привязанный к клиенту Avito-диалог (по c.avitoKey).
+function crmChatFor(c){ return (c&&c.avitoKey&&crmChats&&crmChats[c.avitoKey])?crmChats[c.avitoKey]:null; }
+// Диалог не отвечён, если последнее сообщение — от клиента.
+function chatUnanswered(ch){ var m=ch&&ch.messages&&ch.messages[ch.messages.length-1]; return !!(m&&m.role==="user"); }
 let crmNewClient={name:"",phone:"",msg:"",notes:""};
 
 const CRM_STAGES=[
@@ -7033,6 +7048,7 @@ const CRM_STAGES=[
 let AI_INSTRUCTION="# Инструкция нейропродавца КубрДом\n\n## Роль\nТы — менеджер по продажам КубрДом. Отвечаешь на входящие сообщения клиентов из Авито. Твоя цель — квалифицировать клиента и назначить встречу на производстве.\n\n## Этапы работы с клиентом\n\n**1. Приветствие (Входящие)**\n- Отвечай в течение 5 минут\n- Поздоровайся, представься, уточни запрос\n- Пример: «Добрый день! Меня зовут [имя], менеджер КубрДом. Вы интересовались баней из контейнера — расскажите подробнее, что вы хотите?»\n\n**2. Квалификация**\nЗадай 3 вопроса:\n- Какой объект интересует? (баня/дом, размер)\n- Есть ли земельный участок? (адрес, назначение)\n- Бюджет и сроки?\n\n**3. Ключевой этап — Встреча на производстве**\n- Предложи приехать на производство: «Лучший способ убедиться в качестве — приехать и всё увидеть своими глазами. Мы находимся в [адрес]. Когда вам удобно?»\n- Встреча = 70% вероятность сделки\n\n**4. Договор**\n- После встречи высылай КП в течение 24 часов\n- Аванс 30%, остаток при сдаче\n\n## Важно\n- Не называй точную стоимость без расчёта\n- Всегда веди к встрече на производстве\n- Отвечай дружелюбно, без канцеляризма\n- Если клиент не отвечает 2 дня — напомни о себе";
 
 function tCRM(){
+  crmEnsureChats();   // подтянуть Avito-диалоги для подсветки/карточек
   if(crmView==="instruction") return tCRMInstruction();
   if(crmView==="client"&&crmOpenId) return tCRMClient(crmOpenId);
   return tCRMFunnel();
@@ -7233,7 +7249,7 @@ function tCRMFunnel(){
           (crmSelectMode?'<div style="font-size:22px;flex-shrink:0;pointer-events:none">'+(_sel?"☑️":"⬜")+'</div>':'')+
           '<div style="width:38px;height:38px;border-radius:10px;background:'+s.color+'18;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;pointer-events:none">👤</div>'+
           '<div style="flex:1;min-width:0;pointer-events:none">'+
-            '<div style="font-size:13px;font-weight:700;color:#1a2a3a">'+c.name+'</div>'+
+            '<div style="font-size:13px;font-weight:700;color:#1a2a3a">'+c.name+(chatUnanswered(crmChatFor(c))?' <span style="font-size:9px;font-weight:700;color:#fff;background:#e74c3c;border-radius:5px;padding:1px 6px;vertical-align:middle">● не отвечено</span>':'')+'</div>'+
             '<div style="font-size:11px;color:#7a9aaa;margin-top:2px">'+(c.phone?'<a href="tel:'+c.phone.replace(/[^0-9+]/g,"")+'" onclick="event.stopPropagation();return true" style="color:#27ae60;text-decoration:none;font-weight:700">📞 '+c.phone+'</a>':'')+'  ·  '+c.source+'  ·  '+c.date+'</div>'+
             '<div style="font-size:12px;color:#5a7a9a;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+c.msg+'</div>'+
             (c.notes?'<div style="font-size:10px;color:#9aabbf;margin-top:2px;font-style:italic">📝 '+c.notes+'</div>':'')+
@@ -7366,6 +7382,49 @@ function tCRMClient(cid){
     '<input id="crm-edit-source-'+c.id+'" value="'+c.source.replace(/"/g,"&quot;")+'" placeholder="Источник" style="width:100%;padding:7px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;margin-bottom:6px;outline:none;box-sizing:border-box">'+
     '<button data-a="crm-save-contact" data-cid="'+c.id+'" style="width:100%;padding:7px;background:#2980b9;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">💾 Сохранить контакт</button>'+
   '</div>';
+  // ── ДИАЛОГ AVITO (привязка + переписка + ответ) ──
+  const _ch=crmChatFor(c);
+  if(_ch){
+    const _msgs=_ch.messages||[]; const _unans=chatUnanswered(_ch);
+    html+='<div style="background:#fff;border-radius:12px;border:1.5px solid '+(_unans?"#e74c3c":"#dde6f0")+';padding:12px 14px;margin-bottom:12px">'+
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
+        '<span style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;flex:1">💬 ДИАЛОГ AVITO'+(_unans?' · <span style="color:#e74c3c">● не отвечено</span>':'')+'</span>'+
+        '<button data-a="crm-chat-refresh" style="padding:3px 9px;background:#f0f4f8;border:1px solid #dde6f0;border-radius:6px;cursor:pointer;font-size:11px;color:#7a9aaa;font-weight:700">⟳</button>'+
+        '<button data-a="crm-unlink-avito" data-cid="'+c.id+'" style="padding:3px 9px;background:#fff;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;font-size:10px;color:#e74c3c;font-weight:700">Отвязать</button>'+
+      '</div>'+
+      '<div style="max-height:300px;overflow-y:auto;margin-bottom:8px">'+
+        (_msgs.length?_msgs.map(function(m){
+          var mine=m.role==="assistant";
+          var who=!mine?"👤 Клиент":(m.auto?"🟢 Авто":(m.manual?"🙋 Вы":"🤖 ИИ"));
+          var hl=(!mine&&m===_msgs[_msgs.length-1]&&_unans);
+          return '<div style="background:'+(mine?"#eef6f4":(hl?"#fff0f0":"#f4f7fb"))+';'+(hl?"border:1px solid #e74c3c55;":"")+'border-radius:9px;padding:7px 9px;margin-bottom:5px;'+(mine?"margin-left:20px":"margin-right:20px")+'">'+
+            '<div style="font-size:9px;color:#7a9aaa;font-weight:700;margin-bottom:2px">'+who+'</div>'+
+            '<div style="font-size:12px;color:#1a2a3a;line-height:1.4;white-space:pre-wrap">'+esc(m.text||"")+'</div>'+
+          '</div>';
+        }).join(""):'<div style="font-size:11px;color:#9aabbf;text-align:center;padding:8px">Сообщений нет</div>')+
+      '</div>'+
+      '<textarea id="crm-reply-'+c.id+'" placeholder="Ответить клиенту в Avito..." style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;height:58px;resize:vertical;margin-bottom:6px"></textarea>'+
+      '<button data-a="crm-send-avito" data-key="'+esc(c.avitoKey||"")+'" data-cid="'+c.id+'" style="width:100%;padding:9px;background:#005bff;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Отправить клиенту в Avito</button>'+
+    '</div>';
+  } else {
+    html+='<div style="background:#fff;border-radius:12px;border:1px dashed #005bff44;padding:12px 14px;margin-bottom:12px">'+
+      '<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">💬 ДИАЛОГ AVITO</div>';
+    if(crmLinkPickerFor===c.id){
+      var _linked={}; crmClients.forEach(function(x){ if(x.avitoKey)_linked[x.avitoKey]=x.id; });
+      var _avail=crmChats?Object.keys(crmChats).filter(function(k){ return crmChats[k]&&crmChats[k].source==="avito"&&(!_linked[k]||_linked[k]===c.id); }):[];
+      html+=(_avail.length?_avail.map(function(k){ var ch=crmChats[k]; var last=(ch.messages||[]).slice(-1)[0]||{};
+          return '<div data-a="crm-link-pick" data-cid="'+c.id+'" data-key="'+esc(k)+'" style="border:1px solid #eef2f7;border-radius:9px;padding:8px 10px;margin-bottom:5px;cursor:pointer">'+
+            '<div style="font-size:12px;font-weight:700;color:#0d1b2e">'+esc(ch.name||k)+(chatUnanswered(ch)?' <span style="font-size:8px;color:#fff;background:#e74c3c;border-radius:4px;padding:1px 5px">●</span>':'')+'</div>'+
+            '<div style="font-size:10px;color:#5a7a9a;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc((last.text||"").slice(0,90))+'</div>'+
+          '</div>';
+        }).join(""):'<div style="font-size:11px;color:#9aabbf;text-align:center;padding:8px">Нет свободных Avito-диалогов (обнови ⟳ или подожди входящих)</div>')+
+        '<button data-a="crm-link-cancel" style="width:100%;margin-top:4px;padding:6px;background:#f0f4f8;border:none;border-radius:7px;cursor:pointer;font-size:11px;color:#7a9aaa;font-weight:600">Отмена</button>';
+    } else {
+      html+='<button data-a="crm-link-avito" data-cid="'+c.id+'" style="width:100%;padding:9px;background:#005bff12;border:1px solid #005bff44;border-radius:8px;cursor:pointer;color:#005bff;font-size:12px;font-weight:700">🔗 Привязать диалог из Avito</button>'+
+        '<div style="font-size:10px;color:#9aabbf;margin-top:6px">Свяжи карточку с перепиской Avito — увидишь диалог и сможешь отвечать отсюда.</div>';
+    }
+    html+='</div>';
+  }
   // ── QUALIFICATION: Plot ownership + Purchase timeline ──
   const plotVal=c.plot||"none"; // "yes"|"progress"|"no"|"none"
   const timeVal=c.timeline||"none"; // "month"|"3months"|"later"|"none"
@@ -8447,6 +8506,21 @@ function bind(){
       setTimeout(function(){
         try{window.scrollTo({top:0,behavior:"instant"});}catch(e){window.scrollTo(0,0);}
       },0);
+    };}
+    else if(a==="crm-link-avito"){el.onclick=async()=>{ crmLinkPickerFor=el.dataset.cid; try{ const r=await fetch(API_BASE+"/api/ai/chats",{headers:authHeaders()}); const j=await r.json(); crmChats=(j&&j.success)?(j.chats||{}):(crmChats||{}); }catch(e){} render(); };}
+    else if(a==="crm-link-cancel"){el.onclick=()=>{ crmLinkPickerFor=null; render(); };}
+    else if(a==="crm-link-pick"){el.onclick=()=>{ const cid=el.dataset.cid,key=el.dataset.key; crmClients=crmClients.map(function(x){return x.id===cid?Object.assign({},x,{avitoKey:key}):x;}); crmLinkPickerFor=null; fl(); };}
+    else if(a==="crm-unlink-avito"){el.onclick=()=>{ const cid=el.dataset.cid; crmClients=crmClients.map(function(x){return x.id===cid?Object.assign({},x,{avitoKey:null}):x;}); fl(); };}
+    else if(a==="crm-chat-refresh"){el.onclick=async()=>{ el.textContent="⏳"; try{ const r=await fetch(API_BASE+"/api/ai/chats",{headers:authHeaders()}); const j=await r.json(); crmChats=(j&&j.success)?(j.chats||{}):crmChats; }catch(e){} render(); };}
+    else if(a==="crm-send-avito"){el.onclick=async()=>{
+      const cid=el.dataset.cid,key=el.dataset.key;
+      const ta=document.getElementById("crm-reply-"+cid); const text=(ta&&ta.value||"").trim();
+      if(!text){ if(ta)ta.focus(); return; }
+      el.textContent="⏳ Отправка…";
+      try{ const r=await fetch(API_BASE+"/api/ai/send",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({clientKey:key,text:text})}); const j=await r.json(); if(!(j&&j.success))alert("Не отправлено: "+((j&&(j.note||j.error))||"ошибка")); }
+      catch(e){ alert("Ошибка: "+((e&&e.message)||e)); }
+      try{ const r2=await fetch(API_BASE+"/api/ai/chats",{headers:authHeaders()}); const j2=await r2.json(); crmChats=(j2&&j2.success)?(j2.chats||{}):crmChats; }catch(e){}
+      render();
     };}
     else if(a==="crm-back"){el.onclick=()=>{
       crmView="funnel";

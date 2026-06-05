@@ -473,6 +473,27 @@ async function aiWebhook(env, request) {
   return json({ ok: true });
 }
 
+// POST /api/ai/send {clientKey,text} — ответ клиенту из карточки CRM. Шлёт в Avito + лог + Telegram. Требует токен.
+async function aiSend(env, request) {
+  let body = {}; try { body = await request.json(); } catch (_) {}
+  const key = (body.clientKey || "").toString();
+  const text = (body.text || "").toString().slice(0, 2000);
+  if (!key || !text) return json({ success: false, error: "need clientKey+text" }, 400);
+  const chats = await aiLoadChats(env);
+  const c = chats[key];
+  if (!c) return json({ success: false, error: "chat not found" }, 404);
+  let ok = false, note = "(не Avito-чат)";
+  if (c.avitoChatId) {
+    try { const sr = await avitoSend(env, c.avitoChatId, text); ok = !!(sr && sr.id); if (!ok) note = JSON.stringify(sr).slice(0, 140); }
+    catch (e) { note = e.message || String(e); }
+  }
+  c.messages.push({ role: "assistant", text: text, status: ok ? "sent" : "draft", manual: true, ts: Date.now() });
+  c.updatedAt = Date.now();
+  await aiSaveChats(env, chats);
+  if (c.topicId) { try { await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: (ok ? "✅ Ответ из CRM отправлен клиенту:\n\n" : "⚠️ Ответ из CRM НЕ ушёл (" + note + "):\n\n") + text }); } catch (e) {} }
+  return json({ success: ok || !c.avitoChatId, sent: ok, note: ok ? "" : note });
+}
+
 // GET /api/ai/chats — диалоги для CRM (с токеном).
 async function aiChatsList(env) {
   const chats = await aiLoadChats(env);
@@ -615,6 +636,11 @@ export default {
     // AI: входящее сообщение (симулятор/Avito) → черновик в Telegram-ветку (с токеном).
     if (url.pathname === "/api/ai/incoming" && request.method === "POST") {
       try { return await aiIncoming(env, request); }
+      catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+    // AI: ответ клиенту из карточки CRM (с токеном).
+    if (url.pathname === "/api/ai/send" && request.method === "POST") {
+      try { return await aiSend(env, request); }
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
     // AI: список диалогов для CRM (с токеном).
