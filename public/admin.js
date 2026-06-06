@@ -6566,7 +6566,7 @@ function tMarketingMain(){
         '<div style="font-size:14px;font-weight:700;color:#1a2a3a">Авито → Telegram → Нейропродавец</div>'+
         '<div style="font-size:11px;color:#5a7a9a;margin-top:2px">Автоматизированная обработка входящих лидов</div>'+
       '</div>'+
-      '<span style="font-size:10px;font-weight:700;color:#27ae60;background:#eafaf0;border-radius:6px;padding:2px 8px;border:1px solid #27ae6044">🟢 Активно</span>'+
+      (function(){var on=settings.aiEnabled!==false;return '<button data-a="mkt-toggle-active" title="Включить/выключить нейропродавца" style="font-size:10px;font-weight:700;color:'+(on?"#27ae60":"#888")+';background:'+(on?"#eafaf0":"#f0f0f0")+';border-radius:6px;padding:3px 9px;border:1px solid '+(on?"#27ae6044":"#ccc")+';cursor:pointer">'+(on?"🟢 Активно":"⚪ Выключен")+'</button>';})()+
     '</div>'+
     // Flow
     '<div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;flex-wrap:wrap">'+
@@ -8777,6 +8777,7 @@ function bind(){
     // ── МАРКЕТИНГ ──────────────────────────────────────────────
     else if(a==="mkt-instruction"){el.onclick=()=>{window._mktInstView=true;render();};}
     else if(a==="mkt-toggle-auto"){el.onclick=()=>{ settings=Object.assign({},settings,{aiAutoSend:!settings.aiAutoSend}); fl(); };}
+    else if(a==="mkt-toggle-active"){el.onclick=()=>{ var on=settings.aiEnabled!==false; settings=Object.assign({},settings,{aiEnabled:!on}); fl(); };}
     else if(a==="mkt-provider"){el.onclick=()=>{ settings=Object.assign({},settings,{aiProvider:el.dataset.p}); fl(); };}
     else if(a==="mkt-open-chat"){el.onclick=()=>{ mktOpenChat=el.dataset.k; render(); };}
     else if(a==="mkt-close-chat"){el.onclick=()=>{ mktOpenChat=null; render(); };}

@@ -290,6 +290,11 @@ async function aiProvider(env) {
   try { const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind("admin_panel", "settings").first(); if (row && row.data) { const s = JSON.parse(row.data); if (s && ["kimi", "claude", "gpt", "dsreasoner", "yandex", "yandexlite", "yandexpro"].indexOf(s.aiProvider) >= 0) return s.aiProvider; } } catch (e) {}
   return "deepseek";
 }
+// Включён ли нейропродавец (мастер-выключатель settings.aiEnabled, по умолчанию вкл).
+async function aiEnabled(env) {
+  try { const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind("admin_panel", "settings").first(); if (row && row.data) { const s = JSON.parse(row.data); return s.aiEnabled !== false; } } catch (e) {}
+  return true;
+}
 // Доступы провайдера. kind:"anthropic"|"yandex" — нативный API; иначе OpenAI-совместимый.
 function aiResolve(env, provider) {
   if (provider === "yandexlite") return { key: env.YANDEX_API_KEY, model: "yandexgpt-lite/latest", name: "YandexGPT Lite", kind: "yandex" };
@@ -460,6 +465,12 @@ async function aiProcessIncoming(env, opt) {
   if (opt.itemId) c.itemId = opt.itemId;
   c.messages.push({ role: "user", text: text, status: "in", ts: Date.now() });
   await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "👤 Клиент:\n" + text });
+  // Мастер-выключатель: нейропродавец на паузе — лид сохранён, но ИИ не отвечает (ответ вручную).
+  if (!(await aiEnabled(env))) {
+    await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "🔕 Нейропродавец выключен — ответьте клиенту вручную." });
+    c.updatedAt = Date.now(); await aiSaveChats(env, chats);
+    return { success: true, paused: true };
+  }
   const history = c.messages.filter(function (m) { return m.role === "user" || m.role === "assistant"; }).slice(-12)
     .map(function (m) { return { role: m.role === "assistant" ? "assistant" : "user", content: m.text }; });
   let ai;
@@ -640,6 +651,7 @@ async function avitoWebhook(env, request) {
 // «Дожим»: раз в сутки (cron) напоминаем молчащим Avito-клиентам.
 async function aiNudge(env) {
   if (!env.TG_SALES_BOT_TOKEN || !env.TG_SALES_CHAT_ID) return;
+  if (!(await aiEnabled(env))) return;   // нейропродавец на паузе — без дожима
   const chats = await aiLoadChats(env);
   const now = Date.now(), DAY = 86400000, SILENCE = 2 * DAY, SPACING = 2 * DAY, MAX = 2;
   let changed = false, autoOn = false;
