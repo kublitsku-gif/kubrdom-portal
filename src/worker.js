@@ -287,11 +287,12 @@ async function avitoChats(env) {
 // Один и тот же код для DeepSeek/GigaChat/OpenAI/Qwen — отличается base_url+key+model.
 // Какой провайдер выбран в портале (settings.aiProvider): "deepseek" (по умолчанию) | "kimi" | "claude".
 async function aiProvider(env) {
-  try { const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind("admin_panel", "settings").first(); if (row && row.data) { const s = JSON.parse(row.data); if (s && (s.aiProvider === "kimi" || s.aiProvider === "claude" || s.aiProvider === "gpt")) return s.aiProvider; } } catch (e) {}
+  try { const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind("admin_panel", "settings").first(); if (row && row.data) { const s = JSON.parse(row.data); if (s && ["kimi", "claude", "gpt", "dsreasoner"].indexOf(s.aiProvider) >= 0) return s.aiProvider; } } catch (e) {}
   return "deepseek";
 }
 // Доступы провайдера. kind:"anthropic" — нативный Messages API; иначе OpenAI-совместимый.
 function aiResolve(env, provider) {
+  if (provider === "dsreasoner") return { key: env.AI_API_KEY, base: env.AI_BASE_URL || "https://api.deepseek.com", model: "deepseek-reasoner", name: "DeepSeek-R" };
   if (provider === "kimi") return { key: env.KIMI_API_KEY, base: env.KIMI_BASE_URL || "https://api.moonshot.ai/v1", model: env.KIMI_MODEL || "moonshot-v1-32k", name: "Kimi" };
   if (provider === "claude") return { key: env.CLAUDE_API_KEY, base: "https://api.anthropic.com", model: env.CLAUDE_MODEL || "claude-sonnet-4-6", name: "Claude", kind: "anthropic" };
   if (provider === "gpt") return { key: env.OPENAI_API_KEY, base: env.OPENAI_BASE_URL || "https://api.openai.com/v1", model: env.OPENAI_MODEL || "gpt-4o-mini", name: "GPT" };
@@ -321,12 +322,17 @@ async function aiChat(env, messages, opts) {
   let temperature = opts.temperature != null ? opts.temperature : 0.4;
   let max_tokens = opts.max_tokens || 600;
   let useJson = !!opts.response_format;
-  // Kimi K2 — «думающая»: разрешена только temperature=1, нужен большой бюджет токенов (reasoning+ответ), без response_format.
-  if (opts.provider === "kimi" && /^kimi-k2/i.test(model)) { temperature = 1; if (max_tokens < 4000) max_tokens = 4000; useJson = false; }
+  let sendTemp = true;
+  // Reasoning-модели (Kimi K2, DeepSeek-R1): не любят response_format, нужен большой бюджет токенов (reasoning+ответ).
+  const isKimiK2 = /^kimi-k2/i.test(model);
+  const isDsReasoner = /reasoner/i.test(model);
+  if (isKimiK2 || isDsReasoner) { if (max_tokens < 4000) max_tokens = 4000; useJson = false; }
+  if (isKimiK2) temperature = 1;             // Kimi K2 допускает только temperature=1
+  if (isDsReasoner) sendTemp = false;        // DeepSeek-R1 не поддерживает temperature
   const r = await fetch(base + "/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: "Bearer " + pr.key },
-    body: JSON.stringify(Object.assign({ model: model, messages: messages, temperature: temperature, max_tokens: max_tokens }, useJson ? { response_format: opts.response_format } : {}))
+    body: JSON.stringify(Object.assign({ model: model, messages: messages, max_tokens: max_tokens }, sendTemp ? { temperature: temperature } : {}, useJson ? { response_format: opts.response_format } : {}))
   });
   const j = await r.json();
   if (!r.ok || !j.choices) throw new Error(pr.name + ": " + JSON.stringify(j.error || j).slice(0, 200));
