@@ -287,11 +287,12 @@ async function avitoChats(env) {
 // Один и тот же код для DeepSeek/GigaChat/OpenAI/Qwen — отличается base_url+key+model.
 // Какой провайдер выбран в портале (settings.aiProvider): "deepseek" (по умолчанию) | "kimi" | "claude".
 async function aiProvider(env) {
-  try { const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind("admin_panel", "settings").first(); if (row && row.data) { const s = JSON.parse(row.data); if (s && ["kimi", "claude", "gpt", "dsreasoner"].indexOf(s.aiProvider) >= 0) return s.aiProvider; } } catch (e) {}
+  try { const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind("admin_panel", "settings").first(); if (row && row.data) { const s = JSON.parse(row.data); if (s && ["kimi", "claude", "gpt", "dsreasoner", "yandex"].indexOf(s.aiProvider) >= 0) return s.aiProvider; } } catch (e) {}
   return "deepseek";
 }
-// Доступы провайдера. kind:"anthropic" — нативный Messages API; иначе OpenAI-совместимый.
+// Доступы провайдера. kind:"anthropic"|"yandex" — нативный API; иначе OpenAI-совместимый.
 function aiResolve(env, provider) {
+  if (provider === "yandex") return { key: env.YANDEX_API_KEY, model: env.YANDEX_MODEL || "yandexgpt/latest", name: "YandexGPT", kind: "yandex" };
   if (provider === "dsreasoner") return { key: env.AI_API_KEY, base: env.AI_BASE_URL || "https://api.deepseek.com", model: "deepseek-reasoner", name: "DeepSeek-R" };
   if (provider === "kimi") return { key: env.KIMI_API_KEY, base: env.KIMI_BASE_URL || "https://api.moonshot.ai/v1", model: env.KIMI_MODEL || "moonshot-v1-32k", name: "Kimi" };
   if (provider === "claude") return { key: env.CLAUDE_API_KEY, base: "https://api.anthropic.com", model: env.CLAUDE_MODEL || "claude-sonnet-4-6", name: "Claude", kind: "anthropic" };
@@ -315,6 +316,23 @@ async function aiChat(env, messages, opts) {
     if (!r.ok || !j.content) throw new Error(pr.name + ": " + JSON.stringify(j.error || j).slice(0, 200));
     const text = (j.content || []).filter(function (b) { return b.type === "text"; }).map(function (b) { return b.text; }).join("").trim();
     return { text: text, usage: j.usage || null };
+  }
+  // YandexGPT (Yandex Cloud Foundation Models): свой формат — modelUri c folder id, поле text, Api-Key.
+  if (pr.kind === "yandex") {
+    if (!env.YANDEX_FOLDER_ID) throw new Error("YandexGPT: не задан YANDEX_FOLDER_ID (каталог)");
+    let sys = "", msgs = [];
+    messages.forEach(function (m) { if (m.role === "system") sys += (sys ? "\n\n" : "") + m.content; else msgs.push({ role: m.role, text: m.content }); });
+    const ymsgs = (sys ? [{ role: "system", text: sys }] : []).concat(msgs);
+    const r = await fetch("https://llm.api.cloud.yandex.net/foundationModels/v1/completion", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Api-Key " + pr.key },
+      body: JSON.stringify({ modelUri: "gpt://" + env.YANDEX_FOLDER_ID + "/" + pr.model, completionOptions: { stream: false, temperature: opts.temperature != null ? opts.temperature : 0.4, maxTokens: String(opts.max_tokens || 800) }, messages: ymsgs })
+    });
+    const raw = await r.text(); let j = null; try { j = JSON.parse(raw); } catch (e) {}
+    if (!r.ok || !j || !j.result) throw new Error(pr.name + " " + r.status + ": " + String(raw || "").replace(/\s+/g, " ").slice(0, 140));
+    const alt = j.result.alternatives && j.result.alternatives[0];
+    const text = ((alt && alt.message && alt.message.text) || "").trim();
+    return { text: text, usage: j.result.usage || null };
   }
   // OpenAI-совместимые (DeepSeek/Kimi)
   const base = pr.base.replace(/\/+$/, "");

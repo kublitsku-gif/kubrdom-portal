@@ -54,6 +54,7 @@ jobs:
             KIMI_API_KEY
             CLAUDE_API_KEY
             OPENAI_API_KEY
+            YANDEX_API_KEY
             TG_SALES_BOT_TOKEN
             WEBHOOK_SECRET
         env:
@@ -64,5 +65,6 @@ jobs:
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
           CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          YANDEX_API_KEY: ${{ secrets.YANDEX_API_KEY }}
           TG_SALES_BOT_TOKEN: ${{ secrets.TG_SALES_BOT_TOKEN }}
           WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}

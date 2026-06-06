@@ -37,3 +37,6 @@ CLAUDE_MODEL = "claude-sonnet-4-6"
 # GPT (OpenAI, OpenAI-совместимый). Ключ — секрет OPENAI_API_KEY.
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 OPENAI_MODEL = "gpt-4o-mini"
+# YandexGPT (Yandex Cloud). Ключ — секрет YANDEX_API_KEY. FOLDER_ID — каталог (не секрет, задаёт пользователь).
+YANDEX_MODEL = "yandexgpt/latest"
+YANDEX_FOLDER_ID = ""
