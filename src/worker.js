@@ -329,13 +329,21 @@ async function aiChat(env, messages, opts) {
   if (isKimiK2 || isDsReasoner) { if (max_tokens < 4000) max_tokens = 4000; useJson = false; }
   if (isKimiK2) temperature = 1;             // Kimi K2 допускает только temperature=1
   if (isDsReasoner) sendTemp = false;        // DeepSeek-R1 не поддерживает temperature
-  const r = await fetch(base + "/chat/completions", {
+  const reqInit = {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: "Bearer " + pr.key },
     body: JSON.stringify(Object.assign({ model: model, messages: messages, max_tokens: max_tokens }, sendTemp ? { temperature: temperature } : {}, useJson ? { response_format: opts.response_format } : {}))
-  });
-  const j = await r.json();
-  if (!r.ok || !j.choices) throw new Error(pr.name + ": " + JSON.stringify(j.error || j).slice(0, 200));
+  };
+  let r, raw = "";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    r = await fetch(base + "/chat/completions", reqInit);
+    raw = await r.text();
+    if (r.ok || r.status < 500) break;                 // не 5xx — не повторяем
+    if (attempt === 0) await new Promise(function (res) { setTimeout(res, 1200); });  // 5xx (502/503/перегрузка) — одна повторная попытка
+  }
+  let j = null; try { j = JSON.parse(raw); } catch (e) {}
+  if (!r.ok) throw new Error(pr.name + " " + r.status + ": " + String(raw || "").replace(/\s+/g, " ").slice(0, 140));
+  if (!j || !j.choices) throw new Error(pr.name + ": неожиданный ответ — " + String(raw || "").slice(0, 140));
   return { text: ((j.choices[0].message && j.choices[0].message.content) || "").trim(), usage: j.usage || null };
 }
 // Системная роль нейропродавца КубрДом.

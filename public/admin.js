@@ -8791,7 +8791,8 @@ function bind(){
       try{
         const hist=mktTest.map(function(m){return {role:m.role,content:m.text};});
         const r=await fetch(API_BASE+"/api/ai/test-chat",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({history:hist,kind:mktTestKind})});
-        const j=await r.json();
+        let j=null; try{ j=await r.json(); }catch(_){}
+        if(!j) j={success:false,error:(r.status>=500?"сервер занят ("+r.status+") — мощная модель таймаутит, повторите":"ошибка ответа сервера")};
         mktTest=mktTest.concat([(j&&j.success)?{role:"assistant",text:j.reply,needsApproval:j.needsApproval}:{role:"assistant",text:"⚠️ "+((j&&j.error)||"ошибка"),needsApproval:false}]);
       }catch(e){ mktTest=mktTest.concat([{role:"assistant",text:"⚠️ "+((e&&e.message)||e),needsApproval:false}]); }
       mktTestBusy=false; render();
