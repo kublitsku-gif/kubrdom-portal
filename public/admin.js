@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-10.5";
+const APP_BUILD = "2026-06-10.6";
 
 // ─── АВТО-ОБНОВЛЕНИЕ ПАНЕЛИ ─────────────────────────────────────────────────
 // Открытая вкладка не подхватывает новый деплой сама (HTTP-кэш работает только на перезагрузке).
@@ -52,7 +52,16 @@ async function checkAppUpdate(){
     const et = r.headers.get("ETag") || r.headers.get("etag") || "";
     if(!et) return;
     if(_appEtag === null){ _appEtag = et; return; }   // первый замер — запоминаем текущую версию
-    if(et !== _appEtag) showAppUpdateBanner();
+    if(et !== _appEtag){
+      // Новый деплой. Если всё сохранено и пользователь не печатает — перезагружаемся САМИ
+      // (вкладка тихо переезжает на новую версию). Иначе — баннер, решение за пользователем.
+      const ae = document.activeElement;
+      const typing = ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA");
+      let clean = false;
+      try { clean = _hydrated && !_saving && (JSON.stringify(serializeState()) === _lastSavedJson); } catch(e){}
+      if (clean && !typing) { location.reload(); return; }
+      showAppUpdateBanner();
+    }
   }catch(e){ /* офлайн/таймаут — проверим в следующий раз */ }
 }
 function showAppUpdateBanner(){
