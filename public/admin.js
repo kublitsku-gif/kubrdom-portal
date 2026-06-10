@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.18";
+const APP_BUILD = "2026-06-11.19";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4368,17 +4368,6 @@ function tContractList(){
               return chips?'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px">'+chips+'</div>':'';
             })()+
             filesRow+
-            (function(){
-              const respIds=c.responsible||[];
-              if(!respIds.length)return '';
-              const respUsers=users.filter(function(u){return respIds.includes(u.id);});
-              return '<div style="display:flex;align-items:center;gap:4px;margin-top:6px;flex-wrap:wrap">'+
-                '<span style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.3px">ОТВЕТСТВЕННЫЕ:</span>'+
-                respUsers.map(function(u){
-                  return '<span style="display:inline-flex;align-items:center;gap:3px;background:'+u.c+'15;border:1px solid '+u.c+'33;border-radius:10px;padding:1px 7px;font-size:10px;color:'+u.c+';font-weight:600">'+u.av+' '+u.name+'</span>';
-                }).join('')+
-              '</div>';
-            })()+
           '</div>'+
           '<div style="text-align:right;flex-shrink:0">'+
             '<div style="font-size:14px;font-weight:700;color:#1a2a3a">'+(c.amount?c.amount.toLocaleString("ru-RU")+' ₽':'—')+'</div>'+
