@@ -2300,11 +2300,20 @@ function render(){
       a.insertAdjacentHTML("beforeend",modal);
     }
   }
+  // Plan picker modal (выбор планировки из базы dbPlans для файла договора)
+  if(planPicker){
+    a.insertAdjacentHTML("beforeend", planPickerModal());
+  }
   bind();
   // Material picker search input
   if(ctMatPicker){
     const ms=document.getElementById("ct-mat-search");
     if(ms){ms.oninput=function(){ctMatPicker.search=this.value;render();};}
+  }
+  // Plan picker search input
+  if(planPicker){
+    const ps=document.getElementById("plan-pick-search");
+    if(ps){ps.oninput=function(){planPickerSearch=this.value;render();};}
   }
   if((tab==="assign"||tab==="templates")&&!openTemplate)renderTplCards();
   if(tab==="contracts"&&(contractView||contractAddForm)){
@@ -4019,7 +4028,10 @@ function tContractList(){
             let h='<div style="background:#fafbfc;border:1px solid '+color+'33;border-radius:9px;padding:9px 11px;margin-bottom:8px">';
             h+='<div style="display:flex;align-items:center;justify-content:space-between">'+
                  '<span style="font-size:10px;color:'+color+';font-weight:700">'+title+(files.length?' · '+files.length:'')+'</span>'+
+                 '<span style="display:flex;gap:6px;align-items:center">'+
+                 (kind==="plan"?'<button data-a="ct-new-plan-pick" style="padding:3px 10px;background:#6c5ce7;border:none;border-radius:6px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">📐 Из базы</button>':'')+
                  '<label data-a="ct-new-file-label" data-kind="'+kind+'" style="padding:3px 10px;background:'+color+';border:none;border-radius:6px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">+ Прикрепить<input id="ct-new-file-inp-'+kind+'" type="file" multiple style="display:none"></label>'+
+                 '</span>'+
                '</div>';
             if(files.length){
               h+='<div style="margin-top:6px">';
@@ -4233,7 +4245,10 @@ function buildContractFiles(c){
     let h='<div style="background:#fff;border-radius:12px;border:1px solid '+color+'33;padding:12px 14px;margin-bottom:10px">';
     h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'+
          '<div style="font-size:10px;color:'+color+';font-weight:700;letter-spacing:0.5px">'+title+(files.length?' · '+files.length:'')+'</div>'+
+         '<span style="display:flex;gap:6px;align-items:center">'+
+         (kind==="plan"?'<button data-a="ct-plan-pick" data-cid="'+c.id+'" style="padding:4px 11px;background:#6c5ce7;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">📐 Из базы</button>':'')+
          '<label data-a="ct-file-label" data-cid="'+c.id+'" data-kind="'+kind+'" style="padding:4px 11px;background:'+color+';border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">+ Прикрепить<input id="ct-file-inp-'+c.id+'-'+kind+'" type="file" multiple style="display:none"></label>'+
+         '</span>'+
        '</div>';
     if(!files.length){
       h+='<div style="font-size:11px;color:#9aabbf;text-align:center;padding:12px;border:1px dashed '+color+'44;border-radius:8px">Нет файлов. Нажмите «+ Прикрепить»</div>';
@@ -6862,6 +6877,50 @@ let contractView=null; // null=list, id=detail
 let contractEditId=null; // id being edited
 let ctClientSearch=""; // search in client dropdown
 let ctMatPicker=null; // {cid, ewi, search:""} - shows material picker modal
+// Пикер планировки из базы (dbPlans) для файла договора. target: "__new" (форма создания) | cid (карточка).
+let planPicker=null;        // null | {target:"__new"|cid}
+let planPickerSearch="";
+let planPickerTab="all";    // "all" | "house" | "banya"
+
+// Модалка выбора планировки из «Базы данных → Планировки». Показывает только планы с изображением;
+// PDF/файл по-прежнему грузится кнопкой «+ Прикрепить». Выбранный план кладётся в файлы договора (kind=plan).
+function planPickerModal(){
+  const all=dbPlans.filter(function(p){return p.img;});
+  const byTab=planPickerTab==="all"?all:all.filter(function(p){return (p.cat||"house")===planPickerTab;});
+  const q=(planPickerSearch||"").trim().toLowerCase();
+  const list=q?byTab.filter(function(p){return (p.name||"").toLowerCase().indexOf(q)>=0;}):byTab;
+  const nH=all.filter(function(p){return (p.cat||"house")==="house";}).length;
+  const nB=all.filter(function(p){return p.cat==="banya";}).length;
+  const tab=function(c,label,n){const on=planPickerTab===c;return '<button data-a="plan-pick-tab" data-c="'+c+'" style="flex:1;padding:7px 6px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700;border:1.5px solid '+(on?"#8e44ad":"#dde6f0")+';background:'+(on?"#8e44ad":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+'">'+label+' ('+n+')</button>';};
+  let m='<div id="plan-pick-modal" style="position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:flex-end;justify-content:center;padding:0">';
+  m+='<div style="background:#fff;width:100%;max-width:500px;max-height:82vh;border-radius:16px 16px 0 0;display:flex;flex-direction:column;overflow:hidden">';
+  m+='<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #e8eef5">'+
+       '<div><div style="font-size:14px;font-weight:700;color:#1a2a3a">📐 Планировка из базы</div><div style="font-size:11px;color:#7a9aaa">'+all.length+' планировок · PDF — кнопкой «+ Прикрепить»</div></div>'+
+       '<button data-a="plan-pick-close" style="padding:6px 12px;background:#f0f4f8;border:none;border-radius:8px;cursor:pointer;font-size:13px;color:#7a9aaa;font-weight:600">✕</button>'+
+     '</div>';
+  m+='<div style="display:flex;gap:6px;padding:10px 16px 0">'+tab("all","Все",all.length)+tab("house","🏠 Дома",nH)+tab("banya","🛁 Бани",nB)+'</div>';
+  m+='<div style="padding:10px 16px"><input id="plan-pick-search" value="'+esc(planPickerSearch||"")+'" placeholder="🔍 Поиск планировки..." style="width:100%;padding:9px 12px;border-radius:8px;border:1.5px solid #8e44ad44;font-size:13px;outline:none;box-sizing:border-box"></div>';
+  m+='<div style="flex:1;overflow-y:auto;padding:0 12px 14px">';
+  if(!all.length){
+    m+='<div style="padding:24px;text-align:center;font-size:12px;color:#9aabbf">В базе нет планировок с изображением.<br>Добавьте их в «🗄️ База данных → 📐 Планировки» или загрузите PDF кнопкой «+ Прикрепить».</div>';
+  } else if(!list.length){
+    m+='<div style="padding:24px;text-align:center;font-size:12px;color:#9aabbf">Ничего не найдено</div>';
+  } else {
+    m+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+    list.forEach(function(p){
+      m+='<div data-a="plan-pick-item" data-pid="'+p.id+'" style="border:1px solid #e6ecf3;border-radius:10px;overflow:hidden;cursor:pointer;background:#fafbfc">'+
+           '<div style="height:110px;background:#f8fafc;position:relative">'+
+             '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#c8d8e8;font-size:26px">📐</div>'+
+             '<img src="'+p.img+'" onerror="this.style.display=\'none\'" style="position:relative;width:100%;height:100%;object-fit:contain;display:block">'+
+           '</div>'+
+           '<div style="padding:7px 9px;font-size:11.5px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(p.name||"Планировка")+'</div>'+
+         '</div>';
+    });
+    m+='</div>';
+  }
+  m+='</div></div></div>';
+  return m;
+}
 // Global client picker function - called from inline onclick
 window._ctPick=function(el){
   if(!el||!el.dataset){return;}
@@ -8439,6 +8498,30 @@ function bind(){
       fl();
     };}
     else if(a==="ct-mat-close"){el.onclick=()=>{ctMatPicker=null;render();};}
+    // Пикер планировки из базы (dbPlans) → файл договора kind=plan
+    else if(a==="ct-new-plan-pick"){el.onclick=()=>{planPicker={target:"__new"};planPickerSearch="";planPickerTab="all";render();};}
+    else if(a==="ct-plan-pick"){el.onclick=()=>{planPicker={target:el.dataset.cid};planPickerSearch="";planPickerTab="all";render();};}
+    else if(a==="plan-pick-close"){el.onclick=()=>{planPicker=null;render();};}
+    else if(a==="plan-pick-tab"){el.onclick=()=>{planPickerTab=el.dataset.c;render();};}
+    else if(a==="plan-pick-item"){el.onclick=()=>{
+      if(!planPicker)return;
+      const p=dbPlans.find(function(x){return x.id===el.dataset.pid;});
+      if(!p||!p.img){planPicker=null;render();return;}
+      // Подставляем готовую планировку как файл договора: data = R2-ссылка плана (не копируем файл).
+      const fileDesc={id:gid(),kind:"plan",name:p.name||"Планировка",data:p.img,mime:"image/jpeg",size:0,date:new Date().toISOString().slice(0,16).replace("T"," "),fromPlanId:p.id};
+      const target=planPicker.target;
+      planPicker=null;
+      if(target==="__new"){
+        contractNew.files=(contractNew.files||[]).concat([fileDesc]);
+        render();
+      } else {
+        contractDocs=contractDocs.map(function(c){
+          if(c.id!==target)return c;
+          return Object.assign({},c,{files:(c.files||[]).concat([fileDesc])});
+        });
+        fl();
+      }
+    };}
     else if(a==="ct-ewm-save"){el.onclick=()=>{
       const cid=el.dataset.cid,ewi=parseInt(el.dataset.ewi),mi=parseInt(el.dataset.mi);
       const qty=parseFloat((document.getElementById("ct-ewm-qty-"+cid+"-"+ewi+"-"+mi)||{}).value)||1;
