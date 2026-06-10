@@ -38,7 +38,53 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-10.6";
+const APP_BUILD = "2026-06-10.7";
+
+// ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
+// Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
+// событий (keydown/beforeinput/input + фокус + перерисовки). Нужен, чтобы понять,
+// ПОЧЕМУ на конкретном устройстве «не вводятся цифры»: видно, доходят ли нажатия
+// до страницы, в какой элемент, и не глушит ли их кто-то (defaultPrevented).
+if (location.search.indexOf("diag=1") >= 0) {
+  (function(){
+    const log = [];
+    let renders = 0;
+    function box(){
+      let b = document.getElementById("diag-box");
+      if (!b){
+        b = document.createElement("pre");
+        b.id = "diag-box";
+        b.style.cssText = "position:fixed;bottom:0;left:0;right:0;max-height:42vh;overflow:auto;background:rgba(0,0,0,0.88);color:#7CFC00;font:10px/1.5 monospace;padding:8px 10px;margin:0;z-index:100000;white-space:pre-wrap;word-break:break-all";
+        document.body.appendChild(b);
+      }
+      return b;
+    }
+    function add(line){
+      log.push(line);
+      if (log.length > 28) log.shift();
+      try { box().textContent = "ДИАГНОСТИКА ВВОДА · v" + APP_BUILD + " · renders:" + renders + "\n" + log.join("\n"); } catch(e){}
+    }
+    ["keydown","beforeinput","input","focusin","focusout"].forEach(function(t){
+      window.addEventListener(t, function(e){
+        const tg = e.target || {};
+        const id = tg.id || tg.tagName || "?";
+        if (t === "focusin" || t === "focusout"){ add(t + " → " + id); return; }
+        const val = (tg.value != null) ? (" val='" + String(tg.value).slice(0,20) + "'") : "";
+        add(t + " key=" + (e.key || e.data || "·") + " → " + id + val + (e.defaultPrevented ? " ⛔PREVENTED" : ""));
+      }, true);
+    });
+    // считаем перерисовки (render — глобальная функция classic-скрипта)
+    setTimeout(function(){
+      try {
+        const orig = window.render;
+        if (typeof orig === "function"){
+          window.render = function(){ renders++; add("RENDER #" + renders); return orig.apply(this, arguments); };
+        }
+      } catch(e){}
+      add("диагностика активна; кликните в поле и наберите цифры");
+    }, 1500);
+  })();
+}
 
 // ─── АВТО-ОБНОВЛЕНИЕ ПАНЕЛИ ─────────────────────────────────────────────────
 // Открытая вкладка не подхватывает новый деплой сама (HTTP-кэш работает только на перезагрузке).
@@ -654,6 +700,25 @@ window._bindPhoneInputs=function(){
   });
 };
 
+// План зарплаты в договоре: пишем в стейт на КАЖДЫЙ ввод, БЕЗ render() (фокус сохраняем).
+// Иначе случайная перерисовка (poll/CRM-бейдж после blur) стирала набранное → 💾 писал 0.
+// id = "ctsal-plan-<cid>-<uid>" ("ctsal-plan-".length === 11). Автосейв подхватит. Ошибки глотаем:
+// синк — best-effort, он не должен мешать самому вводу.
+function _syncSalPlan(id,numVal){
+  try{
+    const rest=id.slice(11);
+    const li=rest.lastIndexOf("-");
+    if(li<=0)return;
+    const cid=rest.slice(0,li), uid=rest.slice(li+1);
+    contractDocs=contractDocs.map(function(c){
+      if(c.id!==cid)return c;
+      const sal=Object.assign({},c.salaries||{});
+      sal[uid]=Object.assign({},sal[uid]||{},{plan:numVal});
+      return Object.assign({},c,{salaries:sal});
+    });
+  }catch(e){}
+}
+
 window._bindMoneyInputs=function(){
   document.querySelectorAll("input[data-money='1']").forEach(function(inp){
     if(inp._moneyBound)return;
@@ -671,23 +736,13 @@ window._bindMoneyInputs=function(){
       // Sync to state to survive re-render
       const numVal=unfmtMoney(this.value);
       if(this.id==="ct-amount")contractNew.amount=numVal;
-      else if(this.id.indexOf("ctsal-plan-")===0){
-        // План зарплаты в договоре: пишем в стейт на КАЖДЫЙ ввод, БЕЗ render() (фокус сохраняем).
-        // Иначе случайная перерисовка (poll/CRM-бейдж после blur, сохранение дедлайна рядом) стирала
-        // набранное → 💾 читал пустое поле и писал 0 → «не могу поменять зарплату». Автосейв подхватит.
-        const rest=this.id.slice(11);            // "ctsal-plan-".length === 11 → "<cid>-<uid>"
-        const li=rest.lastIndexOf("-");
-        if(li>0){
-          const cid=rest.slice(0,li), uid=rest.slice(li+1);
-          contractDocs=contractDocs.map(function(c){
-            if(c.id!==cid)return c;
-            const sal=Object.assign({},c.salaries||{});
-            sal[uid]=Object.assign({},sal[uid]||{},{plan:numVal});
-            return Object.assign({},c,{salaries:sal});
-          });
-        }
-      }
+      else if(this.id.indexOf("ctsal-plan-")===0)_syncSalPlan(this.id,numVal);
     });
+    // Резервный синк на change (срабатывает при уходе из поля) — на случай, если на конкретном
+    // устройстве события input ведут себя нестандартно (IME/автозаполнение/старый движок).
+    if(inp.id&&inp.id.indexOf("ctsal-plan-")===0){
+      inp.addEventListener("change",function(){ _syncSalPlan(this.id,unfmtMoney(this.value)); });
+    }
   });
 };
 const gid=()=>"x"+Date.now()+Math.random().toString(36).slice(2,5);
