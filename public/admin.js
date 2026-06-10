@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-10.8";
+const APP_BUILD = "2026-06-10.9";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -2645,31 +2645,40 @@ function renderObjCard(obj, isAdmin){
     html+='</div>';
     html+='</div>';
   }
-  // Планировки объекта — только те, что прикреплены в его договорах (раздел «Договора»). Только показ.
+  // Файлы из договоров объекта (планировки + спецификации) — только показ, источник правды в договоре.
   (function(){
     const objContracts=contractDocs.filter(function(d){return d.objId===obj.id;});
-    const seen={}, planFiles=[];
-    objContracts.forEach(function(c){
-      (c.files||[]).forEach(function(f){
-        if(f.kind!=="plan"||!f.data||seen[f.data])return;
-        seen[f.data]=1; planFiles.push(f);
+    function collect(kind){
+      const seen={}, out=[];
+      objContracts.forEach(function(c){
+        (c.files||[]).forEach(function(f){
+          if(f.kind!==kind||!f.data||seen[f.data])return;
+          seen[f.data]=1; out.push(f);
+        });
       });
-    });
-    if(!planFiles.length)return;
-    html+='<div style="padding:10px 16px 12px;border-top:1px solid #f4f6f9">';
-    html+='<div style="font-size:10px;font-weight:700;color:#8e44ad;letter-spacing:0.3px;margin-bottom:8px">📐 ПЛАНИРОВКИ ИЗ ДОГОВОРА</div>';
-    html+='<div style="display:flex;gap:8px;flex-wrap:wrap">';
-    planFiles.forEach(function(f){
-      const isImg=(f.mime||"").indexOf("image")===0;
-      html+='<a href="'+f.data+'" target="_blank" rel="noopener" style="width:84px;text-decoration:none">'+
-              '<div style="height:64px;border-radius:8px;border:1px solid #e6ddf0;background:#faf7fd;overflow:hidden;position:relative">'+
-                '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#c8b8dc;font-size:22px">📐</div>'+
-                (isImg?'<img src="'+f.data+'" onerror="this.style.display=\'none\'" style="position:relative;width:100%;height:100%;object-fit:cover;display:block">':'')+
-              '</div>'+
-              '<div style="font-size:9px;color:#5a7a9a;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name||"Планировка")+'</div>'+
-            '</a>';
-    });
-    html+='</div></div>';
+      return out;
+    }
+    function group(files,title,color,icon,fallbackName){
+      if(!files.length)return "";
+      let h='<div style="font-size:10px;font-weight:700;color:'+color+';letter-spacing:0.3px;margin-bottom:8px">'+title+'</div>';
+      h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">';
+      files.forEach(function(f){
+        const isImg=(f.mime||"").indexOf("image")===0;
+        h+='<a href="'+f.data+'" target="_blank" rel="noopener" style="width:84px;text-decoration:none">'+
+             '<div style="height:64px;border-radius:8px;border:1px solid '+color+'33;background:'+color+'0d;overflow:hidden;position:relative">'+
+               '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:'+color+'66;font-size:22px">'+icon+'</div>'+
+               (isImg?'<img src="'+f.data+'" onerror="this.style.display=\'none\'" style="position:relative;width:100%;height:100%;object-fit:cover;display:block">':'')+
+             '</div>'+
+             '<div style="font-size:9px;color:#5a7a9a;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name||fallbackName)+'</div>'+
+           '</a>';
+      });
+      h+='</div>';
+      return h;
+    }
+    const plansHtml=group(collect("plan"),"📐 ПЛАНИРОВКИ ИЗ ДОГОВОРА","#8e44ad","📐","Планировка");
+    const specsHtml=group(collect("spec"),"📋 СПЕЦИФИКАЦИИ ИЗ ДОГОВОРА","#16a085","📋","Спецификация");
+    if(!plansHtml&&!specsHtml)return;
+    html+='<div style="padding:10px 16px 4px;border-top:1px solid #f4f6f9">'+plansHtml+specsHtml+'</div>';
   })();
   // Team row (admin only)
   html+=buildTeamRow(obj.id, isAdmin);
@@ -4187,7 +4196,8 @@ function tContractList(){
           }
           return '<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:0.5px;margin-bottom:6px">📎 ФАЙЛЫ</div>'+
                  miniSection("contract","📄 Файл договора","#2980b9")+
-                 miniSection("plan","📐 Файл планировки и проект","#8e44ad");
+                 miniSection("plan","📐 Файл планировки и проект","#8e44ad")+
+                 miniSection("spec","📋 Файл спецификации","#16a085");
         })()+
         // Extra works block (visible always - main can have extras too)
         (function(){
@@ -4414,6 +4424,7 @@ function buildContractFiles(c){
   let html='<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin:14px 0 8px">📎 ФАЙЛЫ</div>';
   html+=section("contract","📄 ФАЙЛ ДОГОВОРА","#2980b9");
   html+=section("plan","📐 ФАЙЛ ПЛАНИРОВКИ И ПРОЕКТ","#8e44ad");
+  html+=section("spec","📋 ФАЙЛ СПЕЦИФИКАЦИИ","#16a085");
   return html;
 }
 
