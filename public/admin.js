@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-10.14";
+const APP_BUILD = "2026-06-10.15";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -373,7 +373,7 @@ async function apiSave(){
       method:  "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
       body:    JSON.stringify({ items: items }),
-    }, 15000);
+    }, 30000);   // 30с: на медленном/троттленом канале POST снимка (~1 МБ) может идти долго
     if (r.status === 401) { clearToken(); location.reload(); return { success: false, error: "unauthorized" }; }
     if (!r.ok) {
       let detail = "HTTP " + r.status;
@@ -403,8 +403,14 @@ function showSaveError(detail, snapLen){
     document.body.appendChild(b);
   }
   const tooBig = /large|big|413|exceed|too\s|D1_|SQLITE|размер|велик/i.test(detail) || (snapLen && snapLen > 1500000);
-  b.innerHTML = "⚠️ Изменения НЕ сохраняются в облако!<br><span style='font-weight:400;font-size:12px'>" + esc(detail)
-    + (tooBig ? "<br>Снимок слишком большой (тяжёлые фото в base64). Обновите страницу (Cmd+Shift+R) — новая версия хранит фото отдельно в облаке." : "") + "</span>";
+  // Технические тексты → человеческие. Таймаут/обрыв сети — самый частый случай (медленный
+  // канал или блокировка без VPN): данные целы локально, автосейв ретраит каждые 2.5с сам.
+  let human = String(detail || "");
+  if (/abort/i.test(human)) human = "Сервер не отвечает (таймаут сети). Проверьте интернет или включите VPN.";
+  else if (/Failed to fetch|NetworkError|Load failed/i.test(human)) human = "Нет связи с сервером. Проверьте интернет или включите VPN.";
+  b.innerHTML = "⚠️ Изменения НЕ сохраняются в облако!<br><span style='font-weight:400;font-size:12px'>" + esc(human)
+    + (tooBig ? "<br>Снимок слишком большой (тяжёлые фото в base64). Обновите страницу (Cmd+Shift+R) — новая версия хранит фото отдельно в облаке." : "")
+    + "<br>Правки сохранены на устройстве и уйдут в облако сами, когда появится связь.</span>";
 }
 function clearSaveError(){
   const b = document.getElementById("save-error-banner");
