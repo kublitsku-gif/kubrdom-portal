@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-10.10";
+const APP_BUILD = "2026-06-10.11";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4916,7 +4916,15 @@ function tFinanceMode(){
 
 
 function tFinanceExperiment(){
-  const signed=contractDocs.filter(function(c){return c.status==="signed"||c.status==="closed";});
+  // Привязка к ДОГОВОРАМ, не к объектам: договор без объекта (objId="") полноценно участвует
+  // в P&L и БДДС. Берём все договоры (вкл. «Оформляется» — предварительный договор уже приносит
+  // аванс); статус виден бейджем на карточке.
+  const cts=contractDocs.slice();
+  function extraTotal(c){
+    return (c.extraWorks||[]).reduce(function(a,w){return a+(w.cost||0)+(w.mats||[]).reduce(function(b,m){return b+(m.cost||0)*(m.qty||1);},0);},0);
+  }
+  // Выручка договора: основной — сумма + доп. работы; доп-договор — только его работы.
+  function contractRevenue(c){ return (c.type==="main"?(c.amount||0):0)+extraTotal(c); }
   function objMaterials(oid){
     const o=objects.find(function(x){return x.id===oid;}); if(!o)return 0;
     return o.stages.flatMap(function(s){return s.works.flatMap(function(w){return w.mats||[];});})
@@ -4931,16 +4939,27 @@ function tFinanceExperiment(){
     s+=(c.extraWorksPlan||[]).reduce(function(a,w){return a+(w.amount||0);},0);
     return s;
   }
-  // ── Итоги (P&L) ──
+  // Транзакции договора: по contractId, либо по объекту договора (старые записи без contractId).
+  function contractTxns(c,type){
+    return finTxns.filter(function(t){return t.type===type&&(t.contractId===c.id||(c.objId&&t.objId===c.objId));})
+      .reduce(function(a,t){return a+(t.amount||0);},0);
+  }
+  // ── Итоги (P&L) ── материалы объекта считаем один раз, даже если на объекте несколько договоров
   let revenue=0,materials=0,labor=0;
-  signed.forEach(function(c){ revenue+=getObjectContractAmount(c.objId); materials+=objMaterials(c.objId); labor+=objLabor(c); });
+  const matSeen={};
+  cts.forEach(function(c){
+    revenue+=contractRevenue(c);
+    labor+=objLabor(c);
+    if(c.objId&&!matSeen[c.objId]){ matSeen[c.objId]=1; materials+=objMaterials(c.objId); }
+  });
   const cogs=materials+labor, gross=revenue-cogs, margin=revenue>0?Math.round(gross/revenue*100):0;
   // ── БДДС (живые деньги) ──
   let factIn=0,factOut=0;
   finTxns.forEach(function(t){ if(t.type==="income")factIn+=t.amount||0; else if(t.type==="expense")factOut+=t.amount||0; });
-  const flow=factIn-factOut, toReceive=revenue-factIn;
+  const flow=factIn-factOut, toReceive=Math.max(0,revenue-factIn);
   const RP=function(n){return (n>=0?"+":"−")+Math.abs(n).toLocaleString("ru-RU")+" ₽";};
   const RU=function(n){return n.toLocaleString("ru-RU")+" ₽";};
+  const CT_STAT={draft:{label:"Оформляется",color:"#7f8c8d"},signed:{label:"Подписан",color:"#2980b9"},closed:{label:"Закрыт",color:"#27ae60"}};
 
   let html='';
   // Пояснение
@@ -4977,19 +4996,27 @@ function tFinanceExperiment(){
       '<span style="font-size:16px;font-weight:800;color:#f0b94a">'+RU(toReceive)+'</span>'+
     '</div>'+
   '</div>';
-  // По объектам
-  html+='<div style="font-size:12px;font-weight:700;color:#7a9aaa;letter-spacing:0.5px;margin-bottom:10px">ПО ОБЪЕКТАМ</div>';
-  signed.forEach(function(c){
-    const o=objects.find(function(x){return x.id===c.objId;}); if(!o)return;
-    const rev=getObjectContractAmount(c.objId), mat=objMaterials(c.objId), lab=objLabor(c);
+  // По договорам (объект — дополнение, если привязан)
+  html+='<div style="font-size:12px;font-weight:700;color:#7a9aaa;letter-spacing:0.5px;margin-bottom:10px">ПО ДОГОВОРАМ</div>';
+  if(!cts.length){
+    html+='<div style="background:#fff;border-radius:12px;padding:26px;text-align:center;color:#9aabbf;font-size:12px;border:1px dashed #d0dae8">Договоров пока нет — добавьте их во вкладке «📄 Договора».</div>';
+  }
+  cts.forEach(function(c){
+    const o=objects.find(function(x){return x.id===c.objId;})||null;
+    const st=CT_STAT[c.status]||CT_STAT.draft;
+    const rev=contractRevenue(c), mat=c.objId?objMaterials(c.objId):0, lab=objLabor(c);
     const profit=rev-mat-lab, pct=rev>0?Math.round(profit/rev*100):0;
-    const oin=finTxns.filter(function(t){return t.objId===c.objId&&t.type==="income";}).reduce(function(a,t){return a+(t.amount||0);},0);
-    const oout=finTxns.filter(function(t){return t.objId===c.objId&&t.type==="expense";}).reduce(function(a,t){return a+(t.amount||0);},0);
-    const toRecv=rev-oin;
-    html+='<div data-a="fin-open" data-cid="'+c.id+'" data-oid="'+c.objId+'" style="background:#fff;border:1px solid #dde6f0;border-radius:14px;padding:14px;margin-bottom:10px;cursor:pointer">'+
+    const oin=contractTxns(c,"income");
+    const oout=contractTxns(c,"expense");
+    const toRecv=Math.max(0,rev-oin);
+    html+='<div data-a="fin-open" data-cid="'+c.id+'" data-oid="'+(c.objId||"")+'" style="background:#fff;border:1px solid #dde6f0;border-radius:14px;padding:14px;margin-bottom:10px;cursor:pointer">'+
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">'+
-        '<div style="font-size:15px;font-weight:700;color:#0d1b2e">'+(o.icon||"")+' '+o.name+'</div>'+
-        '<div style="text-align:right"><div style="font-size:17px;font-weight:800;color:'+(profit>=0?"#27ae60":"#e74c3c")+'">'+RP(profit)+'</div><div style="font-size:10px;color:#9aabbf">прибыль · '+pct+'%</div></div>'+
+        '<div style="flex:1;min-width:0;padding-right:8px">'+
+          '<div style="font-size:14px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📄 '+esc(c.name||"Договор")+'</div>'+
+          '<div style="font-size:11px;color:#7a9aaa;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.client||"")+(o?' · '+(o.icon||"")+' '+esc(o.name):'')+'</div>'+
+          '<span style="display:inline-block;margin-top:4px;font-size:9px;font-weight:700;color:'+st.color+';background:'+st.color+'18;border-radius:5px;padding:1px 7px">'+st.label+'</span>'+
+        '</div>'+
+        '<div style="text-align:right;flex-shrink:0"><div style="font-size:17px;font-weight:800;color:'+(profit>=0?"#27ae60":"#e74c3c")+'">'+RP(profit)+'</div><div style="font-size:10px;color:#9aabbf">прибыль · '+pct+'%</div></div>'+
       '</div>'+
       '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:11px;margin-bottom:8px">'+
         '<div><div style="color:#9aabbf">ВЫРУЧКА</div><b style="color:#2980b9">'+RU(rev)+'</b></div>'+
