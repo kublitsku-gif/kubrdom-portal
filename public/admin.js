@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-10.7";
+const APP_BUILD = "2026-06-10.8";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4619,7 +4619,7 @@ function tContractDetail(cid){
           '<div style="display:flex;gap:6px;align-items:end">'+
             '<div style="flex:1;min-width:0">'+
               '<div style="font-size:9px;color:#9aabbf;margin-bottom:3px">ПЛАН ₽ (по умолчанию '+getDefaultSalary(u).toLocaleString("ru-RU")+')</div>'+
-              '<input id="ctsal-plan-'+cid+'-'+u.id+'" type="text" inputmode="numeric" data-money="1" value="'+(ud.plan!=null&&ud.plan!==0?fmtMoney(ud.plan):"")+'" placeholder="'+getDefaultSalary(u).toLocaleString("ru-RU")+'" style="width:100%;padding:6px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;text-align:right;box-sizing:border-box">'+
+              '<input id="ctsal-plan-'+cid+'-'+u.id+'" type="text" inputmode="numeric" data-money="1" value="'+(ud.plan!=null&&ud.plan!==0?fmtMoney(ud.plan):"")+'" placeholder="введите сумму" style="width:100%;padding:6px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;text-align:right;box-sizing:border-box">'+
             '</div>'+
             '<div style="flex:1;min-width:0">'+
               '<div style="font-size:9px;color:#9aabbf;margin-bottom:3px">ВЫПЛАЧЕНО ₽</div>'+
