@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-10.13";
+const APP_BUILD = "2026-06-10.14";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -5874,8 +5874,26 @@ function tFinanceContractPnL(cid){
     '</div>'+
   '</div>';
 
+  // ── РАЗДЕЛЫ КАК ВКЛАДКИ ── кнопки в стиле главного меню; ниже показывается только активный
+  // раздел. Тип транзакции жёстко задан разделом: Приходы — только приход, остальные — расход
+  // своей категории (категории в форме и так фильтруются по sectionGroup).
+  const secDefs=[];
+  if(canSeeIncome)secDefs.push({k:"income",n:"💰 Приходы",c:"#27ae60"});
+  if(canSeeSupply)secDefs.push({k:"supply",n:"📦 Снабжение",c:"#2980b9"});
+  if(canSeeSalaryProd)secDefs.push({k:"salary_prod",n:"👷 Зарплата",c:"#e67e22"});
+  const extraVisible=canSeeSalaryProd&&(((c.extraWorksPlan||[]).length>0)||txns.some(function(t){return t.type==="expense"&&txnCategoryGroup(t.category)==="salary_prod_extra";})||isAdmin||isFinancier);
+  if(extraVisible)secDefs.push({k:"extra",n:"🛠 Доп работы",c:"#16a085"});
+  if(canSeeSalaryEscort&&(escortSalUsers.length||salaryEscortTxns.length))secDefs.push({k:"salary_escort",n:"🚚 РОП",c:"#9b59b6"});
+  if(secDefs.length&&!secDefs.some(function(s){return s.k===finCtSection;}))finCtSection=secDefs[0].k;
+  html+='<div style="display:flex;gap:6px;overflow-x:auto;padding:2px 2px 10px;scrollbar-width:none;-webkit-overflow-scrolling:touch">'+
+    secDefs.map(function(s){
+      const on=finCtSection===s.k;
+      return '<button data-a="fin-ct-section" data-k="'+s.k+'" style="flex-shrink:0;padding:9px 14px;border-radius:12px;border:1.5px solid '+(on?s.c:"#dde6f0")+';background:'+(on?s.c:"#fff")+';color:'+(on?"#fff":"#5a7080")+';font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:'+(on?"0 3px 10px "+s.c+"55":"none")+'">'+s.n+'</button>';
+    }).join("")+
+  '</div>';
+
   // ── INCOME SECTION (admin / financier only) ──
-  if(canSeeIncome){
+  if(canSeeIncome&&finCtSection==="income"){
     html+=renderContractSection({
       title:"💰 ПРИХОДЫ ОТ КЛИЕНТА",
       color:"#27ae60",
@@ -5891,7 +5909,7 @@ function tFinanceContractPnL(cid){
   }
 
   // ── SUPPLY SECTION (admin / financier / supply) ──
-  if(canSeeSupply){
+  if(canSeeSupply&&finCtSection==="supply"){
     html+=renderContractSection({
       title:"📦 СНАБЖЕНИЕ",
       color:"#2980b9",
@@ -5914,7 +5932,7 @@ function tFinanceContractPnL(cid){
     const myProdUsers=(isBrigadier||isWorker)&&!isAdmin&&!isFinancier?
       prodSalUsers.filter(function(u){return u.id===user.id;}):
       prodSalUsers;
-    html+=renderContractSection({
+    if(finCtSection==="salary_prod")html+=renderContractSection({
       title:"👷 ЗАРПЛАТА ПРОИЗВОДСТВА",
       color:"#e67e22",
       txns:salaryProdTxns,
@@ -5934,7 +5952,7 @@ function tFinanceContractPnL(cid){
     const extraSpent=extraTxns.reduce(function(a,t){return a+t.amount;},0);
     const extraPlanItems=c.extraWorksPlan||[];
     const extraPlanTotal=extraPlanItems.reduce(function(a,w){return a+(w.amount||0);},0);
-    if(extraTxns.length||extraPlanItems.length||isAdmin||isFinancier){
+    if((extraTxns.length||extraPlanItems.length||isAdmin||isFinancier)&&finCtSection==="extra"){
       html+=renderContractSection({
         title:"🛠 ДОП РАБОТЫ ПРОИЗВОДСТВА",
         color:"#16a085",
@@ -5956,7 +5974,7 @@ function tFinanceContractPnL(cid){
   }
 
   // ── ESCORT SALARY SECTION (escort see only this; admin/financier see all) ──
-  if(canSeeSalaryEscort&&(escortSalUsers.length||salaryEscortTxns.length)){
+  if(canSeeSalaryEscort&&(escortSalUsers.length||salaryEscortTxns.length)&&finCtSection==="salary_escort"){
     // For escort — filter to show only their own row
     const myEscortUsers=isEscort&&!isAdmin&&!isFinancier?
       escortSalUsers.filter(function(u){return u.id===user.id;}):
@@ -5980,13 +5998,19 @@ function tFinanceContractPnL(cid){
 
   // Form is rendered inline inside the matching section (renderContractSection)
 
-  // Одна плавающая кнопка «+ Транзакция» на весь экран (по умолчанию — приход; конкретный
-  // раздел открывается тапом по его шапке: Снабжение, Зарплата и т.д.).
-  if(canAddIncome||canAddSupply||canAddSalary){
-    const fabType=canAddIncome?"income":"expense";
-    html+='<div style="position:sticky;bottom:14px;z-index:60;display:flex;flex-direction:column;align-items:center;gap:4px;margin-top:8px;pointer-events:none">'+
-      '<button data-a="fin-add-typed" data-cid="'+cid+'" data-type="'+fabType+'" style="pointer-events:auto;padding:12px 28px;background:linear-gradient(135deg,#27ae60,#1f8b4d);border:none;border-radius:26px;cursor:pointer;color:#fff;font-size:14px;font-weight:800;box-shadow:0 6px 18px rgba(39,174,96,0.45)">+ Транзакция</button>'+
-      '<div style="pointer-events:none;font-size:9px;color:#8aa0b8;background:rgba(255,255,255,0.85);border-radius:8px;padding:2px 8px">или тапни нужный раздел ↑</div>'+
+  // Одна плавающая кнопка «+ Транзакция» — добавляет строго в АКТИВНЫЙ раздел: для «Приходов»
+  // тип всегда income, для остальных — expense с категорией раздела (без выбора типа).
+  const FAB_MAP={
+    income:{t:"income",cat:"",label:"+ Приход",grad:"linear-gradient(135deg,#27ae60,#1f8b4d)",shadow:"rgba(39,174,96,0.45)",can:canAddIncome},
+    supply:{t:"expense",cat:"📦 Закупка материалов",label:"+ Расход · снабжение",grad:"linear-gradient(135deg,#2980b9,#1f5e8b)",shadow:"rgba(41,128,185,0.45)",can:canAddSupply},
+    salary_prod:{t:"expense",cat:"👷 Зарплата производства",label:"+ Выплата зарплаты",grad:"linear-gradient(135deg,#e67e22,#b35e10)",shadow:"rgba(230,126,34,0.45)",can:canAddSalary},
+    extra:{t:"expense",cat:"🛠 Доп. работы производства",label:"+ Оплата доп работ",grad:"linear-gradient(135deg,#16a085,#0e6e5a)",shadow:"rgba(22,160,133,0.45)",can:canAddSalary},
+    salary_escort:{t:"expense",cat:"🚚 Зарплата сопроводителя",label:"+ Выплата РОПу",grad:"linear-gradient(135deg,#9b59b6,#6f3a85)",shadow:"rgba(155,89,182,0.45)",can:canAddSalary}
+  };
+  const fm=FAB_MAP[finCtSection]||FAB_MAP.income;
+  if(fm.can){
+    html+='<div style="position:sticky;bottom:14px;z-index:60;display:flex;justify-content:center;margin-top:8px;pointer-events:none">'+
+      '<button data-a="fin-add-typed" data-cid="'+cid+'" data-type="'+fm.t+'" data-cat="'+fm.cat+'" style="pointer-events:auto;padding:12px 28px;background:'+fm.grad+';border:none;border-radius:26px;cursor:pointer;color:#fff;font-size:14px;font-weight:800;box-shadow:0 6px 18px '+fm.shadow+'">'+fm.label+'</button>'+
     '</div>';
   }
 
@@ -7055,6 +7079,7 @@ let finOpenContractId=null; // contract P&L view
 let cleanupExpanded={}; // {contractId: true} — раскрыт ли список премий за уборку
 let finSelectedContractIds=[]; // contracts selected for dashboard aggregation
 let finAddForm=false;
+let finCtSection="income"; // активный раздел в P&L договора (income|supply|salary_prod|extra|salary_escort)
 let finNewTxn={type:"income",category:"",amount:"",date:new Date().toISOString().slice(0,10),note:"",method:"transfer"};
 // Contracts
 let contractDocs=[
@@ -8424,6 +8449,7 @@ function bind(){
     };}
     else if(a==="fin-back"){el.onclick=()=>{finOpenObjId=null;finOpenContractId=null;finAddForm=false;render();};}
     else if(a==="fin-add"){el.onclick=()=>{finAddForm=!finAddForm;finNewTxn={type:"income",category:FIN_INCOME_CATS[0],amount:"",date:new Date().toISOString().slice(0,10),note:"",method:"transfer"};render();};}
+    else if(a==="fin-ct-section"){el.onclick=()=>{finCtSection=el.dataset.k;finAddForm=false;render();};}
     else if(a==="fin-add-typed"){el.onclick=()=>{
       const type=el.dataset.type||"income";
       const cat=el.dataset.cat||(type==="income"?FIN_INCOME_CATS[0]:FIN_EXPENSE_CATS[0]);
