@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-10.16";
+const APP_BUILD = "2026-06-11.17";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4318,9 +4318,27 @@ function tContractList(){
     byObj[c.objId].push(c);
   });
 
+  // Тип предмета договора (баня/дом) — эвристикой по названию, примечанию и объекту.
+  function contractKind(c){
+    const o=objects.find(function(x){return x.id===c.objId;});
+    const s=((c.name||"")+" "+(c.note||"")+" "+(o?o.name:"")).toLowerCase();
+    if(/бан/.test(s))return "banya";
+    if(/дом/.test(s))return "house";
+    return null;
+  }
   // Рендер одной карточки договора (используется в группах и в списке без объекта)
   function renderContractCard(c){
     const st=STATUS[c.status]||STATUS.draft;
+    const kind=contractKind(c);
+    // Индикаторы файлов: зелёный ✓ — прикреплён, красный ✕ — нет
+    const fk={contract:false,plan:false,spec:false};
+    (c.files||[]).forEach(function(f){ if(fk[f.kind]!==undefined&&f.data)fk[f.kind]=true; });
+    const fileChip=function(ok,icon,label){
+      return '<span style="font-size:10px;font-weight:700;border-radius:6px;padding:1px 8px;background:'+(ok?'#27ae6018':'#e74c3c12')+';color:'+(ok?'#27ae60':'#e74c3c')+'">'+icon+' '+label+' '+(ok?'✓':'✕')+'</span>';
+    };
+    const filesRow='<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px">'+
+      fileChip(fk.contract,'📄','Договор')+fileChip(fk.plan,'📐','Проект')+fileChip(fk.spec,'📋','Спец.')+
+    '</div>';
     return '<div data-a="ct-open" data-cid="'+c.id+'" style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:8px;cursor:pointer;border-left:3px solid '+st.color+'">'+
         '<div style="display:flex;align-items:flex-start;gap:10px">'+
           '<div style="flex:1;min-width:0">'+
@@ -4328,6 +4346,7 @@ function tContractList(){
               '<span style="font-size:10px;font-weight:700;background:'+st.color+'18;color:'+st.color+';border-radius:5px;padding:1px 7px">'+st.label+'</span>'+
               '<span style="font-size:10px;background:'+(c.type==="main"?'#2980b918':'#8e44ad18')+';color:'+(c.type==="main"?'#2980b9':'#8e44ad')+';border-radius:5px;padding:1px 7px">'+(c.type==="main"?'Основной':'Доп. работы')+'</span>'+
               (!c.objId?'<span style="font-size:10px;background:#e67e2218;color:#e67e22;border-radius:5px;padding:1px 7px">📎 Без объекта</span>':'')+
+              (kind==="banya"?'<span style="font-size:10px;font-weight:700;background:#e67e2218;color:#e67e22;border-radius:5px;padding:1px 7px">🛁 Баня</span>':kind==="house"?'<span style="font-size:10px;font-weight:700;background:#2980b918;color:#2980b9;border-radius:5px;padding:1px 7px">🏠 Дом</span>':'')+
             '</div>'+
             '<div style="font-size:13px;font-weight:700;color:#1a2a3a">'+c.name+'</div>'+
             (function(){
@@ -4346,6 +4365,7 @@ function tContractList(){
               if(c.deadlineDate) chips+='<span style="font-size:10px;font-weight:700;color:'+(dlInfo?dlInfo.color:"#e67e22")+';background:'+(dlInfo?dlInfo.color:"#e67e22")+'15;border-radius:6px;padding:1px 8px">🏁 '+c.deadlineDate+(dlInfo&&(dlInfo.overdue||dlInfo.color!=="#27ae60")?' · '+dlInfo.label:'')+'</span>';
               return chips?'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px">'+chips+'</div>':'';
             })()+
+            filesRow+
             (function(){
               const respIds=c.responsible||[];
               if(!respIds.length)return '';
