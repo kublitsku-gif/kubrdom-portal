@@ -116,11 +116,20 @@ async function postState(env, storageKey, request) {
   return json({ success: true, written: batch.length, updated_at: now });
 }
 
-// Разрешённые типы изображений (тип задаём САМИ по расширению, не доверяя клиенту —
-// иначе можно залить text/html или svg и получить XSS при отдаче).
+// Разрешённые типы (тип задаём САМИ по расширению, не доверяя клиенту — иначе можно
+// залить text/html или svg и получить XSS при отдаче). Картинки — для фото объектов/
+// планировок; документы — для файлов договоров (pdf/doc/xls). SVG/HTML в список НЕ входят.
 const IMG_TYPES = { png:"image/png", jpg:"image/jpeg", jpeg:"image/jpeg", webp:"image/webp", gif:"image/gif", heic:"image/heic", heif:"image/heif" };
+const DOC_TYPES = {
+  pdf:  "application/pdf",
+  doc:  "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls:  "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+};
+const FILE_TYPES = Object.assign({}, IMG_TYPES, DOC_TYPES);
 
-// GET /api/file/<key> — публичная отдача файла из R2 (для <img>, без токена).
+// GET /api/file/<key> — публичная отдача файла из R2 (для <img> и ссылок «Открыть», без токена).
 async function getFile(env, key) {
   if (!env.FILES) return json({ success: false, error: "R2 not configured" }, 500);
   const obj = await env.FILES.get(key);
@@ -129,9 +138,16 @@ async function getFile(env, key) {
   const headers = new Headers(CORS_HEADERS);
   headers.set("Content-Type", ct);
   headers.set("Cache-Control", "public, max-age=31536000, immutable");
-  // Защита: не угадывать тип, не исполнять как страницу.
+  // Защита: не угадывать тип (тип фиксируем сами по расширению при загрузке).
   headers.set("X-Content-Type-Options", "nosniff");
-  headers.set("Content-Security-Policy", "default-src 'none'; sandbox");
+  if (ct.indexOf("image/") === 0) {
+    // Картинки — инлайн в песочнице: нейтрализует любой «активный» контент при отдаче.
+    headers.set("Content-Security-Policy", "default-src 'none'; sandbox");
+  } else if (ct !== "application/pdf") {
+    // Офисные документы (doc/docx/xls/xlsx) браузер не рендерит — отдаём как загрузку, не инлайн.
+    headers.set("Content-Disposition", "attachment");
+  }
+  // PDF — инлайн (открывается во встроенном вьюере); nosniff достаточно, тип задан нами.
   return new Response(obj.body, { headers });
 }
 
@@ -140,11 +156,11 @@ async function putFile(env, request, url) {
   if (!env.FILES) return json({ success: false, error: "R2 not configured" }, 500);
   const name = url.searchParams.get("name") || "";
   const ext = (name.split(".").pop() || "").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 8);
-  const ct = IMG_TYPES[ext];
-  if (!ct) return json({ success: false, error: "Можно загружать только изображения (png, jpg, webp, gif, heic)" }, 415);
+  const ct = FILE_TYPES[ext];
+  if (!ct) return json({ success: false, error: "Можно загружать изображения (png, jpg, webp, gif, heic) и документы (pdf, doc, docx, xls, xlsx)" }, 415);
   const body = await request.arrayBuffer();
   if (body.byteLength === 0) return json({ success: false, error: "Пустой файл" }, 400);
-  if (body.byteLength > 15 * 1024 * 1024) return json({ success: false, error: "Файл больше 15 МБ" }, 413);
+  if (body.byteLength > 20 * 1024 * 1024) return json({ success: false, error: "Файл больше 20 МБ" }, 413);
   const key = "plans/" + crypto.randomUUID() + "." + ext;
   await env.FILES.put(key, body, { httpMetadata: { contentType: ct } });
   // Относительный URL: рендерится как <img src="/api/file/..."> на любом домене (same-origin
