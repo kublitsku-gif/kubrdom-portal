@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.20";
+const APP_BUILD = "2026-06-11.21";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4360,7 +4360,7 @@ function tContractList(){
               '<span style="font-size:10px;background:'+(c.type==="main"?'#2980b918':'#8e44ad18')+';color:'+(c.type==="main"?'#2980b9':'#8e44ad')+';border-radius:5px;padding:1px 7px">'+(c.type==="main"?'Основной':'Доп. работы')+'</span>'+
               (function(){
                 const o=objects.find(function(x){return x.id===c.objId;});
-                if(!o)return '<span style="font-size:10px;background:#e67e2218;color:#e67e22;border-radius:5px;padding:1px 7px">📎 Без объекта</span>';
+                if(!o)return '<span data-a="ct-link-obj" data-cid="'+c.id+'" style="font-size:10px;font-weight:700;background:#e67e2218;color:#e67e22;border-radius:5px;padding:1px 7px;cursor:pointer;border:1px dashed #e67e2266">📎 Без объекта · привязать</span>';
                 return '<span style="font-size:10px;font-weight:700;background:#27ae6018;color:#27ae60;border-radius:5px;padding:1px 7px">'+o.icon+' '+esc(o.name)+'</span>';
               })()+
               (kind==="banya"?'<span style="font-size:10px;font-weight:700;background:#e67e2218;color:#e67e22;border-radius:5px;padding:1px 7px">🛁 Баня</span>':kind==="house"?'<span style="font-size:10px;font-weight:700;background:#2980b918;color:#2980b9;border-radius:5px;padding:1px 7px">🏠 Дом</span>':'')+
@@ -8713,6 +8713,15 @@ function bind(){
     else if(a==="ct-goto-crm"){el.onclick=()=>{
       const crmid=el.dataset.crmid;
       tab="crm"; crmView="client"; crmOpenId=crmid; render();
+    };}
+    else if(a==="ct-link-obj"){el.onclick=function(ev){
+      if(ev){ev.stopPropagation();}
+      const cid=el.dataset.cid;
+      contractView=cid; contractEditId=cid;
+      const c0=contractDocs.find(function(x){return x.id===cid;})||{};
+      ctEditDraft={cid:cid,name:c0.name||"",amount:c0.amount||0,signDate:c0.signDate||"",deadlineDate:c0.deadlineDate||"",note:c0.note||"",objId:c0.objId||""};
+      render();
+      setTimeout(function(){const s=document.getElementById("ct-edit-obj");if(s){s.scrollIntoView({block:"center"});s.focus();}},60);
     };}
     else if(a==="ct-edit-toggle"){el.onclick=()=>{
       contractEditId=contractEditId===el.dataset.cid?null:el.dataset.cid;
