@@ -631,6 +631,22 @@ window._bindMoneyInputs=function(){
       // Sync to state to survive re-render
       const numVal=unfmtMoney(this.value);
       if(this.id==="ct-amount")contractNew.amount=numVal;
+      else if(this.id.indexOf("ctsal-plan-")===0){
+        // План зарплаты в договоре: пишем в стейт на КАЖДЫЙ ввод, БЕЗ render() (фокус сохраняем).
+        // Иначе случайная перерисовка (poll/CRM-бейдж после blur, сохранение дедлайна рядом) стирала
+        // набранное → 💾 читал пустое поле и писал 0 → «не могу поменять зарплату». Автосейв подхватит.
+        const rest=this.id.slice(11);            // "ctsal-plan-".length === 11 → "<cid>-<uid>"
+        const li=rest.lastIndexOf("-");
+        if(li>0){
+          const cid=rest.slice(0,li), uid=rest.slice(li+1);
+          contractDocs=contractDocs.map(function(c){
+            if(c.id!==cid)return c;
+            const sal=Object.assign({},c.salaries||{});
+            sal[uid]=Object.assign({},sal[uid]||{},{plan:numVal});
+            return Object.assign({},c,{salaries:sal});
+          });
+        }
+      }
     });
   });
 };
