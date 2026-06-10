@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.17";
+const APP_BUILD = "2026-06-11.18";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -2203,7 +2203,9 @@ function clientProjectContent(c, activeTab){
   const extraTotal=extraWorks.reduce(function(a,w){return a+(w.cost||0)+(w.mats||[]).reduce(function(b,m){return b+(m.cost||0)*(m.qty||1);},0);},0);
   const mainTotal=c.amount||0;
   const grandTotal=mainTotal+extraTotal;
-  const payments=finTxns.filter(function(t){return t.type==="income"&&(t.objId===c.objId||t.contractId===c.id);})
+  // ВАЖНО: матч по объекту только при НЕпустом objId — иначе ""==="" и платежи одного
+  // договора без объекта светились у ВСЕХ договоров без объекта (аванс Бочарова у Лысенко).
+  const payments=finTxns.filter(function(t){return t.type==="income"&&((c.objId&&t.objId===c.objId)||t.contractId===c.id);})
     .sort(function(a,b){return (a.date||"").localeCompare(b.date||"");});
   const paidTotal=payments.reduce(function(a,t){return a+(t.amount||0);},0);
   const leftTotal=Math.max(0,grandTotal-paidTotal);
@@ -9005,7 +9007,7 @@ function bind(){
       const note=(document.getElementById("fin-note")||{}).value||"";
       if(!amt){alert("Введите сумму");return;}
       const objId=cid?(contractDocs.find(function(x){return x.id===cid;})||{}).objId:finOpenObjId;
-      finTxns.push({id:gid(),type:finNewTxn.type,category:cat,amount:amt,date,note,objId,contractId:cid,method:finNewTxn.type==="income"?(finNewTxn.method||"transfer"):undefined});
+      finTxns.push({id:gid(),type:finNewTxn.type,category:cat,amount:amt,date,note,objId:objId||undefined,contractId:cid,method:finNewTxn.type==="income"?(finNewTxn.method||"transfer"):undefined});
       finAddForm=false;
       fl();
     };}
