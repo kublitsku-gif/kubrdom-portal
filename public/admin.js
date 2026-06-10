@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-10.12";
+const APP_BUILD = "2026-06-10.13";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -5980,6 +5980,16 @@ function tFinanceContractPnL(cid){
 
   // Form is rendered inline inside the matching section (renderContractSection)
 
+  // Одна плавающая кнопка «+ Транзакция» на весь экран (по умолчанию — приход; конкретный
+  // раздел открывается тапом по его шапке: Снабжение, Зарплата и т.д.).
+  if(canAddIncome||canAddSupply||canAddSalary){
+    const fabType=canAddIncome?"income":"expense";
+    html+='<div style="position:sticky;bottom:14px;z-index:60;display:flex;flex-direction:column;align-items:center;gap:4px;margin-top:8px;pointer-events:none">'+
+      '<button data-a="fin-add-typed" data-cid="'+cid+'" data-type="'+fabType+'" style="pointer-events:auto;padding:12px 28px;background:linear-gradient(135deg,#27ae60,#1f8b4d);border:none;border-radius:26px;cursor:pointer;color:#fff;font-size:14px;font-weight:800;box-shadow:0 6px 18px rgba(39,174,96,0.45)">+ Транзакция</button>'+
+      '<div style="pointer-events:none;font-size:9px;color:#8aa0b8;background:rgba(255,255,255,0.85);border-radius:8px;padding:2px 8px">или тапни нужный раздел ↑</div>'+
+    '</div>';
+  }
+
   html+='</div>';
   return html;
 }
@@ -5993,11 +6003,18 @@ function renderContractSection(opts){
 
   let html='<div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:10px">';
 
-  // Header
-  html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'+
-    '<div style="font-size:11px;color:'+opts.color+';font-weight:700;letter-spacing:0.5px">'+opts.title+'</div>'+
-    (opts.canAdd?'<button data-a="'+opts.addAction+'" data-cid="'+opts.cid+'" data-type="'+opts.addType+'" data-cat="'+(opts.addCategory||"")+'" style="padding:4px 10px;background:'+(showFormHere?"#7a9aaa":opts.color)+';border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:600">'+(showFormHere?"× Отмена":"+ Транзакция")+'</button>':"")+
-  '</div>';
+  // Header — вместо пяти одинаковых кнопок «+ Транзакция» тапается ВСЯ шапка раздела:
+  // открывает форму транзакции этого раздела (повторный тап — закрыть). Справа — круглый «+».
+  if(opts.canAdd){
+    html+='<div data-a="'+opts.addAction+'" data-cid="'+opts.cid+'" data-type="'+opts.addType+'" data-cat="'+(opts.addCategory||"")+'" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;cursor:pointer;user-select:none">'+
+      '<div style="font-size:11px;color:'+opts.color+';font-weight:700;letter-spacing:0.5px">'+opts.title+'</div>'+
+      '<div style="width:26px;height:26px;border-radius:50%;background:'+(showFormHere?"#7a9aaa":opts.color)+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;flex-shrink:0;box-shadow:0 2px 6px '+opts.color+'44">'+(showFormHere?"×":"+")+'</div>'+
+    '</div>';
+  } else {
+    html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'+
+      '<div style="font-size:11px;color:'+opts.color+';font-weight:700;letter-spacing:0.5px">'+opts.title+'</div>'+
+    '</div>';
+  }
 
   // Inline form right under section header when this section is active
   if(showFormHere&&c){
