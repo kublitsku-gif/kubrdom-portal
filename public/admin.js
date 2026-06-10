@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-10.15";
+const APP_BUILD = "2026-06-10.16";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -2396,9 +2396,21 @@ function render(){
   const _tabsScrollPrev=(function(){const e=document.getElementById("tabs-scroll");return e?e.scrollLeft:null;})();
   // Был ли фокус в поле поиска до перерисовки — чтобы не выдёргивать клавиатуру при открытии вкладки
   const _prevActiveId=(document.activeElement&&document.activeElement.id)||"";
+  let _prevSelStart=null;
+  try{ if(_prevActiveId&&document.activeElement.selectionStart!=null)_prevSelStart=document.activeElement.selectionStart; }catch(e){}
   a.innerHTML=page();
   // Восстанавливаем прокрутку ленты вкладок, чтобы экран не «дёргался».
   if(_tabsScrollPrev!=null){const e=document.getElementById("tabs-scroll");if(e)e.scrollLeft=_tabsScrollPrev;}
+  // Возвращаем фокус и курсор в поле, где печатал пользователь: перерисовка на каждую букву
+  // (поиски клиента/CRM и т.п.) иначе «съедает» все символы после первого — клавиатура
+  // печатает в никуда, пока поле без фокуса.
+  if(_prevActiveId){
+    const _pf=document.getElementById(_prevActiveId);
+    if(_pf&&_pf!==document.activeElement){
+      try{ _pf.focus(); const L=(_prevSelStart!=null?_prevSelStart:(_pf.value||"").length); _pf.setSelectionRange(L,L); }
+      catch(e){ try{_pf.focus();}catch(_){} }
+    }
+  }
   // Material picker modal overlay
   if(ctMatPicker){
     const objId=ctMatPicker.cid==="__new"?contractNew.objId:(contractDocs.find(function(x){return x.id===ctMatPicker.cid;})||{}).objId;
@@ -2452,6 +2464,7 @@ function render(){
   }
   if((tab==="assign"||tab==="templates")&&!openTemplate)renderTplCards();
   if(tab==="contracts"&&(contractView||contractAddForm)){
+    _bindContractFormSync();   // поля форм договора переживают перерисовку (синк в буферы)
     ["ct-client-search","ct-edit-client-search"].forEach(function(id){
       const si=document.getElementById(id);
       if(si){
@@ -4537,6 +4550,8 @@ function tContractDetail(cid){
 
   // Details — editable or view
   const isEditing=contractEditId===cid;
+  // Источник значений edit-формы: черновик (переживает перерисовки), фолбэк — сам договор.
+  const ed=(isEditing&&ctEditDraft&&ctEditDraft.cid===cid)?ctEditDraft:{name:c.name,amount:c.amount,signDate:c.signDate,deadlineDate:c.deadlineDate,note:c.note,objId:c.objId};
   html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:10px">';
   html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'+
     '<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px">ДЕТАЛИ</div>'+
@@ -4546,23 +4561,23 @@ function tContractDetail(cid){
   if(isEditing){
     html+=
       '<select id="ct-edit-obj" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;margin-bottom:8px;outline:none;background:#fff;box-sizing:border-box">'+
-        '<option value=""'+(!c.objId?' selected':'')+'>— Без объекта —</option>'+
-        objects.map(function(o){return'<option value="'+o.id+'"'+(c.objId===o.id?' selected':'')+'>'+o.icon+' '+o.name+'</option>';}).join("")+
+        '<option value=""'+(!ed.objId?' selected':'')+'>— Без объекта —</option>'+
+        objects.map(function(o){return'<option value="'+o.id+'"'+(ed.objId===o.id?' selected':'')+'>'+o.icon+' '+o.name+'</option>';}).join("")+
       '</select>'+
       '<div style="display:flex;gap:6px;margin-bottom:8px">'+
         '<button data-a="ct-edit-type" data-cid="'+cid+'" data-t="main" style="flex:1;padding:6px;border-radius:7px;border:none;cursor:pointer;font-size:12px;font-weight:700;background:'+(c.type==="main"?'#2980b9':'#f0f4f8')+';color:'+(c.type==="main"?'#fff':'#7a9aaa')+'">Основной</button>'+
         '<button data-a="ct-edit-type" data-cid="'+cid+'" data-t="extra" style="flex:1;padding:6px;border-radius:7px;border:none;cursor:pointer;font-size:12px;font-weight:700;background:'+(c.type==="extra"?'#8e44ad':'#f0f4f8')+';color:'+(c.type==="extra"?'#fff':'#7a9aaa')+'">Доп. работы</button>'+
       '</div>'+
-      '<input id="ct-edit-name" value="'+c.name.replace(/"/g,"&quot;")+'" placeholder="Название / номер" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;margin-bottom:8px;outline:none;box-sizing:border-box">'+
+      '<input id="ct-edit-name" value="'+String(ed.name||"").replace(/"/g,"&quot;")+'" placeholder="Название / номер" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;margin-bottom:8px;outline:none;box-sizing:border-box">'+
       (c.status==="draft"?buildClientSelector('ct-edit-client-sel', c.client, 'ct-edit-client-search'):'<div style="margin-bottom:8px"><div style="font-size:9px;color:#7a9aaa;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">КЛИЕНТ</div><div style="font-size:13px;font-weight:600;color:#1a2a3a;padding:8px 10px;background:#f8fafc;border-radius:8px;border:1px solid #e8eef5">'+(c.client||'—')+'</div></div>')+
       '<div style="display:flex;gap:8px;margin-bottom:4px">'+
-        '<input id="ct-edit-amount" type="text" inputmode="numeric" data-money="1" value="'+(c.amount?fmtMoney(c.amount):'')+'" placeholder="Сумма ₽" style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none">'+
+        '<input id="ct-edit-amount" type="text" inputmode="numeric" data-money="1" value="'+(ed.amount?fmtMoney(ed.amount):'')+'" placeholder="Сумма ₽" style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none">'+
       '</div>'+
       '<div style="display:flex;gap:8px;margin-bottom:8px">'+
-        '<div style="flex:1"><div style="font-size:9px;color:#7a9aaa;font-weight:700;margin-bottom:3px">📅 ПОДПИСАНИЕ</div><input id="ct-edit-date" type="date" value="'+(c.signDate||'')+'" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box"></div>'+
-        '<div style="flex:1"><div style="font-size:9px;color:#e67e22;font-weight:700;margin-bottom:3px">🏁 ДЕДЛАЙН</div><input id="ct-edit-deadline" type="date" value="'+(c.deadlineDate||'')+'" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #e67e2255;font-size:13px;outline:none;box-sizing:border-box"></div>'+
+        '<div style="flex:1"><div style="font-size:9px;color:#7a9aaa;font-weight:700;margin-bottom:3px">📅 ПОДПИСАНИЕ</div><input id="ct-edit-date" type="date" value="'+(ed.signDate||'')+'" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box"></div>'+
+        '<div style="flex:1"><div style="font-size:9px;color:#e67e22;font-weight:700;margin-bottom:3px">🏁 ДЕДЛАЙН</div><input id="ct-edit-deadline" type="date" value="'+(ed.deadlineDate||'')+'" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #e67e2255;font-size:13px;outline:none;box-sizing:border-box"></div>'+
       '</div>'+
-      '<textarea id="ct-edit-note" placeholder="Примечания" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;height:60px;resize:none;outline:none;margin-bottom:10px;box-sizing:border-box">'+(c.note||'')+'</textarea>'+
+      '<textarea id="ct-edit-note" placeholder="Примечания" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;height:60px;resize:none;outline:none;margin-bottom:10px;box-sizing:border-box">'+esc(ed.note||'')+'</textarea>'+
       '<button data-a="ct-edit-save" data-cid="'+cid+'" style="width:100%;padding:9px;background:#27ae60;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">💾 Сохранить изменения</button>';
   } else {
     // Calculate extra works total
@@ -7126,6 +7141,38 @@ let contractDocs=[
 ]; // {id, objId, type:"main"|"extra", name, amount, signDate, client, status:"draft"|"signed"|"closed", file:"", note}
 let contractView=null; // null=list, id=detail
 let contractEditId=null; // id being edited
+// Несохранённые правки edit-формы договора. Поля живут в innerHTML и гибнут при любой
+// перерисовке (выбор клиента, файл, фоновый рендер) — поэтому рендерим их из черновика
+// и синкаем на каждый ввод. «Отмена» просто выбрасывает черновик, договор не тронут.
+let ctEditDraft=null; // {cid,name,amount,signDate,deadlineDate,note,objId}
+
+// Синк текстовых/date-полей форм договора в буферы (add → contractNew, edit → ctEditDraft).
+// Без него любой render() сбрасывал всё, что набрано, но не сохранено (сумма выживала,
+// потому что её синкает money-биндинг — теперь так ведут себя ВСЕ поля).
+function _bindContractFormSync(){
+  const bind=function(id,fn){
+    const el=document.getElementById(id);
+    if(el&&!el._draftSync){
+      el._draftSync=true;
+      el.addEventListener("input",function(){fn(this.value);});
+      el.addEventListener("change",function(){fn(this.value);});   // date-пикеры шлют change
+    }
+  };
+  if(contractAddForm){
+    bind("ct-name",function(v){contractNew.name=v;});
+    bind("ct-date",function(v){contractNew.signDate=v;});
+    bind("ct-deadline",function(v){contractNew.deadlineDate=v;});
+    bind("ct-note",function(v){contractNew.note=v;});
+  }
+  if(contractEditId&&ctEditDraft&&ctEditDraft.cid===contractEditId){
+    bind("ct-edit-name",function(v){ctEditDraft.name=v;});
+    bind("ct-edit-date",function(v){ctEditDraft.signDate=v;});
+    bind("ct-edit-deadline",function(v){ctEditDraft.deadlineDate=v;});
+    bind("ct-edit-note",function(v){ctEditDraft.note=v;});
+    bind("ct-edit-amount",function(v){ctEditDraft.amount=unfmtMoney(v);});
+    bind("ct-edit-obj",function(v){ctEditDraft.objId=v;});
+  }
+}
 let ctClientSearch=""; // search in client dropdown
 let ctMatPicker=null; // {cid, ewi, search:""} - shows material picker modal
 // Пикер планировки из базы (dbPlans) для файла договора. target: "__new" (форма создания) | cid (карточка).
@@ -8641,7 +8688,14 @@ function bind(){
       const crmid=el.dataset.crmid;
       tab="crm"; crmView="client"; crmOpenId=crmid; render();
     };}
-    else if(a==="ct-edit-toggle"){el.onclick=()=>{contractEditId=contractEditId===el.dataset.cid?null:el.dataset.cid;render();};}
+    else if(a==="ct-edit-toggle"){el.onclick=()=>{
+      contractEditId=contractEditId===el.dataset.cid?null:el.dataset.cid;
+      if(contractEditId){
+        const c0=contractDocs.find(function(x){return x.id===contractEditId;})||{};
+        ctEditDraft={cid:contractEditId,name:c0.name||"",amount:c0.amount||0,signDate:c0.signDate||"",deadlineDate:c0.deadlineDate||"",note:c0.note||"",objId:c0.objId||""};
+      } else ctEditDraft=null;   // закрыли/отменили — черновик в корзину, договор не тронут
+      render();
+    };}
     else if(a==="ct-edit-type"){el.onclick=()=>{
       const cid=el.dataset.cid,t=el.dataset.t;
       contractDocs=contractDocs.map(function(c){return c.id===cid?Object.assign({},c,{type:t}):c;});
@@ -8657,7 +8711,7 @@ function bind(){
       const note=(document.getElementById("ct-edit-note")||{}).value||"";
       const objId=(document.getElementById("ct-edit-obj")||{}).value||"";
       contractDocs=contractDocs.map(function(c){return c.id===cid?Object.assign({},c,{name:name.trim()||c.name,client,amount,signDate:date,deadlineDate,note,objId}):c;});
-      contractEditId=null;fl();
+      contractEditId=null;ctEditDraft=null;fl();
     };}
     else if(a==="ct-resp-toggle"){el.onclick=()=>{
       const cid=el.dataset.cid, uid=el.dataset.uid;
