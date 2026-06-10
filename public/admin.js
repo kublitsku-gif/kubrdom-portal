@@ -4075,7 +4075,7 @@ function tContractList(){
           }
           return '<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:0.5px;margin-bottom:6px">📎 ФАЙЛЫ</div>'+
                  miniSection("contract","📄 Файл договора","#2980b9")+
-                 miniSection("plan","📐 Файл планировки","#8e44ad");
+                 miniSection("plan","📐 Файл планировки и проект","#8e44ad");
         })()+
         // Extra works block (visible always - main can have extras too)
         (function(){
@@ -4301,7 +4301,7 @@ function buildContractFiles(c){
   }
   let html='<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin:14px 0 8px">📎 ФАЙЛЫ</div>';
   html+=section("contract","📄 ФАЙЛ ДОГОВОРА","#2980b9");
-  html+=section("plan","📐 ФАЙЛ ПЛАНИРОВКИ","#8e44ad");
+  html+=section("plan","📐 ФАЙЛ ПЛАНИРОВКИ И ПРОЕКТ","#8e44ad");
   return html;
 }
 
