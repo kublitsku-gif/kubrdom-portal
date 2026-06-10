@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-10.9";
+const APP_BUILD = "2026-06-10.10";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -2203,6 +2203,25 @@ function clientProjectContent(c, activeTab){
   const leftTotal=Math.max(0,grandTotal-paidTotal);
   let html="";
 
+  // Карточка файла договора для кабинета клиента: картинка — с превью, PDF/документ — строкой
+  // с кнопкой «Открыть». Используется для договора, планировок/проекта и спецификации.
+  function fileCardsHtml(files,color){
+    let h='<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">';
+    files.forEach(function(f){
+      const isImg=(f.mime||"").indexOf("image")===0;
+      h+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;overflow:hidden">'+
+        (isImg?'<a href="'+f.data+'" target="_blank" rel="noopener" style="display:block"><img src="'+f.data+'" style="width:100%;max-height:300px;object-fit:contain;background:#f8fafc;display:block"></a>':'')+
+        '<div style="display:flex;align-items:center;gap:9px;padding:10px 12px">'+
+          '<span style="font-size:20px">'+(isImg?"🖼":((f.mime||"").indexOf("pdf")>=0?"📕":"📄"))+'</span>'+
+          '<div style="flex:1;min-width:0;font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name||"Файл")+'</div>'+
+          '<a href="'+f.data+'" target="_blank" rel="noopener" style="padding:6px 12px;background:'+color+'18;border:1px solid '+color+'44;border-radius:7px;color:'+color+';font-size:11px;font-weight:700;text-decoration:none">Открыть</a>'+
+        '</div>'+
+      '</div>';
+    });
+    h+='</div>';
+    return h;
+  }
+
   // ── ОБЪЕКТ ──
   if(activeTab==="objects"){
     let progressHtml="";
@@ -2231,16 +2250,21 @@ function clientProjectContent(c, activeTab){
       '</div>'+
       progressHtml+
     '</div>';
-    html+='<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin:4px 0 8px">📐 ВАШИ ПЛАНИРОВКИ</div>';
-    if(plans.length){
-      html+='<div style="display:flex;flex-direction:column;gap:10px">';
-      plans.forEach(function(p){
-        html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;overflow:hidden">'+
-          (p.img?'<a href="'+p.img+'" target="_blank" rel="noopener" style="display:block"><img src="'+p.img+'" style="width:100%;max-height:260px;object-fit:contain;background:#f8fafc;display:block"></a>':'<div style="padding:30px;text-align:center;color:#c8d8e8;font-size:30px;background:#f8fafc">📐</div>')+
-          '<div style="padding:10px 12px;font-size:13px;font-weight:700;color:#1a2a3a">'+(p.name||"Планировка")+'</div>'+
-        '</div>';
-      });
-      html+='</div>';
+    html+='<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin:4px 0 8px">📐 ВАШИ ПЛАНИРОВКИ И ПРОЕКТ</div>';
+    const planFiles=(c.files||[]).filter(function(f){return f.kind==="plan";});
+    if(plans.length||planFiles.length){
+      if(plans.length){
+        html+='<div style="display:flex;flex-direction:column;gap:10px;margin-bottom:10px">';
+        plans.forEach(function(p){
+          html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;overflow:hidden">'+
+            (p.img?'<a href="'+p.img+'" target="_blank" rel="noopener" style="display:block"><img src="'+p.img+'" style="width:100%;max-height:260px;object-fit:contain;background:#f8fafc;display:block"></a>':'<div style="padding:30px;text-align:center;color:#c8d8e8;font-size:30px;background:#f8fafc">📐</div>')+
+            '<div style="padding:10px 12px;font-size:13px;font-weight:700;color:#1a2a3a">'+(p.name||"Планировка")+'</div>'+
+          '</div>';
+        });
+        html+='</div>';
+      }
+      // Файлы планировок/проекта, прикреплённые в договоре (PDF и др.)
+      if(planFiles.length) html+=fileCardsHtml(planFiles,"#8e44ad");
     } else {
       html+='<div style="text-align:center;padding:24px 16px;color:#9aabbf;font-size:13px;border:1px dashed #d0dae8;border-radius:12px">Менеджер ещё не прикрепил планировки. Они появятся здесь.</div>';
     }
@@ -2251,21 +2275,15 @@ function clientProjectContent(c, activeTab){
     const cFiles=(c.files||[]).filter(function(f){return f.kind==="contract";});
     html+='<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin:0 0 8px">📄 ДОГОВОР</div>';
     if(cFiles.length){
-      html+='<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">';
-      cFiles.forEach(function(f){
-        const isImg=(f.mime||"").indexOf("image")===0;
-        html+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;overflow:hidden">'+
-          (isImg?'<a href="'+f.data+'" target="_blank" rel="noopener" style="display:block"><img src="'+f.data+'" style="width:100%;max-height:300px;object-fit:contain;background:#f8fafc;display:block"></a>':'')+
-          '<div style="display:flex;align-items:center;gap:9px;padding:10px 12px">'+
-            '<span style="font-size:20px">'+(isImg?"🖼":((f.mime||"").indexOf("pdf")>=0?"📕":"📄"))+'</span>'+
-            '<div style="flex:1;min-width:0;font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+f.name+'</div>'+
-            '<a href="'+f.data+'" target="_blank" rel="noopener" style="padding:6px 12px;background:#2980b918;border:1px solid #2980b944;border-radius:7px;color:#2980b9;font-size:11px;font-weight:700;text-decoration:none">Открыть</a>'+
-          '</div>'+
-        '</div>';
-      });
-      html+='</div>';
+      html+=fileCardsHtml(cFiles,"#2980b9");
     } else {
       html+='<div style="text-align:center;padding:22px 16px;color:#9aabbf;font-size:13px;border:1px dashed #d0dae8;border-radius:12px;margin-bottom:14px">Файл договора пока не прикреплён.</div>';
+    }
+    // Спецификация из договора — клиент видит её здесь же
+    const sFiles=(c.files||[]).filter(function(f){return f.kind==="spec";});
+    if(sFiles.length){
+      html+='<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin:0 0 8px">📋 СПЕЦИФИКАЦИЯ</div>';
+      html+=fileCardsHtml(sFiles,"#16a085");
     }
     html+='<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin:0 0 8px">➕ ДОПОЛНИТЕЛЬНЫЕ РАБОТЫ</div>';
     if(extraWorks.length){
