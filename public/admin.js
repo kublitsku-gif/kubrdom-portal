@@ -35,6 +35,37 @@ const CACHE_KEY    = "state_" + STORAGE_KEY;
 // важна прежде всего для документов (pdf/doc/xls) — предупреждаем до отправки, чтобы не ловить 413.
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
+// Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
+// давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
+// версия на устройстве. По этой подписи это видно сразу.
+const APP_BUILD = "2026-06-10.5";
+
+// ─── АВТО-ОБНОВЛЕНИЕ ПАНЕЛИ ─────────────────────────────────────────────────
+// Открытая вкладка не подхватывает новый деплой сама (HTTP-кэш работает только на перезагрузке).
+// Поэтому раз в минуту (и при возврате на вкладку) спрашиваем HEAD /admin.js и сравниваем ETag.
+// Изменился → деплойнута новая версия → жёлтый баннер с кнопкой «Обновить» (location.reload()).
+let _appEtag = null;
+async function checkAppUpdate(){
+  try{
+    const r = await fetchT("/admin.js", { method:"HEAD", cache:"no-store" }, 8000);
+    if(!r.ok) return;
+    const et = r.headers.get("ETag") || r.headers.get("etag") || "";
+    if(!et) return;
+    if(_appEtag === null){ _appEtag = et; return; }   // первый замер — запоминаем текущую версию
+    if(et !== _appEtag) showAppUpdateBanner();
+  }catch(e){ /* офлайн/таймаут — проверим в следующий раз */ }
+}
+function showAppUpdateBanner(){
+  if(document.getElementById("app-update-banner")) return;
+  const b = document.createElement("div");
+  b.id = "app-update-banner";
+  b.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:10000;background:#f39c12;color:#fff;padding:10px 14px;font:600 13px -apple-system,sans-serif;display:flex;align-items:center;justify-content:center;gap:12px;box-shadow:0 2px 10px rgba(0,0,0,0.18)";
+  b.innerHTML = '<span>🔄 Вышло обновление панели</span><button id="app-update-btn" style="padding:6px 16px;background:#fff;border:none;border-radius:8px;cursor:pointer;color:#b06d00;font-size:12px;font-weight:700">Обновить</button>';
+  document.body.appendChild(b);
+  const btn = document.getElementById("app-update-btn");
+  if(btn) btn.onclick = function(){ location.reload(); };
+}
+
 function readCache(){
   try { const r = localStorage.getItem(CACHE_KEY); return r ? JSON.parse(r) : null; }
   catch { return null; }
@@ -1662,7 +1693,7 @@ function loginPage(){
           '<div style="font-size:12px;color:#7a9aaa;margin-top:4px;letter-spacing:1.5px;font-weight:600">ПОРТАЛ УПРАВЛЕНИЯ</div>'+
         '</div>'+
         inner+
-        '<div style="text-align:center;margin-top:14px;font-size:11px;color:#a0b4c8">КубрДом · Портал управления</div>'+
+        '<div style="text-align:center;margin-top:14px;font-size:11px;color:#a0b4c8">КубрДом · Портал управления · v'+APP_BUILD+'</div>'+
       '</div>'+
     '</div>';
   }
@@ -2454,6 +2485,7 @@ ${showPinChange?`<div style="background:#fff;border-bottom:1px solid #eef2f7;pad
   ${tab==="assign"?tObjects():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tCRM()}
 </div>
 <div id="save-toast" style="position:fixed;bottom:24px;right:24px;background:#27ae60;color:#fff;border-radius:12px;padding:10px 18px;font-size:13px;font-weight:700;box-shadow:0 4px 16px rgba(39,174,96,0.35);opacity:0;transform:translateY(8px);transition:opacity 0.2s,transform 0.2s;pointer-events:none;z-index:999">✓ Сохранено</div>
+<div style="text-align:center;font-size:9px;color:#c0ccd8;padding:10px 0 16px">КубрДом · v${APP_BUILD}</div>
 </div>`;
 }
 
@@ -9735,3 +9767,8 @@ function _autoLogin(){
   crmEnsureChats(); setInterval(crmPollBadge, 45000);   // счётчик неотвеченных CRM
   document.addEventListener("visibilitychange", function(){ if (!document.hidden) pollOnce(); });
 })();
+
+// Авто-обновление панели: работает в обоих путях загрузки (cache-first и первый вход).
+setTimeout(checkAppUpdate, 4000);                       // первый замер ETag (база для сравнения)
+setInterval(checkAppUpdate, 60000);                     // раз в минуту
+document.addEventListener("visibilitychange", function(){ if (!document.hidden) checkAppUpdate(); });
