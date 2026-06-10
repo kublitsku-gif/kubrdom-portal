@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-10.11";
+const APP_BUILD = "2026-06-10.12";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4953,9 +4953,16 @@ function tFinanceExperiment(){
     if(c.objId&&!matSeen[c.objId]){ matSeen[c.objId]=1; materials+=objMaterials(c.objId); }
   });
   const cogs=materials+labor, gross=revenue-cogs, margin=revenue>0?Math.round(gross/revenue*100):0;
-  // ── БДДС (живые деньги) ──
-  let factIn=0,factOut=0;
-  finTxns.forEach(function(t){ if(t.type==="income")factIn+=t.amount||0; else if(t.type==="expense")factOut+=t.amount||0; });
+  // ── БДДС (живые деньги) ── только транзакции, привязанные к договорам (contractId или объект
+  // договора). «Сироты» (старые записи без привязки) в итог НЕ входят — показываем отдельной строкой,
+  // чтобы цифры карточки всегда сходились с карточками договоров ниже.
+  let factIn=0,factOut=0,orphanIn=0,orphanOut=0;
+  const isLinked=function(t){ return cts.some(function(c){return t.contractId===c.id||(c.objId&&t.objId===c.objId);}); };
+  finTxns.forEach(function(t){
+    const amt=t.amount||0;
+    if(isLinked(t)){ if(t.type==="income")factIn+=amt; else if(t.type==="expense")factOut+=amt; }
+    else { if(t.type==="income")orphanIn+=amt; else if(t.type==="expense")orphanOut+=amt; }
+  });
   const flow=factIn-factOut, toReceive=Math.max(0,revenue-factIn);
   const RP=function(n){return (n>=0?"+":"−")+Math.abs(n).toLocaleString("ru-RU")+" ₽";};
   const RU=function(n){return n.toLocaleString("ru-RU")+" ₽";};
@@ -4995,6 +5002,7 @@ function tFinanceExperiment(){
       '<span style="font-size:12px;color:#a9c7e0">Осталось получить по договорам</span>'+
       '<span style="font-size:16px;font-weight:800;color:#f0b94a">'+RU(toReceive)+'</span>'+
     '</div>'+
+    ((orphanIn||orphanOut)?'<div style="font-size:10px;color:#7e9cba;margin-top:8px">⚠️ Вне договоров (не учтено): +'+RU(orphanIn)+' / −'+RU(orphanOut)+' — старые транзакции без привязки к договору.</div>':'')+
   '</div>';
   // По договорам (объект — дополнение, если привязан)
   html+='<div style="font-size:12px;font-weight:700;color:#7a9aaa;letter-spacing:0.5px;margin-bottom:10px">ПО ДОГОВОРАМ</div>';
@@ -5775,8 +5783,9 @@ function tFinanceContractPnL(cid){
     finOpenContractId=null;
     return tFinanceList();
   }
-  const obj=objects.find(function(o){return o.id===c.objId;});
-  if(!obj){finOpenContractId=null;return tFinanceList();}
+  // Договор без объекта — полноценный P&L: транзакции (приходы/снабжение/зарплаты) живут на
+  // договоре (contractId), объект нужен только для плана материалов. Заглушка вместо выброса.
+  const obj=objects.find(function(o){return o.id===c.objId;})||{id:"",name:"Без объекта",icon:"📄",stages:[]};
 
   const user=currentUser;
   const isAdmin=user&&user.roles.includes("admin");
