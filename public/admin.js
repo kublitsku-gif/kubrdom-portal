@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.23";
+const APP_BUILD = "2026-06-11.24";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1317,6 +1317,76 @@ function fl(){
   }
 }
 function deepCopy(x){return JSON.parse(JSON.stringify(x));}
+
+// ─── ХАРАКТЕРИСТИКИ ОБЪЕКТА (помещения + проёмы) ─────────────────────────────
+// Хранятся в шаблоне (t.specs) и копируются в объект при создании. Из метражей
+// помещений сметы берут площади: потолок = пол, объём = пол × высота, стены —
+// заданная площадь (брутто). Числа дробные (м² / м).
+function ensureSpecs(o){ if(!o.specs||typeof o.specs!=="object"){o.specs={rooms:[],openings:[]};} if(!Array.isArray(o.specs.rooms))o.specs.rooms=[]; if(!Array.isArray(o.specs.openings))o.specs.openings=[]; return o.specs; }
+function specRoomCalc(r){
+  const floor=Number(r.floor)||0, wall=Number(r.wall)||0, h=Number(r.h)||0;
+  return { floor:floor, ceil:floor, wall:wall, h:h, vol:Math.round(floor*h*100)/100 };
+}
+function specTotals(specs){
+  let floor=0,ceil=0,wall=0,vol=0;
+  (specs.rooms||[]).forEach(function(r){const c=specRoomCalc(r);floor+=c.floor;ceil+=c.ceil;wall+=c.wall;vol+=c.vol;});
+  return {floor:Math.round(floor*100)/100, ceil:Math.round(ceil*100)/100, wall:Math.round(wall*100)/100, vol:Math.round(vol*100)/100,
+          openings:(specs.openings||[]).reduce(function(a,o){return a+(Number(o.n)||1);},0)};
+}
+// Редактор характеристик внутри карточки шаблона (oid — id шаблона). Поля синкаются по change.
+function specsEditorHtml(o){
+  const specs=ensureSpecs(o);
+  const T=specTotals(specs);
+  const num=function(id,val,ph){return '<input id="'+id+'" value="'+(val===0||val?val:"")+'" type="number" step="any" inputmode="decimal" placeholder="'+(ph||"")+'" style="width:100%;padding:7px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;text-align:right">';};
+  let h='<div style="background:#fff;border-radius:12px;border:1px solid #16a08544;padding:12px 14px;margin-bottom:14px">';
+  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'+
+       '<div style="font-size:11px;font-weight:700;color:#16a085;letter-spacing:0.5px">📐 ХАРАКТЕРИСТИКИ ОБЪЕКТА</div>'+
+       '<button data-a="spec-room-add" data-oid="'+o.id+'" style="padding:4px 11px;background:#16a085;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">+ Помещение</button>'+
+     '</div>';
+  if(!specs.rooms.length){
+    h+='<div style="font-size:11px;color:#9aabbf;text-align:center;padding:12px;border:1px dashed #16a08544;border-radius:8px;margin-bottom:8px">Нет помещений. Добавьте: парная, мойка, комната отдыха, санузел…</div>';
+  }
+  specs.rooms.forEach(function(r,i){
+    const c=specRoomCalc(r);
+    h+='<div style="background:#fafbfc;border:1px solid #e6ecf3;border-radius:9px;padding:9px 10px;margin-bottom:7px">'+
+      '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">'+
+        '<input id="spec-r-name-'+o.id+'-'+i+'" data-a="spec-room-field" data-oid="'+o.id+'" data-i="'+i+'" data-f="name" value="'+esc(r.name||"")+'" placeholder="Помещение (напр. Парная)" style="flex:1;min-width:0;padding:7px 9px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;font-weight:700;outline:none;box-sizing:border-box">'+
+        '<button data-a="spec-room-del" data-oid="'+o.id+'" data-i="'+i+'" style="width:28px;height:28px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:12px;flex-shrink:0">🗑</button>'+
+      '</div>'+
+      '<div style="display:flex;gap:6px">'+
+        '<div style="flex:1"><div style="font-size:9px;color:#9aabbf;font-weight:700;margin-bottom:2px">ПОЛ, м²</div>'+'<input id="spec-r-floor-'+o.id+'-'+i+'" data-a="spec-room-field" data-oid="'+o.id+'" data-i="'+i+'" data-f="floor" value="'+(r.floor||r.floor===0?r.floor:"")+'" type="number" step="any" inputmode="decimal" style="width:100%;padding:7px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;text-align:right"></div>'+
+        '<div style="flex:1"><div style="font-size:9px;color:#9aabbf;font-weight:700;margin-bottom:2px">СТЕНЫ, м²</div>'+'<input id="spec-r-wall-'+o.id+'-'+i+'" data-a="spec-room-field" data-oid="'+o.id+'" data-i="'+i+'" data-f="wall" value="'+(r.wall||r.wall===0?r.wall:"")+'" type="number" step="any" inputmode="decimal" style="width:100%;padding:7px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;text-align:right"></div>'+
+        '<div style="flex:1"><div style="font-size:9px;color:#9aabbf;font-weight:700;margin-bottom:2px">ВЫСОТА, м</div>'+'<input id="spec-r-h-'+o.id+'-'+i+'" data-a="spec-room-field" data-oid="'+o.id+'" data-i="'+i+'" data-f="h" value="'+(r.h||r.h===0?r.h:"")+'" type="number" step="any" inputmode="decimal" placeholder="2.5" style="width:100%;padding:7px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;text-align:right"></div>'+
+      '</div>'+
+      '<div style="font-size:10px;color:#16a085;font-weight:600;margin-top:6px">потолок '+c.ceil.toLocaleString("ru-RU")+' м² · объём '+c.vol.toLocaleString("ru-RU")+' м³</div>'+
+    '</div>';
+  });
+  // Проёмы
+  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin:12px 0 8px">'+
+       '<div style="font-size:10px;font-weight:700;color:#7a9aaa;letter-spacing:0.5px">🚪 ПРОЁМЫ (двери / окна)</div>'+
+       '<button data-a="spec-open-add" data-oid="'+o.id+'" style="padding:4px 11px;background:#7a9aaa;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">+ Проём</button>'+
+     '</div>';
+  specs.openings.forEach(function(op,i){
+    h+='<div style="display:flex;gap:5px;align-items:center;margin-bottom:5px">'+
+      '<input id="spec-o-name-'+o.id+'-'+i+'" data-a="spec-open-field" data-oid="'+o.id+'" data-i="'+i+'" data-f="name" value="'+esc(op.name||"")+'" placeholder="Дверь / окно" style="flex:1;min-width:0;padding:6px 8px;border-radius:6px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box">'+
+      '<input id="spec-o-w-'+o.id+'-'+i+'" data-a="spec-open-field" data-oid="'+o.id+'" data-i="'+i+'" data-f="w" value="'+(op.w||"")+'" type="number" step="any" inputmode="decimal" placeholder="Ш,см" style="width:64px;padding:6px 6px;border-radius:6px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;text-align:right">'+
+      '<span style="font-size:11px;color:#9aabbf">×</span>'+
+      '<input id="spec-o-h-'+o.id+'-'+i+'" data-a="spec-open-field" data-oid="'+o.id+'" data-i="'+i+'" data-f="h" value="'+(op.h||"")+'" type="number" step="any" inputmode="decimal" placeholder="В,см" style="width:64px;padding:6px 6px;border-radius:6px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;text-align:right">'+
+      '<input id="spec-o-n-'+o.id+'-'+i+'" data-a="spec-open-field" data-oid="'+o.id+'" data-i="'+i+'" data-f="n" value="'+(op.n||1)+'" type="number" step="1" inputmode="numeric" style="width:46px;padding:6px 6px;border-radius:6px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;text-align:center">'+
+      '<button data-a="spec-open-del" data-oid="'+o.id+'" data-i="'+i+'" style="width:26px;height:26px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>'+
+    '</div>';
+  });
+  // Итоги
+  h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:12px;padding-top:10px;border-top:1px solid #eef2f7">'+
+    '<div style="text-align:center"><div style="font-size:9px;color:#9aabbf">ПОЛ/ПОТОЛОК</div><div style="font-size:13px;font-weight:700;color:#16a085">'+T.floor.toLocaleString("ru-RU")+' м²</div></div>'+
+    '<div style="text-align:center"><div style="font-size:9px;color:#9aabbf">СТЕНЫ</div><div style="font-size:13px;font-weight:700;color:#16a085">'+T.wall.toLocaleString("ru-RU")+' м²</div></div>'+
+    '<div style="text-align:center"><div style="font-size:9px;color:#9aabbf">ОБЪЁМ</div><div style="font-size:13px;font-weight:700;color:#16a085">'+T.vol.toLocaleString("ru-RU")+' м³</div></div>'+
+    '<div style="text-align:center"><div style="font-size:9px;color:#9aabbf">ПРОЁМЫ</div><div style="font-size:13px;font-weight:700;color:#16a085">'+T.openings+' шт</div></div>'+
+  '</div>';
+  h+='</div>';
+  return h;
+}
+
 
 function renderTplCards(){
   const grid=document.getElementById("tpl-grid");
@@ -3452,6 +3522,7 @@ function tTemplates(){
   </div>
   <div style="font-size:12px;color:#7a9aaa">${allW.length} работ · <span id="tpl-grand">${fmt(grand)}</span> · в ${objects.filter(o=>o.templateId===t.id).length} объектах</div>
 </div>
+${specsEditorHtml(t)}
 <div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">СОБРАТЬ ИЗ СМЕТ (${tKind==="house"?"🏠 дом":"🛁 баня"}) — отметьте работы галочками</div>
 ${groups.map(g=>{
   const stN=g.st?g.st.n:0;
@@ -8335,7 +8406,7 @@ function bind(){
       if(!name||!nobj.templateId)return;
       const tmpl=templates.find(t=>t.id===nobj.templateId);
       const newId=gid();
-      objects.push({id:newId,name,icon,templateId:nobj.templateId,stages:deepCopy(tmpl.stages)});
+      objects.push({id:newId,name,icon,templateId:nobj.templateId,stages:deepCopy(tmpl.stages),specs:deepCopy(tmpl.specs||{rooms:[],openings:[]})});
       nobj.assignTo.forEach(uid=>{users=users.map(u=>u.id===uid?{...u,objs:[...u.objs,newId]}:u);});
       showNObj=false;fl();
     };}
@@ -8347,6 +8418,41 @@ function bind(){
     else if(a==="show-nt"){el.onclick=()=>{showNT=true;nt={name:"",icon:"🛁",kind:"banya"};render();};}
     else if(a==="nt-kind"){el.onclick=()=>{nt.kind=el.dataset.k;nt.name=document.getElementById("nt-name")?.value||nt.name;nt.icon=document.getElementById("nt-icon")?.value||nt.icon;render();};}
     else if(a==="cancel-nt"){el.onclick=()=>{showNT=false;render();};}
+    else if(a==="spec-room-add"){el.onclick=()=>{
+      const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return;
+      ensureSpecs(o); o.specs.rooms=o.specs.rooms.concat([{name:"",floor:"",wall:"",h:2.5}]); fl();
+    };}
+    else if(a==="spec-room-del"){el.onclick=()=>{
+      const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return;
+      const i=parseInt(el.dataset.i,10); ensureSpecs(o); o.specs.rooms=o.specs.rooms.filter((_,k)=>k!==i); fl();
+    };}
+    else if(a==="spec-open-add"){el.onclick=()=>{
+      const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return;
+      ensureSpecs(o); o.specs.openings=o.specs.openings.concat([{name:"",w:"",h:"",n:1}]); fl();
+    };}
+    else if(a==="spec-open-del"){el.onclick=()=>{
+      const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return;
+      const i=parseInt(el.dataset.i,10); ensureSpecs(o); o.specs.openings=o.specs.openings.filter((_,k)=>k!==i); fl();
+    };}
+    else if(a==="spec-room-field"){
+      // синк по change (на blur) — ввод не теряется при перерисовке, тоталы обновляются
+      el.onchange=()=>{
+        const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return;
+        const i=parseInt(el.dataset.i,10), f=el.dataset.f; ensureSpecs(o);
+        if(!o.specs.rooms[i])return;
+        o.specs.rooms[i][f]=(f==="name")?el.value:(el.value===""?"":Number(el.value));
+        fl();
+      };
+    }
+    else if(a==="spec-open-field"){
+      el.onchange=()=>{
+        const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return;
+        const i=parseInt(el.dataset.i,10), f=el.dataset.f; ensureSpecs(o);
+        if(!o.specs.openings[i])return;
+        o.specs.openings[i][f]=(f==="name")?el.value:(el.value===""?"":Number(el.value));
+        fl();
+      };
+    }
     else if(a==="add-tpl"){el.onclick=()=>{
       const name=document.getElementById("nt-name")?.value?.trim();
       const icon=document.getElementById("nt-icon")?.value||"🏠";
