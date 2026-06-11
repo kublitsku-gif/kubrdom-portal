@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.52";
+const APP_BUILD = "2026-06-12.53";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -5390,6 +5390,13 @@ function tFinanceExperiment(){
     return o.stages.flatMap(function(s){return s.works.flatMap(function(w){return w.mats||[];});})
       .reduce(function(a,m){return a+(Number(m.cost)||0)*(m.qty||1);},0);
   }
+  // Куплено по снабжению: материалы объекта, отмеченные снабженцем как «куплено».
+  function objMatsBought(oid){
+    const o=objects.find(function(x){return x.id===oid;}); if(!o)return 0;
+    return o.stages.flatMap(function(s){return s.works.flatMap(function(w){return w.mats||[];});})
+      .filter(function(m){return !!purchased[m.id];})
+      .reduce(function(a,m){return a+(Number(m.cost)||0)*(m.qty||1);},0);
+  }
   function objLabor(c){
     let s=0;
     users.filter(function(u){return (c.responsible||[]).includes(u.id);}).forEach(function(u){
@@ -5473,6 +5480,7 @@ function tFinanceExperiment(){
     const o=objects.find(function(x){return x.id===c.objId;})||null;
     const st=CT_STAT[c.status]||CT_STAT.draft;
     const rev=contractRevenue(c), mat=c.objId?objMaterials(c.objId):0, lab=objLabor(c);
+    const matBought=c.objId?objMatsBought(c.objId):0, matLeft=Math.max(0,mat-matBought);
     const profit=rev-mat-lab, pct=rev>0?Math.round(profit/rev*100):0;
     const oin=contractTxns(c,"income");
     const oout=contractTxns(c,"expense");
@@ -5488,7 +5496,9 @@ function tFinanceExperiment(){
       '</div>'+
       '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:11px;margin-bottom:8px">'+
         '<div><div style="color:#9aabbf">ВЫРУЧКА</div><b style="color:#2980b9">'+RU(rev)+'</b></div>'+
-        '<div><div style="color:#9aabbf">МАТЕРИАЛЫ</div><b style="color:#1a2a3a">'+RU(mat)+'</b></div>'+
+        '<div><div style="color:#9aabbf">МАТЕРИАЛЫ</div><b style="color:#1a2a3a">'+RU(mat)+'</b>'+
+          (mat>0?'<div style="font-size:9px;line-height:1.3;margin-top:1px"><span style="color:#27ae60">куплено '+RU(matBought)+'</span> · <span style="color:#e67e22">ещё '+RU(matLeft)+'</span></div>':'')+
+        '</div>'+
         '<div><div style="color:#9aabbf">РАБОТА</div><b style="color:#1a2a3a">'+RU(lab)+'</b></div>'+
       '</div>'+
       '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:11px;border-top:1px solid #eef2f7;padding-top:8px">'+
