@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.25";
+const APP_BUILD = "2026-06-11.26";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1322,7 +1322,8 @@ function deepCopy(x){return JSON.parse(JSON.stringify(x));}
 // Хранятся в шаблоне (t.specs) и копируются в объект при создании. Из метражей
 // помещений сметы берут площади: потолок = пол, объём = пол × высота, стены —
 // заданная площадь (брутто). Числа дробные (м² / м).
-function ensureSpecs(o){ if(!o.specs||typeof o.specs!=="object"){o.specs={rooms:[],openings:[]};} if(!Array.isArray(o.specs.rooms))o.specs.rooms=[]; if(!Array.isArray(o.specs.openings))o.specs.openings=[]; return o.specs; }
+function ensureSpecs(o){ if(!o.specs||typeof o.specs!=="object"){o.specs={rooms:[],openings:[]};} if(!Array.isArray(o.specs.rooms))o.specs.rooms=[]; if(!Array.isArray(o.specs.openings))o.specs.openings=[]; o.specs.rooms.forEach(function(r){ if(!r.id)r.id="r"+Math.random().toString(36).slice(2,9); }); return o.specs; }
+let specSel={};   // {roomId:true} — выделенные помещения для подсчёта общего метража
 function specRoomCalc(r){
   const floor=Number(r.floor)||0, wall=Number(r.wall)||0, h=Number(r.h)||0;
   return { floor:floor, ceil:floor, wall:wall, h:h, vol:Math.round(floor*h*100)/100 };
@@ -1350,6 +1351,7 @@ function specsEditorHtml(o){
     const c=specRoomCalc(r);
     h+='<div style="background:#fafbfc;border:1px solid #e6ecf3;border-radius:9px;padding:9px 10px;margin-bottom:7px">'+
       '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">'+
+        '<div data-a="spec-room-sel" data-id="'+r.id+'" style="width:24px;height:24px;border-radius:6px;border:2px solid '+(specSel[r.id]?"#16a085":"#cdd8e6")+';background:'+(specSel[r.id]?"#16a085":"#fff")+';display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:800;cursor:pointer;flex-shrink:0">'+(specSel[r.id]?"✓":"")+'</div>'+
         '<input id="spec-r-name-'+o.id+'-'+i+'" data-a="spec-room-field" data-oid="'+o.id+'" data-i="'+i+'" data-f="name" value="'+esc(r.name||"")+'" placeholder="Помещение (напр. Парная)" style="flex:1;min-width:0;padding:7px 9px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;font-weight:700;outline:none;box-sizing:border-box">'+
         '<button data-a="spec-room-del" data-oid="'+o.id+'" data-i="'+i+'" style="width:28px;height:28px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:12px;flex-shrink:0">🗑</button>'+
       '</div>'+
@@ -1376,7 +1378,25 @@ function specsEditorHtml(o){
       '<button data-a="spec-open-del" data-oid="'+o.id+'" data-i="'+i+'" style="width:26px;height:26px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>'+
     '</div>';
   });
-  // Итоги
+  // Выбранные помещения — общий метраж
+  const selRooms=(specs.rooms||[]).filter(function(r){return specSel[r.id];});
+  if(selRooms.length){
+    let sf=0,sw=0,sv=0;
+    selRooms.forEach(function(r){var c=specRoomCalc(r);sf+=c.floor;sw+=c.wall;sv+=c.vol;});
+    sf=Math.round(sf*100)/100; sw=Math.round(sw*100)/100; sv=Math.round(sv*100)/100;
+    h+='<div style="background:#16a08510;border:1px solid #16a08544;border-radius:9px;padding:9px 11px;margin-top:10px">'+
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'+
+        '<span style="font-size:10px;font-weight:700;color:#16a085">ВЫБРАНО: '+selRooms.length+' пом. ('+selRooms.map(function(r){return esc(r.name||"?");}).join(", ")+')</span>'+
+        '<button data-a="spec-sel-clear" style="font-size:10px;color:#7a9aaa;background:transparent;border:none;cursor:pointer;text-decoration:underline">сбросить</button>'+
+      '</div>'+
+      '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">'+
+        '<div style="text-align:center"><div style="font-size:9px;color:#9aabbf">ПОЛ/ПОТОЛОК</div><div style="font-size:14px;font-weight:800;color:#16a085">'+sf.toLocaleString("ru-RU")+' м²</div></div>'+
+        '<div style="text-align:center"><div style="font-size:9px;color:#9aabbf">СТЕНЫ</div><div style="font-size:14px;font-weight:800;color:#16a085">'+sw.toLocaleString("ru-RU")+' м²</div></div>'+
+        '<div style="text-align:center"><div style="font-size:9px;color:#9aabbf">ОБЪЁМ</div><div style="font-size:14px;font-weight:800;color:#16a085">'+sv.toLocaleString("ru-RU")+' м³</div></div>'+
+      '</div>'+
+    '</div>';
+  }
+  // Итоги (по всем помещениям)
   h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:12px;padding-top:10px;border-top:1px solid #eef2f7">'+
     '<div style="text-align:center"><div style="font-size:9px;color:#9aabbf">ПОЛ/ПОТОЛОК</div><div style="font-size:13px;font-weight:700;color:#16a085">'+T.floor.toLocaleString("ru-RU")+' м²</div></div>'+
     '<div style="text-align:center"><div style="font-size:9px;color:#9aabbf">СТЕНЫ</div><div style="font-size:13px;font-weight:700;color:#16a085">'+T.wall.toLocaleString("ru-RU")+' м²</div></div>'+
@@ -8419,9 +8439,11 @@ function bind(){
     else if(a==="show-nt"){el.onclick=()=>{showNT=true;nt={name:"",icon:"🛁",kind:"banya"};render();};}
     else if(a==="nt-kind"){el.onclick=()=>{nt.kind=el.dataset.k;nt.name=document.getElementById("nt-name")?.value||nt.name;nt.icon=document.getElementById("nt-icon")?.value||nt.icon;render();};}
     else if(a==="cancel-nt"){el.onclick=()=>{showNT=false;render();};}
+    else if(a==="spec-room-sel"){el.onclick=()=>{ const id=el.dataset.id; const n=Object.assign({},specSel); if(n[id])delete n[id]; else n[id]=true; specSel=n; render(); };}
+    else if(a==="spec-sel-clear"){el.onclick=()=>{ specSel={}; render(); };}
     else if(a==="spec-room-add"){el.onclick=()=>{
       const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return;
-      ensureSpecs(o); o.specs.rooms=o.specs.rooms.concat([{name:"",floor:"",wall:"",h:2.5}]); fl();
+      ensureSpecs(o); o.specs.rooms=o.specs.rooms.concat([{id:"r"+Math.random().toString(36).slice(2,9),name:"",floor:"",wall:"",h:2.5}]); fl();
     };}
     else if(a==="spec-room-del"){el.onclick=()=>{
       const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return;
