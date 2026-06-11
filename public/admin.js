@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.38";
+const APP_BUILD = "2026-06-11.39";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -995,6 +995,7 @@ let showNStageTid="",newTStage={n:"",c:"#e67e22"},tnsMode="manual"; // manual | 
 let dbStagePicks={}; // {stageName: true} — отмеченные этапы для массового добавления
 let showNWorkSid="";
 let tplMatModal=null;
+let tplMatExpand={};   // {estId:true} — раскрыты ли материалы работы в сборщике (по тапу, не авто)
 // Global DB
 let dbWorks=[
   {id:"dw1",n:"Двери и Окна Рехау Термо — ламинация, 3 стекла, энергосбережение",cost:50000,stage:"ЭТАП 1 — ПОДГОТОВИТЕЛЬНЫЕ РАБОТЫ",note:"50 тыс · комплект",mats:[]},
@@ -3706,10 +3707,10 @@ ${groups.map(g=>{
       <div data-a="tpl-est" data-eid="${e.id}" style="display:flex;align-items:center;gap:9px;padding:8px;border-radius:8px;cursor:pointer;background:${on?color+"10":"transparent"}">
         <div style="width:19px;height:19px;border-radius:5px;border:2px solid ${on?color:"#cdd8e6"};background:${on?color:"#fff"};display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:800;flex-shrink:0">${on?"✓":""}</div>
         <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;color:#1a2a3a;line-height:1.25">${e.name}</div>
-        <div style="font-size:10px;color:#9aabbf;margin-top:1px">${(e.lines||[]).length} мат.</div></div>
+        <div style="font-size:10px;color:#9aabbf;margin-top:1px">${on?`<span data-a="tpl-mat-toggle" data-eid="${e.id}" style="cursor:pointer;color:#2980b9;font-weight:700;border-bottom:1px dashed #2980b955">${tplMatExpand[e.id]?"▾":"▸"} ${(e.lines||[]).length} мат.</span>`:`${(e.lines||[]).length} мат.`}</div></div>
         <span id="tplw-t-${e.id}" style="font-size:12px;font-weight:700;color:#0d1b2e;white-space:nowrap">${fmt(wTotal)}</span>${currentUser&&currentUser.roles.includes("admin")?`<button data-a="tpl-est-del" data-eid="${e.id}" title="Удалить работу из каталога" style="width:24px;height:24px;flex-shrink:0;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;margin-left:4px">🗑</button>`:""}
       </div>
-      ${on?`<div style="padding:2px 8px 8px 34px">
+      ${(on&&tplMatExpand[e.id])?`<div style="padding:2px 8px 8px 34px">
         ${(tw.mats||[]).length?(tw.mats||[]).map(m=>{const mo=EXP_MODES.find(x=>x.k===(m.mode||"piece"))||EXP_MODES[0];const conv=expConv({mode:m.mode,unitCost:Number(m.cost)||0,packBase:m.packBase,packPer:m.packPer,sheetM2:m.sheetM2,lenPer:m.lenPer});const lt=Math.round((Number(m.cost)||0)*(m.qty||0));
           return`<div style="display:flex;align-items:center;gap:6px;padding:6px 0;border-top:1px solid #f0f4f8">
             <div style="flex:1;min-width:0"><div style="font-size:12px;color:#1a2a3a;font-weight:600;line-height:1.2">${m.n}</div>
@@ -8720,6 +8721,7 @@ function bind(){
       if(i>=0)ids.splice(i,1);else ids.push(eid);
       _tplRebuild(t,ids);render();
     };}
+    else if(a==="tpl-mat-toggle"){el.onclick=function(ev){ if(ev)ev.stopPropagation(); const eid=el.dataset.eid; tplMatExpand=Object.assign({},tplMatExpand,{[eid]:!tplMatExpand[eid]}); render(); };}
     else if(a==="tpl-est-del"){el.onclick=function(ev){
       if(ev)ev.stopPropagation();
       const eid=el.dataset.eid; const es=estimates.find(x=>x.id===eid); if(!es)return;
