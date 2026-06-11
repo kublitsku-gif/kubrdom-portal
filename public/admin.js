@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.46";
+const APP_BUILD = "2026-06-11.47";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -225,6 +225,7 @@ function applyState(items){
   if (settings && (settings.aiProvider === "claude" || settings.aiProvider === "gpt")) settings = Object.assign({}, settings, { aiProvider: "deepseek" });
   // Старый общий "yandex" → Pro (теперь раздельные Lite/Pro).
   if (settings && settings.aiProvider === "yandex") settings = Object.assign({}, settings, { aiProvider: "yandexpro" });
+  try{ normalizeWorkCosts(); }catch(e){}   // стоимость работ = сумма материалов
 }
 
 // fetch с таймаутом (AbortController): на «подвисшем» соединении (throttle Cloudflare без VPN)
@@ -3694,7 +3695,7 @@ function tTemplates(){
     const selIds=(t.stages||[]).flatMap(s=>s.works||[]).map(w=>w.estId).filter(Boolean);
     const selWorks={}; (t.stages||[]).forEach(s=>(s.works||[]).forEach(w=>{if(w.estId)selWorks[w.estId]=w;}));
     const allW=(t.stages||[]).flatMap(s=>s.works||[]);
-    const grand=allW.reduce((a,w)=>a+(w.cost||0),0);
+    const grand=allW.reduce((a,w)=>a+wMatTotal(w),0);
     const tKind=t.kind||"banya";
     const _hidden=t.hiddenEst||[];
     const _est=estimates.filter(e=>(e.kind||"banya")===tKind).filter(e=>_hidden.indexOf(e.id)<0);
@@ -3735,7 +3736,7 @@ ${groups.map(g=>{
     <span style="font-size:10px;color:#9aabbf">${selN}/${ids.length}</span>
   </div>
   <div style="padding:6px 10px">
-    ${g.items.length?(function(){var _ri=function(e){const on=selIds.includes(e.id);const tw=on?selWorks[e.id]:null;const wTotal=tw?tw.cost:estTotal(e);
+    ${g.items.length?(function(){var _ri=function(e){const on=selIds.includes(e.id);const tw=on?selWorks[e.id]:null;const wTotal=tw?wMatTotal(tw):estTotal(e);
       return`<div style="margin-bottom:4px">
       <div data-a="tpl-est" data-eid="${e.id}" style="display:flex;align-items:center;gap:9px;padding:8px;border-radius:8px;cursor:pointer;background:${on?color+"10":"transparent"}">
         <div style="width:19px;height:19px;border-radius:5px;border:2px solid ${on?color:"#cdd8e6"};background:${on?color:"#fff"};display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:800;flex-shrink:0">${on?"✓":""}</div>
@@ -4072,11 +4073,18 @@ function estProd(pid){return expProducts.find(function(p){return p.id===pid;});}
 function estLineTotal(line){var p=estProd(line.pid);return p?Math.round((Number(p.unitCost)||0)*(Number(line.qty)||0)):0;}
 function estTotal(e){return (e.lines||[]).reduce(function(a,l){return a+estLineTotal(l);},0);}
 // Построение работы шаблона из сметы (cost = итог сметы, mats = пер-юнит разбивка)
+// Стоимость работы = СУММА её материалов (без отдельного скрытого ФОТ). Если нужна оплата
+// работы — её добавляют отдельной строкой-«материалом» (как «Аренда», «Контейнер»).
+function wMatTotal(w){ return (w&&w.mats||[]).reduce(function(a,m){return a+(Number(m.cost)||0)*(m.qty||0);},0); }
 function _tplEstWork(e){
   var mats=(e.lines||[]).map(function(l){var p=estProd(l.pid)||{};return {id:gid(), n:p.name||"", store:p.store||"", url:p.url||"", note:"", cost:Number(p.unitCost)||0, qty:Number(l.qty)||1, mode:p.mode||"piece", unitCost:Number(p.unitCost)||0, packBase:p.packBase, packPer:p.packPer, lenPer:p.lenPer, sheetM2:p.sheetM2};});
   var matSum=mats.reduce(function(a,m){return a+(Number(m.cost)||0)*(m.qty||0);},0);
-  var total=Number(e.cost)||matSum;
-  return {id:gid(), estId:e.id, n:e.name, cost:total, labor:Math.max(0,total-matSum), note:"", mats:mats};
+  return {id:gid(), estId:e.id, n:e.name, cost:matSum, labor:0, note:"", mats:mats};
+}
+// Миграция: стоимость каждой работы = сумма материалов (убираем устаревший скрытый ФОТ).
+function normalizeWorkCosts(){
+  function fix(list){ (list||[]).forEach(function(o){ (o.stages||[]).forEach(function(s){ (s.works||[]).forEach(function(w){ var t=wMatTotal(w); if((Number(w.cost)||0)!==t||w.labor){ w.cost=t; w.labor=0; } }); }); }); }
+  fix(templates); fix(objects);
 }
 // Пересборка этапов шаблона из набора id выбранных смет
 function _tplRebuild(t, ids){
@@ -8776,7 +8784,7 @@ function bind(){
       const lt=Math.round((Number(m.cost)||0)*(m.qty||0));
       const lts=document.getElementById("tplm-lt-"+eid+"-"+mid);if(lts)lts.textContent=lt.toLocaleString("ru-RU")+" ₽";
       const sum=(w.mats||[]).reduce((a,mm)=>a+(Number(mm.cost)||0)*(mm.qty||0),0);
-      w.cost=(Number(w.labor)||0)+sum;
+      w.cost=sum;
       const wt=document.getElementById("tplw-t-"+eid);if(wt)wt.textContent=fmt(w.cost);
       const grand=(t.stages||[]).flatMap(s=>s.works||[]).reduce((a,ww)=>a+(ww.cost||0),0);
       const gt=document.getElementById("tpl-grand");if(gt)gt.textContent=fmt(grand);
@@ -8787,7 +8795,7 @@ function bind(){
       const w=(t.stages||[]).flatMap(s=>s.works||[]).find(x=>x.estId===eid);if(!w)return;
       w.mats=(w.mats||[]).filter(x=>x.id!==mid);
       const sum=(w.mats||[]).reduce((a,mm)=>a+(Number(mm.cost)||0)*(mm.qty||0),0);
-      w.cost=(Number(w.labor)||0)+sum;   // пересчёт стоимости работы
+      w.cost=sum;   // стоимость работы = сумма материалов
       fl();
     };}
     else if(a==="tpl-add-mat-open"){el.onclick=()=>{tplPickFor={eid:el.dataset.eid};tplPickSearch="";render();};}
@@ -8798,7 +8806,7 @@ function bind(){
       const p=expProducts.find(x=>x.id===el.dataset.pid);if(!p)return;
       const ex=(w.mats||[]).find(x=>x.n===p.name);
       if(ex){ex.qty=(Number(ex.qty)||0)+1;}else{(w.mats=w.mats||[]).push({id:gid(),n:p.name,store:p.store||"",url:p.url||"",note:"",cost:Number(p.unitCost)||0,qty:1,mode:p.mode||"piece",unitCost:Number(p.unitCost)||0,packBase:p.packBase,packPer:p.packPer,lenPer:p.lenPer,sheetM2:p.sheetM2});}
-      w.cost=(Number(w.labor)||0)+(w.mats||[]).reduce((a,m)=>a+(Number(m.cost)||0)*(m.qty||0),0);
+      w.cost=wMatTotal(w);
       tplPickFor=null;tplPickSearch="";render();
     };}
     else if(a==="tpl-est"){el.onclick=()=>{
