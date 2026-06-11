@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.45";
+const APP_BUILD = "2026-06-11.46";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1408,6 +1408,31 @@ function specFilePickerModal(){
   m+='</div></div></div>';
   return m;
 }
+let specCopyPicker=null;   // oid целевого шаблона/объекта для копирования характеристик
+function specCopyModal(){
+  if(!specCopyPicker)return "";
+  const oid=specCopyPicker;
+  const srcs=templates.filter(function(x){return x.id!==oid&&x.specs&&(x.specs.rooms||[]).length;});
+  let m='<div id="spec-copy-modal" style="position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:flex-end;justify-content:center;padding:0">';
+  m+='<div style="background:#fff;width:100%;max-width:500px;max-height:80vh;border-radius:16px 16px 0 0;display:flex;flex-direction:column;overflow:hidden">';
+  m+='<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #e8eef5">'+
+       '<div style="font-size:14px;font-weight:700;color:#1a2a3a">📐 Характеристики из шаблона</div>'+
+       '<button data-a="spec-copy-close" style="padding:6px 12px;background:#f0f4f8;border:none;border-radius:8px;cursor:pointer;font-size:13px;color:#7a9aaa;font-weight:600">✕</button>'+
+     '</div>';
+  m+='<div style="flex:1;overflow-y:auto;padding:10px 12px 14px">';
+  if(!srcs.length){ m+='<div style="padding:24px;text-align:center;font-size:12px;color:#9aabbf">Нет шаблонов с заполненными помещениями.</div>'; }
+  else { srcs.forEach(function(t){
+    const T=specTotals(t.specs);
+    m+='<div data-a="spec-copy-pick" data-oid="'+oid+'" data-src="'+t.id+'" style="display:flex;align-items:center;gap:10px;padding:11px 12px;border:1px solid #e6ecf3;border-radius:10px;margin-bottom:7px;cursor:pointer;background:#fafbfc">'+
+         '<span style="font-size:20px">'+(t.icon||"🛁")+'</span>'+
+         '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(t.name||"Шаблон")+'</div>'+
+           '<div style="font-size:10px;color:#9aabbf">'+(t.specs.rooms||[]).length+' пом. · пол '+T.floor.toLocaleString("ru-RU")+' м² · h '+(t.specs.height||0)+' м'+((t.specs.planName||t.specs.specName)?' · 📎 документы':'')+'</div></div>'+
+       '</div>';
+  }); }
+  m+='<div style="font-size:10px;color:#9aabbf;text-align:center;padding:6px 0">Скопируются помещения, высота, проёмы и документы. Работы не затрагиваются.</div>';
+  m+='</div></div></div>';
+  return m;
+}
 function specsEditorHtml(o){
   const specs=ensureSpecs(o);
   const H=Number(specs.height)||0;
@@ -1422,7 +1447,10 @@ function specsEditorHtml(o){
   let h='<div style="background:#fff;border-radius:12px;border:1px solid #16a08544;padding:12px 14px;margin-bottom:14px">';
   h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'+
        '<div style="font-size:11px;font-weight:700;color:#16a085;letter-spacing:0.5px">📐 ХАРАКТЕРИСТИКИ ОБЪЕКТА</div>'+
-       '<button data-a="spec-room-add" data-oid="'+o.id+'" style="padding:4px 11px;background:#16a085;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">+ Помещение</button>'+
+       '<div style="display:flex;gap:5px">'+
+         (templates.some(function(x){return x.id!==o.id&&x.specs&&(x.specs.rooms||[]).length;})?'<button data-a="spec-copy-open" data-oid="'+o.id+'" style="padding:4px 10px;background:#fff;border:1px solid #16a08555;border-radius:7px;cursor:pointer;color:#16a085;font-size:11px;font-weight:700">📋 Из шаблона</button>':'')+
+         '<button data-a="spec-room-add" data-oid="'+o.id+'" style="padding:4px 11px;background:#16a085;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">+ Помещение</button>'+
+       '</div>'+
      '</div>';
   // Общая высота потолка
   h+='<div style="display:flex;align-items:center;gap:10px;background:#f4faf8;border:1px solid #16a08533;border-radius:9px;padding:8px 11px;margin-bottom:12px">'+
@@ -2709,6 +2737,9 @@ function render(){
   // Spec file picker (привязка планировки/спецификации к характеристикам объекта)
   if(specFilePicker){
     a.insertAdjacentHTML("beforeend", specFilePickerModal());
+  }
+  if(specCopyPicker){
+    a.insertAdjacentHTML("beforeend", specCopyModal());
   }
   bind();
   // Material picker search input
@@ -8678,6 +8709,17 @@ function bind(){
     else if(a==="spec-room-open"){el.onclick=()=>{ specActiveRoom=Object.assign({},specActiveRoom,{[el.dataset.oid]:el.dataset.id}); render(); };}
     else if(a==="spec-height"){el.onchange=()=>{ const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return; ensureSpecs(o); o.specs.height=(el.value===""?"":Number(el.value)); fl(); };}
     else if(a==="spec-sel-clear"){el.onclick=()=>{ specSel={}; render(); };}
+    else if(a==="spec-copy-open"){el.onclick=()=>{ specCopyPicker=el.dataset.oid; render(); };}
+    else if(a==="spec-copy-close"){el.onclick=()=>{ specCopyPicker=null; render(); };}
+    else if(a==="spec-copy-pick"){el.onclick=()=>{
+      const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid);
+      const src=templates.find(x=>x.id===el.dataset.src);
+      if(!o||!src||!src.specs){ specCopyPicker=null; render(); return; }
+      const copy=JSON.parse(JSON.stringify(src.specs));
+      (copy.rooms||[]).forEach(function(r){ r.id="r"+Math.random().toString(36).slice(2,9); });  // новые id помещений
+      o.specs=copy;   // работы (stages) не трогаем
+      specCopyPicker=null; fl();
+    };}
     else if(a==="spec-file-pick"){el.onclick=()=>{ specFilePicker={oid:el.dataset.oid,kind:el.dataset.kind}; render(); };}
     else if(a==="spec-file-close"){el.onclick=()=>{ specFilePicker=null; render(); };}
     else if(a==="spec-file-unlink"){el.onclick=()=>{ const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return; ensureSpecs(o); const k=el.dataset.kind; if(k==="plan"){o.specs.planUrl="";o.specs.planName="";}else{o.specs.specUrl="";o.specs.specName="";} fl(); };}
