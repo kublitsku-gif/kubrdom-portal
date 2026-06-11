@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.30";
+const APP_BUILD = "2026-06-11.31";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4114,7 +4114,11 @@ function renderEstimates(){
     if(g.st&&g.st.n===3){
       return ROOMS_EST.map(function(rm){
         var items=g.items.filter(function(e){return estRoom(e)===rm.k;});
-        return roomHeadHtml(rm,items.length)+items.map(function(it){return estCardHtml(it,g.st);}).join("");
+        return '<div class="est-roomzone" data-room="'+rm.k+'" style="border-radius:10px;padding-bottom:4px;min-height:54px">'+
+          roomHeadHtml(rm,items.length)+
+          items.map(function(it){return estCardHtml(it,g.st);}).join("")+
+          (items.length?'':'<div style="font-size:10px;color:#c0ccd8;text-align:center;padding:6px 0 10px">перетащите работу сюда</div>')+
+        '</div>';
       }).join("");
     }
     return g.items.map(function(it){return estCardHtml(it,g.st);}).join("");
@@ -4146,13 +4150,14 @@ function renderEstimates(){
     c.addEventListener("dragend",function(){ estDrag=null; c.style.opacity="1"; c.style.outline=""; });
     c.addEventListener("dragover",function(ev){ if(estDrag&&estDrag!==c.dataset.id){ ev.preventDefault(); c.style.outline="2px dashed #16a085"; } });
     c.addEventListener("dragleave",function(){ c.style.outline=""; });
-    c.addEventListener("drop",function(ev){ ev.preventDefault(); c.style.outline="";
+    c.addEventListener("drop",function(ev){ ev.preventDefault(); ev.stopPropagation(); c.style.outline="";
       if(!estDrag||estDrag===c.dataset.id){ estDrag=null; return; }
       var from=estimates.findIndex(function(x){return x.id===estDrag;});
       var toI=estimates.findIndex(function(x){return x.id===c.dataset.id;});
       if(from<0||toI<0){ estDrag=null; return; }
-      var moved=estimates[from];
-      moved.stage=Number(estimates[toI].stage)||0;          // перенимаем этап карточки-цели
+      var moved=estimates[from], tgt=estimates[toI];
+      moved.stage=Number(tgt.stage)||0;                     // перенимаем этап карточки-цели
+      if(moved.stage===3) moved.room=estRoom(tgt);          // и комнату (чистовой этап)
       estimates.splice(from,1);
       var toI2=estimates.findIndex(function(x){return x.id===c.dataset.id;});
       estimates.splice(toI2,0,moved);                       // вставляем перед целью
@@ -4167,6 +4172,17 @@ function renderEstimates(){
       if(!estDrag){ return; }
       var m=estimates.find(function(x){return x.id===estDrag;});
       if(m){ m.stage=Number(h.dataset.st)||0; }
+      estDrag=null; renderEstimates();
+    });
+  });
+  // зона комнаты (вся область) — drop куда угодно внутри блока переносит в этап 3 + комнату
+  el.querySelectorAll(".est-roomzone").forEach(function(rz){
+    rz.addEventListener("dragover",function(ev){ if(estDrag){ ev.preventDefault(); rz.style.background="#eef6f4"; } });
+    rz.addEventListener("dragleave",function(){ rz.style.background=""; });
+    rz.addEventListener("drop",function(ev){ ev.preventDefault(); rz.style.background="";
+      if(!estDrag)return;
+      var m=estimates.find(function(x){return x.id===estDrag;});
+      if(m){ m.stage=3; m.room=rz.dataset.room; }
       estDrag=null; renderEstimates();
     });
   });
