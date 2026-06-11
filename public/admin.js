@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.53";
+const APP_BUILD = "2026-06-12.54";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -3468,7 +3468,7 @@ ${obj.stages.map(s=>`<div style="background:#fff;border-radius:12px;border:1px s
     ${isAdmin?`<button data-a="obj-del-stage" data-oid="${obj.id}" data-sid="${s.id}" style="padding:2px 7px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;font-size:10px;color:#e74c3c">✕</button>`:""}
   </div>
   <div style="padding:8px 12px">
-    ${s.works.map(w=>{
+    ${(()=>{const _ri=(w)=>{
       const logs=w.timeLogs||[];
       const totalH=logs.reduce((a,l)=>a+(l.hours||0),0);
       const isTimeOpen=openTimeWid===w.id;
@@ -3576,7 +3576,23 @@ ${obj.stages.map(s=>`<div style="background:#fff;border-radius:12px;border:1px s
       }
       h+=`</div>`;
       return h;
-    }).join("")}
+    };
+    // Чистовой этап — разбивка работ по помещениям (Парная/Душевая/Туалет/КО/Общие),
+    // как в смете. Комната берётся из w.room, иначе определяется по названию работы.
+    if(/чистов/i.test(s.n||"")){
+      return ROOMS_EST.map(function(rm){
+        const _its=s.works.filter(function(w){return estRoom({name:w.n,room:w.room})===rm.k;});
+        if(!_its.length)return "";
+        const _sum=_its.reduce(function(a,w){return a+(Number(w.cost)||0);},0);
+        return '<div style="display:flex;align-items:center;gap:6px;margin:10px 2px 5px;padding:5px 9px;border-radius:7px;background:'+rm.color+'12;border:1px dashed '+rm.color+'55">'+
+            '<span style="font-size:12px">'+rm.emoji+'</span>'+
+            '<span style="font-size:10px;font-weight:800;color:'+rm.color+';letter-spacing:0.3px;flex:1">'+rm.n.toUpperCase()+'</span>'+
+            '<span style="font-size:9px;color:'+rm.color+';font-weight:700">'+_its.length+' · '+fmt(_sum)+'</span>'+
+          '</div>'+_its.map(_ri).join("");
+      }).join("");
+    }
+    return s.works.map(_ri).join("");
+    })()}
     ${isAdmin?(showNObjWorkSid===s.id?`<div style="margin-top:6px;background:#f0f4f8;border-radius:9px;padding:9px">
       <input id="onw-n" placeholder="Название работы" style="width:100%;padding:7px 9px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;margin-bottom:5px;outline:none;box-sizing:border-box">
       <div style="display:flex;gap:5px">
