@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.28";
+const APP_BUILD = "2026-06-11.29";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1326,15 +1326,23 @@ function ensureSpecs(o){
   if(!o.specs||typeof o.specs!=="object"){o.specs={rooms:[],openings:[]};}
   if(!Array.isArray(o.specs.rooms))o.specs.rooms=[];
   if(!Array.isArray(o.specs.openings))o.specs.openings=[];
-  o.specs.rooms.forEach(function(r){ if(!r.id)r.id="r"+Math.random().toString(36).slice(2,9); if(r.ceil==null&&(r.floor||r.floor===0))r.ceil=r.floor; });
   if(o.specs.height==null){ var firstH=(o.specs.rooms[0]&&o.specs.rooms[0].h); o.specs.height=(firstH!=null&&firstH!=="")?Number(firstH):2.5; }
+  var _H=Number(o.specs.height)||0;
+  o.specs.rooms.forEach(function(r){
+    if(!r.id)r.id="r"+Math.random().toString(36).slice(2,9);
+    // миграция: было поле площади пола → переносим в длину (ширина 1), периметр из стен/высоты
+    if(r.w==null&&r.l==null&&(r.floor||r.floor===0)&&r.floor!==""){ r.l=Number(r.floor)||0; r.w=1; }
+    if(r.wallLen==null&&(r.wall||r.wall===0)&&r.wall!==""&&_H>0){ r.wallLen=Math.round((Number(r.wall)/_H)*100)/100; }
+  });
   return o.specs;
 }
 let specSel={};          // {roomId:true} — выделенные помещения для суммы «Выбрано»
 let specActiveRoom={};   // {oid: roomId} — активная вкладка-помещение
 function specRoomCalc(r,H){
-  const floor=Number(r.floor)||0, wall=Number(r.wall)||0;
-  const ceil=(r.ceil===0||r.ceil)?Number(r.ceil):floor, h=Number(H)||0;
+  const h=Number(H)||0;
+  const floor=(r.w!=null&&r.w!=="")||(r.l!=null&&r.l!=="") ? Math.round((Number(r.w)||0)*(Number(r.l)||0)*100)/100 : (Number(r.floor)||0);
+  const wall=(r.wallLen!=null&&r.wallLen!=="") ? Math.round((Number(r.wallLen)||0)*h*100)/100 : (Number(r.wall)||0);
+  const ceil=(r.ceil===0||r.ceil)&&r.ceil!=="" ? Number(r.ceil) : floor;
   return { floor:floor, ceil:ceil, wall:wall, vol:Math.round(floor*h*100)/100 };
 }
 function specTotals(specs){
@@ -1413,16 +1421,34 @@ function specsEditorHtml(o){
     if(actIdx>=0){
       const r=rooms[actIdx], c=specRoomCalc(r,H);
       h+='<div style="background:#fafbfc;border:1px solid #e6ecf3;border-radius:10px;padding:11px 12px;margin-bottom:8px">'+
-        '<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">'+
+        '<div style="display:flex;gap:6px;align-items:center;margin-bottom:10px">'+
           '<input id="spec-r-name-'+o.id+'-'+actIdx+'" data-a="spec-room-field" data-oid="'+o.id+'" data-i="'+actIdx+'" data-f="name" value="'+esc(r.name||"")+'" placeholder="Название помещения" style="flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:14px;font-weight:700;outline:none;box-sizing:border-box">'+
           '<button data-a="spec-room-del" data-oid="'+o.id+'" data-i="'+actIdx+'" style="width:30px;height:30px;background:transparent;border:1px solid #e74c3c44;border-radius:7px;cursor:pointer;color:#e74c3c;font-size:13px;flex-shrink:0">🗑</button>'+
         '</div>'+
-        '<div style="display:flex;gap:6px">'+
-          '<div style="flex:1"><div style="font-size:9px;color:#9aabbf;font-weight:700;margin-bottom:3px">ПОЛ, м²</div>'+fld("spec-r-floor-"+o.id+"-"+actIdx,o.id,actIdx,"floor",r.floor)+'</div>'+
-          '<div style="flex:1"><div style="font-size:9px;color:#9aabbf;font-weight:700;margin-bottom:3px">СТЕНЫ, м²</div>'+fld("spec-r-wall-"+o.id+"-"+actIdx,o.id,actIdx,"wall",r.wall)+'</div>'+
-          '<div style="flex:1"><div style="font-size:9px;color:#9aabbf;font-weight:700;margin-bottom:3px">ПОТОЛОК, м²</div>'+fld("spec-r-ceil-"+o.id+"-"+actIdx,o.id,actIdx,"ceil",r.ceil)+'</div>'+
+        // ПОЛ: ширина × длина → площадь
+        '<div style="margin-bottom:10px">'+
+          '<div style="font-size:9px;color:#9aabbf;font-weight:700;margin-bottom:3px">ПОЛ — ШИРИНА × ДЛИНА, м</div>'+
+          '<div style="display:flex;gap:6px;align-items:center">'+
+            fld("spec-r-w-"+o.id+"-"+actIdx,o.id,actIdx,"w",r.w,"ширина")+
+            '<span style="font-size:14px;color:#9aabbf;font-weight:700">×</span>'+
+            fld("spec-r-l-"+o.id+"-"+actIdx,o.id,actIdx,"l",r.l,"длина")+
+            '<span style="background:#16a08515;color:#16a085;font-weight:800;border-radius:8px;padding:8px 10px;font-size:13px;white-space:nowrap;flex-shrink:0">= '+c.floor.toLocaleString("ru-RU")+' м²</span>'+
+          '</div>'+
         '</div>'+
-        '<div style="font-size:10px;color:#16a085;font-weight:600;margin-top:7px">объём '+c.vol.toLocaleString("ru-RU")+' м³ (пол × '+(specs.height||0).toLocaleString("ru-RU")+' м)</div>'+
+        // СТЕНЫ: длина стен × высота → площадь
+        '<div style="margin-bottom:10px">'+
+          '<div style="font-size:9px;color:#9aabbf;font-weight:700;margin-bottom:3px">СТЕНЫ — ДЛИНА (ПЕРИМЕТР), м</div>'+
+          '<div style="display:flex;gap:6px;align-items:center">'+
+            fld("spec-r-wallLen-"+o.id+"-"+actIdx,o.id,actIdx,"wallLen",r.wallLen,"длина стен")+
+            '<span style="font-size:12px;color:#9aabbf;white-space:nowrap">× '+(specs.height||0).toLocaleString("ru-RU")+' м</span>'+
+            '<span style="background:#16a08515;color:#16a085;font-weight:800;border-radius:8px;padding:8px 10px;font-size:13px;white-space:nowrap;flex-shrink:0">= '+c.wall.toLocaleString("ru-RU")+' м²</span>'+
+          '</div>'+
+        '</div>'+
+        // ПОТОЛОК (по умолчанию = пол; можно задать своё)
+        '<div style="display:flex;gap:6px;align-items:center">'+
+          '<div style="flex:1"><div style="font-size:9px;color:#9aabbf;font-weight:700;margin-bottom:3px">ПОТОЛОК, м² (по умолч. = пол)</div>'+fld("spec-r-ceil-"+o.id+"-"+actIdx,o.id,actIdx,"ceil",r.ceil,c.floor.toLocaleString("ru-RU"))+'</div>'+
+          '<div style="flex:1;align-self:flex-end"><div style="font-size:10px;color:#16a085;font-weight:600;padding-bottom:9px">объём '+c.vol.toLocaleString("ru-RU")+' м³</div></div>'+
+        '</div>'+
       '</div>';
     }
   }
