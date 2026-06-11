@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.39";
+const APP_BUILD = "2026-06-11.40";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -3713,7 +3713,7 @@ ${groups.map(g=>{
       ${(on&&tplMatExpand[e.id])?`<div style="padding:2px 8px 8px 34px">
         ${(tw.mats||[]).length?(tw.mats||[]).map(m=>{const mo=EXP_MODES.find(x=>x.k===(m.mode||"piece"))||EXP_MODES[0];const conv=expConv({mode:m.mode,unitCost:Number(m.cost)||0,packBase:m.packBase,packPer:m.packPer,sheetM2:m.sheetM2,lenPer:m.lenPer});const lt=Math.round((Number(m.cost)||0)*(m.qty||0));
           return`<div style="display:flex;align-items:center;gap:6px;padding:6px 0;border-top:1px solid #f0f4f8">
-            <div style="flex:1;min-width:0"><div style="font-size:12px;color:#1a2a3a;font-weight:600;line-height:1.2">${m.n}</div>
+            <div style="flex:1;min-width:0"><div data-a="tpl-mat-open" data-name="${esc(m.n).replace(/"/g,"&quot;")}" style="font-size:12px;color:#2980b9;font-weight:600;line-height:1.2;cursor:pointer;display:inline-flex;align-items:center;gap:4px;border-bottom:1px dashed #2980b955">${m.n}<span style="font-size:9px">✏️</span></div>
             <div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:2px">
               ${m.store?`<span style="font-size:9px;font-weight:700;background:${SC[m.store]||'#666'};color:#fff;border-radius:4px;padding:1px 6px">${m.store}</span>`:''}
               <span style="font-size:10px;color:#9aabbf">${(Number(m.cost)||0).toLocaleString('ru-RU')} ₽/${mo.unit}</span>
@@ -8722,6 +8722,7 @@ function bind(){
       _tplRebuild(t,ids);render();
     };}
     else if(a==="tpl-mat-toggle"){el.onclick=function(ev){ if(ev)ev.stopPropagation(); const eid=el.dataset.eid; tplMatExpand=Object.assign({},tplMatExpand,{[eid]:!tplMatExpand[eid]}); render(); };}
+    else if(a==="tpl-mat-open"){el.onclick=function(ev){ if(ev)ev.stopPropagation(); const nm=el.dataset.name; const prod=expProducts.find(function(x){return x.name===nm;}); if(!prod){ alert("Материал «"+nm+"» не найден в базе (возможно переименован или удалён)."); return; } tab="works"; dbSection="mats"; expOpenId=prod.id; render(); window.scrollTo(0,0); };}
     else if(a==="tpl-est-del"){el.onclick=function(ev){
       if(ev)ev.stopPropagation();
       const eid=el.dataset.eid; const es=estimates.find(x=>x.id===eid); if(!es)return;
