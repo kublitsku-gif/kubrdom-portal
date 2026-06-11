@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.47";
+const APP_BUILD = "2026-06-11.48";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1035,7 +1035,7 @@ let dbWorks=[
   {id:"dw34",n:"Кондиционер",cost:35000,stage:"ЭТАП 3 — ЧИСТОВАЯ ОТДЕЛКА",note:"",mats:[]},
   {id:"dw35",n:"Покрытие полков маслом",cost:20000,stage:"ЭТАП 3 — ЧИСТОВАЯ ОТДЕЛКА",note:"",mats:[]},
 ];
-let dbSection="works";
+let dbSection="mats";
 let dbMatSearch=""; // поиск по материалам в Базе данных (название или магазин)
 let matPackView={}; // {matId: "m2"|"pack"} — режим отображения цены для материалов, продаваемых упаковками
 // === ДЕМО «Эксперимент»: список товаров (не сохраняется) ===
@@ -3823,10 +3823,10 @@ function tWorks(){
   const dbLevel=dbAccessLevel();
   const plansOnly=dbLevel==="plans";
   if(plansOnly) dbSection="plans";
+  if(dbSection==="works") dbSection="mats";   // вкладка «Работы» убрана
   return`<div>
 <!-- Переключатель разделов -->
 ${plansOnly?"":`<div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap">
-  <button data-a="db-tab" data-dt="works" style="flex:1;min-width:96px;padding:11px 6px;border-radius:12px;cursor:pointer;font-size:12px;font-weight:700;border:2px solid ${dbSection==="works"?"#e67e22":"#dde6f0"};background:${dbSection==="works"?"#e67e22":"#fff"};color:${dbSection==="works"?"#fff":"#7a9aaa"};box-shadow:${dbSection==="works"?"0 3px 10px rgba(230,126,34,0.3)":"none"};transition:all 0.15s">🔨 Работы</button>
   <button data-a="db-tab" data-dt="mats" style="flex:1;min-width:96px;padding:11px 6px;border-radius:12px;cursor:pointer;font-size:12px;font-weight:700;border:2px solid ${dbSection==="mats"?"#2980b9":"#dde6f0"};background:${dbSection==="mats"?"#2980b9":"#fff"};color:${dbSection==="mats"?"#fff":"#7a9aaa"};box-shadow:${dbSection==="mats"?"0 3px 10px rgba(41,128,185,0.3)":"none"};transition:all 0.15s">📦 Материалы</button>
   <button data-a="db-tab" data-dt="plans" style="flex:1;min-width:96px;padding:11px 6px;border-radius:12px;cursor:pointer;font-size:12px;font-weight:700;border:2px solid ${dbSection==="plans"?"#8e44ad":"#dde6f0"};background:${dbSection==="plans"?"#8e44ad":"#fff"};color:${dbSection==="plans"?"#fff":"#7a9aaa"};box-shadow:${dbSection==="plans"?"0 3px 10px rgba(142,68,173,0.3)":"none"};transition:all 0.15s">📐 Планировки</button>
   <button data-a="db-tab" data-dt="est" style="flex:1;min-width:96px;padding:11px 6px;border-radius:12px;cursor:pointer;font-size:12px;font-weight:700;border:2px solid ${dbSection==="est"?"#16a085":"#dde6f0"};background:${dbSection==="est"?"#16a085":"#fff"};color:${dbSection==="est"?"#fff":"#7a9aaa"};box-shadow:${dbSection==="est"?"0 3px 10px rgba(22,160,133,0.3)":"none"};transition:all 0.15s">🧾 Сметы</button>
