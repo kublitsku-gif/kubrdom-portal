@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.34";
+const APP_BUILD = "2026-06-11.35";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4147,11 +4147,13 @@ function renderEstimates(){
         ? '<div class="est-stagehead" data-st="'+g.st.n+'" style="display:flex;align-items:center;gap:7px;margin:16px 2px 8px;padding:4px 4px;border-radius:8px"><span style="font-size:14px">'+g.st.emoji+'</span><span style="width:9px;height:9px;border-radius:50%;background:'+g.st.color+';flex-shrink:0"></span><span style="font-size:11px;font-weight:800;letter-spacing:0.5px;color:'+g.st.color+'">'+g.st.short.toUpperCase()+' · '+g.st.label.toUpperCase()+'</span><span style="font-size:10px;color:#9aabbf">· '+g.items.length+'</span></div>'
         : '<div class="est-stagehead" data-st="0" style="margin:16px 2px 8px;padding:4px 4px;border-radius:8px;font-size:11px;font-weight:800;letter-spacing:0.5px;color:#9aabbf">БЕЗ ЭТАПА · '+g.items.length+'</div>';
       return head+groupBody(g);
-    }).join(""):'<div style="text-align:center;color:#aaa;font-size:13px;padding:20px">'+(_q?'Ничего не найдено':'Смет пока нет')+'</div>');
+    }).join(""):'<div style="text-align:center;color:#aaa;font-size:13px;padding:20px">'+(_q?'Ничего не найдено':'Смет пока нет')+'</div>')+
+    '<button id="est-fab" title="Новая смета" style="position:fixed;right:18px;bottom:84px;z-index:500;display:flex;align-items:center;gap:7px;padding:13px 20px;background:linear-gradient(135deg,#16a085,#0e6e5a);border:none;border-radius:26px;cursor:pointer;color:#fff;font-size:14px;font-weight:800;box-shadow:0 6px 20px rgba(22,160,133,0.5)"><span style="font-size:18px;line-height:1">+</span> Смета</button>';
   el.querySelectorAll(".est-kind").forEach(function(b){b.onclick=function(){estKind=b.dataset.k;estSearch="";renderEstimates();};});
   var es=document.getElementById("est-search");
   if(es){ es.oninput=function(){estSearch=this.value;renderEstimates();}; if(_act==="est-search"){es.focus();var L2=es.value.length;try{es.setSelectionRange(L2,L2);}catch(_e){}} }
   var nw=document.getElementById("est-new"); if(nw)nw.onclick=function(){var ne={id:gid(),kind:estKind,name:"Новая смета",lines:[]};estimates.unshift(ne);estOpenId=ne.id;renderEstimates();};
+  var fab=document.getElementById("est-fab"); if(fab)fab.onclick=function(){var ne={id:gid(),kind:estKind,name:"Новая смета",lines:[]};estimates.unshift(ne);estOpenId=ne.id;renderEstimates();window.scrollTo(0,0);};
   var sga=document.getElementById("est-stage-add"); if(sga)sga.onclick=function(){ var nm=prompt("Название нового этапа:",""); if(!nm||!nm.trim())return; var mx=EST_STAGES.reduce(function(a,s){return Math.max(a,s.n);},0); EST_STAGES=EST_STAGES.concat([{n:mx+1,label:nm.trim(),short:"Этап "+(mx+1),color:"#16a085",emoji:"🧩"}]); renderEstimates(); };
   el.querySelectorAll(".est-card").forEach(function(c){
     c.onclick=function(){ estScrollY=window.pageYOffset||document.documentElement.scrollTop||0; estOpenId=c.dataset.id; renderEstimates(); };
