@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.41";
+const APP_BUILD = "2026-06-11.42";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -3708,7 +3708,7 @@ ${groups.map(g=>{
         <div style="width:19px;height:19px;border-radius:5px;border:2px solid ${on?color:"#cdd8e6"};background:${on?color:"#fff"};display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:800;flex-shrink:0">${on?"✓":""}</div>
         <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;color:#1a2a3a;line-height:1.25">${e.name}</div>
         <div style="font-size:10px;color:#9aabbf;margin-top:1px">${on?`<span data-a="tpl-mat-toggle" data-eid="${e.id}" style="cursor:pointer;color:#2980b9;font-weight:700;border-bottom:1px dashed #2980b955">${tplMatExpand[e.id]?"▾":"▸"} ${(e.lines||[]).length} мат.</span>`:`${(e.lines||[]).length} мат.`}</div></div>
-        <span id="tplw-t-${e.id}" style="font-size:12px;font-weight:700;color:#0d1b2e;white-space:nowrap">${fmt(wTotal)}</span>${currentUser&&currentUser.roles.includes("admin")?`<button data-a="tpl-est-del" data-eid="${e.id}" title="Удалить работу из каталога" style="width:24px;height:24px;flex-shrink:0;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;margin-left:4px">🗑</button>`:""}
+        <span id="tplw-t-${e.id}" style="font-size:12px;font-weight:700;color:#0d1b2e;white-space:nowrap">${fmt(wTotal)}</span>${currentUser&&currentUser.roles.includes("admin")?`<button data-a="tpl-est-del" data-eid="${e.id}" title="Убрать работу из этого шаблона (в каталоге смет остаётся)" style="width:24px;height:24px;flex-shrink:0;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;margin-left:4px">🗑</button>`:""}
       </div>
       ${(on&&tplMatExpand[e.id])?`<div style="padding:2px 8px 8px 34px">
         ${(tw.mats||[]).length?(tw.mats||[]).map(m=>{const mo=EXP_MODES.find(x=>x.k===(m.mode||"piece"))||EXP_MODES[0];const conv=expConv({mode:m.mode,unitCost:Number(m.cost)||0,packBase:m.packBase,packPer:m.packPer,sheetM2:m.sheetM2,lenPer:m.lenPer});const lt=Math.round((Number(m.cost)||0)*(m.qty||0));
@@ -8729,12 +8729,11 @@ function bind(){
     else if(a==="tpl-mat-open"){el.onclick=function(ev){ if(ev)ev.stopPropagation(); const nm=el.dataset.name; const prod=expProducts.find(function(x){return x.name===nm;}); if(!prod){ alert("Материал «"+nm+"» не найден в базе (возможно переименован или удалён)."); return; } tab="works"; dbSection="mats"; expOpenId=prod.id; render(); window.scrollTo(0,0); };}
     else if(a==="tpl-est-del"){el.onclick=function(ev){
       if(ev)ev.stopPropagation();
-      const eid=el.dataset.eid; const es=estimates.find(x=>x.id===eid); if(!es)return;
-      if(!confirm("Удалить работу «"+es.name+"» из каталога смет?\nОна исчезнет из сборщика всех шаблонов (уже собранные объекты не меняются)."))return;
-      estimates=estimates.filter(x=>x.id!==eid);
-      // убрать ссылку на неё из текущего шаблона (отметка снимается)
-      const t=templates.find(x=>x.id===openTemplate);
-      if(t)t.stages=(t.stages||[]).map(s=>Object.assign({},s,{works:(s.works||[]).filter(w=>w.estId!==eid)}));
+      const eid=el.dataset.eid;
+      const t=templates.find(x=>x.id===openTemplate); if(!t)return;
+      // Убираем работу ТОЛЬКО из этого шаблона. Каталог смет (База данных → Сметы) — главный,
+      // он НЕ трогается: работа там остаётся, её можно вернуть галочкой или удалить уже там.
+      t.stages=(t.stages||[]).map(s=>Object.assign({},s,{works:(s.works||[]).filter(w=>w.estId!==eid)}));
       fl();
     };}
     else if(a==="tpl-est-stage"){el.onclick=()=>{
