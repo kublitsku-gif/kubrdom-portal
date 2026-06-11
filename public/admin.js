@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.43";
+const APP_BUILD = "2026-06-11.44";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -3665,7 +3665,8 @@ function tTemplates(){
     const allW=(t.stages||[]).flatMap(s=>s.works||[]);
     const grand=allW.reduce((a,w)=>a+(w.cost||0),0);
     const tKind=t.kind||"banya";
-    const _est=estimates.filter(e=>(e.kind||"banya")===tKind);
+    const _hidden=t.hiddenEst||[];
+    const _est=estimates.filter(e=>(e.kind||"banya")===tKind).filter(e=>_hidden.indexOf(e.id)<0);
     const groups=EST_STAGES.map(st=>({st:st,items:_est.filter(e=>Number(e.stage)===st.n)}));
     const noStage=_est.filter(e=>!EST_STAGES.find(x=>x.n===Number(e.stage)));
     if(noStage.length)groups.push({st:null,items:noStage});
@@ -3687,6 +3688,7 @@ function tTemplates(){
 </div>
 ${specsEditorHtml(t)}
 <div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">СОБРАТЬ ИЗ СМЕТ (${tKind==="house"?"🏠 дом":"🛁 баня"}) — отметьте работы галочками</div>
+${_hidden.length?`<button data-a="tpl-est-unhide" style="margin-bottom:8px;padding:5px 11px;background:#fff;border:1px dashed #7a9aaa;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:11px;font-weight:700">↩︎ Показать скрытые (${_hidden.length})</button>`:""}
 ${groups.map(g=>{
   const stN=g.st?g.st.n:0;
   const color=g.st?g.st.color:"#7a9aaa";
@@ -8770,11 +8772,13 @@ function bind(){
       if(ev)ev.stopPropagation();
       const eid=el.dataset.eid;
       const t=templates.find(x=>x.id===openTemplate); if(!t)return;
-      // Убираем работу ТОЛЬКО из этого шаблона. Каталог смет (База данных → Сметы) — главный,
-      // он НЕ трогается: работа там остаётся, её можно вернуть галочкой или удалить уже там.
+      // Прячем работу из сборщика ЭТОГО шаблона (curate). Каталог Сметы (База данных) — главный,
+      // он НЕ трогается. Вернуть — кнопкой «Показать скрытые».
+      t.hiddenEst=(t.hiddenEst||[]).concat(t.hiddenEst&&t.hiddenEst.indexOf(eid)>=0?[]:[eid]);
       t.stages=(t.stages||[]).map(s=>Object.assign({},s,{works:(s.works||[]).filter(w=>w.estId!==eid)}));
       fl();
     };}
+    else if(a==="tpl-est-unhide"){el.onclick=()=>{ const t=templates.find(x=>x.id===openTemplate); if(t)t.hiddenEst=[]; fl(); };}
     else if(a==="tpl-est-stage"){el.onclick=()=>{
       const t=templates.find(x=>x.id===openTemplate);if(!t)return;
       const tKind=t.kind||"banya";
