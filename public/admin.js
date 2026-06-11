@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.40";
+const APP_BUILD = "2026-06-11.41";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4107,7 +4107,11 @@ function renderEstimates(){
     return;
   }
   var _q=(estSearch||"").trim().toLowerCase();
-  var _fl=estimates.filter(function(e){return (e.kind||"banya")===estKind;}).filter(function(e){return !_q||(e.name||"").toLowerCase().indexOf(_q)>=0;});
+  var _fl=estimates.filter(function(e){return (e.kind||"banya")===estKind;}).filter(function(e){
+    if(!_q)return true;
+    if((e.name||"").toLowerCase().indexOf(_q)>=0)return true;                          // по названию работы
+    return (e.lines||[]).some(function(l){var p=estProd(l.pid);return p&&(p.name||"").toLowerCase().indexOf(_q)>=0;}); // по материалу
+  });
   function estCardHtml(e,st){var t=estTotal(e),n=(e.lines||[]).length;var col=st?st.color:"#94a3b8";
     return '<div class="est-card" draggable="true" data-id="'+e.id+'" style="background:#fff;border-radius:14px;border:1px solid #e6ecf3;border-left:5px solid '+col+';box-shadow:0 2px 8px rgba(20,40,70,0.04);padding:13px 14px;margin-bottom:8px;cursor:grab;display:flex;align-items:center;gap:10px">'+
       '<div style="width:40px;height:40px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:20px;background:'+col+'22">'+estEmoji(e)+'</div>'+
@@ -4141,7 +4145,7 @@ function renderEstimates(){
       '<button class="est-kind" data-k="banya" style="flex:1;padding:9px 6px;border-radius:10px;cursor:pointer;font-size:13px;font-weight:700;border:2px solid '+(estKind==="banya"?"#16a085":"#dde6f0")+';background:'+(estKind==="banya"?"#16a085":"#fff")+';color:'+(estKind==="banya"?"#fff":"#7a9aaa")+'">🛁 Баня</button>'+
       '<button class="est-kind" data-k="house" style="flex:1;padding:9px 6px;border-radius:10px;cursor:pointer;font-size:13px;font-weight:700;border:2px solid '+(estKind==="house"?"#16a085":"#dde6f0")+';background:'+(estKind==="house"?"#16a085":"#fff")+';color:'+(estKind==="house"?"#fff":"#7a9aaa")+'">🏠 Дом</button>'+
     '</div>'+
-    '<div style="margin-bottom:10px"><input id="est-search" value="'+(estSearch||"").replace(/"/g,"&quot;")+'" placeholder="🔍 Поиск по названию работы..." style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid #dde6f0;font-size:13px;outline:none;box-sizing:border-box"></div>'+
+    '<div style="margin-bottom:10px"><input id="est-search" value="'+(estSearch||"").replace(/"/g,"&quot;")+'" placeholder="🔍 Поиск по работе или материалу..." style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid #dde6f0;font-size:13px;outline:none;box-sizing:border-box"></div>'+
     '<button id="est-new" style="width:100%;margin-bottom:6px;padding:11px;background:#16a085;border:none;border-radius:11px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">+ Новая смета</button>'+
     '<button id="est-stage-add" style="width:100%;margin-bottom:8px;padding:9px;background:#fff;border:1px dashed #16a085;border-radius:10px;cursor:pointer;color:#16a085;font-size:12px;font-weight:700">+ Этап</button>'+
     (_fl.length?_groups.map(function(g){
