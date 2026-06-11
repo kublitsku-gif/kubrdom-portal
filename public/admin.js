@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.31";
+const APP_BUILD = "2026-06-11.32";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1089,6 +1089,7 @@ function estRoom(e){
   return hits.length===1?hits[0]:"obshchie";
 }
 let estOpenId=null;       // открытая смета (null = список)
+let estScrollY=0;        // прокрутка списка смет — вернуть при выходе из карточки
 let estDrag=null;         // id перетаскиваемой карточки сметы (drag-and-drop по этапам)
 let estSearch="";         // поиск по сметам (по названию работы)
 let estKind="banya";      // активный вид смет: banya | house
@@ -4082,7 +4083,7 @@ function renderEstimates(){
         '</div>'+
         '<div style="padding:0 12px 12px;display:flex;gap:8px"><button id="est-dup" style="flex:1;padding:9px;background:#fff;border:1px solid #16a08555;border-radius:9px;cursor:pointer;color:#16a085;font-size:12px;font-weight:700">⧉ Дублировать</button><button id="est-delete" style="flex:1;padding:9px;background:#fff;border:1px solid #e74c3c55;border-radius:9px;cursor:pointer;color:#e74c3c;font-size:12px;font-weight:700">Удалить смету</button></div>'+
       '</div>';
-    var bk=document.getElementById("est-back"); if(bk)bk.onclick=function(){estOpenId=null;renderEstimates();};
+    var bk=document.getElementById("est-back"); if(bk)bk.onclick=function(){estOpenId=null;renderEstimates();var _y=estScrollY||0;requestAnimationFrame(function(){window.scrollTo(0,_y);});};
     var nm=document.getElementById("est-name"); if(nm){nm.oninput=function(){e.name=this.value;}; if(_act==="est-name"){nm.focus();var L=nm.value.length;try{nm.setSelectionRange(L,L);}catch(_e){}}}
     var ad=document.getElementById("est-add"); if(ad)ad.onclick=function(){estPicking=true;estPickSearch="";renderEstimates();};
     el.querySelectorAll(".est-room").forEach(function(b){b.onclick=function(){e.room=b.dataset.room; if((Number(e.stage)||0)!==3)e.stage=3; renderEstimates();};});
@@ -4145,7 +4146,7 @@ function renderEstimates(){
   if(es){ es.oninput=function(){estSearch=this.value;renderEstimates();}; if(_act==="est-search"){es.focus();var L2=es.value.length;try{es.setSelectionRange(L2,L2);}catch(_e){}} }
   var nw=document.getElementById("est-new"); if(nw)nw.onclick=function(){var ne={id:gid(),kind:estKind,name:"Новая смета",lines:[]};estimates.unshift(ne);estOpenId=ne.id;renderEstimates();};
   el.querySelectorAll(".est-card").forEach(function(c){
-    c.onclick=function(){ estOpenId=c.dataset.id; renderEstimates(); };
+    c.onclick=function(){ estScrollY=window.pageYOffset||document.documentElement.scrollTop||0; estOpenId=c.dataset.id; renderEstimates(); };
     c.addEventListener("dragstart",function(ev){ estDrag=c.dataset.id; ev.dataTransfer.effectAllowed="move"; c.style.opacity="0.4"; });
     c.addEventListener("dragend",function(){ estDrag=null; c.style.opacity="1"; c.style.outline=""; });
     c.addEventListener("dragover",function(ev){ if(estDrag&&estDrag!==c.dataset.id){ ev.preventDefault(); c.style.outline="2px dashed #16a085"; } });
