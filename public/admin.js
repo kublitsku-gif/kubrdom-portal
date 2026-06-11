@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.54";
+const APP_BUILD = "2026-06-12.55";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -2903,7 +2903,12 @@ function renderObjCard(obj, isAdmin){
   const allMats=allWorks.flatMap(function(w){return w.mats||[];});
   const totalCost=allWorks.reduce(function(a,w){return a+w.cost;},0);
   const st=getMatStatus(allMats);
-  const pct=st?Math.round(st.done/st.total*100):0;
+  // Прогресс закупки — по ДЕНЬГАМ (куплено ₽ / всего ₽), а не по числу позиций:
+  // дорогая купленная позиция должна двигать процент сильнее дешёвой.
+  const matsTotalCost=allMats.reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
+  const matsBoughtCost=allMats.filter(function(m){return!!purchased[m.id];}).reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
+  const matsLeftCost=matsTotalCost-matsBoughtCost;
+  const pct=matsTotalCost>0?Math.round(matsBoughtCost/matsTotalCost*100):(st&&st.done===st.total&&st.total>0?100:0);
 
   let html='<div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;overflow:hidden">';
   // Header
@@ -2960,9 +2965,6 @@ function renderObjCard(obj, isAdmin){
   html+='</div>';
   // Purchase progress with money amounts
   if(st){
-    const matsTotalCost=allMats.reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
-    const matsBoughtCost=allMats.filter(function(m){return!!purchased[m.id];}).reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
-    const matsLeftCost=matsTotalCost-matsBoughtCost;
     html+='<div style="padding:8px 16px 10px;border-top:1px solid #f4f6f9">';
     // Top row: label + pct
     html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
