@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.48";
+const APP_BUILD = "2026-06-11.49";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -3729,11 +3729,12 @@ ${groups.map(g=>{
   const selN=ids.filter(id=>selIds.includes(id)).length;
   const allSel=ids.length&&selN===ids.length;
   const someSel=selN>0&&!allSel;
+  const stSum=g.items.filter(function(e){return selIds.includes(e.id);}).reduce(function(a,e){return a+(selWorks[e.id]?wMatTotal(selWorks[e.id]):estTotal(e));},0);
   return`<div style="background:#fff;border-radius:12px;border:1px solid ${color}44;margin-bottom:10px;overflow:hidden">
   <div data-a="tpl-est-stage" data-st="${stN}" style="display:flex;align-items:center;gap:9px;padding:10px 13px;background:linear-gradient(135deg,${color}15,transparent);border-bottom:1px solid ${color}22;cursor:pointer">
     <div style="width:20px;height:20px;border-radius:6px;border:2px solid ${color};background:${allSel?color:(someSel?color+"55":"#fff")};display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:800;flex-shrink:0">${allSel?"✓":(someSel?"–":"")}</div>
     <span style="font-size:12px;font-weight:800;color:${color};letter-spacing:0.3px;flex:1">${title.toUpperCase()}</span>
-    <span style="font-size:10px;color:#9aabbf">${selN}/${ids.length}</span>
+    <span style="font-size:10px;color:#9aabbf;white-space:nowrap">${selN}/${ids.length}</span>${stSum?`<span style="font-size:11px;font-weight:800;color:${color};white-space:nowrap;margin-left:6px">${fmt(stSum)}</span>`:""}
   </div>
   <div style="padding:6px 10px">
     ${g.items.length?(function(){var _ri=function(e){const on=selIds.includes(e.id);const tw=on?selWorks[e.id]:null;const wTotal=tw?wMatTotal(tw):estTotal(e);
@@ -3766,6 +3767,10 @@ ${groups.map(g=>{
   </div>
 </div>`;
 }).join("")}
+<div style="display:flex;align-items:center;justify-content:space-between;background:#0d1b2e;border-radius:12px;padding:12px 16px;margin:4px 0 8px;color:#fff">
+  <span style="font-size:12px;font-weight:700;color:#9fb3c8">ИТОГО по шаблону (${allW.length} работ)</span>
+  <span style="font-size:18px;font-weight:800">${fmt(grand)}</span>
+</div>
 ${tplPickFor?`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:flex-start;justify-content:center;padding:50px 14px;z-index:200">
   <div style="background:#fff;border-radius:16px;width:100%;max-width:460px;max-height:80vh;overflow:auto;padding:16px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
