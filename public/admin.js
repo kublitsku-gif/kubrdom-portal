@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.51";
+const APP_BUILD = "2026-06-11.52";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -8906,14 +8906,18 @@ function bind(){
     else if(a==="supply-store-filter"){el.onclick=()=>{supplyStoreFilter=supplyStoreFilter===el.dataset.store?'':el.dataset.store;render();};}  
     else if(a==="supply-check"){el.onclick=()=>{
       const mid=el.dataset.mid;
+      const _y=window.pageYOffset||document.documentElement.scrollTop||0;
       purchased[mid]=!purchased[mid];
       render();
+      requestAnimationFrame(function(){window.scrollTo(0,_y);}); // не прыгать вверх при отметке «куплено»
     };}
     else if(a==="supply-stage-check"){el.onclick=()=>{
       const ids=el.dataset.ids.split(',');
       const allDone=el.dataset.done==="1";
+      const _y=window.pageYOffset||document.documentElement.scrollTop||0;
       ids.forEach(function(id){if(id)purchased[id]=!allDone;});
       render();
+      requestAnimationFrame(function(){window.scrollTo(0,_y);});
     };}
     else if(a==="supply-sort"){el.onclick=()=>{window._supplySort=el.dataset.s;render();};}
     else if(a==="supply-edit-mat"){el.onclick=(ev)=>{ev&&ev.stopPropagation();supplyEditMid=el.dataset.mid;render();};}
