@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.29";
+const APP_BUILD = "2026-06-11.30";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1069,6 +1069,24 @@ function estEmoji(e){
   for(var i=0;i<EST_EMOJI_RULES.length;i++){ if(EST_EMOJI_RULES[i][0].test(s)) return EST_EMOJI_RULES[i][1]; }
   var st=EST_STAGES.find(function(x){return x.n===Number(e&&e.stage);});
   return st?st.emoji:"🧾";
+}
+// Комнаты для разбивки чистового этапа (этап 3). e.room — назначенная комната; иначе
+// определяем по названию (один матч → комната, несколько/ноль → «Общие»).
+const ROOMS_EST=[
+  {k:"parnaya",  n:"Парная",        emoji:"🔥", color:"#e67e22"},
+  {k:"dushevaya",n:"Душевая",       emoji:"🚿", color:"#2980b9"},
+  {k:"tualet",   n:"Туалет",        emoji:"🚽", color:"#16a085"},
+  {k:"ko",       n:"Комната отдыха",emoji:"🛋", color:"#8e44ad"},
+  {k:"obshchie", n:"Общие",         emoji:"🏗️", color:"#7a9aaa"}
+];
+function estRoom(e){
+  if(e&&e.room)return e.room;
+  var s=((e&&e.name)||"").toLowerCase(), hits=[];
+  if(/парн|сауна/.test(s))hits.push("parnaya");
+  if(/душев|моечн|\bмойк/.test(s))hits.push("dushevaya");
+  if(/туалет|санузел|унитаз/.test(s))hits.push("tualet");
+  if(/отдыха|комнат[аы]? отдых|\bко\b/.test(s))hits.push("ko");
+  return hits.length===1?hits[0]:"obshchie";
 }
 let estOpenId=null;       // открытая смета (null = список)
 let estDrag=null;         // id перетаскиваемой карточки сметы (drag-and-drop по этапам)
@@ -4038,6 +4056,7 @@ function renderEstimates(){
             return '<button class="est-stage" data-st="'+st.n+'" style="flex:1;border:1.5px solid '+(on?st.color:"#dde6f0")+';background:'+(on?st.color:"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:7px 2px;font-size:11px;font-weight:700;line-height:1.25;cursor:pointer"><div style="font-size:13px">'+st.n+'</div>'+st.label+'</button>';
           }).join("")+'</div>'+
         '</div>'+
+        '<div style="padding:0 16px 10px"><div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:6px">КОМНАТА (для чистового этапа)</div><div style="display:flex;gap:5px;flex-wrap:wrap">'+ROOMS_EST.map(function(rm){var on=estRoom(e)===rm.k;return '<button class="est-room" data-room="'+rm.k+'" style="border:1.5px solid '+(on?rm.color:"#dde6f0")+';background:'+(on?rm.color:"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:6px 9px;font-size:11px;font-weight:700;cursor:pointer">'+rm.emoji+' '+rm.n+'</button>';}).join("")+'</div></div>'+
         '<div style="padding:0 12px">'+
           (e.lines.length?e.lines.map(function(l,i){var p=estProd(l.pid);if(!p)return '';var mo=EXP_MODES.find(function(x){return x.k===(p.mode||"piece");})||EXP_MODES[0];var conv=expConv(p);
             return '<div style="display:flex;align-items:center;gap:7px;padding:9px 4px;border-bottom:1px solid #f0f4f8">'+
@@ -4061,11 +4080,13 @@ function renderEstimates(){
           '<span style="font-size:12px;color:#9fb3c8;font-weight:600">Итого по смете</span>'+
           '<span id="est-grand" style="font-size:21px;font-weight:800">'+estTotal(e).toLocaleString("ru-RU")+' ₽</span>'+
         '</div>'+
-        '<div style="padding:0 12px 12px"><button id="est-delete" style="width:100%;padding:9px;background:#fff;border:1px solid #e74c3c55;border-radius:9px;cursor:pointer;color:#e74c3c;font-size:12px;font-weight:700">Удалить смету</button></div>'+
+        '<div style="padding:0 12px 12px;display:flex;gap:8px"><button id="est-dup" style="flex:1;padding:9px;background:#fff;border:1px solid #16a08555;border-radius:9px;cursor:pointer;color:#16a085;font-size:12px;font-weight:700">⧉ Дублировать</button><button id="est-delete" style="flex:1;padding:9px;background:#fff;border:1px solid #e74c3c55;border-radius:9px;cursor:pointer;color:#e74c3c;font-size:12px;font-weight:700">Удалить смету</button></div>'+
       '</div>';
     var bk=document.getElementById("est-back"); if(bk)bk.onclick=function(){estOpenId=null;renderEstimates();};
     var nm=document.getElementById("est-name"); if(nm){nm.oninput=function(){e.name=this.value;}; if(_act==="est-name"){nm.focus();var L=nm.value.length;try{nm.setSelectionRange(L,L);}catch(_e){}}}
     var ad=document.getElementById("est-add"); if(ad)ad.onclick=function(){estPicking=true;estPickSearch="";renderEstimates();};
+    el.querySelectorAll(".est-room").forEach(function(b){b.onclick=function(){e.room=b.dataset.room; if((Number(e.stage)||0)!==3)e.stage=3; renderEstimates();};});
+    var du=document.getElementById("est-dup"); if(du)du.onclick=function(){var c=JSON.parse(JSON.stringify(e)); c.id=gid(); c.name=(e.name||"Смета")+" (копия)"; estimates.unshift(c); estOpenId=c.id; renderEstimates();};
     el.querySelectorAll(".est-stage").forEach(function(b){b.onclick=function(){e.stage=+b.dataset.st;renderEstimates();};});
     el.querySelectorAll(".est-q").forEach(function(inp){inp.oninput=function(){
       var i=+inp.dataset.i; e.lines[i].qty=parseFloat(this.value)||0;
@@ -4086,6 +4107,18 @@ function renderEstimates(){
       '<div style="font-size:16px;font-weight:800;color:#0d1b2e;white-space:nowrap">'+t.toLocaleString("ru-RU")+' ₽</div>'+
     '</div>';
   }
+  function roomHeadHtml(rm,cnt){
+    return '<div class="est-roomhead" data-room="'+rm.k+'" style="display:flex;align-items:center;gap:6px;margin:8px 2px 6px;padding:5px 9px;border-radius:8px;background:'+rm.color+'12;border:1px dashed '+rm.color+'55"><span style="font-size:13px">'+rm.emoji+'</span><span style="font-size:11px;font-weight:800;color:'+rm.color+';letter-spacing:0.3px;flex:1">'+rm.n.toUpperCase()+'</span><span style="font-size:10px;color:#9aabbf">'+cnt+'</span></div>';
+  }
+  function groupBody(g){
+    if(g.st&&g.st.n===3){
+      return ROOMS_EST.map(function(rm){
+        var items=g.items.filter(function(e){return estRoom(e)===rm.k;});
+        return roomHeadHtml(rm,items.length)+items.map(function(it){return estCardHtml(it,g.st);}).join("");
+      }).join("");
+    }
+    return g.items.map(function(it){return estCardHtml(it,g.st);}).join("");
+  }
   var _groups=[];
   EST_STAGES.forEach(function(st){var items=_fl.filter(function(e){return Number(e.stage)===st.n;});if(items.length)_groups.push({st:st,items:items});});
   var _noStage=_fl.filter(function(e){return !EST_STAGES.find(function(x){return x.n===Number(e.stage);});});
@@ -4101,7 +4134,7 @@ function renderEstimates(){
       var head=g.st
         ? '<div class="est-stagehead" data-st="'+g.st.n+'" style="display:flex;align-items:center;gap:7px;margin:16px 2px 8px;padding:4px 4px;border-radius:8px"><span style="font-size:14px">'+g.st.emoji+'</span><span style="width:9px;height:9px;border-radius:50%;background:'+g.st.color+';flex-shrink:0"></span><span style="font-size:11px;font-weight:800;letter-spacing:0.5px;color:'+g.st.color+'">'+g.st.short.toUpperCase()+' · '+g.st.label.toUpperCase()+'</span><span style="font-size:10px;color:#9aabbf">· '+g.items.length+'</span></div>'
         : '<div class="est-stagehead" data-st="0" style="margin:16px 2px 8px;padding:4px 4px;border-radius:8px;font-size:11px;font-weight:800;letter-spacing:0.5px;color:#9aabbf">БЕЗ ЭТАПА · '+g.items.length+'</div>';
-      return head+g.items.map(function(it){return estCardHtml(it,g.st);}).join("");
+      return head+groupBody(g);
     }).join(""):'<div style="text-align:center;color:#aaa;font-size:13px;padding:20px">'+(_q?'Ничего не найдено':'Смет пока нет')+'</div>');
   el.querySelectorAll(".est-kind").forEach(function(b){b.onclick=function(){estKind=b.dataset.k;estSearch="";renderEstimates();};});
   var es=document.getElementById("est-search");
@@ -4134,6 +4167,17 @@ function renderEstimates(){
       if(!estDrag){ return; }
       var m=estimates.find(function(x){return x.id===estDrag;});
       if(m){ m.stage=Number(h.dataset.st)||0; }
+      estDrag=null; renderEstimates();
+    });
+  });
+  // заголовок комнаты (чистовой этап) — drop-таргет: переносит в этап 3 + комнату
+  el.querySelectorAll(".est-roomhead").forEach(function(rh){
+    rh.addEventListener("dragover",function(ev){ if(estDrag){ ev.preventDefault(); rh.style.background="#eef6f4"; } });
+    rh.addEventListener("dragleave",function(){ rh.style.background=""; });
+    rh.addEventListener("drop",function(ev){ ev.preventDefault(); rh.style.background="";
+      if(!estDrag)return;
+      var m=estimates.find(function(x){return x.id===estDrag;});
+      if(m){ m.stage=3; m.room=rh.dataset.room; }
       estDrag=null; renderEstimates();
     });
   });
