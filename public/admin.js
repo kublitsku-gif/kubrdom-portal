@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.32";
+const APP_BUILD = "2026-06-11.33";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -171,6 +171,7 @@ function serializeState(){
     { work_id: "objects",         data: objects         },
     { work_id: "templates",       data: templates       },
     { work_id: "estimates",       data: estimates       },
+    { work_id: "estStages",       data: EST_STAGES      },
     { work_id: "users",           data: users           },
     { work_id: "roles",           data: roles           },
     { work_id: "rolePermissions", data: rolePermissions },
@@ -205,6 +206,7 @@ function applyState(items){
   objects         = arr("objects",         objects);
   templates       = arr("templates",       templates);
   estimates       = arr("estimates",       estimates);
+  EST_STAGES      = arr("estStages",       EST_STAGES);
   users           = arr("users",           users);
   roles           = arr("roles",           roles);
   dbWorks         = arr("dbWorks",         dbWorks);
@@ -1048,11 +1050,15 @@ let expSearch=""; // поиск по списку эксперимента
 let expOpenId=null; // id товара, открытого в редакторе (null = список)
 let expContainer="dbexp-card"; // контейнер, в который рендерится список/редактор (Материалы или Эксперимент)
 // ── СМЕТЫ: собираются из материалов каталога (expProducts) ──
-const EST_STAGES=[
+let EST_STAGES=[
   {n:1, label:"Подготовительный", short:"Этап 1", color:"#e67e22", emoji:"🏗️"},
   {n:2, label:"Черновые работы",  short:"Этап 2", color:"#2980b9", emoji:"🔧"},
-  {n:3, label:"Чистовые работы",  short:"Этап 3", color:"#16a085", emoji:"✨"}
+  {n:3, label:"Чистовые работы",  short:"Этап 3", color:"#16a085", emoji:"✨", finish:true}
 ];
+// Чистовой этап (на нём сметы разбиваются по комнатам). По флагу finish, а не по n===3 —
+// чтобы этапы можно было добавлять/удалять, не ломая привязку комнат.
+function isFinishStage(n){var s=EST_STAGES.find(function(x){return x.n===Number(n);});return !!(s&&s.finish);}
+function estFinishN(){var s=EST_STAGES.find(function(x){return x.finish;});return s?s.n:0;}
 // Эмодзи карточки сметы по ключевым словам названия; фолбэк — эмодзи этапа, затем 🧾.
 const EST_EMOJI_RULES=[
   [/контейнер|модул/,"📦"],[/двер|окн/,"🚪"],[/аренд|площад/,"🏗️"],
@@ -4086,7 +4092,7 @@ function renderEstimates(){
     var bk=document.getElementById("est-back"); if(bk)bk.onclick=function(){estOpenId=null;renderEstimates();var _y=estScrollY||0;requestAnimationFrame(function(){window.scrollTo(0,_y);});};
     var nm=document.getElementById("est-name"); if(nm){nm.oninput=function(){e.name=this.value;}; if(_act==="est-name"){nm.focus();var L=nm.value.length;try{nm.setSelectionRange(L,L);}catch(_e){}}}
     var ad=document.getElementById("est-add"); if(ad)ad.onclick=function(){estPicking=true;estPickSearch="";renderEstimates();};
-    el.querySelectorAll(".est-room").forEach(function(b){b.onclick=function(){e.room=b.dataset.room; if((Number(e.stage)||0)!==3)e.stage=3; renderEstimates();};});
+    el.querySelectorAll(".est-room").forEach(function(b){b.onclick=function(){e.room=b.dataset.room; var _fn=estFinishN()||3; if((Number(e.stage)||0)!==_fn)e.stage=_fn; renderEstimates();};});
     var du=document.getElementById("est-dup"); if(du)du.onclick=function(){var c=JSON.parse(JSON.stringify(e)); c.id=gid(); c.name=(e.name||"Смета")+" (копия)"; estimates.unshift(c); estOpenId=c.id; renderEstimates();};
     el.querySelectorAll(".est-stage").forEach(function(b){b.onclick=function(){e.stage=+b.dataset.st;renderEstimates();};});
     el.querySelectorAll(".est-q").forEach(function(inp){inp.oninput=function(){
@@ -4112,7 +4118,7 @@ function renderEstimates(){
     return '<div class="est-roomhead" data-room="'+rm.k+'" style="display:flex;align-items:center;gap:6px;margin:8px 2px 6px;padding:5px 9px;border-radius:8px;background:'+rm.color+'12;border:1px dashed '+rm.color+'55"><span style="font-size:13px">'+rm.emoji+'</span><span style="font-size:11px;font-weight:800;color:'+rm.color+';letter-spacing:0.3px;flex:1">'+rm.n.toUpperCase()+'</span><span style="font-size:10px;color:#9aabbf">'+cnt+'</span></div>';
   }
   function groupBody(g){
-    if(g.st&&g.st.n===3){
+    if(g.st&&g.st.finish){
       return ROOMS_EST.map(function(rm){
         var items=g.items.filter(function(e){return estRoom(e)===rm.k;});
         return '<div class="est-roomzone" data-room="'+rm.k+'" style="border-radius:10px;padding-bottom:4px;min-height:54px">'+
@@ -4135,9 +4141,10 @@ function renderEstimates(){
     '</div>'+
     '<div style="margin-bottom:10px"><input id="est-search" value="'+(estSearch||"").replace(/"/g,"&quot;")+'" placeholder="🔍 Поиск по названию работы..." style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid #dde6f0;font-size:13px;outline:none;box-sizing:border-box"></div>'+
     '<button id="est-new" style="width:100%;margin-bottom:6px;padding:11px;background:#16a085;border:none;border-radius:11px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">+ Новая смета</button>'+
+    '<button id="est-stage-add" style="width:100%;margin-bottom:8px;padding:9px;background:#fff;border:1px dashed #16a085;border-radius:10px;cursor:pointer;color:#16a085;font-size:12px;font-weight:700">+ Этап</button>'+
     (_fl.length?_groups.map(function(g){
       var head=g.st
-        ? '<div class="est-stagehead" data-st="'+g.st.n+'" style="display:flex;align-items:center;gap:7px;margin:16px 2px 8px;padding:4px 4px;border-radius:8px"><span style="font-size:14px">'+g.st.emoji+'</span><span style="width:9px;height:9px;border-radius:50%;background:'+g.st.color+';flex-shrink:0"></span><span style="font-size:11px;font-weight:800;letter-spacing:0.5px;color:'+g.st.color+'">'+g.st.short.toUpperCase()+' · '+g.st.label.toUpperCase()+'</span><span style="font-size:10px;color:#9aabbf">· '+g.items.length+'</span></div>'
+        ? '<div class="est-stagehead" data-st="'+g.st.n+'" style="display:flex;align-items:center;gap:7px;margin:16px 2px 8px;padding:4px 4px;border-radius:8px"><span style="font-size:14px">'+g.st.emoji+'</span><span style="width:9px;height:9px;border-radius:50%;background:'+g.st.color+';flex-shrink:0"></span><span style="font-size:11px;font-weight:800;letter-spacing:0.5px;color:'+g.st.color+'">'+g.st.short.toUpperCase()+' · '+g.st.label.toUpperCase()+'</span><span style="font-size:10px;color:#9aabbf;flex:1">· '+g.items.length+'</span>'+(currentUser&&currentUser.roles.includes("admin")?'<button class="est-stage-del-btn" data-n="'+g.st.n+'" title="Удалить этап" style="width:24px;height:24px;flex-shrink:0;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px">🗑</button>':'')+'</div>'
         : '<div class="est-stagehead" data-st="0" style="margin:16px 2px 8px;padding:4px 4px;border-radius:8px;font-size:11px;font-weight:800;letter-spacing:0.5px;color:#9aabbf">БЕЗ ЭТАПА · '+g.items.length+'</div>';
       return head+groupBody(g);
     }).join(""):'<div style="text-align:center;color:#aaa;font-size:13px;padding:20px">'+(_q?'Ничего не найдено':'Смет пока нет')+'</div>');
@@ -4145,6 +4152,8 @@ function renderEstimates(){
   var es=document.getElementById("est-search");
   if(es){ es.oninput=function(){estSearch=this.value;renderEstimates();}; if(_act==="est-search"){es.focus();var L2=es.value.length;try{es.setSelectionRange(L2,L2);}catch(_e){}} }
   var nw=document.getElementById("est-new"); if(nw)nw.onclick=function(){var ne={id:gid(),kind:estKind,name:"Новая смета",lines:[]};estimates.unshift(ne);estOpenId=ne.id;renderEstimates();};
+  var sga=document.getElementById("est-stage-add"); if(sga)sga.onclick=function(){ var nm=prompt("Название нового этапа:",""); if(!nm||!nm.trim())return; var mx=EST_STAGES.reduce(function(a,s){return Math.max(a,s.n);},0); EST_STAGES=EST_STAGES.concat([{n:mx+1,label:nm.trim(),short:"Этап "+(mx+1),color:"#16a085",emoji:"🧩"}]); renderEstimates(); };
+  el.querySelectorAll(".est-stage-del-btn").forEach(function(bd){ bd.onclick=function(ev){ if(ev)ev.stopPropagation(); var n=Number(bd.dataset.n); var st=EST_STAGES.find(function(x){return x.n===n;}); if(!st)return; var cnt=estimates.filter(function(e){return Number(e.stage)===n;}).length; if(!confirm("Удалить этап «"+st.label+"»?"+(cnt?"\n"+cnt+" работ(ы) этого этапа станут «без этапа» (не удаляются).":""))) return; EST_STAGES=EST_STAGES.filter(function(x){return x.n!==n;}); estimates.forEach(function(e){ if(Number(e.stage)===n)e.stage=0; }); renderEstimates(); }; });
   el.querySelectorAll(".est-card").forEach(function(c){
     c.onclick=function(){ estScrollY=window.pageYOffset||document.documentElement.scrollTop||0; estOpenId=c.dataset.id; renderEstimates(); };
     c.addEventListener("dragstart",function(ev){ estDrag=c.dataset.id; ev.dataTransfer.effectAllowed="move"; c.style.opacity="0.4"; });
@@ -4158,7 +4167,7 @@ function renderEstimates(){
       if(from<0||toI<0){ estDrag=null; return; }
       var moved=estimates[from], tgt=estimates[toI];
       moved.stage=Number(tgt.stage)||0;                     // перенимаем этап карточки-цели
-      if(moved.stage===3) moved.room=estRoom(tgt);          // и комнату (чистовой этап)
+      if(isFinishStage(moved.stage)) moved.room=estRoom(tgt); // и комнату (чистовой этап)
       estimates.splice(from,1);
       var toI2=estimates.findIndex(function(x){return x.id===c.dataset.id;});
       estimates.splice(toI2,0,moved);                       // вставляем перед целью
@@ -4183,7 +4192,7 @@ function renderEstimates(){
     rz.addEventListener("drop",function(ev){ ev.preventDefault(); rz.style.background="";
       if(!estDrag)return;
       var m=estimates.find(function(x){return x.id===estDrag;});
-      if(m){ m.stage=3; m.room=rz.dataset.room; }
+      if(m){ m.stage=estFinishN()||3; m.room=rz.dataset.room; }
       estDrag=null; renderEstimates();
     });
   });
@@ -4194,7 +4203,7 @@ function renderEstimates(){
     rh.addEventListener("drop",function(ev){ ev.preventDefault(); rh.style.background="";
       if(!estDrag)return;
       var m=estimates.find(function(x){return x.id===estDrag;});
-      if(m){ m.stage=3; m.room=rh.dataset.room; }
+      if(m){ m.stage=estFinishN()||3; m.room=rh.dataset.room; }
       estDrag=null; renderEstimates();
     });
   });
