@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.55";
+const APP_BUILD = "2026-06-12.56";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1345,7 +1345,7 @@ let nr={n:"",c:"#9b59b6",group:"other"};
 let nt={name:"",icon:"🛁",kind:"banya"};
 let tplPickFor=null;   // {eid} — для какой работы шаблона открыт выбор материала
 let tplPickSearch="";  // поиск в выборе материала шаблона
-let nobj={name:"",icon:"🛁",templateId:"",assignTo:[]};
+let nobj={name:"",icon:"🛁",templateId:""};
 let openTemplate=null,openObject=null;
 
 
@@ -3693,15 +3693,7 @@ ${showNObj?`<div style="background:#fff;border-radius:14px;border:2px solid #c03
       </div>`;}).join("")}
     </div>
   </div>
-  <div style="margin-bottom:12px">
-    <div style="font-size:11px;color:#7a9aaa;font-weight:600;margin-bottom:6px">НАЗНАЧИТЬ СОТРУДНИКОВ</div>
-    <div style="display:flex;flex-wrap:wrap;gap:6px">
-      ${users.map(u=>{const on=nobj.assignTo.includes(u.id);return`<div data-a="toggle-nobj-u" data-uid="${u.id}" style="display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;cursor:pointer;background:${on?u.c:"transparent"};border:1.5px solid ${on?u.c:"#d0dae8"}">
-        <span style="font-size:14px">${u.av}</span>
-        <span style="font-size:12px;font-weight:600;color:${on?"#fff":"#5a7a9a"}">${u.name}</span>
-      </div>`;}).join("")}
-    </div>
-  </div>
+  <div style="font-size:11px;color:#9aabbf;margin-bottom:12px">👷 Сотрудники назначаются во вкладке «Договора» (ответственные по договору объекта).</div>
   <div style="display:flex;gap:8px">
     <button data-a="add-obj" style="flex:1;padding:10px;background:#27ae60;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">Создать объект</button>
     <button data-a="cancel-nobj" style="padding:10px 16px;background:transparent;border:1px solid #d0dae8;border-radius:10px;cursor:pointer;font-size:13px;color:#7a9aaa">Отмена</button>
@@ -8741,18 +8733,18 @@ function bind(){
       else { dbWorks.push(newWork); }
       showNDBWork=false;fl();
     };}
-    else if(a==="show-nobj"){el.onclick=()=>{showNObj=true;nobj={name:"",icon:"🛁",templateId:"",assignTo:[]};render();};}
+    else if(a==="show-nobj"){el.onclick=()=>{showNObj=true;nobj={name:"",icon:"🛁",templateId:""};render();};}
     else if(a==="cancel-nobj"){el.onclick=()=>{showNObj=false;render();};}
     else if(a==="pick-nobj-t"){el.onclick=()=>{nobj.templateId=el.dataset.tid;nobj.name=document.getElementById("nobj-name")?.value||nobj.name;nobj.icon=document.getElementById("nobj-icon")?.value||nobj.icon;render();};}
-    else if(a==="toggle-nobj-u"){el.onclick=()=>{const uid=el.dataset.uid;nobj.assignTo=nobj.assignTo.includes(uid)?nobj.assignTo.filter(x=>x!==uid):[...nobj.assignTo,uid];render();};}
     else if(a==="add-obj"){el.onclick=()=>{
-      const name=document.getElementById("nobj-name")?.value?.trim();
+      const name=(document.getElementById("nobj-name")?.value||"").trim();
       const icon=document.getElementById("nobj-icon")?.value||"🏠";
-      if(!name||!nobj.templateId)return;
       const tmpl=templates.find(t=>t.id===nobj.templateId);
+      if(!name){ alert("Введите название объекта."); return; }
+      if(!tmpl){ alert("Выберите шаблон."); return; }
       const newId=gid();
-      objects.push({id:newId,name,icon,templateId:nobj.templateId,stages:deepCopy(tmpl.stages),specs:deepCopy(tmpl.specs||{rooms:[],openings:[]})});
-      nobj.assignTo.forEach(uid=>{users=users.map(u=>u.id===uid?{...u,objs:[...u.objs,newId]}:u);});
+      objects=objects.concat([{id:newId,name,icon,templateId:nobj.templateId,stages:deepCopy(tmpl.stages),specs:deepCopy(tmpl.specs||{rooms:[],openings:[]})}]);
+      // Сотрудники не назначаются здесь — только через ответственных по договору (вкладка «Договора»).
       showNObj=false;fl();
     };}
     else if(a==="open-obj"){el.onclick=()=>{openObject=el.dataset.oid;render();};}
