@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.44";
+const APP_BUILD = "2026-06-11.45";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4343,7 +4343,7 @@ function expEditorHtml(p){
         <div style="display:flex;align-items:center;gap:6px;margin-top:6px">
           <span style="width:9px;height:9px;border-radius:50%;background:${storeColor};flex-shrink:0"></span>
           <input id="exp-store" value="${(p.store||"").replace(/"/g,"&quot;")}" placeholder="Магазин" style="border:none;outline:none;font-size:12px;font-weight:700;color:#5a7a9a;background:transparent;width:108px">
-          <input id="exp-url" value="${(p.url||"").replace(/"/g,"&quot;")}" placeholder="ссылка на товар" style="flex:1;min-width:0;border:none;outline:none;font-size:11px;color:#9aabbf;background:transparent;border-bottom:1px dashed #e2e8f0">
+          <input id="exp-url" value="${(p.url||"").replace(/"/g,"&quot;")}" placeholder="ссылка на товар" style="flex:1;min-width:0;border:none;outline:none;font-size:11px;color:#9aabbf;background:transparent;border-bottom:1px dashed #e2e8f0">${/^https?:\/\//i.test(p.url||"")?`<a href="${(p.url||"").replace(/"/g,"&quot;")}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Открыть в магазине" style="flex-shrink:0;font-size:11px;font-weight:700;color:#fff;background:#2980b9;border-radius:6px;padding:3px 8px;text-decoration:none">↗ Открыть</a>`:""}
         </div>
       </div>
     </div>
