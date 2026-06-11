@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.33";
+const APP_BUILD = "2026-06-11.34";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4144,7 +4144,7 @@ function renderEstimates(){
     '<button id="est-stage-add" style="width:100%;margin-bottom:8px;padding:9px;background:#fff;border:1px dashed #16a085;border-radius:10px;cursor:pointer;color:#16a085;font-size:12px;font-weight:700">+ Этап</button>'+
     (_fl.length?_groups.map(function(g){
       var head=g.st
-        ? '<div class="est-stagehead" data-st="'+g.st.n+'" style="display:flex;align-items:center;gap:7px;margin:16px 2px 8px;padding:4px 4px;border-radius:8px"><span style="font-size:14px">'+g.st.emoji+'</span><span style="width:9px;height:9px;border-radius:50%;background:'+g.st.color+';flex-shrink:0"></span><span style="font-size:11px;font-weight:800;letter-spacing:0.5px;color:'+g.st.color+'">'+g.st.short.toUpperCase()+' · '+g.st.label.toUpperCase()+'</span><span style="font-size:10px;color:#9aabbf;flex:1">· '+g.items.length+'</span>'+(currentUser&&currentUser.roles.includes("admin")?'<button class="est-stage-del-btn" data-n="'+g.st.n+'" title="Удалить этап" style="width:24px;height:24px;flex-shrink:0;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px">🗑</button>':'')+'</div>'
+        ? '<div class="est-stagehead" data-st="'+g.st.n+'" style="display:flex;align-items:center;gap:7px;margin:16px 2px 8px;padding:4px 4px;border-radius:8px"><span style="font-size:14px">'+g.st.emoji+'</span><span style="width:9px;height:9px;border-radius:50%;background:'+g.st.color+';flex-shrink:0"></span><span style="font-size:11px;font-weight:800;letter-spacing:0.5px;color:'+g.st.color+'">'+g.st.short.toUpperCase()+' · '+g.st.label.toUpperCase()+'</span><span style="font-size:10px;color:#9aabbf">· '+g.items.length+'</span></div>'
         : '<div class="est-stagehead" data-st="0" style="margin:16px 2px 8px;padding:4px 4px;border-radius:8px;font-size:11px;font-weight:800;letter-spacing:0.5px;color:#9aabbf">БЕЗ ЭТАПА · '+g.items.length+'</div>';
       return head+groupBody(g);
     }).join(""):'<div style="text-align:center;color:#aaa;font-size:13px;padding:20px">'+(_q?'Ничего не найдено':'Смет пока нет')+'</div>');
@@ -4153,7 +4153,6 @@ function renderEstimates(){
   if(es){ es.oninput=function(){estSearch=this.value;renderEstimates();}; if(_act==="est-search"){es.focus();var L2=es.value.length;try{es.setSelectionRange(L2,L2);}catch(_e){}} }
   var nw=document.getElementById("est-new"); if(nw)nw.onclick=function(){var ne={id:gid(),kind:estKind,name:"Новая смета",lines:[]};estimates.unshift(ne);estOpenId=ne.id;renderEstimates();};
   var sga=document.getElementById("est-stage-add"); if(sga)sga.onclick=function(){ var nm=prompt("Название нового этапа:",""); if(!nm||!nm.trim())return; var mx=EST_STAGES.reduce(function(a,s){return Math.max(a,s.n);},0); EST_STAGES=EST_STAGES.concat([{n:mx+1,label:nm.trim(),short:"Этап "+(mx+1),color:"#16a085",emoji:"🧩"}]); renderEstimates(); };
-  el.querySelectorAll(".est-stage-del-btn").forEach(function(bd){ bd.onclick=function(ev){ if(ev)ev.stopPropagation(); var n=Number(bd.dataset.n); var st=EST_STAGES.find(function(x){return x.n===n;}); if(!st)return; var cnt=estimates.filter(function(e){return Number(e.stage)===n;}).length; if(!confirm("Удалить этап «"+st.label+"»?"+(cnt?"\n"+cnt+" работ(ы) этого этапа станут «без этапа» (не удаляются).":""))) return; EST_STAGES=EST_STAGES.filter(function(x){return x.n!==n;}); estimates.forEach(function(e){ if(Number(e.stage)===n)e.stage=0; }); renderEstimates(); }; });
   el.querySelectorAll(".est-card").forEach(function(c){
     c.onclick=function(){ estScrollY=window.pageYOffset||document.documentElement.scrollTop||0; estOpenId=c.dataset.id; renderEstimates(); };
     c.addEventListener("dragstart",function(ev){ estDrag=c.dataset.id; ev.dataTransfer.effectAllowed="move"; c.style.opacity="0.4"; });
