@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.36";
+const APP_BUILD = "2026-06-11.37";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -3701,7 +3701,7 @@ ${groups.map(g=>{
     <span style="font-size:10px;color:#9aabbf">${selN}/${ids.length}</span>
   </div>
   <div style="padding:6px 10px">
-    ${g.items.length?g.items.map(e=>{const on=selIds.includes(e.id);const tw=on?selWorks[e.id]:null;const wTotal=tw?tw.cost:estTotal(e);
+    ${g.items.length?(function(){var _ri=function(e){const on=selIds.includes(e.id);const tw=on?selWorks[e.id]:null;const wTotal=tw?tw.cost:estTotal(e);
       return`<div style="margin-bottom:4px">
       <div data-a="tpl-est" data-eid="${e.id}" style="display:flex;align-items:center;gap:9px;padding:8px;border-radius:8px;cursor:pointer;background:${on?color+"10":"transparent"}">
         <div style="width:19px;height:19px;border-radius:5px;border:2px solid ${on?color:"#cdd8e6"};background:${on?color:"#fff"};display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:800;flex-shrink:0">${on?"✓":""}</div>
@@ -3727,7 +3727,7 @@ ${groups.map(g=>{
           </div>`;}).join(''):`<div style="font-size:11px;color:#bbb;padding:6px 0">Без материалов · фикс. стоимость ${fmt(tw.cost)}</div>`}
         <button data-a="tpl-add-mat-open" data-eid="${e.id}" style="width:100%;margin-top:6px;padding:8px;background:#eef6f4;border:1px dashed #16a085;border-radius:9px;cursor:pointer;color:#16a085;font-size:12px;font-weight:700">+ Добавить материал</button>
       </div>`:''}
-    </div>`;}).join(""):`<div style="text-align:center;color:#bbb;font-size:12px;padding:10px">Нет смет на этом этапе</div>`}
+    </div>`;};var _f=(g.st&&g.st.finish);var _body=_f?ROOMS_EST.map(function(rm){var _its=g.items.filter(function(x){return estRoom(x)===rm.k;});if(!_its.length)return "";return '<div style="display:flex;align-items:center;gap:6px;margin:8px 2px 4px;padding:5px 9px;border-radius:7px;background:'+rm.color+'12;border:1px dashed '+rm.color+'55"><span style="font-size:12px">'+rm.emoji+'</span><span style="font-size:10px;font-weight:800;color:'+rm.color+';letter-spacing:0.3px;flex:1">'+rm.n.toUpperCase()+'</span><span style="font-size:9px;color:#9aabbf">'+_its.length+'</span></div>'+_its.map(_ri).join("");}).join(""):g.items.map(_ri).join("");return _body;})():`<div style="text-align:center;color:#bbb;font-size:12px;padding:10px">Нет смет на этом этапе</div>`}
   </div>
 </div>`;
 }).join("")}
