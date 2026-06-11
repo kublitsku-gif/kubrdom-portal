@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.42";
+const APP_BUILD = "2026-06-11.43";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -3958,6 +3958,42 @@ function expConv(p){
   }
   return null;
 }
+// ── Обновление цены материала из магазина + учёт подорожания ────────────────
+function _matApplyPrice(p,newPrice){
+  newPrice=Number(newPrice)||0; if(!newPrice)return false;
+  const old=Number(p.unitCost)||0;
+  if(newPrice!==old){ p.priceOld=old; }                 // запоминаем прежнюю — для дельты
+  p.unitCost=newPrice; p.priceCheckedAt=new Date().toISOString().slice(0,10);
+  scheduleSave();
+  return true;
+}
+function _matManualPrice(p,why){
+  if(p.url){ try{ window.open(p.url,"_blank","noopener"); }catch(e){} }   // откроем магазин
+  const v=prompt("Авто-цену получить не удалось ("+(why||"магазин блокирует")+").\nОткрыл ссылку магазина — впишите текущую цену (₽):", String(Number(p.unitCost)||0));
+  if(v==null)return;
+  const n=unfmtMoney(v); if(!n)return;
+  _matApplyPrice(p,n); renderExpCard();
+}
+let _matPriceBusy={};   // {id:true} пока идёт запрос
+async function _matRefreshPrice(p){
+  if(!p||!p.url||_matPriceBusy[p.id])return;
+  _matPriceBusy[p.id]=true; renderExpCard();
+  try{
+    const r=await fetchT(API_BASE+"/api/price?url="+encodeURIComponent(p.url), {headers:authHeaders()}, 22000);
+    const j=await r.json();
+    _matPriceBusy[p.id]=false;
+    if(j&&j.success&&j.price){ _matApplyPrice(p,j.price); renderExpCard(); return; }
+    renderExpCard();
+    _matManualPrice(p,(j&&j.error)||"магазин блокирует");
+  }catch(e){ _matPriceBusy[p.id]=false; renderExpCard(); _matManualPrice(p,"сеть"); }
+}
+// Дельта подорожания: вёрстка бейджа (или "")
+function _matDeltaHtml(p){
+  if(p.priceOld==null||Number(p.priceOld)===Number(p.unitCost))return "";
+  const d=(Number(p.unitCost)||0)-(Number(p.priceOld)||0);
+  const up=d>0;
+  return '<span title="изменение цены'+(p.priceCheckedAt?" с "+p.priceCheckedAt:"")+'" style="font-size:9px;font-weight:800;border-radius:5px;padding:1px 6px;background:'+(up?"#e74c3c15":"#27ae6015")+';color:'+(up?"#e74c3c":"#27ae60")+'">'+(up?"▲ +":"▼ ")+Math.abs(d).toLocaleString("ru-RU")+" ₽</span>";
+}
 function expViewIdx(p,conv){ const v=expView[p.id]; return (v==="1")?1:(v==="0"?0:conv.def); }
 function expRowHtml(p){
   const mode=EXP_MODES.find(function(x){return x.k===p.mode;})||EXP_MODES[0];
@@ -3980,6 +4016,8 @@ function expRowHtml(p){
         <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:5px;align-items:center">
           ${safeUrl?`<a href="${safeUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:10px;font-weight:700;background:${storeColor};color:#fff;border-radius:5px;padding:1px 7px;text-decoration:none">${esc(p.store)} ↗</a>`:`<span style="font-size:10px;font-weight:700;background:${storeColor};color:#fff;border-radius:5px;padding:1px 7px">${esc(p.store)}</span>`}
           <span style="font-size:10px;font-weight:700;color:#5a7a9a;background:#eef2f7;border-radius:5px;padding:1px 7px">${mode.icon} ${mode.label}</span>
+          ${safeUrl?`<button data-exp-price="${p.id}" data-id="${p.id}" title="Обновить цену из магазина" style="font-size:11px;border:1px solid #16a08544;background:#16a08510;color:#16a085;border-radius:5px;padding:1px 6px;cursor:pointer;font-weight:700">${_matPriceBusy[p.id]?"⏳":"🔄"}</button>`:''}
+          ${_matDeltaHtml(p)}
         </div>
       </div>
       <div style="text-align:right;flex-shrink:0">
@@ -4250,6 +4288,7 @@ function renderExpCard(containerId){
   };
   el.querySelectorAll("[data-exp-tg]").forEach(function(b){b.onclick=function(ev){if(ev)ev.stopPropagation();expView[b.dataset.id]=b.dataset.expTg;renderExpCard();};});
   el.querySelectorAll("[data-exp-open]").forEach(function(c){c.onclick=function(){expOpenId=c.dataset.expOpen;renderExpCard();};});
+  el.querySelectorAll("[data-exp-price]").forEach(function(b){b.onclick=function(ev){if(ev)ev.stopPropagation();var p=expProducts.find(function(x){return x.id===b.dataset.id;});if(p)_matRefreshPrice(p);};});
 }
 
 // ── ЭКСПЕРИМЕНТ: редактор товара (раскрывается по тапу) ─────────

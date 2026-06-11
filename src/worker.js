@@ -700,6 +700,42 @@ async function aiNudge(env) {
   if (changed) await aiSaveChats(env, chats);
 }
 
+// ── Цена из магазина (best-effort) ──────────────────────────────────────────
+// Озон/Лемана почти всегда блокируют серверный доступ или рендерят цену в JS —
+// тогда вернём ошибку, фронт предложит ввести цену вручную. Для «сговорчивых»
+// магазинов (JSON-LD / og:price / itemprop) цену достаём.
+function parsePriceFromHtml(html){
+  if(!html) return null;
+  let m = html.match(/"price"\s*:\s*"?(\d[\d\s\u00a0.,]*)"?/i);
+  if(!m) m = html.match(/property=["']og:price:amount["'][^>]*content=["'](\d[\d\s\u00a0.,]*)["']/i);
+  if(!m) m = html.match(/itemprop=["']price["'][^>]*content=["'](\d[\d\s\u00a0.,]*)["']/i);
+  if(!m) m = html.match(/content=["'](\d[\d\s\u00a0.,]*)["'][^>]*itemprop=["']price["']/i);
+  if(!m) m = html.match(/"(?:finalPrice|cardPrice|salePrice|priceValue)"\s*:\s*"?(\d[\d\s\u00a0.,]*)"?/i);
+  if(!m) return null;
+  let num = String(m[1]).replace(/[\s\u00a0]/g,"");
+  if(num.indexOf(",")>=0 && num.indexOf(".")<0) num=num.replace(",", ".");       // запятая-десятичная
+  num = num.replace(/\.(?=\d{3}(\D|$))/g,"");                                   // точка-разделитель тысяч
+  const v = Math.round(parseFloat(num));
+  return (v>0 && v<100000000) ? v : null;
+}
+async function getPrice(url){
+  let u; try{ u=new URL(url); }catch(e){ return { success:false, error:"некорректная ссылка" }; }
+  if(u.protocol!=="http:" && u.protocol!=="https:") return { success:false, error:"некорректная ссылка" };
+  let r;
+  try{
+    r = await fetch(u.toString(), { redirect:"follow", headers:{
+      "User-Agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      "Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language":"ru-RU,ru;q=0.9,en;q=0.8"
+    }});
+  }catch(e){ return { success:false, error:"магазин недоступен ("+String(e.message||e).slice(0,60)+")" }; }
+  if(!r.ok) return { success:false, error:"магазин блокирует доступ (HTTP "+r.status+")" };
+  let html=""; try{ html=(await r.text()).slice(0, 2_000_000); }catch(e){ return { success:false, error:"не удалось прочитать страницу" }; }
+  const price = parsePriceFromHtml(html);
+  if(price==null) return { success:false, error:"цена не найдена (магазин рисует её скриптом)" };
+  return { success:true, price };
+}
+
 export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil(aiNudge(env));
@@ -812,6 +848,12 @@ export default {
     // Переименование темы объекта (с токеном).
     if (url.pathname === "/api/topic-rename" && request.method === "POST") {
       try { return await renameTopic(env, url); }
+      catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+
+    // Цена материала из магазина (best-effort, с токеном).
+    if (url.pathname === "/api/price" && request.method === "GET") {
+      try { return json(await getPrice(url.searchParams.get("url") || "")); }
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
 
