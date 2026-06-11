@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.49";
+const APP_BUILD = "2026-06-11.51";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1087,6 +1087,23 @@ const ROOMS_EST=[
   {k:"ko",       n:"Комната отдыха",emoji:"🛋", color:"#8e44ad"},
   {k:"obshchie", n:"Общие",         emoji:"🏗️", color:"#7a9aaa"}
 ];
+// Площадь помещения для чистовой работы: по комнате (e.room) и типу из названия (стены/пол/потолок).
+function workFillArea(e, specs){
+  if(!specs||!Array.isArray(specs.rooms))return null;
+  var rk=estRoom(e);
+  if(rk==="obshchie")return null;
+  var room=specs.rooms.find(function(r){ return estRoom({name:r.name})===rk; });
+  if(!room)return null;
+  var s=(e.name||"").toLowerCase(), type=null;
+  if(/потол/.test(s))type="ceil";
+  else if(/стен/.test(s))type="wall";
+  else if(/(?:^|[^а-яё])пол[аы]?(?:[^а-яё]|$)/.test(s)||/напольн/.test(s))type="floor";  // кириллице-безопасно: пол/пола/полы, но не «полки/полков»
+  if(!type)return null;
+  var c=specRoomCalc(room, specs.height);
+  var v=c[type];
+  if(!(v>0))return null;
+  return { type:type, value:v, room:room.name, label:(type==="wall"?"стены":type==="floor"?"пол":"потолок") };
+}
 function estRoom(e){
   if(e&&e.room)return e.room;
   var s=((e&&e.name)||"").toLowerCase(), hits=[];
@@ -3743,7 +3760,7 @@ ${groups.map(g=>{
         <div style="width:19px;height:19px;border-radius:5px;border:2px solid ${on?color:"#cdd8e6"};background:${on?color:"#fff"};display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:800;flex-shrink:0">${on?"✓":""}</div>
         <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;color:#1a2a3a;line-height:1.25">${e.name}</div>
         <div style="font-size:10px;color:#9aabbf;margin-top:1px">${on?`<span data-a="tpl-mat-toggle" data-eid="${e.id}" style="cursor:pointer;color:#2980b9;font-weight:700;border-bottom:1px dashed #2980b955">${tplMatExpand[e.id]?"▾":"▸"} ${(e.lines||[]).length} мат.</span>`:`${(e.lines||[]).length} мат.`}</div></div>
-        <span id="tplw-t-${e.id}" style="font-size:12px;font-weight:700;color:#0d1b2e;white-space:nowrap">${fmt(wTotal)}</span>${currentUser&&currentUser.roles.includes("admin")?`<button data-a="tpl-est-del" data-eid="${e.id}" title="Убрать работу из этого шаблона (в каталоге смет остаётся)" style="width:24px;height:24px;flex-shrink:0;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;margin-left:4px">🗑</button>`:""}
+        ${(function(){ if(!on)return ""; var fa=workFillArea(e, t.specs); if(!fa)return ""; return `<button data-a="tpl-fill-area" data-eid="${e.id}" title="Подставить площадь ${fa.label} (${numRu(fa.value)} м²) в материалы" style="flex-shrink:0;background:#16a08515;border:1px solid #16a08544;border-radius:6px;color:#16a085;font-size:10px;font-weight:700;padding:2px 7px;cursor:pointer;margin-left:4px;white-space:nowrap">📐 ${numRu(fa.value)} м²</button>`; })()}<span id="tplw-t-${e.id}" style="font-size:12px;font-weight:700;color:#0d1b2e;white-space:nowrap">${fmt(wTotal)}</span>${currentUser&&currentUser.roles.includes("admin")?`<button data-a="tpl-est-del" data-eid="${e.id}" title="Убрать работу из этого шаблона (в каталоге смет остаётся)" style="width:24px;height:24px;flex-shrink:0;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;margin-left:4px">🗑</button>`:""}
       </div>
       ${(on&&tplMatExpand[e.id])?`<div style="padding:2px 8px 8px 34px">
         ${(tw.mats||[]).length?(tw.mats||[]).map(m=>{const mo=EXP_MODES.find(x=>x.k===(m.mode||"piece"))||EXP_MODES[0];const conv=expConv({mode:m.mode,unitCost:Number(m.cost)||0,packBase:m.packBase,packPer:m.packPer,sheetM2:m.sheetM2,lenPer:m.lenPer});const lt=Math.round((Number(m.cost)||0)*(m.qty||0));
@@ -8822,6 +8839,24 @@ function bind(){
       _tplRebuild(t,ids);render();
     };}
     else if(a==="tpl-mat-toggle"){el.onclick=function(ev){ if(ev)ev.stopPropagation(); const eid=el.dataset.eid; tplMatExpand=Object.assign({},tplMatExpand,{[eid]:!tplMatExpand[eid]}); render(); };}
+    else if(a==="tpl-fill-area"){el.onclick=function(ev){
+      if(ev)ev.stopPropagation();
+      const t=templates.find(x=>x.id===openTemplate); if(!t)return;
+      const eid=el.dataset.eid;
+      const e=estimates.find(x=>x.id===eid); if(!e)return;
+      const fa=workFillArea(e, t.specs); if(!fa)return;
+      const w=(t.stages||[]).flatMap(s=>s.works||[]).find(x=>x.estId===eid); if(!w||!(w.mats||[]).length)return;
+      let applied=false;
+      (w.mats||[]).forEach(function(m){
+        if(isDeliveryMat(m))return;
+        if(m.mode==="m2"){ m.qty=fa.value; applied=true; }
+        else if((m.mode==="pack"||m.mode==="sheet")&&m.packBase==="м²"&&Number(m.packPer)>0){ m.qty=Math.ceil(fa.value/Number(m.packPer)*100)/100; applied=true; }
+      });
+      if(!applied){ const m0=(w.mats||[]).find(function(m){return !isDeliveryMat(m);}); if(m0)m0.qty=fa.value; }  // фолбэк — первый не-доставочный
+      w.cost=wMatTotal(w);
+      tplMatExpand=Object.assign({},tplMatExpand,{[eid]:true});   // раскрыть, чтобы видеть результат
+      fl();
+    };}
     else if(a==="tpl-mat-open"){el.onclick=function(ev){ if(ev)ev.stopPropagation(); const nm=el.dataset.name; const prod=expProducts.find(function(x){return x.name===nm;}); if(!prod){ alert("Материал «"+nm+"» не найден в базе (возможно переименован или удалён)."); return; } tab="works"; dbSection="mats"; expOpenId=prod.id; render(); window.scrollTo(0,0); };}
     else if(a==="tpl-est-del"){el.onclick=function(ev){
       if(ev)ev.stopPropagation();
