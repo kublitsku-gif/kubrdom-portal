@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.35";
+const APP_BUILD = "2026-06-11.36";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4067,7 +4067,7 @@ function renderEstimates(){
         '<div style="padding:0 12px">'+
           (e.lines.length?e.lines.map(function(l,i){var p=estProd(l.pid);if(!p)return '';var mo=EXP_MODES.find(function(x){return x.k===(p.mode||"piece");})||EXP_MODES[0];var conv=expConv(p);
             return '<div style="display:flex;align-items:center;gap:7px;padding:9px 4px;border-bottom:1px solid #f0f4f8">'+
-              '<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:600;color:#1a2a3a;line-height:1.25">'+p.name+'</div>'+
+              '<div style="flex:1;min-width:0"><div class="est-line-mat" data-pid="'+p.id+'" style="font-size:12.5px;font-weight:600;color:#2980b9;line-height:1.25;cursor:pointer;display:inline-flex;align-items:center;gap:4px;border-bottom:1px dashed #2980b955">'+p.name+'<span style="font-size:10px">✏️</span></div>'+
               '<div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin-top:3px">'+
                 (p.store?'<span style="font-size:9px;font-weight:700;background:'+(SC[p.store]||"#666")+';color:#fff;border-radius:4px;padding:1px 6px">'+p.store+'</span>':'')+
                 '<span style="font-size:10px;color:#9aabbf">'+(Number(p.unitCost)||0).toLocaleString("ru-RU")+' ₽/'+mo.unit+'</span>'+
@@ -4101,6 +4101,7 @@ function renderEstimates(){
       var gt=document.getElementById("est-grand"); if(gt)gt.textContent=estTotal(e).toLocaleString("ru-RU")+" ₽";
     };});
     el.querySelectorAll(".est-del").forEach(function(b){b.onclick=function(){var i=+b.dataset.i;e.lines.splice(i,1);renderEstimates();};});
+    el.querySelectorAll(".est-line-mat").forEach(function(b){b.onclick=function(){ var pid=b.dataset.pid; if(!expProducts.find(function(x){return x.id===pid;}))return; dbSection="mats"; expOpenId=pid; render(); window.scrollTo(0,0); };});
     var dl=document.getElementById("est-delete"); if(dl)dl.onclick=function(){estimates=estimates.filter(function(x){return x.id!==e.id;});estOpenId=null;renderEstimates();};
     return;
   }
