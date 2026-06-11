@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.24";
+const APP_BUILD = "2026-06-11.25";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -3561,6 +3561,7 @@ ${groups.map(g=>{
             <input data-a="tpl-mq" data-eid="${e.id}" data-mid="${m.id}" type="number" step="any" value="${m.qty}" style="width:46px;padding:5px 4px;border-radius:6px;border:1px solid #d0dae8;font-size:12px;text-align:center;outline:none">
             <span style="font-size:10px;color:#9aabbf;width:22px">${mo.unit}</span>
             <span id="tplm-lt-${e.id}-${m.id}" style="font-size:12px;font-weight:700;color:#0d1b2e;width:60px;text-align:right;white-space:nowrap">${lt.toLocaleString('ru-RU')} ₽</span>
+            <button data-a="tpl-mat-del" data-eid="${e.id}" data-mid="${m.id}" title="Удалить материал" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>
           </div>`;}).join(''):`<div style="font-size:11px;color:#bbb;padding:6px 0">Без материалов · фикс. стоимость ${fmt(tw.cost)}</div>`}
         <button data-a="tpl-add-mat-open" data-eid="${e.id}" style="width:100%;margin-top:6px;padding:8px;background:#eef6f4;border:1px dashed #16a085;border-radius:9px;cursor:pointer;color:#16a085;font-size:12px;font-weight:700">+ Добавить материал</button>
       </div>`:''}
@@ -8474,6 +8475,15 @@ function bind(){
       const wt=document.getElementById("tplw-t-"+eid);if(wt)wt.textContent=fmt(w.cost);
       const grand=(t.stages||[]).flatMap(s=>s.works||[]).reduce((a,ww)=>a+(ww.cost||0),0);
       const gt=document.getElementById("tpl-grand");if(gt)gt.textContent=fmt(grand);
+    };}
+    else if(a==="tpl-mat-del"){el.onclick=()=>{
+      const t=templates.find(x=>x.id===openTemplate);if(!t)return;
+      const eid=el.dataset.eid,mid=el.dataset.mid;
+      const w=(t.stages||[]).flatMap(s=>s.works||[]).find(x=>x.estId===eid);if(!w)return;
+      w.mats=(w.mats||[]).filter(x=>x.id!==mid);
+      const sum=(w.mats||[]).reduce((a,mm)=>a+(Number(mm.cost)||0)*(mm.qty||0),0);
+      w.cost=(Number(w.labor)||0)+sum;   // пересчёт стоимости работы
+      fl();
     };}
     else if(a==="tpl-add-mat-open"){el.onclick=()=>{tplPickFor={eid:el.dataset.eid};tplPickSearch="";render();};}
     else if(a==="tpl-pick-close"){el.onclick=()=>{tplPickFor=null;tplPickSearch="";render();};}
