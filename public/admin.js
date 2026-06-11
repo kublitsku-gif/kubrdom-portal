@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.21";
+const APP_BUILD = "2026-06-11.22";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -162,6 +162,10 @@ function showLogin(message){
 
 // Состояние панели → формат Worker: [{ work_id, data }, ...]
 // Все НАБОРЫ ДАННЫХ панели (не UI-буферы) — единый снимок состояния.
+// Счётчики коллекций по последнему ответу сервера — страж apiSave сверяется с ними.
+let _serverCounts=null;
+const GUARDED_KEYS=["objects","templates","contractDocs","crmClients","dbWorks","dbPlans","expProducts","finTxns","users"];
+
 function serializeState(){
   return [
     { work_id: "objects",         data: objects         },
@@ -196,6 +200,8 @@ function applyState(items){
   // отсеиваем null/undefined-элементы — один битый элемент иначе роняет рендер вкладки
   const arr = function(k, cur){ return Array.isArray(byId[k]) ? byId[k].filter(function(x){ return x != null; }) : cur; };
   const obj = function(k, cur){ return (byId[k] && typeof byId[k] === "object" && !Array.isArray(byId[k])) ? byId[k] : cur; };
+  _serverCounts={};
+  GUARDED_KEYS.forEach(function(k){ const v=byId[k]; _serverCounts[k]=Array.isArray(v)?v.length:null; });
   objects         = arr("objects",         objects);
   templates       = arr("templates",       templates);
   estimates       = arr("estimates",       estimates);
@@ -366,6 +372,21 @@ async function apiSave(){
   const items = serializeState();
   const snap  = JSON.stringify(items);
   if (snap === _lastSavedJson) return { success: true, skipped: true };  // нечего сохранять
+  // СТРАЖ: если сервер давал непустую коллекцию, а мы собрались отправить пустую —
+  // это почти наверняка вкладка с неполными данными (стейл/сбой загрузки), а не
+  // намеренное удаление всего. Не затираем чужую работу — блокируем сейв с баннером.
+  if (_serverCounts) {
+    const itemsById = {};
+    items.forEach(function(it){ itemsById[it.work_id] = it.data; });
+    for (let gi = 0; gi < GUARDED_KEYS.length; gi++) {
+      const k = GUARDED_KEYS[gi];
+      const localArr = itemsById[k];
+      if (_serverCounts[k] > 0 && Array.isArray(localArr) && localArr.length === 0) {
+        showSaveError("Защита данных: раздел «" + k + "» пуст локально, но не пуст в облаке. Обновите страницу (данные подтянутся) — сохранение остановлено, чтобы не затереть чужую работу.");
+        return { success: false, blocked: k };
+      }
+    }
+  }
   _saving = true;
   writeCache(items);                       // optimistic: локально всегда свежо
   try {
@@ -2373,13 +2394,11 @@ function clientPortal(){
 
 function render(){
   scheduleSave();   // любая мутация состояния через render() → debounced автосейв (с dirty-check)
-  // Авто: все «Менеджеры по договорам» — ответственные по каждому договору
-  const escortIds=users.filter(function(u){return u.roles.includes("contract_mgr");}).map(function(u){return u.id;});
-  contractDocs=contractDocs.map(function(c){
-    const resp=c.responsible||[];
-    const merged=[...new Set(resp.concat(escortIds))];
-    return merged.length!==resp.length?Object.assign({},c,{responsible:merged}):c;
-  });
+  // ВАЖНО: render() НИЧЕГО не мутирует. Раньше тут на каждую перерисовку доклеивались
+  // «Менеджеры по договорам» в responsible — из-за этого ЛЮБАЯ вкладка (включая забытую
+  // со старым снимком) становилась «грязной» и автосейвом ЗАТИРАЛА свежие данные других
+  // устройств (так 2026-06-11 потеряли объект «Баня Тула» и шаблоны). Автодобавление
+  // менеджеров перенесено в момент создания договора (ct-save).
   const a=document.getElementById("app");
   if(!a)return;
   // Кабинет клиента
