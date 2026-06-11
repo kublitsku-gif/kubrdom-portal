@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.22";
+const APP_BUILD = "2026-06-11.23";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -378,14 +378,19 @@ async function apiSave(){
   if (_serverCounts) {
     const itemsById = {};
     items.forEach(function(it){ itemsById[it.work_id] = it.data; });
-    for (let gi = 0; gi < GUARDED_KEYS.length; gi++) {
-      const k = GUARDED_KEYS[gi];
-      const localArr = itemsById[k];
-      if (_serverCounts[k] > 0 && Array.isArray(localArr) && localArr.length === 0) {
-        showSaveError("Защита данных: раздел «" + k + "» пуст локально, но не пуст в облаке. Обновите страницу (данные подтянутся) — сохранение остановлено, чтобы не затереть чужую работу.");
-        return { success: false, blocked: k };
-      }
+    const allow = window._allowEmptyOnce || {};
+    const emptied = GUARDED_KEYS.filter(function(k){
+      const la = itemsById[k];
+      return _serverCounts[k] > 0 && Array.isArray(la) && la.length === 0 && !allow[k];
+    });
+    // Явное удаление пользователем (флаг) или одна мелкая коллекция — пропускаем.
+    // Блокируем признаки СТЕЙЛ-ВКЛАДКИ: опустели сразу несколько разделов или большой раздел разом.
+    const mass = emptied.length >= 2 || emptied.some(function(k){ return _serverCounts[k] >= 3; });
+    if (mass) {
+      showSaveError("Защита данных: разделы «" + emptied.join(", ") + "» пусты локально, но не пусты в облаке. Похоже, вкладка устарела — обновите страницу. Сохранение остановлено, чтобы не затереть чужую работу.");
+      return { success: false, blocked: emptied.join(",") };
     }
+    window._allowEmptyOnce = {};   // одноразовые разрешения израсходованы
   }
   _saving = true;
   writeCache(items);                       // optimistic: локально всегда свежо
@@ -4334,7 +4339,8 @@ function tContractList(){
   const byObj={};
   const noObjDocs=[];
   contractDocs.forEach(function(c){
-    if(!c.objId){ noObjDocs.push(c); return; }
+    // объект удалён/не найден → договор показываем в общем списке, а не теряем
+    if(!c.objId||!objects.some(function(o){return o.id===c.objId;})){ noObjDocs.push(c); return; }
     if(!byObj[c.objId])byObj[c.objId]=[];
     byObj[c.objId].push(c);
   });
@@ -9442,6 +9448,9 @@ function bind(){
       if(!confirm("Удалить объект? Это действие нельзя отменить."))return;
       objects=objects.filter(o=>o.id!==oid);
       users=users.map(u=>({...u,objs:u.objs.filter(id=>id!==oid)}));
+      // Договоры НЕ удаляются вместе с объектом — просто отвязываются (objId="")
+      contractDocs=contractDocs.map(function(c){return c.objId===oid?Object.assign({},c,{objId:""}):c;});
+      window._allowEmptyOnce=Object.assign({},window._allowEmptyOnce,{objects:true});  // явное удаление: страж пропускает пустой список
       openObject=null;fl();
     };}
     else if(a==="obj-add-stage"){el.onclick=()=>{showNObjStageTid=el.dataset.oid;newObjStage={n:"",c:"#e67e22"};render();};}
