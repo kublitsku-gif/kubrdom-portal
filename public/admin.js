@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-11.27";
+const APP_BUILD = "2026-06-11.28";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1343,6 +1343,37 @@ function specTotals(specs){
   return {floor:Math.round(floor*100)/100, ceil:Math.round(ceil*100)/100, wall:Math.round(wall*100)/100, vol:Math.round(vol*100)/100,
           openings:(specs.openings||[]).reduce(function(a,o){return a+(Number(o.n)||1);},0)};
 }
+// Модалка привязки планировки/спецификации к характеристикам: файлы из договоров (kind).
+let specFilePicker=null; // {oid, kind}
+function specFilePickerModal(){
+  if(!specFilePicker)return "";
+  const kind=specFilePicker.kind, oid=specFilePicker.oid;
+  const seen={}, files=[];
+  contractDocs.forEach(function(c){ (c.files||[]).forEach(function(f){ if(f.kind===kind&&f.data&&!seen[f.data]){ seen[f.data]=1; files.push({name:f.name,url:f.data,mime:f.mime,contract:c.name}); } }); });
+  const title=kind==="plan"?"📐 Планировка из договоров":"📋 Спецификация из договоров";
+  const color=kind==="plan"?"#8e44ad":"#16a085";
+  let m='<div id="spec-file-modal" style="position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:flex-end;justify-content:center;padding:0">';
+  m+='<div style="background:#fff;width:100%;max-width:500px;max-height:80vh;border-radius:16px 16px 0 0;display:flex;flex-direction:column;overflow:hidden">';
+  m+='<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #e8eef5">'+
+       '<div style="font-size:14px;font-weight:700;color:#1a2a3a">'+title+'</div>'+
+       '<button data-a="spec-file-close" style="padding:6px 12px;background:#f0f4f8;border:none;border-radius:8px;cursor:pointer;font-size:13px;color:#7a9aaa;font-weight:600">✕</button>'+
+     '</div>';
+  m+='<div style="flex:1;overflow-y:auto;padding:10px 12px 14px">';
+  if(!files.length){
+    m+='<div style="padding:24px;text-align:center;font-size:12px;color:#9aabbf">В договорах нет '+(kind==="plan"?"планировок":"спецификаций")+'.<br>Прикрепите файл в договоре (📄 Договора → файлы).</div>';
+  } else {
+    files.forEach(function(f){
+      const isImg=(f.mime||"").indexOf("image")===0;
+      m+='<div data-a="spec-file-choose" data-oid="'+oid+'" data-kind="'+kind+'" data-url="'+esc(f.url)+'" data-name="'+esc(f.name||"")+'" style="display:flex;align-items:center;gap:10px;padding:10px 11px;border:1px solid #e6ecf3;border-radius:10px;margin-bottom:7px;cursor:pointer;background:#fafbfc">'+
+        '<span style="font-size:20px">'+(isImg?"🖼":(kind==="plan"?"📐":"📋"))+'</span>'+
+        '<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name||"Файл")+'</div>'+
+          '<div style="font-size:10px;color:#9aabbf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">из: '+esc(f.contract||"")+'</div></div>'+
+      '</div>';
+    });
+  }
+  m+='</div></div></div>';
+  return m;
+}
 function specsEditorHtml(o){
   const specs=ensureSpecs(o);
   const H=Number(specs.height)||0;
@@ -1410,6 +1441,29 @@ function specsEditorHtml(o){
       '<button data-a="spec-open-del" data-oid="'+o.id+'" data-i="'+i+'" style="width:26px;height:26px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>'+
     '</div>';
   });
+  // Привязка планировки и спецификации из файлов договоров (kind plan/spec)
+  (function(){
+    function slot(kind,title,color,icon,url,name){
+      let s='<div style="background:#fafbfc;border:1px solid '+color+'33;border-radius:9px;padding:9px 11px;margin-bottom:8px">';
+      s+='<div style="display:flex;align-items:center;justify-content:space-between">'+
+           '<span style="font-size:10px;font-weight:700;color:'+color+'">'+title+'</span>'+
+           (url?'<button data-a="spec-file-unlink" data-oid="'+o.id+'" data-kind="'+kind+'" style="font-size:10px;color:#e74c3c;background:transparent;border:none;cursor:pointer;text-decoration:underline">отвязать</button>'
+              :'<button data-a="spec-file-pick" data-oid="'+o.id+'" data-kind="'+kind+'" style="padding:3px 10px;background:'+color+';border:none;border-radius:6px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">+ Из договоров</button>')+
+         '</div>';
+      if(url){
+        s+='<div style="display:flex;align-items:center;gap:8px;margin-top:7px">'+
+             '<span style="font-size:17px">'+icon+'</span>'+
+             '<div style="flex:1;min-width:0;font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(name||"Файл")+'</div>'+
+             '<a href="'+url+'" target="_blank" rel="noopener" style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;color:'+color+';font-size:11px;font-weight:700;text-decoration:none">Открыть</a>'+
+           '</div>';
+      }
+      s+='</div>';
+      return s;
+    }
+    h+='<div style="font-size:10px;font-weight:700;color:#7a9aaa;letter-spacing:0.5px;margin:12px 0 8px">📎 ДОКУМЕНТЫ ОБЪЕКТА</div>';
+    h+=slot("plan","📐 Планировка и проект","#8e44ad","📐",specs.planUrl,specs.planName);
+    h+=slot("spec","📋 Спецификация","#16a085","📋",specs.specUrl,specs.specName);
+  })();
   // Выбранные помещения — сумма
   const selRooms=rooms.filter(function(r){return specSel[r.id];});
   if(selRooms.length){
@@ -2599,6 +2653,10 @@ function render(){
   // Plan picker modal (выбор планировки из базы dbPlans для файла договора)
   if(planPicker){
     a.insertAdjacentHTML("beforeend", planPickerModal());
+  }
+  // Spec file picker (привязка планировки/спецификации к характеристикам объекта)
+  if(specFilePicker){
+    a.insertAdjacentHTML("beforeend", specFilePickerModal());
   }
   bind();
   // Material picker search input
@@ -8476,6 +8534,10 @@ function bind(){
     else if(a==="spec-room-open"){el.onclick=()=>{ specActiveRoom=Object.assign({},specActiveRoom,{[el.dataset.oid]:el.dataset.id}); render(); };}
     else if(a==="spec-height"){el.onchange=()=>{ const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return; ensureSpecs(o); o.specs.height=(el.value===""?"":Number(el.value)); fl(); };}
     else if(a==="spec-sel-clear"){el.onclick=()=>{ specSel={}; render(); };}
+    else if(a==="spec-file-pick"){el.onclick=()=>{ specFilePicker={oid:el.dataset.oid,kind:el.dataset.kind}; render(); };}
+    else if(a==="spec-file-close"){el.onclick=()=>{ specFilePicker=null; render(); };}
+    else if(a==="spec-file-unlink"){el.onclick=()=>{ const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return; ensureSpecs(o); const k=el.dataset.kind; if(k==="plan"){o.specs.planUrl="";o.specs.planName="";}else{o.specs.specUrl="";o.specs.specName="";} fl(); };}
+    else if(a==="spec-file-choose"){el.onclick=()=>{ const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return; ensureSpecs(o); const k=el.dataset.kind; if(k==="plan"){o.specs.planUrl=el.dataset.url;o.specs.planName=el.dataset.name;}else{o.specs.specUrl=el.dataset.url;o.specs.specName=el.dataset.name;} specFilePicker=null; fl(); };}
     else if(a==="spec-room-add"){el.onclick=()=>{
       const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return;
       ensureSpecs(o); const _rid="r"+Math.random().toString(36).slice(2,9); o.specs.rooms=o.specs.rooms.concat([{id:_rid,name:"",floor:"",wall:"",ceil:""}]); specActiveRoom=Object.assign({},specActiveRoom,{[o.id]:_rid}); fl();
