@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.88";
+const APP_BUILD = "2026-06-12.89";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1083,7 +1083,7 @@ function estEmoji(e){
 }
 // Комнаты для разбивки чистового этапа (этап 3). e.room — назначенная комната; иначе
 // определяем по названию (один матч → комната, несколько/ноль → «Общие»).
-const ROOMS_EST=[
+const ROOMS_BANYA=[
   {k:"parnaya",  n:"Парная",        emoji:"🔥", color:"#e67e22"},
   {k:"dushevaya",n:"Душевая",       emoji:"🚿", color:"#2980b9"},
   {k:"tualet",   n:"Туалет",        emoji:"🚽", color:"#16a085"},
@@ -1091,12 +1091,21 @@ const ROOMS_EST=[
   {k:"travyanaya",n:"Травяная",     emoji:"🌿", color:"#27ae60"},
   {k:"obshchie", n:"Общие",         emoji:"🏗️", color:"#7a9aaa"}
 ];
+const ROOMS_HOUSE=[
+  {k:"zal",      n:"Зал",           emoji:"🛋", color:"#8e44ad"},
+  {k:"spalnya",  n:"Спальня",       emoji:"🛏", color:"#2980b9"},
+  {k:"sanuzel",  n:"Сан узел",      emoji:"🚽", color:"#16a085"},
+  {k:"koridor",  n:"Коридор",       emoji:"🚪", color:"#e67e22"},
+  {k:"obshchie", n:"Общие",         emoji:"🏗️", color:"#7a9aaa"}
+];
+function roomsFor(kind){ return kind==="house"?ROOMS_HOUSE:ROOMS_BANYA; }
+const ROOMS_EST=ROOMS_BANYA; // по умолчанию — баня (обратная совместимость)
 // Площадь помещения для чистовой работы: по комнате (e.room) и типу из названия (стены/пол/потолок).
-function workFillArea(e, specs){
+function workFillArea(e, specs, kind){
   if(!specs||!Array.isArray(specs.rooms))return null;
-  var rk=estRoom(e);
+  var rk=estRoom(e, kind);
   if(rk==="obshchie")return null;
-  var room=specs.rooms.find(function(r){ return estRoom({name:r.name})===rk; });
+  var room=specs.rooms.find(function(r){ return estRoom({name:r.name}, kind)===rk; });
   if(!room)return null;
   var s=(e.name||"").toLowerCase(), type=null;
   if(/потол/.test(s))type="ceil";
@@ -1108,14 +1117,21 @@ function workFillArea(e, specs){
   if(!(v>0))return null;
   return { type:type, value:v, room:room.name, label:(type==="wall"?"стены":type==="floor"?"пол":"потолок") };
 }
-function estRoom(e){
+function estRoom(e, kind){
   if(e&&e.room)return e.room;
   var s=((e&&e.name)||"").toLowerCase(), hits=[];
-  if(/парн|сауна/.test(s))hits.push("parnaya");
-  if(/душев|моечн|\bмойк/.test(s))hits.push("dushevaya");
-  if(/туалет|санузел|унитаз/.test(s))hits.push("tualet");
-  if(/отдыха|комнат[аы]? отдых|\bко\b/.test(s))hits.push("ko");
-  if(/травя?н|фитобоч|фитобар|фитотерап/.test(s))hits.push("travyanaya");
+  if(kind==="house"){
+    if(/зал|гостин/.test(s))hits.push("zal");
+    if(/спальн/.test(s))hits.push("spalnya");
+    if(/санузел|сан\s*узел|туалет|ванн|унитаз|душев/.test(s))hits.push("sanuzel");
+    if(/коридор|прихож|тамбур|холл/.test(s))hits.push("koridor");
+  } else {
+    if(/парн|сауна/.test(s))hits.push("parnaya");
+    if(/душев|моечн|\bмойк/.test(s))hits.push("dushevaya");
+    if(/туалет|санузел|унитаз/.test(s))hits.push("tualet");
+    if(/отдыха|комнат[аы]? отдых|\bко\b/.test(s))hits.push("ko");
+    if(/травя?н|фитобоч|фитобар|фитотерап/.test(s))hits.push("travyanaya");
+  }
   return hits.length===1?hits[0]:"obshchie";
 }
 let estOpenId=null;       // открытая смета (null = список)
@@ -3671,8 +3687,9 @@ ${obj.stages.map(s=>{
     // Чистовой этап — разбивка работ по помещениям (Парная/Душевая/Туалет/КО/Общие),
     // как в смете. Комната берётся из w.room, иначе определяется по названию работы.
     if(/чистов/i.test(s.n||"")){
-      return ROOMS_EST.map(function(rm){
-        const _its=_vw.filter(function(w){return estRoom({name:w.n,room:w.room})===rm.k;});
+      const _objKind=(templates.find(function(t){return t.id===obj.templateId;})||{}).kind||"banya";
+      return roomsFor(_objKind).map(function(rm){
+        const _its=_vw.filter(function(w){return estRoom({name:w.n,room:w.room}, _objKind)===rm.k;});
         if(!_its.length)return "";
         const _sum=_its.reduce(function(a,w){return a+(Number(w.cost)||0);},0);
         return '<div style="display:flex;align-items:center;gap:6px;margin:10px 2px 5px;padding:5px 9px;border-radius:7px;background:'+rm.color+'12;border:1px dashed '+rm.color+'55">'+
@@ -3883,7 +3900,7 @@ ${groups.map(g=>{
         <div style="width:19px;height:19px;border-radius:5px;border:2px solid ${on?color:"#cdd8e6"};background:${on?color:"#fff"};display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:800;flex-shrink:0">${on?"✓":""}</div>
         <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;color:#1a2a3a;line-height:1.25">${e.name}</div>
         <div style="font-size:10px;color:#9aabbf;margin-top:1px">${on?`<span data-a="tpl-mat-toggle" data-eid="${e.id}" style="cursor:pointer;color:#2980b9;font-weight:700;border-bottom:1px dashed #2980b955">${tplMatExpand[e.id]?"▾":"▸"} ${(e.lines||[]).length} мат.</span>`:`${(e.lines||[]).length} мат.`}</div></div>
-        ${(function(){ if(!on)return ""; var fa=workFillArea(e, t.specs); if(!fa)return ""; return `<button data-a="tpl-fill-area" data-eid="${e.id}" title="Подставить площадь ${fa.label} (${numRu(fa.value)} м²) в материалы" style="flex-shrink:0;background:#16a08515;border:1px solid #16a08544;border-radius:6px;color:#16a085;font-size:10px;font-weight:700;padding:2px 7px;cursor:pointer;margin-left:4px;white-space:nowrap">📐 ${numRu(fa.value)} м²</button>`; })()}<span id="tplw-t-${e.id}" style="font-size:12px;font-weight:700;color:#0d1b2e;white-space:nowrap">${fmt(wTotal)}</span>${currentUser&&currentUser.roles.includes("admin")?`<button data-a="tpl-est-del" data-eid="${e.id}" title="Убрать работу из этого шаблона (в каталоге смет остаётся)" style="width:24px;height:24px;flex-shrink:0;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;margin-left:4px">🗑</button>`:""}
+        ${(function(){ if(!on)return ""; var fa=workFillArea(e, t.specs, t.kind); if(!fa)return ""; return `<button data-a="tpl-fill-area" data-eid="${e.id}" title="Подставить площадь ${fa.label} (${numRu(fa.value)} м²) в материалы" style="flex-shrink:0;background:#16a08515;border:1px solid #16a08544;border-radius:6px;color:#16a085;font-size:10px;font-weight:700;padding:2px 7px;cursor:pointer;margin-left:4px;white-space:nowrap">📐 ${numRu(fa.value)} м²</button>`; })()}<span id="tplw-t-${e.id}" style="font-size:12px;font-weight:700;color:#0d1b2e;white-space:nowrap">${fmt(wTotal)}</span>${currentUser&&currentUser.roles.includes("admin")?`<button data-a="tpl-est-del" data-eid="${e.id}" title="Убрать работу из этого шаблона (в каталоге смет остаётся)" style="width:24px;height:24px;flex-shrink:0;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;margin-left:4px">🗑</button>`:""}
       </div>
       ${(on&&tplMatExpand[e.id])?`<div style="padding:2px 8px 8px 34px">
         ${(tw.mats||[]).length?(tw.mats||[]).map(m=>{const mo=EXP_MODES.find(x=>x.k===(m.mode||"piece"))||EXP_MODES[0];const conv=expConv({mode:m.mode,unitCost:Number(m.cost)||0,packBase:m.packBase,packPer:m.packPer,sheetM2:m.sheetM2,lenPer:m.lenPer});const lt=Math.round((Number(m.cost)||0)*(m.qty||0));
@@ -3929,7 +3946,7 @@ ${groups.map(g=>{
           </div>`;}).join(''):`<div style="font-size:11px;color:#bbb;padding:6px 0">Без материалов · фикс. стоимость ${fmt(tw.cost)}</div>`}
         <button data-a="tpl-add-mat-open" data-eid="${e.id}" style="width:100%;margin-top:6px;padding:8px;background:#eef6f4;border:1px dashed #16a085;border-radius:9px;cursor:pointer;color:#16a085;font-size:12px;font-weight:700">+ Добавить материал</button>
       </div>`:''}
-    </div>`;};var _f=(g.st&&g.st.finish);var _body=_f?ROOMS_EST.map(function(rm){var _its=g.items.filter(function(x){return estRoom(x)===rm.k;});if(!_its.length)return "";return '<div style="display:flex;align-items:center;gap:6px;margin:8px 2px 4px;padding:5px 9px;border-radius:7px;background:'+rm.color+'12;border:1px dashed '+rm.color+'55"><span style="font-size:12px">'+rm.emoji+'</span><span style="font-size:10px;font-weight:800;color:'+rm.color+';letter-spacing:0.3px;flex:1">'+rm.n.toUpperCase()+'</span><span style="font-size:9px;color:#9aabbf">'+_its.length+'</span></div>'+_its.map(_ri).join("");}).join(""):g.items.map(_ri).join("");return _body;})():`<div style="text-align:center;color:#bbb;font-size:12px;padding:10px">Нет смет на этом этапе</div>`}
+    </div>`;};var _f=(g.st&&g.st.finish);var _body=_f?roomsFor(tKind).map(function(rm){var _its=g.items.filter(function(x){return estRoom(x, tKind)===rm.k;});if(!_its.length)return "";return '<div style="display:flex;align-items:center;gap:6px;margin:8px 2px 4px;padding:5px 9px;border-radius:7px;background:'+rm.color+'12;border:1px dashed '+rm.color+'55"><span style="font-size:12px">'+rm.emoji+'</span><span style="font-size:10px;font-weight:800;color:'+rm.color+';letter-spacing:0.3px;flex:1">'+rm.n.toUpperCase()+'</span><span style="font-size:9px;color:#9aabbf">'+_its.length+'</span></div>'+_its.map(_ri).join("");}).join(""):g.items.map(_ri).join("");return _body;})():`<div style="text-align:center;color:#bbb;font-size:12px;padding:10px">Нет смет на этом этапе</div>`}
   </div>
 </div>`;
 }).join("")}
@@ -4323,7 +4340,7 @@ function renderEstimates(){
             return '<button class="est-stage" data-st="'+st.n+'" style="flex:1;border:1.5px solid '+(on?st.color:"#dde6f0")+';background:'+(on?st.color:"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:7px 2px;font-size:11px;font-weight:700;line-height:1.25;cursor:pointer"><div style="font-size:13px">'+st.n+'</div>'+st.label+'</button>';
           }).join("")+'</div>'+
         '</div>'+
-        '<div style="padding:0 16px 10px"><div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:6px">КОМНАТА (для чистового этапа)</div><div style="display:flex;gap:5px;flex-wrap:wrap">'+ROOMS_EST.map(function(rm){var on=estRoom(e)===rm.k;return '<button class="est-room" data-room="'+rm.k+'" style="border:1.5px solid '+(on?rm.color:"#dde6f0")+';background:'+(on?rm.color:"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:6px 9px;font-size:11px;font-weight:700;cursor:pointer">'+rm.emoji+' '+rm.n+'</button>';}).join("")+'</div></div>'+
+        '<div style="padding:0 16px 10px"><div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:6px">КОМНАТА (для чистового этапа)</div><div style="display:flex;gap:5px;flex-wrap:wrap">'+roomsFor(estKind).map(function(rm){var on=estRoom(e, estKind)===rm.k;return '<button class="est-room" data-room="'+rm.k+'" style="border:1.5px solid '+(on?rm.color:"#dde6f0")+';background:'+(on?rm.color:"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:6px 9px;font-size:11px;font-weight:700;cursor:pointer">'+rm.emoji+' '+rm.n+'</button>';}).join("")+'</div></div>'+
         '<div style="padding:0 12px">'+
           (e.lines.length?e.lines.map(function(l,i){var p=estProd(l.pid);if(!p)return '';var mo=EXP_MODES.find(function(x){return x.k===(p.mode||"piece");})||EXP_MODES[0];var conv=expConv(p);
             return '<div style="display:flex;align-items:center;gap:7px;padding:9px 4px;border-bottom:1px solid #f0f4f8">'+
@@ -4384,8 +4401,8 @@ function renderEstimates(){
   }
   function groupBody(g){
     if(g.st&&g.st.finish){
-      return ROOMS_EST.map(function(rm){
-        var items=g.items.filter(function(e){return estRoom(e)===rm.k;});
+      return roomsFor(estKind).map(function(rm){
+        var items=g.items.filter(function(e){return estRoom(e, estKind)===rm.k;});
         return '<div class="est-roomzone" data-room="'+rm.k+'" style="border-radius:10px;padding-bottom:4px;min-height:54px">'+
           roomHeadHtml(rm,items.length)+
           items.map(function(it){return estCardHtml(it,g.st);}).join("")+
@@ -4433,7 +4450,7 @@ function renderEstimates(){
       if(from<0||toI<0){ estDrag=null; return; }
       var moved=estimates[from], tgt=estimates[toI];
       moved.stage=Number(tgt.stage)||0;                     // перенимаем этап карточки-цели
-      if(isFinishStage(moved.stage)) moved.room=estRoom(tgt); // и комнату (чистовой этап)
+      if(isFinishStage(moved.stage)) moved.room=estRoom(tgt, estKind); // и комнату (чистовой этап)
       estimates.splice(from,1);
       var toI2=estimates.findIndex(function(x){return x.id===c.dataset.id;});
       estimates.splice(toI2,0,moved);                       // вставляем перед целью
@@ -9214,7 +9231,7 @@ function bind(){
       const t=templates.find(x=>x.id===openTemplate); if(!t)return;
       const eid=el.dataset.eid;
       const e=estimates.find(x=>x.id===eid); if(!e)return;
-      const fa=workFillArea(e, t.specs); if(!fa)return;
+      const fa=workFillArea(e, t.specs, t.kind); if(!fa)return;
       const w=(t.stages||[]).flatMap(s=>s.works||[]).find(x=>x.estId===eid); if(!w||!(w.mats||[]).length)return;
       let applied=false;
       (w.mats||[]).forEach(function(m){
