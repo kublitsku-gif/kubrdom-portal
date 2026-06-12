@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.91";
+const APP_BUILD = "2026-06-12.92";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -811,6 +811,7 @@ const TAB_DEFS=[
   {k:"works",     n:"🗄️ База данных"},
   {k:"team",      n:"👥 Команда"},
   {k:"marketing", n:"📣 Маркетинг"},
+  {k:"kp",        n:"📋 КП"},
 ];
 // rolePermissions[roleId] = массив ключей вкладок, которые открывает роль.
 // Админ НЕ входит сюда — он всегда видит все вкладки (зафиксировано).
@@ -822,8 +823,8 @@ let rolePermissions={
   supply:      ["supply","finance"],
   contract_mgr:[],
   client_mgr:  ["assign","contracts","crm","clients"],
-  sales_head:  ["assign","finance","contracts","crm","marketing","works"],
-  sales_mgr:   ["marketing","crm","works"],
+  sales_head:  ["assign","finance","contracts","crm","marketing","works","kp"],
+  sales_mgr:   ["marketing","crm","works","kp"],
   marketer:    ["marketing"],
   financier:   ["finance","crm"],
 };
@@ -1436,6 +1437,10 @@ let specActiveRoom={};   // {oid: roomId} — активная вкладка-п
 let specsCollapsed={};   // {oid:true} — свёрнут ли блок характеристик
 let tplWorkSearch="";    // поиск по работам и материалам в сборщике смет
 let objWorkSearch="";    // поиск по работам и материалам в карточке объекта
+let kpTemplateId="";     // КП: выбранный шаблон
+let kpMarkup=30;         // КП: наценка, %
+let kpClient="";         // КП: имя клиента
+let kpObjName="";        // КП: название объекта/предмета
 function specRoomCalc(r,H){
   const h=Number(H)||0;
   const floor=(r.w!=null&&r.w!=="")||(r.l!=null&&r.l!=="") ? Math.round((Number(r.w)||0)*(Number(r.l)||0)*100)/100 : (Number(r.floor)||0);
@@ -2977,7 +2982,7 @@ ${showPinChange?`<div style="background:#fff;border-bottom:1px solid #eef2f7;pad
   ${TABS.length>4?`<div style="font-size:9px;color:#9aabbf;text-align:center;margin-top:4px;letter-spacing:0.5px">← смахни для других вкладок →</div>`:""}
 </div>
 <div style="padding:14px">
-  ${tab==="assign"?tObjects():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tCRM()}
+  ${tab==="assign"?tObjects():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tab==="kp"?tKP():tCRM()}
 </div>
 <div id="save-toast" style="position:fixed;bottom:24px;right:24px;background:#27ae60;color:#fff;border-radius:12px;padding:10px 18px;font-size:13px;font-weight:700;box-shadow:0 4px 16px rgba(39,174,96,0.35);opacity:0;transform:translateY(8px);transition:opacity 0.2s,transform 0.2s;pointer-events:none;z-index:999">✓ Сохранено</div>
 <div style="text-align:center;font-size:9px;color:#c0ccd8;padding:10px 0 16px">КубрДом · v${APP_BUILD}</div>
@@ -5551,6 +5556,104 @@ function tContractDetail(cid){
   return html;
 }
 
+// ── КП · Калькулятор (шаблон + наценка → цена клиенту) ──────────────
+function kpTplCost(t){ return (t&&t.stages||[]).flatMap(function(s){return s.works||[];}).reduce(function(a,w){return a+(Number(w.cost)||0);},0); }
+function kpStages(t){ // [{name,color,cost}]
+  return (t&&t.stages||[]).map(function(s){ return {name:s.n||"Этап", color:s.c||"#7a9aaa", cost:(s.works||[]).reduce(function(a,w){return a+(Number(w.cost)||0);},0)}; }).filter(function(s){return s.cost>0;});
+}
+function tKP(){
+  const RUk=function(n){return Math.round(n).toLocaleString("ru-RU")+" ₽";};
+  const t=templates.find(function(x){return x.id===kpTemplateId;});
+  const markup=Number(kpMarkup)||0;
+  let html='<div>';
+  html+='<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">📋 КП · КАЛЬКУЛЯТОР</div>';
+  html+='<div style="font-size:12px;color:#5a7a9a;margin-bottom:14px">Выберите шаблон, задайте наценку — получите цену клиенту и КП на печать.</div>';
+  // Выбор шаблона
+  html+='<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:6px">ШАБЛОН</div>';
+  html+='<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px">';
+  templates.forEach(function(t2){ const c2=kpTplCost(t2); const sel=t2.id===kpTemplateId;
+    html+='<div data-a="kp-pick" data-tid="'+t2.id+'" style="display:flex;align-items:center;gap:10px;padding:11px 13px;border-radius:11px;cursor:pointer;border:2px solid '+(sel?"#8e44ad":"#dde6f0")+';background:'+(sel?"#f6f0fb":"#fff")+'">'+
+      '<span style="font-size:22px">'+(t2.icon||"📋")+'</span>'+
+      '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700;color:#1a2a3a">'+esc(t2.name||"Шаблон")+'</div>'+
+        '<div style="font-size:11px;color:#7a9aaa">'+( (t2.stages||[]).flatMap(function(s){return s.works||[];}).length )+' работ · себестоимость '+RUk(c2)+'</div></div>'+
+      (sel?'<span style="font-size:14px;color:#8e44ad;font-weight:700">✓</span>':'')+
+    '</div>';
+  });
+  html+='</div>';
+  if(!t){ html+='<div style="text-align:center;color:#9aabbf;font-size:12px;padding:18px;border:1px dashed #d0dae8;border-radius:10px">Выберите шаблон выше.</div></div>'; return html; }
+  const cost=kpTplCost(t);
+  const price=Math.round(cost*(1+markup/100));
+  const profit=price-cost, margin=price>0?Math.round(profit/price*100):0;
+  // Наценка + поля клиента
+  html+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:12px 14px;margin-bottom:12px">'+
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'+
+      '<span style="font-size:12px;font-weight:700;color:#1a2a3a;flex:1">Наценка</span>'+
+      '<input id="kp-markup" data-a="kp-markup" value="'+markup+'" type="number" step="any" inputmode="decimal" style="width:80px;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:14px;font-weight:700;text-align:right;outline:none">'+
+      '<span style="font-size:13px;color:#7a9aaa">%</span>'+
+    '</div>'+
+    '<div style="display:flex;gap:6px">'+[20,30,40,50].map(function(p){return '<button data-a="kp-markup-q" data-p="'+p+'" style="flex:1;padding:6px;border-radius:7px;border:1.5px solid '+(markup===p?"#8e44ad":"#dde6f0")+';background:'+(markup===p?"#8e44ad":"#fff")+';color:'+(markup===p?"#fff":"#7a9aaa")+';font-size:12px;font-weight:700;cursor:pointer">'+p+'%</button>';}).join("")+'</div>'+
+    '<input id="kp-client" data-a="kp-field" data-f="client" value="'+esc(kpClient).replace(/"/g,"&quot;")+'" placeholder="Клиент (ФИО) — для КП" style="width:100%;margin-top:8px;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box">'+
+    '<input id="kp-objname" data-a="kp-field" data-f="objname" value="'+esc(kpObjName||t.name).replace(/"/g,"&quot;")+'" placeholder="Объект/предмет (напр. Баня 6 м)" style="width:100%;margin-top:6px;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box">'+
+  '</div>';
+  // Результат
+  html+='<div style="background:linear-gradient(135deg,#6d3b8e,#4a2562);border-radius:14px;padding:16px;color:#fff;margin-bottom:12px">'+
+    '<div style="font-size:11px;color:#e6d6f2;font-weight:700;letter-spacing:0.5px;margin-bottom:6px">ЦЕНА КЛИЕНТУ</div>'+
+    '<div style="font-size:28px;font-weight:800;line-height:1.05;margin-bottom:10px">'+RUk(price)+'</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font-size:11px;color:#e6d6f2">'+
+      '<div>себестоимость<div style="font-size:14px;color:#fff;font-weight:700">'+RUk(cost)+'</div></div>'+
+      '<div>прибыль<div style="font-size:14px;color:#fff;font-weight:700">'+RUk(profit)+'</div></div>'+
+      '<div>маржа<div style="font-size:14px;color:#fff;font-weight:700">'+margin+'%</div></div>'+
+    '</div>'+
+  '</div>';
+  // Этапы (цена клиенту = себестоимость этапа × наценка)
+  const stages=kpStages(t);
+  html+='<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:6px">ПО ЭТАПАМ (цена клиенту)</div>';
+  stages.forEach(function(s){ const sp=Math.round(s.cost*(1+markup/100));
+    html+='<div style="display:flex;align-items:center;gap:8px;background:#fff;border:1px solid '+s.color+'33;border-radius:10px;padding:10px 12px;margin-bottom:6px">'+
+      '<div style="width:8px;height:8px;border-radius:50%;background:'+s.color+'"></div>'+
+      '<span style="flex:1;font-size:12px;font-weight:600;color:#1a2a3a">'+esc(s.name)+'</span>'+
+      '<span style="font-size:13px;font-weight:700;color:#0d1b2e">'+RUk(sp)+'</span>'+
+    '</div>';
+  });
+  html+='<button data-a="kp-build" style="width:100%;margin-top:10px;padding:12px;background:#8e44ad;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">📄 Сформировать КП (PDF)</button>';
+  return html+'</div>';
+}
+function buildKP(){
+  const t=templates.find(function(x){return x.id===kpTemplateId;});
+  if(!t){ alert("Выберите шаблон."); return; }
+  const markup=Number(kpMarkup)||0;
+  const cost=kpTplCost(t), price=Math.round(cost*(1+markup/100));
+  const stages=kpStages(t);
+  const RUk=function(n){return Math.round(n).toLocaleString("ru-RU")+" ₽";};
+  const d=new Date(); const ds=String(d.getDate()).padStart(2,"0")+"."+String(d.getMonth()+1).padStart(2,"0")+"."+d.getFullYear();
+  const kpNo=String(d.getDate()).padStart(2,"0")+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getFullYear()).slice(2);
+  const body=stages.map(function(s,i){ const sp=Math.round(s.cost*(1+markup/100)); return '<tr><td class="c">'+(i+1)+'</td><td>'+esc(s.name)+'</td><td class="r">'+RUk(sp)+'</td></tr>'; }).join("");
+  const html='<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>КП '+esc(kpObjName||t.name)+'</title><style>'+
+    'body{font-family:-apple-system,Segoe UI,Arial,sans-serif;padding:28px;color:#1a2a3a;max-width:780px;margin:0 auto}'+
+    'h1{font-size:22px;margin:0 0 4px}.sub{font-size:13px;color:#555;margin:2px 0}'+
+    '.box{background:#f6f0fb;border:1px solid #d9c4ea;border-radius:10px;padding:14px 16px;margin:16px 0}'+
+    '.price{font-size:26px;font-weight:800;color:#6d3b8e}'+
+    'table{width:100%;border-collapse:collapse;margin-top:14px;font-size:14px}'+
+    'th,td{border:1px solid #d9c4ea;padding:9px 11px;text-align:left}th{background:#f6f0fb}'+
+    '.r{text-align:right;white-space:nowrap}.c{text-align:center;color:#999;width:36px}'+
+    '.tot{font-size:18px;font-weight:800;text-align:right;margin-top:10px}'+
+    '.btn{margin:14px 0;padding:10px 18px;background:#8e44ad;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer}'+
+    '.foot{margin-top:24px;font-size:12px;color:#777;line-height:1.6}@media print{.btn{display:none}body{padding:0}}'+
+    '</style></head><body>'+
+    '<h1>Коммерческое предложение № '+kpNo+'</h1>'+
+    '<div class="sub">Дата: '+ds+' · КубрДом</div>'+
+    (kpClient?'<div class="sub">Заказчик: '+esc(kpClient)+'</div>':'')+
+    '<div class="sub">Объект: '+esc(kpObjName||t.name)+'</div>'+
+    '<div class="box"><div style="font-size:12px;color:#6d3b8e;font-weight:700">СТОИМОСТЬ ПОД КЛЮЧ</div><div class="price">'+RUk(price)+'</div></div>'+
+    '<button class="btn" onclick="window.print()">🖨 Печать / Сохранить в PDF</button>'+
+    '<table><thead><tr><th>№</th><th>Этап работ</th><th>Стоимость</th></tr></thead><tbody>'+body+'</tbody></table>'+
+    '<div class="tot">Итого: '+RUk(price)+'</div>'+
+    '<div class="foot">В стоимость входят работы и материалы по указанным этапам. Срок и гарантия — по договору подряда.<br>Предложение носит предварительный характер.</div>'+
+    '</body></html>';
+  const w=window.open("","_blank");
+  if(!w){ alert("Разрешите всплывающие окна, чтобы сформировать КП (PDF)."); return; }
+  w.document.open(); w.document.write(html); w.document.close(); w.focus();
+}
 function tFinance(){
   if(finOpenContractId) return tFinanceContractPnL(finOpenContractId);
   if(finOpenObjId) return tFinancePnL(finOpenObjId);
@@ -9389,6 +9492,11 @@ function bind(){
       render();
     };}
     else if(a==="fin-clear-selection"){el.onclick=()=>{finSelectedContractIds=[];render();};}
+    else if(a==="kp-pick"){el.onclick=()=>{ kpTemplateId=el.dataset.tid; render(); };}
+    else if(a==="kp-markup"){el.oninput=()=>{ kpMarkup=parseFloat((el.value||"").replace(",","."))||0; render(); };}
+    else if(a==="kp-markup-q"){el.onclick=()=>{ kpMarkup=Number(el.dataset.p)||0; render(); };}
+    else if(a==="kp-field"){el.oninput=()=>{ const f=el.dataset.f; if(f==="client")kpClient=el.value; else if(f==="objname")kpObjName=el.value; };}
+    else if(a==="kp-build"){el.onclick=()=>{ buildKP(); };}
     else if(a==="ew-plan-add"){el.onclick=function(){
       const cid=el.dataset.cid;
       const ti=document.getElementById("ew-plan-title-"+cid);
