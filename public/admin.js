@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.87";
+const APP_BUILD = "2026-06-12.88";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -5647,6 +5647,10 @@ function tFinanceExperiment(){
     '<div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid rgba(255,255,255,0.12);margin-top:12px;padding-top:11px">'+
       '<span style="font-size:12px;color:#a9c7e0">Осталось получить по договорам</span>'+
       '<span style="font-size:16px;font-weight:800;color:#f0b94a">'+RU(toReceive)+'</span>'+
+    '</div>'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">'+
+      '<span style="font-size:12px;color:#a9c7e0">Осталось оплатить (материалы + ФОТ)</span>'+
+      '<span style="font-size:16px;font-weight:800;color:#f3b0a0">'+RU(matsLeftAgg+labLeftAgg)+'</span>'+
     '</div>'+
     ((orphanIn||orphanOut)?'<div style="font-size:10px;color:#7e9cba;margin-top:8px">⚠️ Вне договоров (не учтено): +'+RU(orphanIn)+' / −'+RU(orphanOut)+' — старые транзакции без привязки к договору.</div>':'')+
   '</div>';
