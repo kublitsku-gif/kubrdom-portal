@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.75";
+const APP_BUILD = "2026-06-12.76";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -7074,6 +7074,54 @@ function tSupplySelect(sel){
 
 let supplyEditMid=null;   // id материала, открытого на редактирование в снабжении
 let supplyAddOpen=false;  // открыта ли форма добавления материала в снабжении
+
+// ТЗ на закупку для конкретного магазина — печатная HTML-страница (Сохранить как PDF / отправить).
+function buildSupplyTZ(store){
+  const sel=window._supplySelected||{};
+  const objs=objects.filter(function(o){return!!sel[o.id];});
+  let mats=[];
+  objs.forEach(function(o){(o.stages||[]).forEach(function(s){(s.works||[]).forEach(function(w){(w.mats||[]).forEach(function(m){ if((m.store||"")===store) mats.push(m); });});});});
+  if(!mats.length){ alert("Для «"+store+"» нет материалов в выбранных объектах."); return; }
+  const gm={};
+  mats.forEach(function(m){
+    const key=(m.n||"")+'|'+(m.mode||"piece")+'|'+(Number(m.cost)||0);
+    if(!gm[key])gm[key]={n:m.n,mode:m.mode,cost:m.cost,packPer:m.packPer,packBase:m.packBase,sheetM2:m.sheetM2,lenPer:m.lenPer,qty:0,bd:{},notes:[]};
+    const g=gm[key]; g.qty+=(m.qty||1);
+    (Array.isArray(m.breakdown)?m.breakdown:[]).forEach(function(r){ const L=Number(r.len)||0,N=Number(r.n)||0; if(L>0&&N>0)g.bd[L]=(g.bd[L]||0)+N; });
+    if(m.note&&String(m.note).trim()&&g.notes.indexOf(m.note)<0)g.notes.push(m.note);
+  });
+  const rows=Object.keys(gm).map(function(k){return gm[k];}).sort(function(a,b){return (a.n||"").localeCompare(b.n||"");});
+  const total=rows.reduce(function(a,g){return a+(Number(g.cost)||0)*g.qty;},0);
+  function buyText(g){
+    const lens=Object.keys(g.bd).map(function(L){return {len:Number(L),n:g.bd[L]};}).filter(function(r){return r.len>0&&r.n>0;}).sort(function(a,b){return b.len-a.len;});
+    if(lens.length){ const tn=lens.reduce(function(a,r){return a+r.n;},0); const tm=Math.round(lens.reduce(function(a,r){return a+r.len*r.n;},0)*100)/100; return lens.map(function(r){return numRu(r.len)+' м × '+r.n+' шт';}).join(' + ')+' = '+tn+' хлыст ('+numRu(tm)+' м.п.)'; }
+    const conv=matConv(g); if(conv) return conv.altTotal(g.qty);
+    const mo=EXP_MODES.find(function(x){return x.k===(g.mode||'piece');})||EXP_MODES[0]; return numRu(g.qty)+' '+mo.unit;
+  }
+  const objNames=objs.map(function(o){return o.name;}).join(", ");
+  const d=new Date(); const ds=String(d.getDate()).padStart(2,"0")+"."+String(d.getMonth()+1).padStart(2,"0")+"."+d.getFullYear();
+  const body=rows.map(function(g,i){ const mo=EXP_MODES.find(function(x){return x.k===(g.mode||'piece');})||EXP_MODES[0]; return '<tr><td class="c">'+(i+1)+'</td><td>'+esc(g.n)+(g.notes.length?'<div class="note">'+g.notes.map(esc).join('; ')+'</div>':'')+'</td><td>'+buyText(g)+'</td><td class="r">'+(Number(g.cost)||0).toLocaleString('ru-RU')+' ₽/'+mo.unit+'</td><td class="r">'+Math.round((Number(g.cost)||0)*g.qty).toLocaleString('ru-RU')+' ₽</td></tr>'; }).join('');
+  const html='<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>ТЗ на закупку — '+esc(store)+'</title><style>'+
+    'body{font-family:-apple-system,Segoe UI,Arial,sans-serif;padding:24px;color:#1a2a3a;max-width:820px;margin:0 auto}'+
+    'h1{font-size:20px;margin:0 0 4px}.sub{font-size:13px;color:#555;margin-bottom:6px}'+
+    'table{width:100%;border-collapse:collapse;margin-top:14px;font-size:13px}'+
+    'th,td{border:1px solid #cdd8e6;padding:7px 9px;text-align:left;vertical-align:top}th{background:#f0f4f8;font-size:12px}'+
+    '.note{font-size:11px;color:#777;margin-top:3px}.r{text-align:right;white-space:nowrap}.c{text-align:center;color:#999}'+
+    '.tot{font-size:17px;font-weight:800;margin-top:14px;text-align:right}'+
+    '.btn{margin:14px 0;padding:10px 18px;background:#2980b9;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer}'+
+    '@media print{.btn{display:none}body{padding:0}}'+
+    '</style></head><body>'+
+    '<h1>📦 ТЗ на закупку — '+esc(store)+'</h1>'+
+    '<div class="sub">Объект(ы): '+esc(objNames||"—")+'</div>'+
+    '<div class="sub">Дата: '+ds+' · КубрДом · позиций: '+rows.length+'</div>'+
+    '<button class="btn" onclick="window.print()">🖨 Печать / Сохранить в PDF</button>'+
+    '<table><thead><tr><th>№</th><th>Материал</th><th>К закупке</th><th>Цена</th><th>Сумма</th></tr></thead><tbody>'+body+'</tbody></table>'+
+    '<div class="tot">Итого: '+Math.round(total).toLocaleString('ru-RU')+' ₽</div>'+
+    '</body></html>';
+  const w=window.open("","_blank");
+  if(!w){ alert("Разрешите всплывающие окна для этого сайта, чтобы сформировать ТЗ (PDF)."); return; }
+  w.document.open(); w.document.write(html); w.document.close(); w.focus();
+}
 function tSupplyDetail(sel, sortBy){
   const STORECOL={"Озон":"#005bff","Белка":"#d68910","pechki.su":"#c0392b","Егорьевск":"#8e44ad","Лемана":"#e30613","Авито":"#00aaff","Нижний Новгород":"#27ae60"};
   const sortBy2=sortBy||"stage";
@@ -7271,6 +7319,7 @@ function tSupplyDetail(sel, sortBy){
           '<span style="font-size:12px;font-weight:700;background:'+sc+';color:#fff;border-radius:6px;padding:2px 10px">'+store+'</span>'+
           '<span style="flex:1"></span>'+
           '<span style="font-size:11px;color:'+sc+';font-weight:600">'+rows.length+' поз. · '+storeCost.toLocaleString("ru-RU")+' ₽</span>'+
+          (store==="Белка"?'<button data-a="supply-tz" data-store="Белка" style="font-size:11px;color:#fff;background:'+sc+';border:none;border-radius:6px;padding:4px 10px;cursor:pointer;font-weight:700;flex-shrink:0">📄 ТЗ (PDF)</button>':'')+
           (baseUrl?'<a href="'+baseUrl+'" target="_blank" style="font-size:11px;color:#fff;background:'+sc+';border-radius:6px;padding:4px 10px;text-decoration:none;font-weight:600;flex-shrink:0">🛒 Открыть</a>':'')+
         '</div>'+
         '<div style="padding:8px 12px">'+rows.map(mergeRow).join("")+'</div>'+
@@ -9196,6 +9245,7 @@ function bind(){
       requestAnimationFrame(function(){window.scrollTo(0,_y);});
     };}
     else if(a==="supply-sort"){el.onclick=()=>{window._supplySort=el.dataset.s;render();};}
+    else if(a==="supply-tz"){el.onclick=(ev)=>{ ev&&ev.stopPropagation(); buildSupplyTZ(el.dataset.store); };}
     else if(a==="supply-edit-mat"){el.onclick=(ev)=>{ev&&ev.stopPropagation();supplyEditMid=el.dataset.mid;render();};}
     else if(a==="supply-mat-close"){el.onclick=()=>{supplyEditMid=null;render();};}
     else if(a==="supply-mat-save"){el.onclick=()=>{
