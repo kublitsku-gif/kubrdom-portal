@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.63";
+const APP_BUILD = "2026-06-12.64";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -3816,7 +3816,10 @@ ${groups.map(g=>{
       </div>
       ${(on&&tplMatExpand[e.id])?`<div style="padding:2px 8px 8px 34px">
         ${(tw.mats||[]).length?(tw.mats||[]).map(m=>{const mo=EXP_MODES.find(x=>x.k===(m.mode||"piece"))||EXP_MODES[0];const conv=expConv({mode:m.mode,unitCost:Number(m.cost)||0,packBase:m.packBase,packPer:m.packPer,sheetM2:m.sheetM2,lenPer:m.lenPer});const lt=Math.round((Number(m.cost)||0)*(m.qty||0));
-          return`<div style="display:flex;align-items:center;gap:6px;padding:6px 0;border-top:1px solid #f0f4f8">
+          const _hasNote=!!(m.note&&String(m.note).trim());
+          const _showNote=(m.mode==="mp"||m.mode==="sheet"||m.mode==="pack")||_hasNote; // разбивка по хлыстам/листам/пачкам
+          return`<div style="padding:6px 0;border-top:1px solid #f0f4f8">
+            <div style="display:flex;align-items:center;gap:6px">
             <div style="flex:1;min-width:0"><div data-a="tpl-mat-open" data-name="${esc(m.n).replace(/"/g,"&quot;")}" style="font-size:12px;color:#2980b9;font-weight:600;line-height:1.2;cursor:pointer;display:inline-flex;align-items:center;gap:4px;border-bottom:1px dashed #2980b955">${m.n}<span style="font-size:9px">✏️</span></div>
             <div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:2px">
               ${m.store?`<span style="font-size:9px;font-weight:700;background:${SC[m.store]||'#666'};color:#fff;border-radius:4px;padding:1px 6px">${m.store}</span>`:''}
@@ -3829,6 +3832,8 @@ ${groups.map(g=>{
             <span style="font-size:10px;color:#9aabbf;width:22px">${mo.unit}</span>
             <span id="tplm-lt-${e.id}-${m.id}" style="font-size:12px;font-weight:700;color:#0d1b2e;width:60px;text-align:right;white-space:nowrap">${lt.toLocaleString('ru-RU')} ₽</span>
             <button data-a="tpl-mat-del" data-eid="${e.id}" data-mid="${m.id}" title="Удалить материал" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>
+            </div>
+            ${_showNote?`<input data-a="tpl-mat-note" data-eid="${e.id}" data-mid="${m.id}" value="${esc(m.note||'').replace(/"/g,'&quot;')}" placeholder="📝 разбивка: напр. 5 хлыстов по 2 м + 4 по 2,2 м" style="width:100%;margin-top:5px;padding:5px 8px;border-radius:6px;border:1px dashed ${_hasNote?'#16a085':'#cdd8e6'};font-size:11px;color:#5a7a9a;outline:none;box-sizing:border-box;background:${_hasNote?'#f0faf7':'#fafbfc'}">`:''}
           </div>`;}).join(''):`<div style="font-size:11px;color:#bbb;padding:6px 0">Без материалов · фикс. стоимость ${fmt(tw.cost)}</div>`}
         <button data-a="tpl-add-mat-open" data-eid="${e.id}" style="width:100%;margin-top:6px;padding:8px;background:#eef6f4;border:1px dashed #16a085;border-radius:9px;cursor:pointer;color:#16a085;font-size:12px;font-weight:700">+ Добавить материал</button>
       </div>`:''}
@@ -8892,6 +8897,16 @@ function bind(){
       const wt=document.getElementById("tplw-t-"+eid);if(wt)wt.textContent=fmt(w.cost);
       const grand=(t.stages||[]).flatMap(s=>s.works||[]).reduce((a,ww)=>a+(ww.cost||0),0);
       const gt=document.getElementById("tpl-grand");if(gt)gt.textContent=fmt(grand);
+    };}
+    else if(a==="tpl-mat-note"){el.onchange=()=>{
+      const t=templates.find(x=>x.id===openTemplate);if(!t)return;
+      const eid=el.dataset.eid,mid=el.dataset.mid;
+      const w=(t.stages||[]).flatMap(s=>s.works||[]).find(x=>x.estId===eid);if(!w)return;
+      const m=(w.mats||[]).find(x=>x.id===mid);if(!m)return;
+      m.note=el.value;
+      scheduleSave();
+      el.style.borderColor=m.note&&m.note.trim()?"#16a085":"#cdd8e6";
+      el.style.background=m.note&&m.note.trim()?"#f0faf7":"#fafbfc";
     };}
     else if(a==="tpl-mat-del"){el.onclick=()=>{
       const t=templates.find(x=>x.id===openTemplate);if(!t)return;
