@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.57";
+const APP_BUILD = "2026-06-12.58";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -2912,10 +2912,10 @@ function renderObjCard(obj, isAdmin){
 
   let html='<div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;overflow:hidden">';
   // Header
-  html+='<div style="padding:14px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid #f0f4f8">';
-  html+='<span style="font-size:28px;flex-shrink:0">'+obj.icon+'</span>';
+  html+='<div style="padding:10px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #f0f4f8">';
+  html+='<span style="font-size:24px;flex-shrink:0">'+obj.icon+'</span>';
   html+='<div style="flex:1;min-width:0">';
-  html+='<div style="font-size:15px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+obj.name+'</div>';
+  html+='<div style="font-size:14px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+obj.name+'</div>';
   html+='<div style="font-size:11px;color:#7a9aaa;margin-top:2px">'+allWorks.length+' работ · '+allMats.length+' материалов · '+fmt(totalCost)+'</div>';
   // Дедлайн от начальника производства (из договоров объекта)
   (function(){
@@ -2965,30 +2965,21 @@ function renderObjCard(obj, isAdmin){
   html+='</div>';
   // Purchase progress with money amounts
   if(st){
-    html+='<div style="padding:8px 16px 10px;border-top:1px solid #f4f6f9">';
+    html+='<div style="padding:7px 14px 8px;border-top:1px solid #f4f6f9">';
     // Top row: label + pct
-    html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
+    html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">';
     html+='<span style="font-size:10px;font-weight:700;color:'+st.color+';letter-spacing:0.3px">📦 ЗАКУПКА</span>';
     html+='<span style="font-size:10px;color:'+st.color+';font-weight:700">'+pct+'%</span>';
     html+='</div>';
     // Progress bar
-    html+='<div style="background:#e8eef5;border-radius:6px;height:5px;overflow:hidden;margin-bottom:8px">';
+    html+='<div style="background:#e8eef5;border-radius:6px;height:5px;overflow:hidden;margin-bottom:5px">';
     html+='<div style="height:100%;border-radius:6px;background:'+st.color+';width:'+pct+'%;transition:width 0.3s"></div>';
     html+='</div>';
-    // Money row
-    html+='<div style="display:flex;gap:6px">';
-    html+='<div style="flex:1;background:'+st.color+'10;border:1px solid '+st.color+'33;border-radius:8px;padding:6px 10px;text-align:center">';
-    html+='<div style="font-size:11px;font-weight:700;color:'+st.color+'">'+(matsBoughtCost>0?matsBoughtCost.toLocaleString("ru-RU")+' ₽':'—')+'</div>';
-    html+='<div style="font-size:9px;color:#9aabbf;margin-top:1px">куплено</div>';
-    html+='</div>';
-    html+='<div style="flex:1;background:'+(matsLeftCost===0?st.color+'10':'#fdf0f0')+';border:1px solid '+(matsLeftCost===0?st.color+'33':'#e74c3c33')+';border-radius:8px;padding:6px 10px;text-align:center">';
-    html+='<div style="font-size:11px;font-weight:700;color:'+(matsLeftCost===0?st.color:'#e74c3c')+'">'+(matsLeftCost>0?matsLeftCost.toLocaleString("ru-RU")+' ₽':'✓')+'</div>';
-    html+='<div style="font-size:9px;color:#9aabbf;margin-top:1px">'+(matsLeftCost===0?'готово':'осталось')+'</div>';
-    html+='</div>';
-    html+='<div style="flex:1;background:#f0f4f8;border-radius:8px;padding:6px 10px;text-align:center">';
-    html+='<div style="font-size:11px;font-weight:600;color:#5a7a9a">'+matsTotalCost.toLocaleString("ru-RU")+' ₽</div>';
-    html+='<div style="font-size:9px;color:#9aabbf;margin-top:1px">всего</div>';
-    html+='</div>';
+    // Money row — одна компактная строка вместо трёх карточек
+    html+='<div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;gap:8px">';
+    html+='<span style="font-weight:700;color:'+st.color+'">куплено '+matsBoughtCost.toLocaleString("ru-RU")+' ₽</span>';
+    html+='<span style="font-weight:700;color:'+(matsLeftCost>0?'#e74c3c':'#27ae60')+'">'+(matsLeftCost>0?'осталось '+matsLeftCost.toLocaleString("ru-RU")+' ₽':'✓ готово')+'</span>';
+    html+='<span style="color:#9aabbf;white-space:nowrap">всего '+matsTotalCost.toLocaleString("ru-RU")+' ₽</span>';
     html+='</div>';
     html+='</div>';
   }
@@ -3007,16 +2998,16 @@ function renderObjCard(obj, isAdmin){
     }
     function group(files,title,color,icon,fallbackName){
       if(!files.length)return "";
-      let h='<div style="font-size:10px;font-weight:700;color:'+color+';letter-spacing:0.3px;margin-bottom:8px">'+title+'</div>';
-      h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">';
+      let h='<div style="font-size:9px;font-weight:700;color:'+color+';letter-spacing:0.3px;margin-bottom:5px">'+title+'</div>';
+      h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">';
       files.forEach(function(f){
         const isImg=(f.mime||"").indexOf("image")===0;
-        h+='<a href="'+f.data+'" target="_blank" rel="noopener" style="width:84px;text-decoration:none">'+
-             '<div style="height:64px;border-radius:8px;border:1px solid '+color+'33;background:'+color+'0d;overflow:hidden;position:relative">'+
-               '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:'+color+'66;font-size:22px">'+icon+'</div>'+
+        h+='<a href="'+f.data+'" target="_blank" rel="noopener" style="width:56px;text-decoration:none">'+
+             '<div style="height:42px;border-radius:7px;border:1px solid '+color+'33;background:'+color+'0d;overflow:hidden;position:relative">'+
+               '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:'+color+'66;font-size:17px">'+icon+'</div>'+
                (isImg?'<img src="'+f.data+'" onerror="this.style.display=\'none\'" style="position:relative;width:100%;height:100%;object-fit:cover;display:block">':'')+
              '</div>'+
-             '<div style="font-size:9px;color:#5a7a9a;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name||fallbackName)+'</div>'+
+             '<div style="font-size:8px;color:#5a7a9a;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name||fallbackName)+'</div>'+
            '</a>';
       });
       h+='</div>';
@@ -3025,7 +3016,7 @@ function renderObjCard(obj, isAdmin){
     const plansHtml=group(collect("plan"),"📐 ПЛАНИРОВКИ ИЗ ДОГОВОРА","#8e44ad","📐","Планировка");
     const specsHtml=group(collect("spec"),"📋 СПЕЦИФИКАЦИИ ИЗ ДОГОВОРА","#16a085","📋","Спецификация");
     if(!plansHtml&&!specsHtml)return;
-    html+='<div style="padding:10px 16px 4px;border-top:1px solid #f4f6f9">'+plansHtml+specsHtml+'</div>';
+    html+='<div style="padding:8px 14px 4px;border-top:1px solid #f4f6f9">'+plansHtml+specsHtml+'</div>';
   })();
   // Team row (admin only)
   html+=buildTeamRow(obj.id, isAdmin);
