@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.56";
+const APP_BUILD = "2026-06-12.57";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -3628,7 +3628,10 @@ ${objMatModal?`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);di
           <div style="display:flex;align-items:center;gap:5px;margin-top:3px;flex-wrap:wrap">
             ${m.store?`<span style="font-size:10px;font-weight:700;background:${SC[m.store]||"#666"};color:#fff;border-radius:4px;padding:1px 5px">${m.store}</span>`:""}
             <span style="font-size:10px;font-weight:700;color:#5a7a9a;background:#eef2f7;border-radius:4px;padding:1px 6px">${mode.icon} ${mode.unit}</span>
-            ${m.cost>0?`<span style="font-size:11px;color:#7a9aaa">${price.toLocaleString("ru-RU")} ₽/${unit} × ${numRu(qty)} = <b style="color:#0d1b2e">${fmt((Number(m.cost)||0)*qty)}</b></span>`:""}
+            ${m.cost>0?`<span style="font-size:11px;color:#7a9aaa">${price.toLocaleString("ru-RU")} ₽/${unit}</span>`:""}
+            <span style="font-size:11px;color:#7a9aaa">×</span>
+            <input data-a="obj-mat-qty" data-oid="${objMatModal.oid}" data-wid="${objMatModal.wid}" data-mid="${m.id}" value="${numRu(qty)}" inputmode="decimal" style="width:50px;padding:3px 6px;border:1px solid #d0dae8;border-radius:6px;font-size:11px;text-align:center;outline:none" title="Количество">
+            ${m.cost>0?`<span style="font-size:11px;color:#7a9aaa">= <b style="color:#0d1b2e">${fmt((Number(m.cost)||0)*qty)}</b></span>`:""}
           </div>
         </div>
         <button data-a="obj-del-mat" data-oid="${objMatModal.oid}" data-wid="${objMatModal.wid}" data-mid="${m.id}" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>
@@ -3641,10 +3644,13 @@ ${objMatModal?`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);di
         <span style="font-size:10px;color:#9aabbf">${conv.footer}</span>
       </div>`:""}
     </div>`;}).join("")+`${wMats.length===0?`<div style="text-align:center;color:#aaa;font-size:13px;padding:12px">Нет материалов</div>`:""}<div style="margin-top:10px;background:#f0f4f8;border-radius:10px;padding:12px">
-      <input id="opm-n" placeholder="Название" style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;margin-bottom:5px;outline:none;box-sizing:border-box">
+      <div style="font-size:10px;color:#7a9aaa;font-weight:700;margin-bottom:6px">+ ДОБАВИТЬ МАТЕРИАЛ <span style="font-weight:400">(можно выбрать из базы — цена и единица подтянутся)</span></div>
+      <input id="opm-n" list="opm-catalog" autocomplete="off" placeholder="Название или выбрать из базы…" style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;margin-bottom:5px;outline:none;box-sizing:border-box">
+      <datalist id="opm-catalog">${(typeof expProducts!=="undefined"?expProducts:[]).map(function(p){return '<option value="'+esc(p.name).replace(/"/g,"&quot;")+'"></option>';}).join("")}</datalist>
       <div style="display:flex;gap:5px;margin-bottom:7px">
-        <input id="opm-cost" placeholder="Цена ₽" type="number" style="flex:1;padding:7px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none">
-        <input id="opm-store" placeholder="Магазин" style="flex:1;padding:7px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none">
+        <input id="opm-cost" placeholder="Цена ₽ (из базы)" type="number" style="flex:2;padding:7px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;min-width:0">
+        <input id="opm-qty" placeholder="Кол-во" type="number" value="1" step="any" style="flex:1;padding:7px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;min-width:0">
+        <input id="opm-store" placeholder="Магазин" style="flex:1;padding:7px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;min-width:0">
       </div>
       <button data-a="obj-add-mat" style="width:100%;padding:8px;background:#27ae60;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Добавить материал</button>
     </div>`;})()}
@@ -10495,14 +10501,35 @@ function bind(){
       objects=objects.map(o=>o.id===oid?{...o,stages:o.stages.map(s=>({...s,works:s.works.map(w=>w.id===wid?{...w,mats:(w.mats||[]).filter(m=>m.id!==mid)}:w)}))}:o);
       render();
     };}
+    else if(a==="obj-mat-qty"){el.onchange=()=>{
+      const {oid,wid,mid}=el.dataset;
+      const q=parseFloat((el.value||"").replace(",","."));
+      const qty=(isFinite(q)&&q>0)?q:1;
+      objects=objects.map(o=>o.id===oid?{...o,stages:o.stages.map(s=>({...s,works:s.works.map(w=>w.id===wid?{...w,mats:(w.mats||[]).map(m=>m.id===mid?{...m,qty:qty}:m)}:w)}))}:o);
+      render();
+    };}
     else if(a==="obj-add-mat"){el.onclick=()=>{
       if(!objMatModal)return;
       const n=document.getElementById("opm-n")?.value?.trim();
-      const cost=parseInt(document.getElementById("opm-cost")?.value)||0;
-      const store=document.getElementById("opm-store")?.value?.trim()||"";
       if(!n)return;
+      const costInput=document.getElementById("opm-cost")?.value;
+      const q=parseFloat((document.getElementById("opm-qty")?.value||"").replace(",","."));
+      const qty=(isFinite(q)&&q>0)?q:1;
+      const store=document.getElementById("opm-store")?.value?.trim()||"";
+      // Если материал есть в базе (по названию) — подтягиваем цену/единицу/режим оттуда, как в шаблоне.
+      const prod=(typeof expProducts!=="undefined")?expProducts.find(p=>p.name===n):null;
+      const cost=(costInput!==""&&costInput!=null)?(parseInt(costInput)||0):(prod?(Number(prod.unitCost)||0):0);
+      const mat={id:gid(), n, cost, qty, store:store||(prod&&prod.store||"")};
+      if(prod){
+        if(prod.mode)mat.mode=prod.mode;
+        if(prod.packPer)mat.packPer=prod.packPer;
+        if(prod.packBase)mat.packBase=prod.packBase;
+        if(prod.sheetM2)mat.sheetM2=prod.sheetM2;
+        if(prod.lenPer)mat.lenPer=prod.lenPer;
+        if(prod.url)mat.url=prod.url;
+      }
       const {oid,wid}=objMatModal;
-      objects=objects.map(o=>o.id===oid?{...o,stages:o.stages.map(s=>({...s,works:s.works.map(w=>w.id===wid?{...w,mats:[...(w.mats||[]),{id:gid(),n,cost,store}]}:w)}))}:o);
+      objects=objects.map(o=>o.id===oid?{...o,stages:o.stages.map(s=>({...s,works:s.works.map(w=>w.id===wid?{...w,mats:[...(w.mats||[]),mat]}:w)}))}:o);
       render();
     };}
   });
