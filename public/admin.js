@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.59";
+const APP_BUILD = "2026-06-12.60";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -3027,8 +3027,29 @@ function renderObjCard(obj, isAdmin){
 
 
 function buildTeamRow(oid, isAdmin){
-  // Team assignment moved to Contracts tab — no longer shown on object cards
-  return '';
+  // Ответственные по объекту — ТОЛЬКО показ. Источник правды — договоры объекта
+  // (c.responsible). Назначение/выбор делается во вкладке «Договора».
+  const cts=contractDocs.filter(function(d){return d.objId===oid;});
+  const ids=[], seen={};
+  cts.forEach(function(c){(c.responsible||[]).forEach(function(uid){if(uid&&!seen[uid]){seen[uid]=1;ids.push(uid);}});});
+  const people=ids.map(function(uid){return users.find(function(u){return u.id===uid;});}).filter(Boolean);
+  let body;
+  if(people.length){
+    body='<div style="display:flex;gap:5px;flex-wrap:wrap">'+people.map(function(u){
+      return '<span style="display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:14px;background:'+u.c+'15;border:1px solid '+u.c+'44">'+
+        '<span style="font-size:13px">'+u.av+'</span>'+
+        '<span style="font-size:11px;font-weight:600;color:#3a4a5a">'+esc(u.name)+'</span>'+
+      '</span>';
+    }).join("")+'</div>';
+  } else {
+    body='<div style="font-size:10px;color:#bbb">Не назначены — выберите ответственных в договоре (вкладка «Договора»)</div>';
+  }
+  return '<div style="padding:7px 14px;border-top:1px solid #f4f6f9">'+
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px">'+
+      '<span style="font-size:9px;font-weight:700;color:#9aabbf;letter-spacing:0.3px">👷 ОТВЕТСТВЕННЫЕ ПО ДОГОВОРУ</span>'+
+      '<span style="font-size:8px;color:#c4cdd8">назначаются в «Договора»</span>'+
+    '</div>'+body+
+  '</div>';
 }
 
 // ── СВОДКА: сделанные работы + затраченное время по объекту ──
