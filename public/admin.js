@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.81";
+const APP_BUILD = "2026-06-12.82";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -5676,20 +5676,13 @@ function tFinanceExperiment(){
         '<div><div style="color:#9aabbf">МАТЕРИАЛЫ</div><b style="color:#1a2a3a">'+RU(mat)+'</b>'+
           (mat>0?'<div style="font-size:9px;line-height:1.3;margin-top:1px"><span style="color:#27ae60">куплено '+RU(matBought)+'</span> · <span style="color:#e67e22">ещё '+RU(matLeft)+'</span></div>':'')+
         '</div>'+
-        '<div><div style="color:#9aabbf">РАБОТА</div><b style="color:#1a2a3a">'+RU(lab)+'</b></div>'+
+        '<div><div style="color:#9aabbf">РАБОТА</div><b style="color:#1a2a3a">'+RU(lab)+'</b>'+
+          (_salRows.length?'<div style="font-size:9px;line-height:1.35;margin-top:1px">'+_salRows.map(function(r){
+            const done=r.left<=0;
+            return '<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span style="color:#5a7080">'+esc(r.u.name)+':</span> <span style="font-weight:700;color:'+(done?'#27ae60':'#e67e22')+'">'+(done?'✓':RU(r.left))+'</span></div>';
+          }).join('')+'</div>':'')+
+        '</div>'+
       '</div>'+
-      (_salRows.length?'<div style="margin-bottom:8px">'+
-        '<div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.3px;margin-bottom:4px">👷 ЗАРПЛАТА — КОМУ ОСТАЛОСЬ</div>'+
-        '<div style="display:flex;flex-direction:column;gap:3px">'+_salRows.map(function(r){
-          const done=r.left<=0;
-          return '<div style="display:flex;align-items:center;gap:6px;font-size:11px">'+
-            '<span style="font-size:13px">'+r.u.av+'</span>'+
-            '<span style="flex:1;min-width:0;color:#3a4a5a;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.u.name)+'</span>'+
-            (r.paid>0&&!done?'<span style="font-size:9px;color:#27ae60">выпл. '+RU(r.paid)+'</span>':'')+
-            '<span style="font-weight:700;color:'+(done?'#27ae60':'#e67e22')+';white-space:nowrap">'+(done?'✓ выплачено':'осталось '+RU(r.left))+'</span>'+
-          '</div>';
-        }).join('')+'</div>'+
-      '</div>':'')+
       '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:11px;border-top:1px solid #eef2f7;padding-top:8px">'+
         '<div><div style="color:#9aabbf">ПОСТУПИЛО</div><b style="color:#27ae60">'+RU(oin)+'</b></div>'+
         '<div><div style="color:#9aabbf">ОПЛАЧЕНО</div><b style="color:#e74c3c">'+RU(oout)+'</b></div>'+
