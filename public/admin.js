@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.83";
+const APP_BUILD = "2026-06-12.84";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -5653,19 +5653,17 @@ function tFinanceExperiment(){
     const rev=contractRevenue(c), mat=c.objId?objMaterials(c.objId):0, lab=objLabor(c);
     const matBought=c.objId?objMatsBought(c.objId):0, matLeft=Math.max(0,mat-matBought);
     const profit=rev-mat-lab, pct=rev>0?Math.round(profit/rev*100):0;
-    // Зарплаты по людям (ответственные договора): план / выплачено / осталось.
+    // Зарплаты по людям: план из договора, выплачено — из транзакций (ФОТ платится транзакциями).
     const _salRows=users.filter(function(u){return (c.responsible||[]).includes(u.id);}).map(function(u){
       const sal=(c.salaries||{})[u.id]||{};
       const plan=(sal.plan!=null&&sal.plan!==0)?sal.plan:getDefaultSalary(u);
-      return {u:u, plan:plan, paid:Number(sal.paid)||0, left:Math.max(0,plan-(Number(sal.paid)||0))};
+      const paid=getSalaryPaid(c,u);
+      return {u:u, plan:plan, paid:paid, left:Math.max(0,plan-paid)};
     }).filter(function(r){return r.plan>0;});
     const oin=contractTxns(c,"income");
-    // ОПЛАЧЕНО = все затраты: материалы куплено + ФОТ выплачено + прочие расходы.
-    // (материалы — из флага «куплено», зарплата — из sal.paid; чтобы не задвоить,
-    //  из транзакций берём только группу «other», а не supply/salary.)
-    const salPaid=Object.values(c.salaries||{}).reduce(function(a,s){return a+(Number(s.paid)||0);},0);
-    const otherExp=finTxns.filter(function(t){return t.type==="expense"&&(t.contractId===c.id||(c.objId&&t.objId===c.objId))&&txnCategoryGroup(t.category)==="other";}).reduce(function(a,t){return a+(Number(t.amount)||0);},0);
-    const paidAll=matBought+salPaid+otherExp;
+    const oout=contractTxns(c,"expense");
+    // ОПЛАЧЕНО = материалы куплено (флаг) + все расходные транзакции (ФОТ + прочее).
+    const paidAll=matBought+oout;
     const cash=oin-paidAll; // деньги в кассе по договору (может быть с минусом)
     html+='<div data-a="fin-open" data-cid="'+c.id+'" data-oid="'+(c.objId||"")+'" style="background:#fff;border:1px solid #dde6f0;border-radius:14px;padding:14px;margin-bottom:10px;cursor:pointer">'+
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">'+
