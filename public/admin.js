@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.78";
+const APP_BUILD = "2026-06-12.79";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1385,6 +1385,17 @@ function ensureSpecs(o){
 }
 // Типовые длины хлыста/доски (м.п.) для конструктора разбивки материала.
 const LEN_OPTIONS=[1.5,1.8,2,2.2,2.5,3,4,6];
+// Имя материала для объединения в закупке: у не-пачечных отбрасываем хвостовую
+// площадь/количество («ОСП 30 м²» / «ОСП 18 м²» → «ОСП»), чтобы они слились в одну
+// позицию. У пачек хвостовое «N м²» — это размер упаковки, его не трогаем.
+function normMatName(m){
+  var n=((m&&m.n)||"").trim();
+  if(((m&&m.mode)||"piece")!=="pack"){
+    var s=n.replace(/\s+\d+([.,]\d+)?\s*(м²|м2|кв\.?\s*м|м\.п\.?|шт\.?|лист\w*)\.?$/i,"").trim();
+    if(s)n=s;
+  }
+  return n;
+}
 // Сумма метража из разбивки по хлыстам [{len,n}] и читаемый текст для примечания.
 function breakdownTotal(bd){ return Array.isArray(bd)?Math.round(bd.reduce(function(a,r){return a+(Number(r.len)||0)*(Number(r.n)||0);},0)*100)/100:0; }
 function breakdownNote(bd){
@@ -7090,12 +7101,14 @@ function buildSupplyTZ(store){
   const sel=window._supplySelected||{};
   const objs=objects.filter(function(o){return!!sel[o.id];});
   let mats=[];
-  objs.forEach(function(o){(o.stages||[]).forEach(function(s){(s.works||[]).forEach(function(w){(w.mats||[]).forEach(function(m){ if((m.store||"")===store) mats.push(m); });});});});
-  if(!mats.length){ alert("Для «"+store+"» нет материалов в выбранных объектах."); return; }
+  // В ТЗ попадает только то, что ещё НЕ куплено.
+  objs.forEach(function(o){(o.stages||[]).forEach(function(s){(s.works||[]).forEach(function(w){(w.mats||[]).forEach(function(m){ if((m.store||"")===store && !purchased[m.id]) mats.push(m); });});});});
+  if(!mats.length){ alert("Для «"+store+"» нечего закупать — всё уже куплено или нет материалов."); return; }
   const gm={};
   mats.forEach(function(m){
-    const key=(m.n||"")+'|'+(m.mode||"piece")+'|'+(Number(m.cost)||0);
-    if(!gm[key])gm[key]={n:m.n,mode:m.mode,cost:m.cost,packPer:m.packPer,packBase:m.packBase,sheetM2:m.sheetM2,lenPer:m.lenPer,qty:0,bd:{},notes:[]};
+    const nn=normMatName(m);
+    const key=nn+'|'+(m.mode||"piece")+'|'+(Number(m.cost)||0);
+    if(!gm[key])gm[key]={n:nn,mode:m.mode,cost:m.cost,packPer:m.packPer,packBase:m.packBase,sheetM2:m.sheetM2,lenPer:m.lenPer,qty:0,bd:{},notes:[]};
     const g=gm[key]; g.qty+=(m.qty||1);
     (Array.isArray(m.breakdown)?m.breakdown:[]).forEach(function(r){ const L=Number(r.len)||0,N=Number(r.n)||0; if(L>0&&N>0)g.bd[L]=(g.bd[L]||0)+N; });
     if(m.note&&String(m.note).trim()&&g.notes.indexOf(m.note)<0)g.notes.push(m.note);
@@ -7315,8 +7328,9 @@ function tSupplyDetail(sel, sortBy){
       const sc=STORECOL[store]||"#555";
       const groupsMap={};
       sm.forEach(function(m){
-        const key=(m.n||"")+'|'+(m.mode||"piece")+'|'+(Number(m.cost)||0);
-        if(!groupsMap[key])groupsMap[key]={n:m.n,mode:m.mode,cost:m.cost,store:m.store,packPer:m.packPer,packBase:m.packBase,sheetM2:m.sheetM2,lenPer:m.lenPer,url:m.url,qty:0,ids:[],notes:[],bd:{}};
+        const nn=normMatName(m);
+        const key=nn+'|'+(m.mode||"piece")+'|'+(Number(m.cost)||0);
+        if(!groupsMap[key])groupsMap[key]={n:nn,mode:m.mode,cost:m.cost,store:m.store,packPer:m.packPer,packBase:m.packBase,sheetM2:m.sheetM2,lenPer:m.lenPer,url:m.url,qty:0,ids:[],notes:[],bd:{}};
         const g=groupsMap[key]; g.qty+=(m.qty||1); g.ids.push(m.id); if(m.note&&String(m.note).trim()&&g.notes.indexOf(m.note)<0)g.notes.push(m.note);
         (Array.isArray(m.breakdown)?m.breakdown:[]).forEach(function(r){ const L=Number(r.len)||0,N=Number(r.n)||0; if(L>0&&N>0)g.bd[L]=(g.bd[L]||0)+N; });
       });
