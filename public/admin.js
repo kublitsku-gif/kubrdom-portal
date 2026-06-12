@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.70";
+const APP_BUILD = "2026-06-12.71";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -6989,6 +6989,13 @@ function tSupplySelect(sel){
   objects.forEach(function(obj){
     const allMats=obj.stages.flatMap(function(s){return s.works.flatMap(function(w){return(w.mats||[]).map(function(m){return Object.assign({},m,{wn:w.n});});});});
     const totalCost=allMats.reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
+    // Осталось купить (не отмечено «куплено») — всего и по этапам.
+    const stagesLeft=[]; let leftCost=0;
+    obj.stages.forEach(function(s){
+      let sLeft=0;
+      (s.works||[]).forEach(function(w){(w.mats||[]).forEach(function(m){ if(!purchased[m.id]) sLeft+=(Number(m.cost)||0)*(m.qty||1); });});
+      if(sLeft>0.5){ stagesLeft.push({n:s.n, c:s.c||"#e67e22", cost:sLeft}); leftCost+=sLeft; }
+    });
     const assigned=users.filter(function(u){return u.objs.includes(obj.id);});
     const isOn=!!sel[obj.id];
     html+=
@@ -7001,6 +7008,10 @@ function tSupplySelect(sel){
           '<div style="flex:1;min-width:0">'+
             '<div style="font-size:15px;font-weight:700;color:#0d1b2e">'+obj.name+'</div>'+
             '<div style="font-size:11px;color:#7a9aaa;margin-top:2px">'+allMats.length+' матер. · '+totalCost.toLocaleString("ru-RU")+' ₽</div>'+
+            (leftCost>0.5
+              ? '<div style="margin-top:5px;font-size:11px;font-weight:700;color:#e67e22">🛒 Осталось купить: '+leftCost.toLocaleString("ru-RU")+' ₽</div>'+
+                '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">'+stagesLeft.map(function(sl){return '<span style="font-size:9px;font-weight:700;color:'+sl.c+';background:'+sl.c+'12;border:1px solid '+sl.c+'33;border-radius:6px;padding:1px 7px">'+esc(sl.n)+': '+sl.cost.toLocaleString("ru-RU")+' ₽</span>';}).join("")+'</div>'
+              : '<div style="margin-top:5px;font-size:11px;font-weight:700;color:#27ae60">✓ Всё куплено</div>')+
             (assigned.length?'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">'+assigned.map(function(u){return'<span style="font-size:10px;background:'+u.c+'18;color:'+u.c+';border-radius:8px;padding:1px 7px;border:1px solid '+u.c+'33">'+u.av+' '+u.name+'</span>';}).join("")+'</div>':'')+
           '</div>'+
         '</div>'+
