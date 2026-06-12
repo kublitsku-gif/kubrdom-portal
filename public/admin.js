@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.71";
+const APP_BUILD = "2026-06-12.72";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -7090,10 +7090,12 @@ function tSupplyDetail(sel, sortBy){
   if(supplyStoreFilter) allMats=allMats.filter(function(m){return(m.store||'Без магазина')===supplyStoreFilter;});
 
   // Sort tabs
+  const _sortBtn=function(k,label,col){return '<button data-a="supply-sort" data-s="'+k+'" style="flex:1;padding:11px 6px;border-radius:12px;cursor:pointer;font-size:12px;font-weight:700;border:2px solid '+(sortBy2===k?col:"#dde6f0")+';background:'+(sortBy2===k?col:"#fff")+';color:'+(sortBy2===k?"#fff":"#7a9aaa")+';transition:all 0.15s;white-space:nowrap">'+label+'</button>';};
   html+=
-    '<div style="display:flex;gap:8px;margin-bottom:16px">'+
-      '<button data-a="supply-sort" data-s="stage" style="flex:1;padding:11px 8px;border-radius:12px;cursor:pointer;font-size:13px;font-weight:700;border:2px solid '+(sortBy2==="stage"?"#2980b9":"#dde6f0")+';background:'+(sortBy2==="stage"?"#2980b9":"#fff")+';color:'+(sortBy2==="stage"?"#fff":"#7a9aaa")+';box-shadow:'+(sortBy2==="stage"?"0 3px 10px rgba(41,128,185,0.3)":"none")+';transition:all 0.15s">📋 По этапам</button>'+
-      '<button data-a="supply-sort" data-s="store" style="flex:1;padding:11px 8px;border-radius:12px;cursor:pointer;font-size:13px;font-weight:700;border:2px solid '+(sortBy2==="store"?"#27ae60":"#dde6f0")+';background:'+(sortBy2==="store"?"#27ae60":"#fff")+';color:'+(sortBy2==="store"?"#fff":"#7a9aaa")+';box-shadow:'+(sortBy2==="store"?"0 3px 10px rgba(39,174,96,0.3)":"none")+';transition:all 0.15s">🏪 По магазинам</button>'+
+    '<div style="display:flex;gap:6px;margin-bottom:16px">'+
+      _sortBtn("merge","🛒 Закупка","#e67e22")+
+      _sortBtn("stage","📋 Этапы","#2980b9")+
+      _sortBtn("store","🏪 Магазины","#27ae60")+
     '</div>';
 
   // Store summary — use full unfiltered mats for pills
@@ -7181,7 +7183,59 @@ function tSupplyDetail(sel, sortBy){
     '</div>';
   }
 
-  if(sortBy2==="stage"){
+  // Объединённый список для закупки: одинаковые материалы (имя+магазин+режим+цена) — одной позицией с суммой количеств.
+  function mergeRow(g){
+    const sc=STORECOL[g.store||""]||"#555";
+    const ids=g.ids;
+    const allDone=ids.length>0&&ids.every(function(id){return!!purchased[id];});
+    const someDone=ids.some(function(id){return!!purchased[id];});
+    const mode=EXP_MODES.find(function(x){return x.k===(g.mode||"piece");})||EXP_MODES[0];
+    const conv=matConv(g);
+    const qty=g.qty;
+    const lineTotal=((Number(g.cost)||0)*qty).toLocaleString("ru-RU");
+    return '<div data-a="supply-stage-check" data-ids="'+ids.join(',')+'" data-done="'+(allDone?'1':'0')+'" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;margin-bottom:6px;background:'+(allDone?'#f0fdf4':'#f8fafc')+';border:1.5px solid '+(allDone?'#27ae60':'#dde6f0')+';cursor:pointer">'+
+      '<div style="flex-shrink:0;margin-top:1px"><div style="width:22px;height:22px;border-radius:6px;border:2px solid '+(allDone?'#27ae60':someDone?'#e67e22':'#c8d8e8')+';background:'+(allDone?'#27ae60':someDone?'#e67e2233':'#fff')+';display:flex;align-items:center;justify-content:center">'+(allDone?'<span style="color:#fff;font-size:13px;font-weight:700;line-height:1">✓</span>':someDone?'<span style="color:#e67e22;font-size:13px;font-weight:800;line-height:1">–</span>':'')+'</div></div>'+
+      '<div style="flex:1;min-width:0">'+
+        '<div style="font-size:13px;font-weight:600;color:'+(allDone?'#7a9aaa':'#1a2a3a')+';text-decoration:'+(allDone?'line-through':'none')+'">'+esc(g.n)+'</div>'+
+        '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:3px;align-items:center">'+
+          (ids.length>1?'<span style="font-size:10px;font-weight:700;color:#e67e22;background:#e67e2212;border:1px solid #e67e2233;border-radius:5px;padding:1px 7px">📦 '+ids.length+' позиций → 1</span>':'')+
+          (g.store?'<span style="font-size:10px;font-weight:700;background:'+sc+';color:#fff;border-radius:4px;padding:1px 6px">'+g.store+'</span>':'')+
+          '<span style="font-size:10px;font-weight:700;color:#5a7a9a;background:#eef2f7;border-radius:4px;padding:1px 6px">'+mode.icon+' '+mode.unit+'</span>'+
+          (g.cost>0?'<span style="font-size:11px;color:#7a9aaa">'+(Number(g.cost)||0).toLocaleString("ru-RU")+' ₽/'+mode.unit+' × '+numRu(qty)+' = <b style="color:#0d1b2e">'+lineTotal+' ₽</b></span>':'')+
+          (!allDone&&g.url?'<a href="'+g.url+'" target="_blank" style="font-size:10px;color:#fff;background:#2980b9;border-radius:4px;padding:1px 7px;text-decoration:none;font-weight:600" onclick="event.stopPropagation()">🔗 купить</a>':'')+
+          (allDone?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>':'')+
+        '</div>'+
+        (conv?'<div style="margin-top:5px"><span style="font-size:10px;font-weight:700;color:#e67e22;background:#fff3e0;border-radius:6px;padding:2px 8px">🛒 Купить: '+conv.altTotal(qty)+'</span></div>':'')+
+        (g.notes&&g.notes.length?'<div style="font-size:10px;color:#9aabbf;font-style:italic;margin-top:3px">'+g.notes.map(esc).join(" · ")+'</div>':'')+
+      '</div>'+
+    '</div>';
+  }
+  if(sortBy2==="merge"){
+    const stores=[...new Set(allMats.map(function(m){return m.store||"Без магазина";}))];
+    stores.forEach(function(store){
+      const sm=allMats.filter(function(m){return(m.store||"Без магазина")===store;});
+      const sc=STORECOL[store]||"#555";
+      const groupsMap={};
+      sm.forEach(function(m){
+        const key=(m.n||"")+'|'+(m.mode||"piece")+'|'+(Number(m.cost)||0);
+        if(!groupsMap[key])groupsMap[key]={n:m.n,mode:m.mode,cost:m.cost,store:m.store,packPer:m.packPer,packBase:m.packBase,sheetM2:m.sheetM2,lenPer:m.lenPer,url:m.url,qty:0,ids:[],notes:[]};
+        const g=groupsMap[key]; g.qty+=(m.qty||1); g.ids.push(m.id); if(m.note&&String(m.note).trim()&&g.notes.indexOf(m.note)<0)g.notes.push(m.note);
+      });
+      const rows=Object.keys(groupsMap).map(function(k){return groupsMap[k];});
+      const storeCost=rows.reduce(function(a,g){return a+(Number(g.cost)||0)*g.qty;},0);
+      const storeUrl=rows.find(function(g){return g.url&&String(g.url).startsWith("http");});
+      const baseUrl=storeUrl?(storeUrl.url.match(/https?:\/\/[^/]+/)||[""])[0]:"";
+      html+='<div style="background:#fff;border-radius:14px;border:1px solid '+sc+'44;margin-bottom:12px;overflow:hidden">'+
+        '<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:'+sc+'10;border-bottom:1px solid '+sc+'22">'+
+          '<span style="font-size:12px;font-weight:700;background:'+sc+';color:#fff;border-radius:6px;padding:2px 10px">'+store+'</span>'+
+          '<span style="flex:1"></span>'+
+          '<span style="font-size:11px;color:'+sc+';font-weight:600">'+rows.length+' поз. · '+storeCost.toLocaleString("ru-RU")+' ₽</span>'+
+          (baseUrl?'<a href="'+baseUrl+'" target="_blank" style="font-size:11px;color:#fff;background:'+sc+';border-radius:6px;padding:4px 10px;text-decoration:none;font-weight:600;flex-shrink:0">🛒 Открыть</a>':'')+
+        '</div>'+
+        '<div style="padding:8px 12px">'+rows.map(mergeRow).join("")+'</div>'+
+      '</div>';
+    });
+  } else if(sortBy2==="stage"){
     const stageNames=[...new Set(allMats.map(function(m){return m.sn;}))];
     stageNames.forEach(function(sn){
       const sm=allMats.filter(function(m){return m.sn===sn;});
