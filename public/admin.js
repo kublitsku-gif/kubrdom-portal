@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.86";
+const APP_BUILD = "2026-06-12.87";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -5585,13 +5585,16 @@ function tFinanceExperiment(){
       .reduce(function(a,t){return a+(t.amount||0);},0);
   }
   // ── Итоги (P&L) ── материалы объекта считаем один раз, даже если на объекте несколько договоров
-  let revenue=0,materials=0,labor=0;
+  let revenue=0,materials=0,labor=0,matsBoughtAgg=0,labPaidAgg=0;
   const matSeen={};
   cts.forEach(function(c){
     revenue+=contractRevenue(c);
     labor+=objLabor(c);
-    if(c.objId&&!matSeen[c.objId]){ matSeen[c.objId]=1; materials+=objMaterials(c.objId); }
+    if(c.objId&&!matSeen[c.objId]){ matSeen[c.objId]=1; materials+=objMaterials(c.objId); matsBoughtAgg+=objMatsBought(c.objId); }
+    labPaidAgg+=finTxns.filter(function(t){var g=txnCategoryGroup(t.category);return t.type==="expense"&&(t.contractId===c.id||(c.objId&&t.objId===c.objId))&&(g==="salary_prod"||g==="salary_escort"||g==="salary_prod_extra");}).reduce(function(a,t){return a+(Number(t.amount)||0);},0);
   });
+  const matsLeftAgg=Math.max(0,materials-matsBoughtAgg);
+  const labLeftAgg=Math.max(0,labor-labPaidAgg);
   const cogs=materials+labor, gross=revenue-cogs, margin=revenue>0?Math.round(gross/revenue*100):0;
   // ── БДДС (живые деньги) ── только транзакции, привязанные к договорам (contractId или объект
   // договора). «Сироты» (старые записи без привязки) в итог НЕ входят — показываем отдельной строкой,
@@ -5603,7 +5606,10 @@ function tFinanceExperiment(){
     if(isLinked(t)){ if(t.type==="income")factIn+=amt; else if(t.type==="expense")factOut+=amt; }
     else { if(t.type==="income")orphanIn+=amt; else if(t.type==="expense")orphanOut+=amt; }
   });
-  const flow=factIn-factOut, toReceive=Math.max(0,revenue-factIn);
+  // ОПЛАЧЕНО (как в карточке договора) = материалы куплено (флаг) + все расходные транзакции.
+  const paidAllAgg=matsBoughtAgg+factOut;
+  const flow=factIn-paidAllAgg; // деньги в кассе = поступило − оплачено
+  const toReceive=Math.max(0,revenue-factIn);
   const RP=function(n){return (n>=0?"+":"−")+Math.abs(n).toLocaleString("ru-RU")+" ₽";};
   const RU=function(n){return n.toLocaleString("ru-RU")+" ₽";};
   const CT_STAT={draft:{label:"Оформляется",color:"#7f8c8d"},signed:{label:"Подписан",color:"#2980b9"},closed:{label:"Закрыт",color:"#27ae60"}};
@@ -5626,8 +5632,8 @@ function tFinanceExperiment(){
       '<div style="background:rgba(0,0,0,0.18);border-radius:10px;padding:10px"><div style="font-size:10px;color:#bfe9d4">СЕБЕСТОИМОСТЬ</div><div style="font-size:15px;font-weight:700">−'+RU(cogs)+'</div></div>'+
     '</div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px;color:#cfeede">'+
-      '<div>материалы<div style="font-size:13px;color:#fff;font-weight:700">−'+RU(materials)+'</div></div>'+
-      '<div>работа (ФОТ)<div style="font-size:13px;color:#fff;font-weight:700">−'+RU(labor)+'</div></div>'+
+      '<div>материалы<div style="font-size:13px;color:#fff;font-weight:700">−'+RU(materials)+'</div>'+(materials>0?'<div style="font-size:9px;line-height:1.3;margin-top:1px"><span style="color:#7fe3ad">куплено '+RU(matsBoughtAgg)+'</span> · <span style="color:#f3c98a">ещё '+RU(matsLeftAgg)+'</span></div>':'')+'</div>'+
+      '<div>работа (ФОТ)<div style="font-size:13px;color:#fff;font-weight:700">−'+RU(labor)+'</div>'+(labor>0?'<div style="font-size:9px;line-height:1.3;margin-top:1px"><span style="color:#7fe3ad">выплачено '+RU(labPaidAgg)+'</span> · <span style="color:#f3c98a">осталось '+RU(labLeftAgg)+'</span></div>':'')+'</div>'+
     '</div>'+
   '</div>';
   // БДДС карта
@@ -5635,8 +5641,8 @@ function tFinanceExperiment(){
     '<div style="font-size:11px;font-weight:700;letter-spacing:0.5px;color:#a9c7e0;margin-bottom:12px">💰 БДДС · ЖИВЫЕ ДЕНЬГИ</div>'+
     '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">'+
       '<div><div style="font-size:10px;color:#a9c7e0">ПОСТУПИЛО</div><div style="font-size:15px;font-weight:700;color:#5fd99a">+'+RU(factIn)+'</div></div>'+
-      '<div><div style="font-size:10px;color:#a9c7e0">ОПЛАЧЕНО</div><div style="font-size:15px;font-weight:700;color:#f1948a">−'+RU(factOut)+'</div></div>'+
-      '<div><div style="font-size:10px;color:#a9c7e0">ПОТОК</div><div style="font-size:15px;font-weight:700;color:'+(flow>=0?"#5fd99a":"#f1948a")+'">'+RP(flow)+'</div></div>'+
+      '<div><div style="font-size:10px;color:#a9c7e0">ОПЛАЧЕНО</div><div style="font-size:15px;font-weight:700;color:#f1948a">−'+RU(paidAllAgg)+'</div></div>'+
+      '<div><div style="font-size:10px;color:#a9c7e0">ДЕНЬГИ В КАССЕ</div><div style="font-size:15px;font-weight:700;color:'+(flow>=0?"#5fd99a":"#f1948a")+'">'+RP(flow)+'</div></div>'+
     '</div>'+
     '<div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid rgba(255,255,255,0.12);margin-top:12px;padding-top:11px">'+
       '<span style="font-size:12px;color:#a9c7e0">Осталось получить по договорам</span>'+
