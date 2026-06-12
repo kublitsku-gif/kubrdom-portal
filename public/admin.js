@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.90";
+const APP_BUILD = "2026-06-12.91";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -9275,7 +9275,7 @@ function bind(){
     };}
     else if(a==="open-tpl"){el.onclick=()=>{openTemplate=el.dataset.tid;render();};}
     else if(a==="close-tpl"){el.onclick=()=>{openTemplate=null;render();};}
-    else if(a==="del-tpl"){el.onclick=()=>{templates=templates.filter(t=>t.id!==el.dataset.tid);fl();};}
+    else if(a==="del-tpl"){el.onclick=(ev)=>{ if(ev&&ev.stopPropagation)ev.stopPropagation(); const tid=el.dataset.tid; const t=templates.find(x=>x.id===tid); const usedIn=objects.filter(o=>o.templateId===tid).length; const extra=usedIn>0?("\n\nНа этом шаблоне основано объектов: "+usedIn+" (они не удалятся)."):""; if(!confirm("Удалить шаблон «"+((t&&t.name)||"")+"»?"+extra+"\n\nЭто действие необратимо."))return; templates=templates.filter(x=>x.id!==tid);fl();};}
     else if(a==="copy-tpl"){el.onclick=()=>{
       const src=templates.find(t=>t.id===el.dataset.tid);
       if(!src)return;
