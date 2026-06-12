@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.82";
+const APP_BUILD = "2026-06-12.83";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -5660,8 +5660,13 @@ function tFinanceExperiment(){
       return {u:u, plan:plan, paid:Number(sal.paid)||0, left:Math.max(0,plan-(Number(sal.paid)||0))};
     }).filter(function(r){return r.plan>0;});
     const oin=contractTxns(c,"income");
-    const oout=contractTxns(c,"expense");
-    const toRecv=Math.max(0,rev-oin);
+    // ОПЛАЧЕНО = все затраты: материалы куплено + ФОТ выплачено + прочие расходы.
+    // (материалы — из флага «куплено», зарплата — из sal.paid; чтобы не задвоить,
+    //  из транзакций берём только группу «other», а не supply/salary.)
+    const salPaid=Object.values(c.salaries||{}).reduce(function(a,s){return a+(Number(s.paid)||0);},0);
+    const otherExp=finTxns.filter(function(t){return t.type==="expense"&&(t.contractId===c.id||(c.objId&&t.objId===c.objId))&&txnCategoryGroup(t.category)==="other";}).reduce(function(a,t){return a+(Number(t.amount)||0);},0);
+    const paidAll=matBought+salPaid+otherExp;
+    const cash=oin-paidAll; // деньги в кассе по договору (может быть с минусом)
     html+='<div data-a="fin-open" data-cid="'+c.id+'" data-oid="'+(c.objId||"")+'" style="background:#fff;border:1px solid #dde6f0;border-radius:14px;padding:14px;margin-bottom:10px;cursor:pointer">'+
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">'+
         '<div style="flex:1;min-width:0;padding-right:8px">'+
@@ -5685,8 +5690,8 @@ function tFinanceExperiment(){
       '</div>'+
       '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:11px;border-top:1px solid #eef2f7;padding-top:8px">'+
         '<div><div style="color:#9aabbf">ПОСТУПИЛО</div><b style="color:#27ae60">'+RU(oin)+'</b></div>'+
-        '<div><div style="color:#9aabbf">ОПЛАЧЕНО</div><b style="color:#e74c3c">'+RU(oout)+'</b></div>'+
-        '<div><div style="color:#9aabbf">К ПОЛУЧЕНИЮ</div><b style="color:#f0a020">'+RU(toRecv)+'</b></div>'+
+        '<div><div style="color:#9aabbf">ОПЛАЧЕНО</div><b style="color:#e74c3c">'+RU(paidAll)+'</b></div>'+
+        '<div><div style="color:#9aabbf">ДЕНЬГИ В КАССЕ</div><b style="color:'+(cash<0?"#e74c3c":"#27ae60")+'">'+(cash<0?"−"+RU(Math.abs(cash)):RU(cash))+'</b></div>'+
       '</div>'+
       '<div style="margin-top:10px;text-align:center;font-size:12px;font-weight:700;color:#2980b9;background:#eaf2fb;border-radius:8px;padding:9px">📋 Открыть договор · приходы, снабжение, зарплаты, + транзакции →</div>'+
     '</div>';
