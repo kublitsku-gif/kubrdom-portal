@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.64";
+const APP_BUILD = "2026-06-12.65";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1381,6 +1381,22 @@ function ensureSpecs(o){
     if(r.wallLen==null&&(r.wall||r.wall===0)&&r.wall!==""&&_H>0){ r.wallLen=Math.round((Number(r.wall)/_H)*100)/100; }
   });
   return o.specs;
+}
+// Типовые длины хлыста/доски (м.п.) для конструктора разбивки материала.
+const LEN_OPTIONS=[1.5,1.8,2,2.2,2.5,3,4,6];
+// Сумма метража из разбивки по хлыстам [{len,n}] и читаемый текст для примечания.
+function breakdownTotal(bd){ return Array.isArray(bd)?Math.round(bd.reduce(function(a,r){return a+(Number(r.len)||0)*(Number(r.n)||0);},0)*100)/100:0; }
+function breakdownNote(bd){
+  if(!Array.isArray(bd))return "";
+  const parts=bd.filter(function(r){return (Number(r.n)||0)>0;}).map(function(r){return numRu(Number(r.n)||0)+"×"+numRu(Number(r.len)||0)+" м";});
+  if(!parts.length)return "";
+  return parts.join(" + ")+" = "+numRu(breakdownTotal(bd))+" м.п.";
+}
+function lenSelectOptions(cur){
+  const c=Number(cur)||0, has=LEN_OPTIONS.indexOf(c)>=0;
+  let o=LEN_OPTIONS.map(function(L){return '<option value="'+L+'"'+(L===c?' selected':'')+'>'+numRu(L)+' м</option>';}).join("");
+  if(!has&&c>0)o='<option value="'+c+'" selected>'+numRu(c)+' м</option>'+o;
+  return o;
 }
 let specSel={};          // {roomId:true} — выделенные помещения для суммы «Выбрано»
 let specActiveRoom={};   // {oid: roomId} — активная вкладка-помещение
@@ -3816,8 +3832,11 @@ ${groups.map(g=>{
       </div>
       ${(on&&tplMatExpand[e.id])?`<div style="padding:2px 8px 8px 34px">
         ${(tw.mats||[]).length?(tw.mats||[]).map(m=>{const mo=EXP_MODES.find(x=>x.k===(m.mode||"piece"))||EXP_MODES[0];const conv=expConv({mode:m.mode,unitCost:Number(m.cost)||0,packBase:m.packBase,packPer:m.packPer,sheetM2:m.sheetM2,lenPer:m.lenPer});const lt=Math.round((Number(m.cost)||0)*(m.qty||0));
-          const _hasNote=!!(m.note&&String(m.note).trim());
-          const _showNote=(m.mode==="mp"||m.mode==="sheet"||m.mode==="pack")||_hasNote; // разбивка по хлыстам/листам/пачкам
+          const _bd=Array.isArray(m.breakdown)?m.breakdown:[];
+          const _showBd=(m.mode==="mp")||_bd.length>0; // конструктор разбивки по хлыстам — для погонажа (м.п.)
+          const _unit=mo.unit;
+          const _bdTotal=breakdownTotal(_bd);
+          const _bdMatch=Math.abs(_bdTotal-(Number(m.qty)||0))<0.05;
           return`<div style="padding:6px 0;border-top:1px solid #f0f4f8">
             <div style="display:flex;align-items:center;gap:6px">
             <div style="flex:1;min-width:0"><div data-a="tpl-mat-open" data-name="${esc(m.n).replace(/"/g,"&quot;")}" style="font-size:12px;color:#2980b9;font-weight:600;line-height:1.2;cursor:pointer;display:inline-flex;align-items:center;gap:4px;border-bottom:1px dashed #2980b955">${m.n}<span style="font-size:9px">✏️</span></div>
@@ -3833,7 +3852,21 @@ ${groups.map(g=>{
             <span id="tplm-lt-${e.id}-${m.id}" style="font-size:12px;font-weight:700;color:#0d1b2e;width:60px;text-align:right;white-space:nowrap">${lt.toLocaleString('ru-RU')} ₽</span>
             <button data-a="tpl-mat-del" data-eid="${e.id}" data-mid="${m.id}" title="Удалить материал" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>
             </div>
-            ${_showNote?`<input data-a="tpl-mat-note" data-eid="${e.id}" data-mid="${m.id}" value="${esc(m.note||'').replace(/"/g,'&quot;')}" placeholder="📝 разбивка: напр. 5 хлыстов по 2 м + 4 по 2,2 м" style="width:100%;margin-top:5px;padding:5px 8px;border-radius:6px;border:1px dashed ${_hasNote?'#16a085':'#cdd8e6'};font-size:11px;color:#5a7a9a;outline:none;box-sizing:border-box;background:${_hasNote?'#f0faf7':'#fafbfc'}">`:''}
+            ${_showBd?`<div style="margin-top:6px;background:#fafbfc;border:1px dashed ${_bd.length?'#16a085':'#cdd8e6'};border-radius:8px;padding:7px 9px">
+              <div style="font-size:9px;font-weight:700;color:#7a9aaa;letter-spacing:0.3px;margin-bottom:5px">📐 РАЗБИВКА ПО ХЛЫСТАМ</div>
+              ${_bd.map((r,ri)=>`<div style="display:flex;gap:5px;align-items:center;margin-bottom:4px">
+                <select data-a="bd-len" data-eid="${e.id}" data-mid="${m.id}" data-ri="${ri}" style="padding:5px 4px;border-radius:6px;border:1px solid #d0dae8;font-size:11px;outline:none;background:#fff;cursor:pointer">${lenSelectOptions(r.len)}</select>
+                <span style="font-size:11px;color:#9aabbf">×</span>
+                <input data-a="bd-n" data-eid="${e.id}" data-mid="${m.id}" data-ri="${ri}" type="number" step="any" value="${r.n}" style="width:48px;padding:5px 4px;border-radius:6px;border:1px solid #d0dae8;font-size:11px;text-align:center;outline:none">
+                <span style="font-size:11px;color:#9aabbf">шт</span>
+                <span style="flex:1;text-align:right;font-size:11px;font-weight:700;color:#5a7a9a">${numRu(Math.round((Number(r.len)||0)*(Number(r.n)||0)*100)/100)} ${_unit}</span>
+                <button data-a="bd-del" data-eid="${e.id}" data-mid="${m.id}" data-ri="${ri}" title="Удалить" style="width:22px;height:22px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:10px;flex-shrink:0">✕</button>
+              </div>`).join('')}
+              <div style="display:flex;align-items:center;gap:8px;margin-top:5px">
+                <button data-a="bd-add" data-eid="${e.id}" data-mid="${m.id}" style="padding:4px 10px;background:#eef6f4;border:1px dashed #16a085;border-radius:7px;cursor:pointer;color:#16a085;font-size:11px;font-weight:700">+ хлыст</button>
+                ${_bd.length?`<span style="flex:1;text-align:right;font-size:11px;font-weight:800;color:${_bdMatch?'#16a085':'#e67e22'}">Σ ${numRu(_bdTotal)} ${_unit}${_bdMatch?' ✓':' · в работе '+numRu(Number(m.qty)||0)}</span>`:`<span style="flex:1;text-align:right;font-size:10px;color:#bbb">типовые: 1,5 / 1,8 / 2 / 2,2 м…</span>`}
+              </div>
+            </div>`:''}
           </div>`;}).join(''):`<div style="font-size:11px;color:#bbb;padding:6px 0">Без материалов · фикс. стоимость ${fmt(tw.cost)}</div>`}
         <button data-a="tpl-add-mat-open" data-eid="${e.id}" style="width:100%;margin-top:6px;padding:8px;background:#eef6f4;border:1px dashed #16a085;border-radius:9px;cursor:pointer;color:#16a085;font-size:12px;font-weight:700">+ Добавить материал</button>
       </div>`:''}
@@ -8898,16 +8931,18 @@ function bind(){
       const grand=(t.stages||[]).flatMap(s=>s.works||[]).reduce((a,ww)=>a+(ww.cost||0),0);
       const gt=document.getElementById("tpl-grand");if(gt)gt.textContent=fmt(grand);
     };}
-    else if(a==="tpl-mat-note"){el.onchange=()=>{
-      const t=templates.find(x=>x.id===openTemplate);if(!t)return;
-      const eid=el.dataset.eid,mid=el.dataset.mid;
-      const w=(t.stages||[]).flatMap(s=>s.works||[]).find(x=>x.estId===eid);if(!w)return;
-      const m=(w.mats||[]).find(x=>x.id===mid);if(!m)return;
-      m.note=el.value;
-      scheduleSave();
-      el.style.borderColor=m.note&&m.note.trim()?"#16a085":"#cdd8e6";
-      el.style.background=m.note&&m.note.trim()?"#f0faf7":"#fafbfc";
-    };}
+    else if(a==="bd-add"||a==="bd-del"||a==="bd-len"||a==="bd-n"){
+      const _bdMat=function(){
+        const t=templates.find(x=>x.id===openTemplate);if(!t)return null;
+        const w=(t.stages||[]).flatMap(s=>s.works||[]).find(x=>x.estId===el.dataset.eid);if(!w)return null;
+        const m=(w.mats||[]).find(x=>x.id===el.dataset.mid);return m||null;
+      };
+      const _sync=function(m){ m.note=breakdownNote(m.breakdown); scheduleSave(); render(); };
+      if(a==="bd-add"){el.onclick=()=>{ const m=_bdMat();if(!m)return; m.breakdown=(Array.isArray(m.breakdown)?m.breakdown:[]).concat([{len:2,n:1}]); _sync(m); };}
+      else if(a==="bd-del"){el.onclick=()=>{ const m=_bdMat();if(!m)return; const ri=Number(el.dataset.ri); m.breakdown=(Array.isArray(m.breakdown)?m.breakdown:[]).filter((_,i)=>i!==ri); _sync(m); };}
+      else if(a==="bd-len"){el.onchange=()=>{ const m=_bdMat();if(!m||!Array.isArray(m.breakdown))return; const ri=Number(el.dataset.ri); if(m.breakdown[ri])m.breakdown[ri]=Object.assign({},m.breakdown[ri],{len:Number(el.value)||0}); _sync(m); };}
+      else if(a==="bd-n"){el.onchange=()=>{ const m=_bdMat();if(!m||!Array.isArray(m.breakdown))return; const ri=Number(el.dataset.ri); if(m.breakdown[ri])m.breakdown[ri]=Object.assign({},m.breakdown[ri],{n:parseFloat((el.value||"").replace(",","."))||0}); _sync(m); };}
+    }
     else if(a==="tpl-mat-del"){el.onclick=()=>{
       const t=templates.find(x=>x.id===openTemplate);if(!t)return;
       const eid=el.dataset.eid,mid=el.dataset.mid;
