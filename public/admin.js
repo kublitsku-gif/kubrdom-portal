@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.73";
+const APP_BUILD = "2026-06-12.74";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -7177,22 +7177,35 @@ function tSupplyDetail(sel, sortBy){
           (m.store?'<span style="font-size:10px;font-weight:700;background:'+sc+';color:#fff;border-radius:4px;padding:1px 6px;opacity:'+(done?'0.5':'1')+'">'+m.store+'</span>':'')+
           '<span style="font-size:10px;font-weight:700;color:#5a7a9a;background:#eef2f7;border-radius:4px;padding:1px 6px">'+mode.icon+' '+mode.unit+'</span>'+
           (m.cost>0?'<span style="font-size:11px;color:'+(done?'#b0c8b0':'#7a9aaa')+'">'+price.toLocaleString("ru-RU")+' ₽/'+unit+' × '+numRu(qty)+' = <b style="color:'+(done?'#b0c8b0':'#0d1b2e')+'">'+lineTotal+' ₽</b></span>':'')+
-          (m.note?'<span style="font-size:10px;color:#9aabbf;font-style:italic">'+m.note+'</span>':'')+
+          (m.note&&!(Array.isArray(m.breakdown)&&m.breakdown.length)?'<span style="font-size:10px;color:#9aabbf;font-style:italic">'+m.note+'</span>':'')+
           (!done&&m.url?'<a href="'+m.url+'" target="_blank" style="font-size:10px;color:#fff;background:#2980b9;border-radius:4px;padding:1px 7px;text-decoration:none;font-weight:600" onclick="event.stopPropagation()">🔗 купить</a>':'')+
           (done?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>':'')+
           '<button data-a="supply-edit-mat" data-mid="'+m.id+'" style="font-size:10px;color:#7a9aaa;background:#fff;border:1px solid #d0dae8;border-radius:5px;padding:1px 7px;cursor:pointer" onclick="event.stopPropagation()">✏️ изм.</button>'+
         '</div>'+
-        (conv?'<div style="display:flex;align-items:center;gap:6px;margin-top:5px;flex-wrap:wrap">'+
-          '<span style="font-size:10px;font-weight:700;color:#e67e22;background:#fff3e0;border-radius:6px;padding:2px 8px">🛒 Купить: '+conv.altTotal(qty)+'</span>'+
-          '<div style="display:inline-flex;background:#e9eef4;border-radius:20px;padding:2px" onclick="event.stopPropagation()">'+
-            '<button data-a="objmat-view" data-mid="'+m.id+'" data-v="0" style="border:none;cursor:pointer;font-size:10px;font-weight:700;padding:3px 9px;border-radius:18px;'+(idx===0?on:off)+'">'+conv.views[0].unit+'</button>'+
-            '<button data-a="objmat-view" data-mid="'+m.id+'" data-v="1" style="border:none;cursor:pointer;font-size:10px;font-weight:700;padding:3px 9px;border-radius:18px;'+(idx===1?on:off)+'">'+conv.views[1].unit+'</button>'+
-          '</div>'+
-        '</div>':'')+
+        ((Array.isArray(m.breakdown)&&m.breakdown.length)
+          ? (function(){var map={}; m.breakdown.forEach(function(r){var L=Number(r.len)||0,N=Number(r.n)||0; if(L>0&&N>0)map[L]=(map[L]||0)+N;}); return hlystBlock(bdRowsOf(map));})()
+          : (conv?'<div style="display:flex;align-items:center;gap:6px;margin-top:5px;flex-wrap:wrap">'+
+              '<span style="font-size:10px;font-weight:700;color:#e67e22;background:#fff3e0;border-radius:6px;padding:2px 8px">🛒 Купить: '+conv.altTotal(qty)+'</span>'+
+              '<div style="display:inline-flex;background:#e9eef4;border-radius:20px;padding:2px" onclick="event.stopPropagation()">'+
+                '<button data-a="objmat-view" data-mid="'+m.id+'" data-v="0" style="border:none;cursor:pointer;font-size:10px;font-weight:700;padding:3px 9px;border-radius:18px;'+(idx===0?on:off)+'">'+conv.views[0].unit+'</button>'+
+                '<button data-a="objmat-view" data-mid="'+m.id+'" data-v="1" style="border:none;cursor:pointer;font-size:10px;font-weight:700;padding:3px 9px;border-radius:18px;'+(idx===1?on:off)+'">'+conv.views[1].unit+'</button>'+
+              '</div>'+
+            '</div>':''))+
       '</div>'+
     '</div>';
   }
 
+  // Понятный для закупки блок хлыстов по длинам: «2,2 м × 4 шт + 1,5 м × 6 шт».
+  function hlystBlock(rows){
+    if(!rows||!rows.length)return "";
+    const totalN=rows.reduce(function(a,r){return a+r.n;},0);
+    const totalMp=Math.round(rows.reduce(function(a,r){return a+r.len*r.n;},0)*100)/100;
+    return '<div style="margin-top:6px;background:#fff3e0;border:1px solid #e67e2233;border-radius:8px;padding:7px 9px">'+
+      '<div style="font-size:10px;font-weight:800;color:#e67e22;letter-spacing:0.3px;margin-bottom:5px">🪓 ХЛЫСТЫ К ЗАКУПКЕ · '+totalN+' шт · '+numRu(totalMp)+' м.п.</div>'+
+      '<div style="display:flex;flex-wrap:wrap;gap:5px">'+rows.map(function(r){return '<span style="font-size:12px;font-weight:700;color:#5a3a1a;background:#fff;border:1px solid #e67e2255;border-radius:7px;padding:3px 10px">'+numRu(r.len)+' м × <b style="color:#e67e22">'+r.n+' шт</b></span>';}).join('')+'</div>'+
+    '</div>';
+  }
+  function bdRowsOf(bdMap){ return Object.keys(bdMap||{}).map(function(L){return {len:Number(L),n:bdMap[L]};}).filter(function(r){return r.len>0&&r.n>0;}).sort(function(a,b){return b.len-a.len;}); }
   // Объединённый список для закупки: одинаковые материалы (имя+магазин+режим+цена) — одной позицией с суммой количеств.
   function mergeRow(g){
     const sc=STORECOL[g.store||""]||"#555";
@@ -7215,8 +7228,7 @@ function tSupplyDetail(sel, sortBy){
           (!allDone&&g.url?'<a href="'+g.url+'" target="_blank" style="font-size:10px;color:#fff;background:#2980b9;border-radius:4px;padding:1px 7px;text-decoration:none;font-weight:600" onclick="event.stopPropagation()">🔗 купить</a>':'')+
           (allDone?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>':'')+
         '</div>'+
-        (conv?'<div style="margin-top:5px"><span style="font-size:10px;font-weight:700;color:#e67e22;background:#fff3e0;border-radius:6px;padding:2px 8px">🛒 Купить: '+conv.altTotal(qty)+'</span></div>':'')+
-        (g.notes&&g.notes.length?'<div style="font-size:10px;color:#9aabbf;font-style:italic;margin-top:3px">'+g.notes.map(esc).join(" · ")+'</div>':'')+
+        (function(){var rows=bdRowsOf(g.bd); if(rows.length)return hlystBlock(rows); return conv?'<div style="margin-top:5px"><span style="font-size:10px;font-weight:700;color:#e67e22;background:#fff3e0;border-radius:6px;padding:2px 8px">🛒 Купить: '+conv.altTotal(qty)+'</span></div>':'';})()+
       '</div>'+
     '</div>';
   }
@@ -7228,8 +7240,9 @@ function tSupplyDetail(sel, sortBy){
       const groupsMap={};
       sm.forEach(function(m){
         const key=(m.n||"")+'|'+(m.mode||"piece")+'|'+(Number(m.cost)||0);
-        if(!groupsMap[key])groupsMap[key]={n:m.n,mode:m.mode,cost:m.cost,store:m.store,packPer:m.packPer,packBase:m.packBase,sheetM2:m.sheetM2,lenPer:m.lenPer,url:m.url,qty:0,ids:[],notes:[]};
+        if(!groupsMap[key])groupsMap[key]={n:m.n,mode:m.mode,cost:m.cost,store:m.store,packPer:m.packPer,packBase:m.packBase,sheetM2:m.sheetM2,lenPer:m.lenPer,url:m.url,qty:0,ids:[],notes:[],bd:{}};
         const g=groupsMap[key]; g.qty+=(m.qty||1); g.ids.push(m.id); if(m.note&&String(m.note).trim()&&g.notes.indexOf(m.note)<0)g.notes.push(m.note);
+        (Array.isArray(m.breakdown)?m.breakdown:[]).forEach(function(r){ const L=Number(r.len)||0,N=Number(r.n)||0; if(L>0&&N>0)g.bd[L]=(g.bd[L]||0)+N; });
       });
       const rows=Object.keys(groupsMap).map(function(k){return groupsMap[k];});
       const storeCost=rows.reduce(function(a,g){return a+(Number(g.cost)||0)*g.qty;},0);
