@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.69";
+const APP_BUILD = "2026-06-12.70";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1482,7 +1482,7 @@ function specsEditorHtml(o){
   const actIdx=rooms.findIndex(function(r){return r.id===actId;});
   const fld=function(id,oi,i,f,val,ph){return '<input id="'+id+'" data-a="spec-room-field" data-oid="'+oi+'" data-i="'+i+'" data-f="'+f+'" value="'+(val===0||val?val:"")+'" type="number" step="any" inputmode="decimal" placeholder="'+(ph||"")+'" style="width:100%;padding:8px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:14px;outline:none;box-sizing:border-box;text-align:right">';};
 
-  const _collapsed=!!specsCollapsed[o.id];
+  const _collapsed=specsCollapsed[o.id]!==false; // по умолчанию свёрнут (развернуть = клик)
   let h='<div style="background:#fff;border-radius:12px;border:1px solid #16a08544;padding:12px 14px;margin-bottom:14px">';
   h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:'+(_collapsed?'0':'10px')+'">'+
        '<div data-a="specs-collapse" data-oid="'+o.id+'" style="font-size:11px;font-weight:700;color:#16a085;letter-spacing:0.5px;cursor:pointer;display:flex;align-items:center;gap:6px;flex:1">'+(_collapsed?'▸':'▾')+' 📐 ХАРАКТЕРИСТИКИ ОБЪЕКТА</div>'+
@@ -8905,7 +8905,7 @@ function bind(){
       }
     }
     else if(a==="obj-doc-unlink"){el.onclick=()=>{ const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return; ensureSpecs(o); const field=el.dataset.field; o.specs[field+"Url"]=""; o.specs[field+"Name"]=""; fl(); };}
-    else if(a==="specs-collapse"){el.onclick=()=>{ const oid=el.dataset.oid; specsCollapsed=Object.assign({},specsCollapsed,{[oid]:!specsCollapsed[oid]}); render(); };}
+    else if(a==="specs-collapse"){el.onclick=()=>{ const oid=el.dataset.oid; specsCollapsed=Object.assign({},specsCollapsed,{[oid]:(specsCollapsed[oid]===false)}); render(); };}
     else if(a==="spec-room-add"){el.onclick=()=>{
       const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return;
       ensureSpecs(o); const _rid="r"+Math.random().toString(36).slice(2,9); o.specs.rooms=o.specs.rooms.concat([{id:_rid,name:"",floor:"",wall:"",ceil:""}]); specActiveRoom=Object.assign({},specActiveRoom,{[o.id]:_rid}); fl();
