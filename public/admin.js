@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.85";
+const APP_BUILD = "2026-06-12.86";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -5550,7 +5550,9 @@ function tFinanceExperiment(){
   // Привязка к ДОГОВОРАМ, не к объектам: договор без объекта (objId="") полноценно участвует
   // в P&L и БДДС. Берём все договоры (вкл. «Оформляется» — предварительный договор уже приносит
   // аванс); статус виден бейджем на карточке.
-  const cts=contractDocs.slice();
+  const allCts=contractDocs.slice();
+  // Если выбраны договоры чекбоксами — агрегат (P&L + БДДС) считаем по ним; иначе по всем.
+  const cts=finSelectedContractIds.length?allCts.filter(function(c){return finSelectedContractIds.includes(c.id);}):allCts;
   function extraTotal(c){
     return (c.extraWorks||[]).reduce(function(a,w){return a+(w.cost||0)+(w.mats||[]).reduce(function(b,m){return b+(m.cost||0)*(m.qty||1);},0);},0);
   }
@@ -5614,7 +5616,7 @@ function tFinanceExperiment(){
   '</div>';
   // P&L карта
   html+='<div style="background:linear-gradient(135deg,#1e7e5a,#13603e);border-radius:16px;padding:16px;color:#fff;margin-bottom:12px">'+
-    '<div style="font-size:11px;font-weight:700;letter-spacing:0.5px;color:#bfe9d4;margin-bottom:12px">📈 P&L · ПРИБЫЛЬ ПО ВСЕМ ДОГОВОРАМ</div>'+
+    '<div style="font-size:11px;font-weight:700;letter-spacing:0.5px;color:#bfe9d4;margin-bottom:12px">📈 P&L · ПРИБЫЛЬ ПО '+(finSelectedContractIds.length?('ВЫБРАННЫМ ('+finSelectedContractIds.length+')'):'ВСЕМ ДОГОВОРАМ')+'</div>'+
     '<div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:14px">'+
       '<div><div style="font-size:11px;color:#bfe9d4">Валовая прибыль</div><div style="font-size:26px;font-weight:800;line-height:1.1">'+RP(gross)+'</div></div>'+
       '<div style="text-align:right"><div style="font-size:11px;color:#bfe9d4">Маржа</div><div style="font-size:22px;font-weight:800">'+margin+'%</div></div>'+
@@ -5643,13 +5645,17 @@ function tFinanceExperiment(){
     ((orphanIn||orphanOut)?'<div style="font-size:10px;color:#7e9cba;margin-top:8px">⚠️ Вне договоров (не учтено): +'+RU(orphanIn)+' / −'+RU(orphanOut)+' — старые транзакции без привязки к договору.</div>':'')+
   '</div>';
   // По договорам (объект — дополнение, если привязан)
-  html+='<div style="font-size:12px;font-weight:700;color:#7a9aaa;letter-spacing:0.5px;margin-bottom:10px">ПО ДОГОВОРАМ</div>';
-  if(!cts.length){
+  html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'+
+    '<span style="font-size:12px;font-weight:700;color:#7a9aaa;letter-spacing:0.5px">ПО ДОГОВОРАМ'+(finSelectedContractIds.length?' · выбрано '+finSelectedContractIds.length:'')+'</span>'+
+    (finSelectedContractIds.length?'<button data-a="fin-clear-selection" style="padding:4px 10px;background:#e74c3c12;border:1px solid #e74c3c33;border-radius:7px;cursor:pointer;color:#e74c3c;font-size:11px;font-weight:700">✕ Сбросить выбор</button>':'<span style="font-size:10px;color:#bcc8d6">☑ отметьте, чтобы свести сводку</span>')+
+  '</div>';
+  if(!allCts.length){
     html+='<div style="background:#fff;border-radius:12px;padding:26px;text-align:center;color:#9aabbf;font-size:12px;border:1px dashed #d0dae8">Договоров пока нет — добавьте их во вкладке «📄 Договора».</div>';
   }
-  cts.forEach(function(c){
+  allCts.forEach(function(c){
     const o=objects.find(function(x){return x.id===c.objId;})||null;
     const st=CT_STAT[c.status]||CT_STAT.draft;
+    const _selCt=finSelectedContractIds.includes(c.id);
     const rev=contractRevenue(c), mat=c.objId?objMaterials(c.objId):0, lab=objLabor(c);
     const matBought=c.objId?objMatsBought(c.objId):0, matLeft=Math.max(0,mat-matBought);
     const profit=rev-mat-lab, pct=rev>0?Math.round(profit/rev*100):0;
@@ -5661,8 +5667,9 @@ function tFinanceExperiment(){
     // ОПЛАЧЕНО = материалы куплено (флаг) + все расходные транзакции (ФОТ + прочее).
     const paidAll=matBought+oout;
     const cash=oin-paidAll; // деньги в кассе по договору (может быть с минусом)
-    html+='<div data-a="fin-open" data-cid="'+c.id+'" data-oid="'+(c.objId||"")+'" style="background:#fff;border:1px solid #dde6f0;border-radius:14px;padding:14px;margin-bottom:10px;cursor:pointer">'+
+    html+='<div data-a="fin-open" data-cid="'+c.id+'" data-oid="'+(c.objId||"")+'" style="background:#fff;border:2px solid '+(_selCt?"#2980b9":"#dde6f0")+';border-radius:14px;padding:14px;margin-bottom:10px;cursor:pointer;background:'+(_selCt?"#f0f6ff":"#fff")+'">'+
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">'+
+        '<div data-a="fin-toggle-select" data-cid="'+c.id+'" style="width:24px;height:24px;border-radius:7px;border:2px solid '+(_selCt?"#2980b9":"#c8d8e8")+';background:'+(_selCt?"#2980b9":"#fff")+';display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-right:10px;margin-top:1px">'+(_selCt?'<span style="color:#fff;font-size:13px;font-weight:700">✓</span>':'')+'</div>'+
         '<div style="flex:1;min-width:0;padding-right:8px">'+
           '<div style="font-size:14px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📄 '+esc(c.name||"Договор")+'</div>'+
           '<div style="font-size:11px;color:#7a9aaa;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.client||"")+(o?' · '+(o.icon||"")+' '+esc(o.name):'')+'</div>'+
