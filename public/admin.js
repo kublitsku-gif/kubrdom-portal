@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.79";
+const APP_BUILD = "2026-06-12.80";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -3730,6 +3730,10 @@ ${objMatModal?`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);di
         </div>
         <span style="font-size:10px;color:#9aabbf">${conv.footer}</span>
       </div>`:""}
+      ${(Array.isArray(m.breakdown)&&m.breakdown.length)?`<div style="margin-top:6px;background:#fff3e0;border:1px solid #e67e2233;border-radius:8px;padding:6px 9px">
+        <div style="font-size:9px;font-weight:800;color:#e67e22;letter-spacing:0.3px;margin-bottom:4px">🪓 РАЗБИВКА ПО ХЛЫСТАМ · ${numRu(breakdownTotal(m.breakdown))} м.п.</div>
+        <div style="display:flex;flex-wrap:wrap;gap:5px">${m.breakdown.map(function(r){return `<span style="font-size:11px;font-weight:700;color:#5a3a1a;background:#fff;border:1px solid #e67e2255;border-radius:7px;padding:2px 9px">${numRu(Number(r.len)||0)} м × <b style="color:#e67e22">${Number(r.n)||0} шт</b></span>`;}).join("")}</div>
+      </div>`:""}
     </div>`;}).join("")+`${wMats.length===0?`<div style="text-align:center;color:#aaa;font-size:13px;padding:12px">Нет материалов</div>`:""}<div style="margin-top:10px;background:#f0f4f8;border-radius:10px;padding:12px">
       <div style="font-size:10px;color:#7a9aaa;font-weight:700;margin-bottom:6px">+ ДОБАВИТЬ МАТЕРИАЛ <span style="font-weight:400">(можно выбрать из базы — цена и единица подтянутся)</span></div>
       <input id="opm-n" list="opm-catalog" autocomplete="off" placeholder="Название или выбрать из базы…" style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;margin-bottom:5px;outline:none;box-sizing:border-box">
@@ -5485,6 +5489,12 @@ function tContractDetail(cid){
               '<button data-a="ct-ewm-save" data-cid="'+cid+'" data-ewi="'+ewi+'" data-mi="'+mi+'" style="padding:3px 5px;background:#27ae60;border:none;border-radius:4px;cursor:pointer;color:#fff;font-size:9px">💾</button>'+
               '<button data-a="ct-ewm-del" data-cid="'+cid+'" data-ewi="'+ewi+'" data-mi="'+mi+'" style="padding:3px 5px;background:transparent;border:none;cursor:pointer;color:#e74c3c;font-size:11px">✕</button>'+
             '</div>';
+            if(Array.isArray(m.breakdown)&&m.breakdown.length){
+              html+='<div style="margin:0 0 4px 6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center">'+
+                '<span style="font-size:9px;font-weight:800;color:#e67e22">🪓 '+numRu(breakdownTotal(m.breakdown))+' м.п.:</span>'+
+                m.breakdown.map(function(r){return '<span style="font-size:10px;font-weight:700;color:#5a3a1a;background:#fff3e0;border:1px solid #e67e2244;border-radius:6px;padding:1px 7px">'+numRu(Number(r.len)||0)+' м × '+(Number(r.n)||0)+' шт</span>';}).join("")+
+              '</div>';
+            }
           });
         }
 
