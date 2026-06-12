@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.74";
+const APP_BUILD = "2026-06-12.75";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -5613,6 +5613,12 @@ function tFinanceExperiment(){
     const rev=contractRevenue(c), mat=c.objId?objMaterials(c.objId):0, lab=objLabor(c);
     const matBought=c.objId?objMatsBought(c.objId):0, matLeft=Math.max(0,mat-matBought);
     const profit=rev-mat-lab, pct=rev>0?Math.round(profit/rev*100):0;
+    // Зарплаты по людям (ответственные договора): план / выплачено / осталось.
+    const _salRows=users.filter(function(u){return (c.responsible||[]).includes(u.id);}).map(function(u){
+      const sal=(c.salaries||{})[u.id]||{};
+      const plan=(sal.plan!=null&&sal.plan!==0)?sal.plan:getDefaultSalary(u);
+      return {u:u, plan:plan, paid:Number(sal.paid)||0, left:Math.max(0,plan-(Number(sal.paid)||0))};
+    }).filter(function(r){return r.plan>0;});
     const oin=contractTxns(c,"income");
     const oout=contractTxns(c,"expense");
     const toRecv=Math.max(0,rev-oin);
@@ -5632,6 +5638,18 @@ function tFinanceExperiment(){
         '</div>'+
         '<div><div style="color:#9aabbf">РАБОТА</div><b style="color:#1a2a3a">'+RU(lab)+'</b></div>'+
       '</div>'+
+      (_salRows.length?'<div style="margin-bottom:8px">'+
+        '<div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.3px;margin-bottom:4px">👷 ЗАРПЛАТА — КОМУ ОСТАЛОСЬ</div>'+
+        '<div style="display:flex;flex-direction:column;gap:3px">'+_salRows.map(function(r){
+          const done=r.left<=0;
+          return '<div style="display:flex;align-items:center;gap:6px;font-size:11px">'+
+            '<span style="font-size:13px">'+r.u.av+'</span>'+
+            '<span style="flex:1;min-width:0;color:#3a4a5a;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.u.name)+'</span>'+
+            (r.paid>0&&!done?'<span style="font-size:9px;color:#27ae60">выпл. '+RU(r.paid)+'</span>':'')+
+            '<span style="font-weight:700;color:'+(done?'#27ae60':'#e67e22')+';white-space:nowrap">'+(done?'✓ выплачено':'осталось '+RU(r.left))+'</span>'+
+          '</div>';
+        }).join('')+'</div>'+
+      '</div>':'')+
       '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:11px;border-top:1px solid #eef2f7;padding-top:8px">'+
         '<div><div style="color:#9aabbf">ПОСТУПИЛО</div><b style="color:#27ae60">'+RU(oin)+'</b></div>'+
         '<div><div style="color:#9aabbf">ОПЛАЧЕНО</div><b style="color:#e74c3c">'+RU(oout)+'</b></div>'+
