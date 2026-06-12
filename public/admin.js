@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.84";
+const APP_BUILD = "2026-06-12.85";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -5653,15 +5653,11 @@ function tFinanceExperiment(){
     const rev=contractRevenue(c), mat=c.objId?objMaterials(c.objId):0, lab=objLabor(c);
     const matBought=c.objId?objMatsBought(c.objId):0, matLeft=Math.max(0,mat-matBought);
     const profit=rev-mat-lab, pct=rev>0?Math.round(profit/rev*100):0;
-    // Зарплаты по людям: план из договора, выплачено — из транзакций (ФОТ платится транзакциями).
-    const _salRows=users.filter(function(u){return (c.responsible||[]).includes(u.id);}).map(function(u){
-      const sal=(c.salaries||{})[u.id]||{};
-      const plan=(sal.plan!=null&&sal.plan!==0)?sal.plan:getDefaultSalary(u);
-      const paid=getSalaryPaid(c,u);
-      return {u:u, plan:plan, paid:paid, left:Math.max(0,plan-paid)};
-    }).filter(function(r){return r.plan>0;});
     const oin=contractTxns(c,"income");
     const oout=contractTxns(c,"expense");
+    // ФОТ: выплачено — салярные транзакции договора; осталось = план − выплачено.
+    const labPaid=finTxns.filter(function(t){var g=txnCategoryGroup(t.category);return t.type==="expense"&&(t.contractId===c.id||(c.objId&&t.objId===c.objId))&&(g==="salary_prod"||g==="salary_escort"||g==="salary_prod_extra");}).reduce(function(a,t){return a+(Number(t.amount)||0);},0);
+    const labLeft=Math.max(0,lab-labPaid);
     // ОПЛАЧЕНО = материалы куплено (флаг) + все расходные транзакции (ФОТ + прочее).
     const paidAll=matBought+oout;
     const cash=oin-paidAll; // деньги в кассе по договору (может быть с минусом)
@@ -5680,10 +5676,7 @@ function tFinanceExperiment(){
           (mat>0?'<div style="font-size:9px;line-height:1.3;margin-top:1px"><span style="color:#27ae60">куплено '+RU(matBought)+'</span> · <span style="color:#e67e22">ещё '+RU(matLeft)+'</span></div>':'')+
         '</div>'+
         '<div><div style="color:#9aabbf">РАБОТА</div><b style="color:#1a2a3a">'+RU(lab)+'</b>'+
-          (_salRows.length?'<div style="font-size:9px;line-height:1.35;margin-top:1px">'+_salRows.map(function(r){
-            const done=r.left<=0;
-            return '<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span style="color:#5a7080">'+esc(r.u.name)+':</span> <span style="font-weight:700;color:'+(done?'#27ae60':'#e67e22')+'">'+(done?'✓':RU(r.left))+'</span></div>';
-          }).join('')+'</div>':'')+
+          (lab>0?'<div style="font-size:9px;line-height:1.3;margin-top:1px"><span style="color:#27ae60">выплачено '+RU(labPaid)+'</span> · <span style="color:#e67e22">осталось '+RU(labLeft)+'</span></div>':'')+
         '</div>'+
       '</div>'+
       '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:11px;border-top:1px solid #eef2f7;padding-top:8px">'+
