@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.58";
+const APP_BUILD = "2026-06-12.59";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -2996,27 +2996,28 @@ function renderObjCard(obj, isAdmin){
       });
       return out;
     }
-    function group(files,title,color,icon,fallbackName){
-      if(!files.length)return "";
-      let h='<div style="font-size:9px;font-weight:700;color:'+color+';letter-spacing:0.3px;margin-bottom:5px">'+title+'</div>';
-      h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">';
-      files.forEach(function(f){
-        const isImg=(f.mime||"").indexOf("image")===0;
-        h+='<a href="'+f.data+'" target="_blank" rel="noopener" style="width:56px;text-decoration:none">'+
-             '<div style="height:42px;border-radius:7px;border:1px solid '+color+'33;background:'+color+'0d;overflow:hidden;position:relative">'+
-               '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:'+color+'66;font-size:17px">'+icon+'</div>'+
-               (isImg?'<img src="'+f.data+'" onerror="this.style.display=\'none\'" style="position:relative;width:100%;height:100%;object-fit:cover;display:block">':'')+
-             '</div>'+
-             '<div style="font-size:8px;color:#5a7a9a;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name||fallbackName)+'</div>'+
-           '</a>';
-      });
-      h+='</div>';
-      return h;
+    function chip(f,color,icon,typeLabel,fallbackName){
+      const isImg=(f.mime||"").indexOf("image")===0;
+      return '<a href="'+f.data+'" target="_blank" rel="noopener" title="'+esc(f.name||fallbackName)+'" style="display:inline-flex;align-items:center;gap:7px;padding:5px 9px;border-radius:9px;border:1px solid '+color+'33;background:'+color+'0d;text-decoration:none;max-width:100%;min-width:0">'+
+        (isImg
+          ? '<img src="'+f.data+'" onerror="this.style.display=\'none\'" style="width:26px;height:26px;border-radius:5px;object-fit:cover;flex-shrink:0">'
+          : '<span style="font-size:16px;flex-shrink:0">'+icon+'</span>')+
+        '<span style="display:flex;flex-direction:column;min-width:0">'+
+          '<span style="font-size:8px;font-weight:800;color:'+color+';letter-spacing:0.3px">'+typeLabel+'</span>'+
+          '<span style="font-size:10px;color:#5a7a9a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px">'+esc(f.name||fallbackName)+'</span>'+
+        '</span>'+
+        '<span style="font-size:11px;color:'+color+';font-weight:700;flex-shrink:0">↗</span>'+
+      '</a>';
     }
-    const plansHtml=group(collect("plan"),"📐 ПЛАНИРОВКИ ИЗ ДОГОВОРА","#8e44ad","📐","Планировка");
-    const specsHtml=group(collect("spec"),"📋 СПЕЦИФИКАЦИИ ИЗ ДОГОВОРА","#16a085","📋","Спецификация");
-    if(!plansHtml&&!specsHtml)return;
-    html+='<div style="padding:8px 14px 4px;border-top:1px solid #f4f6f9">'+plansHtml+specsHtml+'</div>';
+    const plans=collect("plan"), specs=collect("spec");
+    if(!plans.length&&!specs.length)return;
+    let chips='';
+    plans.forEach(function(f){chips+=chip(f,"#8e44ad","📐","ПЛАНИРОВКА","Планировка");});
+    specs.forEach(function(f){chips+=chip(f,"#16a085","📋","СПЕЦИФИКАЦИЯ","Спецификация");});
+    html+='<div style="padding:8px 14px;border-top:1px solid #f4f6f9">'+
+      '<div style="font-size:9px;font-weight:700;color:#9aabbf;letter-spacing:0.3px;margin-bottom:6px">📎 ДОКУМЕНТЫ ИЗ ДОГОВОРА</div>'+
+      '<div style="display:flex;gap:6px;flex-wrap:wrap">'+chips+'</div>'+
+    '</div>';
   })();
   // Team row (admin only)
   html+=buildTeamRow(obj.id, isAdmin);
