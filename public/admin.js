@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.65";
+const APP_BUILD = "2026-06-12.66";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -3833,7 +3833,7 @@ ${groups.map(g=>{
       ${(on&&tplMatExpand[e.id])?`<div style="padding:2px 8px 8px 34px">
         ${(tw.mats||[]).length?(tw.mats||[]).map(m=>{const mo=EXP_MODES.find(x=>x.k===(m.mode||"piece"))||EXP_MODES[0];const conv=expConv({mode:m.mode,unitCost:Number(m.cost)||0,packBase:m.packBase,packPer:m.packPer,sheetM2:m.sheetM2,lenPer:m.lenPer});const lt=Math.round((Number(m.cost)||0)*(m.qty||0));
           const _bd=Array.isArray(m.breakdown)?m.breakdown:[];
-          const _showBd=(m.mode==="mp")||_bd.length>0; // конструктор разбивки по хлыстам — для погонажа (м.п.)
+          const _showBd=(/полок|полк/i.test(m.n||"")&&m.mode==="mp")||_bd.length>0; // конструктор разбивки по хлыстам — только для материала «полок» (м.п.)
           const _unit=mo.unit;
           const _bdTotal=breakdownTotal(_bd);
           const _bdMatch=Math.abs(_bdTotal-(Number(m.qty)||0))<0.05;
