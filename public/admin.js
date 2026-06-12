@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.62";
+const APP_BUILD = "2026-06-12.63";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1561,9 +1561,29 @@ function specsEditorHtml(o){
       s+='</div>';
       return s;
     }
+    // Слот с прямой загрузкой файла (не из договоров) — напр. спецификация на окна и двери.
+    function uploadSlot(field,title,color,icon){
+      const url=specs[field+"Url"], name=specs[field+"Name"];
+      let s='<div style="background:#fafbfc;border:1px solid '+color+'33;border-radius:9px;padding:9px 11px;margin-bottom:8px">';
+      s+='<div style="display:flex;align-items:center;justify-content:space-between">'+
+           '<span style="font-size:10px;font-weight:700;color:'+color+'">'+title+'</span>'+
+           (url?'<button data-a="obj-doc-unlink" data-oid="'+o.id+'" data-field="'+field+'" style="font-size:10px;color:#e74c3c;background:transparent;border:none;cursor:pointer;text-decoration:underline">удалить</button>'
+              :'<label data-a="obj-doc-upload" data-oid="'+o.id+'" data-field="'+field+'" style="padding:3px 10px;background:'+color+';border:none;border-radius:6px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">⬆️ Загрузить файл<input id="obj-doc-inp-'+o.id+'-'+field+'" type="file" style="display:none"></label>')+
+         '</div>';
+      if(url){
+        s+='<div style="display:flex;align-items:center;gap:8px;margin-top:7px">'+
+             '<span style="font-size:17px">'+icon+'</span>'+
+             '<div style="flex:1;min-width:0;font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(name||"Файл")+'</div>'+
+             '<a href="'+url+'" target="_blank" rel="noopener" style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;color:'+color+';font-size:11px;font-weight:700;text-decoration:none">Открыть</a>'+
+           '</div>';
+      }
+      s+='</div>';
+      return s;
+    }
     h+='<div style="font-size:10px;font-weight:700;color:#7a9aaa;letter-spacing:0.5px;margin:12px 0 8px">📎 ДОКУМЕНТЫ ОБЪЕКТА</div>';
     h+=slot("plan","📐 Планировка и проект","#8e44ad","📐",specs.planUrl,specs.planName);
     h+=slot("spec","📋 Спецификация","#16a085","📋",specs.specUrl,specs.specName);
+    h+=uploadSlot("windows","🪟 Спецификация: окна и двери","#e67e22","🪟");
   })();
   // Выбранные помещения — сумма
   const selRooms=rooms.filter(function(r){return specSel[r.id];});
@@ -8796,6 +8816,26 @@ function bind(){
     else if(a==="spec-file-close"){el.onclick=()=>{ specFilePicker=null; render(); };}
     else if(a==="spec-file-unlink"){el.onclick=()=>{ const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return; ensureSpecs(o); const k=el.dataset.kind; if(k==="plan"){o.specs.planUrl="";o.specs.planName="";}else{o.specs.specUrl="";o.specs.specName="";} fl(); };}
     else if(a==="spec-file-choose"){el.onclick=()=>{ const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return; ensureSpecs(o); const k=el.dataset.kind; if(k==="plan"){o.specs.planUrl=el.dataset.url;o.specs.planName=el.dataset.name;}else{o.specs.specUrl=el.dataset.url;o.specs.specName=el.dataset.name;} specFilePicker=null; fl(); };}
+    else if(a==="obj-doc-upload"){
+      const oid=el.dataset.oid, field=el.dataset.field;
+      const inp=document.getElementById("obj-doc-inp-"+oid+"-"+field);
+      if(inp&&!inp._bound){
+        inp._bound=true;
+        inp.addEventListener("change",async function(){
+          const f=(inp.files||[])[0];
+          inp._bound=false;
+          if(!f)return;
+          let url;
+          try{ url=await uploadFileR2(f); }
+          catch(e){ alert("Не удалось загрузить файл: "+((e&&e.message)||e)); return; }
+          const o=templates.find(x=>x.id===oid)||objects.find(x=>x.id===oid);
+          if(!o)return; ensureSpecs(o);
+          o.specs[field+"Url"]=url; o.specs[field+"Name"]=f.name;
+          fl();
+        });
+      }
+    }
+    else if(a==="obj-doc-unlink"){el.onclick=()=>{ const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return; ensureSpecs(o); const field=el.dataset.field; o.specs[field+"Url"]=""; o.specs[field+"Name"]=""; fl(); };}
     else if(a==="spec-room-add"){el.onclick=()=>{
       const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return;
       ensureSpecs(o); const _rid="r"+Math.random().toString(36).slice(2,9); o.specs.rooms=o.specs.rooms.concat([{id:_rid,name:"",floor:"",wall:"",ceil:""}]); specActiveRoom=Object.assign({},specActiveRoom,{[o.id]:_rid}); fl();
