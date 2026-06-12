@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.76";
+const APP_BUILD = "2026-06-12.77";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -7319,7 +7319,7 @@ function tSupplyDetail(sel, sortBy){
           '<span style="font-size:12px;font-weight:700;background:'+sc+';color:#fff;border-radius:6px;padding:2px 10px">'+store+'</span>'+
           '<span style="flex:1"></span>'+
           '<span style="font-size:11px;color:'+sc+';font-weight:600">'+rows.length+' поз. · '+storeCost.toLocaleString("ru-RU")+' ₽</span>'+
-          (store==="Белка"?'<button data-a="supply-tz" data-store="Белка" style="font-size:11px;color:#fff;background:'+sc+';border:none;border-radius:6px;padding:4px 10px;cursor:pointer;font-weight:700;flex-shrink:0">📄 ТЗ (PDF)</button>':'')+
+          (store==="Белка"||store==="pechki.su"?'<button data-a="supply-tz" data-store="'+store.replace(/"/g,"&quot;")+'" style="font-size:11px;color:#fff;background:'+sc+';border:none;border-radius:6px;padding:4px 10px;cursor:pointer;font-weight:700;flex-shrink:0">📄 ТЗ (PDF)</button>':'')+
           (baseUrl?'<a href="'+baseUrl+'" target="_blank" style="font-size:11px;color:#fff;background:'+sc+';border-radius:6px;padding:4px 10px;text-decoration:none;font-weight:600;flex-shrink:0">🛒 Открыть</a>':'')+
         '</div>'+
         '<div style="padding:8px 12px">'+rows.map(mergeRow).join("")+'</div>'+
