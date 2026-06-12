@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.80";
+const APP_BUILD = "2026-06-12.81";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -227,6 +227,8 @@ function applyState(items){
   if (settings && settings.aiProvider === "yandex") settings = Object.assign({}, settings, { aiProvider: "yandexpro" });
   try{ normalizeWorkCosts(); }catch(e){}   // стоимость работ = сумма материалов
   try{ backfillWorkRooms(); }catch(e){}    // комнаты работ из сметы по estId (шаблон → объект)
+  // Имя клиента договора из привязанного CRM-клиента, если поле пустое.
+  try{ (contractDocs||[]).forEach(function(c){ if((!c.client||!String(c.client).trim())&&c.crmClientId){ var cl=crmClients.find(function(x){return x.id===c.crmClientId;}); if(cl&&cl.name)c.client=cl.name; } }); }catch(e){}
 }
 
 // fetch с таймаутом (AbortController): на «подвисшем» соединении (throttle Cloudflare без VPN)
@@ -5060,6 +5062,13 @@ function buildContractFiles(c){
   return html;
 }
 
+// Имя клиента договора: поле client, иначе имя привязанного CRM-клиента.
+function ctClientName(c){
+  if(!c)return "";
+  if(c.client&&String(c.client).trim())return c.client;
+  const cl=crmClients.find(function(x){return x.id===c.crmClientId;});
+  return (cl&&cl.name)||"";
+}
 function tContractDetail(cid){
   const c=contractDocs.find(function(x){return x.id===cid;});
   if(!c)return tContractList();
@@ -5164,7 +5173,7 @@ function tContractDetail(cid){
         '<button data-a="ct-edit-type" data-cid="'+cid+'" data-t="extra" style="flex:1;padding:6px;border-radius:7px;border:none;cursor:pointer;font-size:12px;font-weight:700;background:'+(c.type==="extra"?'#8e44ad':'#f0f4f8')+';color:'+(c.type==="extra"?'#fff':'#7a9aaa')+'">Доп. работы</button>'+
       '</div>'+
       '<input id="ct-edit-name" value="'+String(ed.name||"").replace(/"/g,"&quot;")+'" placeholder="Название / номер" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;margin-bottom:8px;outline:none;box-sizing:border-box">'+
-      (c.status==="draft"?buildClientSelector('ct-edit-client-sel', c.client, 'ct-edit-client-search'):'<div style="margin-bottom:8px"><div style="font-size:9px;color:#7a9aaa;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">КЛИЕНТ</div><div style="font-size:13px;font-weight:600;color:#1a2a3a;padding:8px 10px;background:#f8fafc;border-radius:8px;border:1px solid #e8eef5">'+(c.client||'—')+'</div></div>')+
+      (c.status==="draft"?buildClientSelector('ct-edit-client-sel', c.client, 'ct-edit-client-search'):'<div style="margin-bottom:8px"><div style="font-size:9px;color:#7a9aaa;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">КЛИЕНТ</div><div style="font-size:13px;font-weight:600;color:#1a2a3a;padding:8px 10px;background:#f8fafc;border-radius:8px;border:1px solid #e8eef5">'+(ctClientName(c)||'—')+'</div></div>')+
       '<div style="display:flex;gap:8px;margin-bottom:4px">'+
         '<input id="ct-edit-amount" type="text" inputmode="numeric" data-money="1" value="'+(ed.amount?fmtMoney(ed.amount):'')+'" placeholder="Сумма ₽" style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none">'+
       '</div>'+
@@ -5185,7 +5194,7 @@ function tContractDetail(cid){
     const rows=[
       {label:"Объект", val:obj?obj.icon+" "+obj.name:"—"},
       {label:"Тип",    val:c.type==="main"?"Основной":"Доп. работы"},
-      {label:"Клиент", val:c.client||"—"},
+      {label:"Клиент", val:ctClientName(c)||"—"},
       {label:"Дата",   val:c.signDate||"—"},
     ];
     rows.forEach(function(row){
