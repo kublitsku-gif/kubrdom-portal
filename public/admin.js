@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.77";
+const APP_BUILD = "2026-06-12.78";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -226,6 +226,7 @@ function applyState(items){
   // Старый общий "yandex" → Pro (теперь раздельные Lite/Pro).
   if (settings && settings.aiProvider === "yandex") settings = Object.assign({}, settings, { aiProvider: "yandexpro" });
   try{ normalizeWorkCosts(); }catch(e){}   // стоимость работ = сумма материалов
+  try{ backfillWorkRooms(); }catch(e){}    // комнаты работ из сметы по estId (шаблон → объект)
 }
 
 // fetch с таймаутом (AbortController): на «подвисшем» соединении (throttle Cloudflare без VPN)
@@ -4232,7 +4233,16 @@ function wMatTotal(w){ return (w&&w.mats||[]).reduce(function(a,m){return a+(Num
 function _tplEstWork(e){
   var mats=(e.lines||[]).map(function(l){var p=estProd(l.pid)||{};return {id:gid(), n:p.name||"", store:p.store||"", url:p.url||"", note:"", cost:Number(p.unitCost)||0, qty:Number(l.qty)||1, mode:p.mode||"piece", unitCost:Number(p.unitCost)||0, packBase:p.packBase, packPer:p.packPer, lenPer:p.lenPer, sheetM2:p.sheetM2};});
   var matSum=mats.reduce(function(a,m){return a+(Number(m.cost)||0)*(m.qty||0);},0);
-  return {id:gid(), estId:e.id, n:e.name, cost:matSum, labor:0, note:"", mats:mats};
+  return {id:gid(), estId:e.id, n:e.name, room:(e.room||""), cost:matSum, labor:0, note:"", mats:mats};
+}
+// Восстановить комнату работ (templates+objects) из сметы по estId — чтобы группировка
+// по помещениям в объекте совпадала с шаблоном (шаблон — источник правды).
+function backfillWorkRooms(){
+  const byEst={}; (estimates||[]).forEach(function(e){ if(e&&e.id)byEst[e.id]=e; });
+  function fix(list){ (list||[]).forEach(function(o){ (o.stages||[]).forEach(function(s){ (s.works||[]).forEach(function(w){
+    if(w&&w.estId&&(w.room==null||w.room==="")){ const e=byEst[w.estId]; if(e&&e.room)w.room=e.room; }
+  }); }); }); }
+  fix(templates); fix(objects);
 }
 // Миграция: стоимость каждой работы = сумма материалов (убираем устаревший скрытый ФОТ).
 function normalizeWorkCosts(){
