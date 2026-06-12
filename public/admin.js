@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.68";
+const APP_BUILD = "2026-06-12.69";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1400,6 +1400,8 @@ function lenSelectOptions(cur){
 }
 let specSel={};          // {roomId:true} — выделенные помещения для суммы «Выбрано»
 let specActiveRoom={};   // {oid: roomId} — активная вкладка-помещение
+let specsCollapsed={};   // {oid:true} — свёрнут ли блок характеристик
+let tplWorkSearch="";    // поиск по работам и материалам в сборщике смет
 function specRoomCalc(r,H){
   const h=Number(H)||0;
   const floor=(r.w!=null&&r.w!=="")||(r.l!=null&&r.l!=="") ? Math.round((Number(r.w)||0)*(Number(r.l)||0)*100)/100 : (Number(r.floor)||0);
@@ -1480,14 +1482,25 @@ function specsEditorHtml(o){
   const actIdx=rooms.findIndex(function(r){return r.id===actId;});
   const fld=function(id,oi,i,f,val,ph){return '<input id="'+id+'" data-a="spec-room-field" data-oid="'+oi+'" data-i="'+i+'" data-f="'+f+'" value="'+(val===0||val?val:"")+'" type="number" step="any" inputmode="decimal" placeholder="'+(ph||"")+'" style="width:100%;padding:8px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:14px;outline:none;box-sizing:border-box;text-align:right">';};
 
+  const _collapsed=!!specsCollapsed[o.id];
   let h='<div style="background:#fff;border-radius:12px;border:1px solid #16a08544;padding:12px 14px;margin-bottom:14px">';
-  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'+
-       '<div style="font-size:11px;font-weight:700;color:#16a085;letter-spacing:0.5px">📐 ХАРАКТЕРИСТИКИ ОБЪЕКТА</div>'+
-       '<div style="display:flex;gap:5px">'+
+  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:'+(_collapsed?'0':'10px')+'">'+
+       '<div data-a="specs-collapse" data-oid="'+o.id+'" style="font-size:11px;font-weight:700;color:#16a085;letter-spacing:0.5px;cursor:pointer;display:flex;align-items:center;gap:6px;flex:1">'+(_collapsed?'▸':'▾')+' 📐 ХАРАКТЕРИСТИКИ ОБЪЕКТА</div>'+
+       (_collapsed?'':'<div style="display:flex;gap:5px">'+
          (templates.some(function(x){return x.id!==o.id&&x.specs&&(x.specs.rooms||[]).length;})?'<button data-a="spec-copy-open" data-oid="'+o.id+'" style="padding:4px 10px;background:#fff;border:1px solid #16a08555;border-radius:7px;cursor:pointer;color:#16a085;font-size:11px;font-weight:700">📋 Из шаблона</button>':'')+
          '<button data-a="spec-room-add" data-oid="'+o.id+'" style="padding:4px 11px;background:#16a085;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">+ Помещение</button>'+
-       '</div>'+
+       '</div>')+
      '</div>';
+  if(_collapsed){
+    h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid #eef2f7">'+
+      '<div style="text-align:center"><div style="font-size:9px;color:#9aabbf">ПОЛ</div><div style="font-size:12px;font-weight:700;color:#16a085">'+T.floor.toLocaleString("ru-RU")+' м²</div></div>'+
+      '<div style="text-align:center"><div style="font-size:9px;color:#9aabbf">СТЕНЫ</div><div style="font-size:12px;font-weight:700;color:#16a085">'+T.wall.toLocaleString("ru-RU")+' м²</div></div>'+
+      '<div style="text-align:center"><div style="font-size:9px;color:#9aabbf">ПОТОЛОК</div><div style="font-size:12px;font-weight:700;color:#16a085">'+T.ceil.toLocaleString("ru-RU")+' м²</div></div>'+
+      '<div style="text-align:center"><div style="font-size:9px;color:#9aabbf">ОБЪЁМ</div><div style="font-size:12px;font-weight:700;color:#16a085">'+T.vol.toLocaleString("ru-RU")+' м³</div></div>'+
+    '</div>';
+    h+='</div>';
+    return h;
+  }
   // Общая высота потолка
   h+='<div style="display:flex;align-items:center;gap:10px;background:#f4faf8;border:1px solid #16a08533;border-radius:9px;padding:8px 11px;margin-bottom:12px">'+
        '<span style="font-size:11px;font-weight:700;color:#1a2a3a;flex:1">📏 Высота потолка (общая)</span>'+
@@ -3783,7 +3796,15 @@ function tTemplates(){
     const grand=allW.reduce((a,w)=>a+wMatTotal(w),0);
     const tKind=t.kind||"banya";
     const _hidden=t.hiddenEst||[];
-    const _est=estimates.filter(e=>(e.kind||"banya")===tKind).filter(e=>_hidden.indexOf(e.id)<0);
+    const _q=(tplWorkSearch||"").trim().toLowerCase();
+    const _matchEst=function(e){
+      if(!_q)return true;
+      if((e.name||"").toLowerCase().indexOf(_q)>=0)return true;
+      const sw=selWorks[e.id];
+      if(sw&&(sw.mats||[]).some(function(m){return (m.n||"").toLowerCase().indexOf(_q)>=0;}))return true;
+      return (e.lines||[]).some(function(l){ const p=expProducts.find(function(x){return x.id===l.pid;}); return p&&(p.name||"").toLowerCase().indexOf(_q)>=0; });
+    };
+    const _est=estimates.filter(e=>(e.kind||"banya")===tKind).filter(e=>_hidden.indexOf(e.id)<0).filter(_matchEst);
     const groups=EST_STAGES.map(st=>({st:st,items:_est.filter(e=>Number(e.stage)===st.n)}));
     const noStage=_est.filter(e=>!EST_STAGES.find(x=>x.n===Number(e.stage)));
     if(noStage.length)groups.push({st:null,items:noStage});
@@ -3805,8 +3826,14 @@ function tTemplates(){
 </div>
 ${specsEditorHtml(t)}
 <div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">СОБРАТЬ ИЗ СМЕТ (${tKind==="house"?"🏠 дом":"🛁 баня"}) — отметьте работы галочками</div>
+<div style="position:relative;margin-bottom:8px">
+  <input id="tpl-work-search" data-a="tpl-work-search" value="${(tplWorkSearch||'').replace(/"/g,'&quot;')}" placeholder="🔍 Поиск по работам и материалам…" style="width:100%;padding:9px 32px 9px 12px;border-radius:10px;border:1.5px solid #dde6f0;font-size:13px;outline:none;box-sizing:border-box">
+  ${tplWorkSearch?`<button data-a="tpl-work-search-clear" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:22px;height:22px;border:none;background:#eef2f7;border-radius:50%;cursor:pointer;color:#7a9aaa;font-size:12px">✕</button>`:''}
+</div>
+${_q&&!groups.some(g=>g.items.length)?`<div style="text-align:center;color:#9aabbf;font-size:12px;padding:18px;background:#fff;border:1px dashed #d0dae8;border-radius:10px;margin-bottom:10px">Ничего не найдено по «${esc(tplWorkSearch)}»</div>`:''}
 ${_hidden.length?`<button data-a="tpl-est-unhide" style="margin-bottom:8px;padding:5px 11px;background:#fff;border:1px dashed #7a9aaa;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:11px;font-weight:700">↩︎ Показать скрытые (${_hidden.length})</button>`:""}
 ${groups.map(g=>{
+  if(_q&&!g.items.length)return "";
   const stN=g.st?g.st.n:0;
   const color=g.st?g.st.color:"#7a9aaa";
   const title=g.st?(g.st.short+" · "+g.st.label):"Без этапа";
@@ -8878,6 +8905,7 @@ function bind(){
       }
     }
     else if(a==="obj-doc-unlink"){el.onclick=()=>{ const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return; ensureSpecs(o); const field=el.dataset.field; o.specs[field+"Url"]=""; o.specs[field+"Name"]=""; fl(); };}
+    else if(a==="specs-collapse"){el.onclick=()=>{ const oid=el.dataset.oid; specsCollapsed=Object.assign({},specsCollapsed,{[oid]:!specsCollapsed[oid]}); render(); };}
     else if(a==="spec-room-add"){el.onclick=()=>{
       const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return;
       ensureSpecs(o); const _rid="r"+Math.random().toString(36).slice(2,9); o.specs.rooms=o.specs.rooms.concat([{id:_rid,name:"",floor:"",wall:"",ceil:""}]); specActiveRoom=Object.assign({},specActiveRoom,{[o.id]:_rid}); fl();
@@ -9006,6 +9034,8 @@ function bind(){
       t.stages=(t.stages||[]).map(s=>Object.assign({},s,{works:(s.works||[]).filter(w=>w.estId!==eid)}));
       fl();
     };}
+    else if(a==="tpl-work-search"){el.oninput=()=>{ tplWorkSearch=el.value; render(); };}
+    else if(a==="tpl-work-search-clear"){el.onclick=()=>{ tplWorkSearch=""; render(); };}
     else if(a==="tpl-est-unhide"){el.onclick=()=>{ const t=templates.find(x=>x.id===openTemplate); if(t)t.hiddenEst=[]; fl(); };}
     else if(a==="tpl-est-stage"){el.onclick=()=>{
       const t=templates.find(x=>x.id===openTemplate);if(!t)return;
