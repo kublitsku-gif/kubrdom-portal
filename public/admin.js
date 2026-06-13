@@ -1441,6 +1441,7 @@ let kpTemplateId="";     // КП: выбранный шаблон
 let kpMarkup=30;         // КП: наценка, %
 let kpClient="";         // КП: имя клиента
 let kpObjName="";        // КП: название объекта/предмета
+let kpExpanded={};       // КП: {templateId:true} — раскрытые карточки шаблонов
 function specRoomCalc(r,H){
   const h=Number(H)||0;
   const floor=(r.w!=null&&r.w!=="")||(r.l!=null&&r.l!=="") ? Math.round((Number(r.w)||0)*(Number(r.l)||0)*100)/100 : (Number(r.floor)||0);
@@ -5560,48 +5561,107 @@ function tContractDetail(cid){
   return html;
 }
 
-// ── КП · Калькулятор (шаблон + наценка → цена клиенту) ──────────────
-function kpTplCost(t){ return (t&&t.stages||[]).flatMap(function(s){return s.works||[];}).reduce(function(a,w){return a+(Number(w.cost)||0);},0); }
-function kpStages(t){ // [{name,color,cost}]
-  return (t&&t.stages||[]).map(function(s){ return {name:s.n||"Этап", color:s.c||"#7a9aaa", cost:(s.works||[]).reduce(function(a,w){return a+(Number(w.cost)||0);},0)}; }).filter(function(s){return s.cost>0;});
+// ── КП · Калькулятор (шаблоны + наценка → цена клиенту) ──────────────
+// Себестоимость работы для КП — w.cost (как и раньше). Наценка СВОЯ у каждой работы
+// (w.markup, %); если своей нет — берётся общая kpMarkup. Этап и весь КП — производные:
+// эффективная наценка = (цена − себестоимость) / себестоимость.
+function kpWorkCost(w){ return Number(w&&w.cost)||0; }
+function kpWorkMarkup(w){ return (w&&w.markup!=null&&w.markup!=="")?(Number(w.markup)||0):(Number(kpMarkup)||0); }
+function kpWorkPrice(w){ return Math.round(kpWorkCost(w)*(1+kpWorkMarkup(w)/100)); }
+function kpWorkKey(w){ return (w&&(w.estId||w.id))||""; }
+function kpWorkName(w){ return (w&&(w.n||w.name))||"Работа"; }
+function kpEffMarkup(cost,price){ return cost>0?Math.round((price-cost)/cost*100):0; }
+function kpFindWork(t,wkey){ return (t&&t.stages||[]).flatMap(function(s){return s.works||[];}).find(function(w){return kpWorkKey(w)===wkey;})||null; }
+function kpTplCost(t){ return (t&&t.stages||[]).flatMap(function(s){return s.works||[];}).reduce(function(a,w){return a+kpWorkCost(w);},0); }
+function kpTplPrice(t){ return (t&&t.stages||[]).flatMap(function(s){return s.works||[];}).reduce(function(a,w){return a+kpWorkPrice(w);},0); }
+function kpStages(t){ // [{name,color,cost,price,works}]
+  return (t&&t.stages||[]).map(function(s){ var works=(s.works||[]);
+    return {name:s.n||"Этап", color:s.c||"#7a9aaa",
+      cost:works.reduce(function(a,w){return a+kpWorkCost(w);},0),
+      price:works.reduce(function(a,w){return a+kpWorkPrice(w);},0),
+      works:works}; }).filter(function(s){return s.works.length>0;});
 }
 function tKP(){
   const RUk=function(n){return Math.round(n).toLocaleString("ru-RU")+" ₽";};
   const t=templates.find(function(x){return x.id===kpTemplateId;});
-  const markup=Number(kpMarkup)||0;
   let html='<div>';
   html+='<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">📋 КП · КАЛЬКУЛЯТОР</div>';
-  html+='<div style="font-size:12px;color:#5a7a9a;margin-bottom:14px">Выберите шаблон, задайте наценку — получите цену клиенту и КП на печать.</div>';
-  // Выбор шаблона
-  html+='<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:6px">ШАБЛОН</div>';
-  html+='<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px">';
-  templates.forEach(function(t2){ const c2=kpTplCost(t2); const sel=t2.id===kpTemplateId;
-    html+='<div data-a="kp-pick" data-tid="'+t2.id+'" style="display:flex;align-items:center;gap:10px;padding:11px 13px;border-radius:11px;cursor:pointer;border:2px solid '+(sel?"#8e44ad":"#dde6f0")+';background:'+(sel?"#f6f0fb":"#fff")+'">'+
-      '<span style="font-size:22px">'+(t2.icon||"📋")+'</span>'+
-      '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700;color:#1a2a3a">'+esc(t2.name||"Шаблон")+'</div>'+
-        '<div style="font-size:11px;color:#7a9aaa">'+( (t2.stages||[]).flatMap(function(s){return s.works||[];}).length )+' работ · себестоимость '+RUk(c2)+'</div></div>'+
-      (sel?'<span style="font-size:14px;color:#8e44ad;font-weight:700">✓</span>':'')+
+  html+='<div style="font-size:12px;color:#5a7a9a;margin-bottom:14px">Нажмите на карточку — раскроются все работы с ценами. У каждой работы задайте свою наценку. Кружком слева выберите шаблон для КП.</div>';
+  if(!templates.length){
+    html+='<div style="text-align:center;color:#9aabbf;font-size:12px;padding:18px;border:1px dashed #d0dae8;border-radius:10px">Нет шаблонов. Создайте шаблон во вкладке «Шаблоны».</div></div>';
+    return html;
+  }
+  // ── Карточки шаблонов (как в «Объектах», раскрываемые: этапы → работы с ценами) ──
+  html+='<div style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px">';
+  templates.forEach(function(t2){
+    const sel=t2.id===kpTemplateId, exp=!!kpExpanded[t2.id];
+    const allW=(t2.stages||[]).flatMap(function(s){return s.works||[];});
+    const c2=kpTplCost(t2), p2=kpTplPrice(t2), e2=kpEffMarkup(c2,p2);
+    html+='<div style="background:#fff;border-radius:14px;border:2px solid '+(sel?"#8e44ad":"#dde6f0")+';overflow:hidden">';
+    // Заголовок карточки: кружок-выбор + (клик = раскрыть) иконка/название/итоги + шеврон
+    html+='<div style="display:flex;align-items:center;gap:10px;padding:11px 13px;'+(sel?"background:#f6f0fb":"")+'">'+
+      '<div data-a="kp-pick" data-tid="'+t2.id+'" title="Выбрать шаблон для КП" style="width:22px;height:22px;border-radius:50%;border:2px solid '+(sel?"#8e44ad":"#cdd8e6")+';background:'+(sel?"#8e44ad":"#fff")+';display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:800;flex-shrink:0;cursor:pointer">'+(sel?"✓":"")+'</div>'+
+      '<div data-a="kp-expand" data-tid="'+t2.id+'" style="flex:1;min-width:0;cursor:pointer;display:flex;align-items:center;gap:10px">'+
+        '<span style="font-size:22px;flex-shrink:0">'+(t2.icon||"📋")+'</span>'+
+        '<div style="flex:1;min-width:0">'+
+          '<div style="font-size:14px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(t2.name||"Шаблон")+'</div>'+
+          '<div style="font-size:11px;color:#7a9aaa">'+allW.length+' работ · себест. '+RUk(c2)+' · <span style="color:#8e44ad;font-weight:700">клиенту '+RUk(p2)+'</span></div>'+
+        '</div>'+
+        '<span style="font-size:13px;color:#9aabbf;flex-shrink:0">'+(exp?"▾":"▸")+'</span>'+
+      '</div>'+
     '</div>';
+    // Тело: этапы → работы
+    if(exp){
+      const stages=kpStages(t2);
+      if(!stages.length){ html+='<div style="padding:10px 14px;color:#bbb;font-size:12px;border-top:1px solid #f0f4f8">В шаблоне нет работ.</div>'; }
+      stages.forEach(function(s){ const seff=kpEffMarkup(s.cost,s.price);
+        html+='<div style="border-top:1px solid #f0f4f8">';
+        html+='<div style="display:flex;align-items:center;gap:8px;padding:9px 13px;background:'+s.color+'0d">'+
+          '<div style="width:8px;height:8px;border-radius:50%;background:'+s.color+';flex-shrink:0"></div>'+
+          '<span style="flex:1;min-width:0;font-size:12px;font-weight:800;color:'+s.color+';letter-spacing:0.3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.name).toUpperCase()+'</span>'+
+          '<span style="font-size:10px;color:#9aabbf;white-space:nowrap">себест. '+RUk(s.cost)+'</span>'+
+          '<span style="font-size:10px;color:#16a085;font-weight:700;white-space:nowrap">+'+seff+'%</span>'+
+          '<span style="font-size:13px;font-weight:800;color:#8e44ad;white-space:nowrap;min-width:78px;text-align:right">'+RUk(s.price)+'</span>'+
+        '</div>';
+        s.works.forEach(function(w){
+          const wkey=kpWorkKey(w), wc=kpWorkCost(w), wmk=kpWorkMarkup(w), wp=kpWorkPrice(w);
+          const over=(w.markup!=null&&w.markup!=="");
+          html+='<div style="display:flex;align-items:center;gap:8px;padding:8px 13px 8px 24px;border-top:1px solid #f6f8fb">'+
+            '<div style="flex:1;min-width:0"><div style="font-size:12.5px;color:#1a2a3a;line-height:1.25">'+esc(kpWorkName(w))+'</div>'+
+              '<div style="font-size:10px;color:#9aabbf;margin-top:1px">себест. '+RUk(wc)+'</div></div>'+
+            '<div style="display:flex;align-items:center;gap:3px;flex-shrink:0">'+
+              '<input id="kpwm-'+t2.id+'-'+wkey+'" data-a="kp-wmarkup" data-tid="'+t2.id+'" data-wid="'+wkey+'" value="'+wmk+'" type="number" step="any" inputmode="decimal" title="Наценка на эту работу, %" style="width:52px;padding:5px 4px;border-radius:6px;border:1.5px solid '+(over?"#8e44ad":"#d0dae8")+';font-size:12px;font-weight:700;text-align:center;outline:none;color:'+(over?"#8e44ad":"#5a7a9a")+'">'+
+              '<span style="font-size:11px;color:#9aabbf">%</span>'+
+            '</div>'+
+            '<span style="font-size:13px;font-weight:700;color:#0d1b2e;white-space:nowrap;min-width:78px;text-align:right">'+RUk(wp)+'</span>'+
+          '</div>';
+        });
+        html+='</div>';
+      });
+    }
+    html+='</div>';
   });
   html+='</div>';
-  if(!t){ html+='<div style="text-align:center;color:#9aabbf;font-size:12px;padding:18px;border:1px dashed #d0dae8;border-radius:10px">Выберите шаблон выше.</div></div>'; return html; }
-  const cost=kpTplCost(t);
-  const price=Math.round(cost*(1+markup/100));
+  if(!t){ html+='<div style="text-align:center;color:#9aabbf;font-size:12px;padding:16px;border:1px dashed #d0dae8;border-radius:10px">Выберите шаблон (кружок слева), чтобы сформировать КП.</div></div>'; return html; }
+  const cost=kpTplCost(t), price=kpTplPrice(t);
   const profit=price-cost, margin=price>0?Math.round(profit/price*100):0;
-  // Наценка + поля клиента
+  const markup=Number(kpMarkup)||0;
+  // Наценка по умолчанию + поля клиента (для выбранного шаблона)
   html+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:12px 14px;margin-bottom:12px">'+
-    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'+
-      '<span style="font-size:12px;font-weight:700;color:#1a2a3a;flex:1">Наценка</span>'+
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">'+
+      '<span style="font-size:12px;font-weight:700;color:#1a2a3a;flex:1">Наценка по умолчанию</span>'+
       '<input id="kp-markup" data-a="kp-markup" value="'+markup+'" type="number" step="any" inputmode="decimal" style="width:80px;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:14px;font-weight:700;text-align:right;outline:none">'+
       '<span style="font-size:13px;color:#7a9aaa">%</span>'+
     '</div>'+
+    '<div style="font-size:10px;color:#9aabbf;margin-bottom:8px">Применяется к работам без своей наценки. У каждой работы можно задать свою выше.</div>'+
     '<div style="display:flex;gap:6px">'+[20,30,40,50].map(function(p){return '<button data-a="kp-markup-q" data-p="'+p+'" style="flex:1;padding:6px;border-radius:7px;border:1.5px solid '+(markup===p?"#8e44ad":"#dde6f0")+';background:'+(markup===p?"#8e44ad":"#fff")+';color:'+(markup===p?"#fff":"#7a9aaa")+';font-size:12px;font-weight:700;cursor:pointer">'+p+'%</button>';}).join("")+'</div>'+
+    '<button data-a="kp-markup-all" data-tid="'+t.id+'" style="width:100%;margin-top:8px;padding:7px;border-radius:8px;border:1px dashed #8e44ad55;background:#faf6fd;color:#8e44ad;font-size:11px;font-weight:700;cursor:pointer">↧ Поставить '+markup+'% всем работам «'+esc(t.name||"шаблона")+'» (сбросить свои)</button>'+
     '<input id="kp-client" data-a="kp-field" data-f="client" value="'+esc(kpClient).replace(/"/g,"&quot;")+'" placeholder="Клиент (ФИО) — для КП" style="width:100%;margin-top:8px;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box">'+
     '<input id="kp-objname" data-a="kp-field" data-f="objname" value="'+esc(kpObjName||t.name).replace(/"/g,"&quot;")+'" placeholder="Объект/предмет (напр. Баня 6 м)" style="width:100%;margin-top:6px;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box">'+
   '</div>';
   // Результат
   html+='<div style="background:linear-gradient(135deg,#6d3b8e,#4a2562);border-radius:14px;padding:16px;color:#fff;margin-bottom:12px">'+
-    '<div style="font-size:11px;color:#e6d6f2;font-weight:700;letter-spacing:0.5px;margin-bottom:6px">ЦЕНА КЛИЕНТУ</div>'+
+    '<div style="font-size:11px;color:#e6d6f2;font-weight:700;letter-spacing:0.5px;margin-bottom:6px">ЦЕНА КЛИЕНТУ · '+esc(t.name||"")+'</div>'+
     '<div style="font-size:28px;font-weight:800;line-height:1.05;margin-bottom:10px">'+RUk(price)+'</div>'+
     '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font-size:11px;color:#e6d6f2">'+
       '<div>себестоимость<div style="font-size:14px;color:#fff;font-weight:700">'+RUk(cost)+'</div></div>'+
@@ -5609,14 +5669,15 @@ function tKP(){
       '<div>маржа<div style="font-size:14px;color:#fff;font-weight:700">'+margin+'%</div></div>'+
     '</div>'+
   '</div>';
-  // Этапы (цена клиенту = себестоимость этапа × наценка)
+  // Этапы (цена клиенту = сумма работ этапа с их наценками)
   const stages=kpStages(t);
   html+='<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:6px">ПО ЭТАПАМ (цена клиенту)</div>';
-  stages.forEach(function(s){ const sp=Math.round(s.cost*(1+markup/100));
+  stages.forEach(function(s){ const seff=kpEffMarkup(s.cost,s.price);
     html+='<div style="display:flex;align-items:center;gap:8px;background:#fff;border:1px solid '+s.color+'33;border-radius:10px;padding:10px 12px;margin-bottom:6px">'+
       '<div style="width:8px;height:8px;border-radius:50%;background:'+s.color+'"></div>'+
-      '<span style="flex:1;font-size:12px;font-weight:600;color:#1a2a3a">'+esc(s.name)+'</span>'+
-      '<span style="font-size:13px;font-weight:700;color:#0d1b2e">'+RUk(sp)+'</span>'+
+      '<span style="flex:1;min-width:0;font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.name)+'</span>'+
+      '<span style="font-size:10px;color:#16a085;font-weight:700;white-space:nowrap">+'+seff+'%</span>'+
+      '<span style="font-size:13px;font-weight:700;color:#0d1b2e;white-space:nowrap;min-width:78px;text-align:right">'+RUk(s.price)+'</span>'+
     '</div>';
   });
   html+='<button data-a="kp-build" style="width:100%;margin-top:10px;padding:12px;background:#8e44ad;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">📄 Сформировать КП (PDF)</button>';
@@ -5625,21 +5686,29 @@ function tKP(){
 function buildKP(){
   const t=templates.find(function(x){return x.id===kpTemplateId;});
   if(!t){ alert("Выберите шаблон."); return; }
-  const markup=Number(kpMarkup)||0;
-  const cost=kpTplCost(t), price=Math.round(cost*(1+markup/100));
+  const price=kpTplPrice(t);
   const stages=kpStages(t);
   const RUk=function(n){return Math.round(n).toLocaleString("ru-RU")+" ₽";};
   const d=new Date(); const ds=String(d.getDate()).padStart(2,"0")+"."+String(d.getMonth()+1).padStart(2,"0")+"."+d.getFullYear();
   const kpNo=String(d.getDate()).padStart(2,"0")+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getFullYear()).slice(2);
-  const body=stages.map(function(s,i){ const sp=Math.round(s.cost*(1+markup/100)); return '<tr><td class="c">'+(i+1)+'</td><td>'+esc(s.name)+'</td><td class="r">'+RUk(sp)+'</td></tr>'; }).join("");
+  // Расписываем все работы по этапам: клиенту показываем цену работы (с наценкой), без себестоимости.
+  let rowNo=0;
+  const body=stages.map(function(s){
+    const head='<tr><td class="sh" colspan="3">'+esc(s.name).toUpperCase()+'</td></tr>';
+    const rows=s.works.map(function(w){ rowNo++; return '<tr><td class="c">'+rowNo+'</td><td>'+esc(kpWorkName(w))+'</td><td class="r">'+RUk(kpWorkPrice(w))+'</td></tr>'; }).join("");
+    const sub='<tr class="subr"><td></td><td class="sub">Итого по этапу «'+esc(s.name)+'»</td><td class="r sub">'+RUk(s.price)+'</td></tr>';
+    return head+rows+sub;
+  }).join("");
   const html='<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>КП '+esc(kpObjName||t.name)+'</title><style>'+
     'body{font-family:-apple-system,Segoe UI,Arial,sans-serif;padding:28px;color:#1a2a3a;max-width:780px;margin:0 auto}'+
     'h1{font-size:22px;margin:0 0 4px}.sub{font-size:13px;color:#555;margin:2px 0}'+
     '.box{background:#f6f0fb;border:1px solid #d9c4ea;border-radius:10px;padding:14px 16px;margin:16px 0}'+
     '.price{font-size:26px;font-weight:800;color:#6d3b8e}'+
-    'table{width:100%;border-collapse:collapse;margin-top:14px;font-size:14px}'+
-    'th,td{border:1px solid #d9c4ea;padding:9px 11px;text-align:left}th{background:#f6f0fb}'+
+    'table{width:100%;border-collapse:collapse;margin-top:14px;font-size:13px}'+
+    'th,td{border:1px solid #d9c4ea;padding:8px 11px;text-align:left;vertical-align:top}th{background:#f6f0fb}'+
     '.r{text-align:right;white-space:nowrap}.c{text-align:center;color:#999;width:36px}'+
+    '.sh{background:#efe2f7;font-weight:800;color:#6d3b8e;font-size:12px;letter-spacing:0.3px}'+
+    '.subr td{background:#faf6fd}.sub{font-weight:700;color:#6d3b8e}'+
     '.tot{font-size:18px;font-weight:800;text-align:right;margin-top:10px}'+
     '.btn{margin:14px 0;padding:10px 18px;background:#8e44ad;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer}'+
     '.foot{margin-top:24px;font-size:12px;color:#777;line-height:1.6}@media print{.btn{display:none}body{padding:0}}'+
@@ -5650,9 +5719,9 @@ function buildKP(){
     '<div class="sub">Объект: '+esc(kpObjName||t.name)+'</div>'+
     '<div class="box"><div style="font-size:12px;color:#6d3b8e;font-weight:700">СТОИМОСТЬ ПОД КЛЮЧ</div><div class="price">'+RUk(price)+'</div></div>'+
     '<button class="btn" onclick="window.print()">🖨 Печать / Сохранить в PDF</button>'+
-    '<table><thead><tr><th>№</th><th>Этап работ</th><th>Стоимость</th></tr></thead><tbody>'+body+'</tbody></table>'+
+    '<table><thead><tr><th>№</th><th>Наименование работ</th><th>Стоимость</th></tr></thead><tbody>'+body+'</tbody></table>'+
     '<div class="tot">Итого: '+RUk(price)+'</div>'+
-    '<div class="foot">В стоимость входят работы и материалы по указанным этапам. Срок и гарантия — по договору подряда.<br>Предложение носит предварительный характер.</div>'+
+    '<div class="foot">В стоимость входят работы и материалы по указанным позициям. Срок и гарантия — по договору подряда.<br>Предложение носит предварительный характер.</div>'+
     '</body></html>';
   const w=window.open("","_blank");
   if(!w){ alert("Разрешите всплывающие окна, чтобы сформировать КП (PDF)."); return; }
@@ -9496,7 +9565,21 @@ function bind(){
       render();
     };}
     else if(a==="fin-clear-selection"){el.onclick=()=>{finSelectedContractIds=[];render();};}
-    else if(a==="kp-pick"){el.onclick=()=>{ kpTemplateId=el.dataset.tid; render(); };}
+    else if(a==="kp-pick"){el.onclick=()=>{ const id=el.dataset.tid; kpTemplateId=id; kpExpanded=Object.assign({},kpExpanded,{[id]:true}); render(); };}
+    else if(a==="kp-expand"){el.onclick=()=>{ const id=el.dataset.tid; kpExpanded=Object.assign({},kpExpanded,{[id]:!kpExpanded[id]}); render(); };}
+    else if(a==="kp-wmarkup"){el.onchange=()=>{
+      const t=templates.find(x=>x.id===el.dataset.tid); if(!t)return;
+      const w=kpFindWork(t, el.dataset.wid); if(!w)return;
+      const v=(el.value||"").replace(",",".").trim();
+      w.markup=(v===""?null:Math.max(0,parseFloat(v)||0));   // пусто → следовать общей наценке
+      fl();
+    };}
+    else if(a==="kp-markup-all"){el.onclick=()=>{
+      const t=templates.find(x=>x.id===el.dataset.tid); if(!t)return;
+      const mk=Number(kpMarkup)||0;
+      (t.stages||[]).forEach(s=>(s.works||[]).forEach(w=>{ w.markup=mk; }));
+      fl();
+    };}
     else if(a==="kp-markup"){el.oninput=()=>{ kpMarkup=parseFloat((el.value||"").replace(",","."))||0; render(); };}
     else if(a==="kp-markup-q"){el.onclick=()=>{ kpMarkup=Number(el.dataset.p)||0; render(); };}
     else if(a==="kp-field"){el.oninput=()=>{ const f=el.dataset.f; if(f==="client")kpClient=el.value; else if(f==="objname")kpObjName=el.value; };}
