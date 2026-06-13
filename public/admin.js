@@ -812,6 +812,7 @@ const TAB_DEFS=[
   {k:"team",      n:"👥 Команда"},
   {k:"marketing", n:"📣 Маркетинг"},
   {k:"kp",        n:"📋 КП"},
+  {k:"voiceai",   n:"🎙 Голосовой ИИ"},
 ];
 // rolePermissions[roleId] = массив ключей вкладок, которые открывает роль.
 // Админ НЕ входит сюда — он всегда видит все вкладки (зафиксировано).
@@ -1442,6 +1443,26 @@ let kpMarkup=30;         // КП: наценка, %
 let kpClient="";         // КП: имя клиента
 let kpObjName="";        // КП: название объекта/предмета
 let kpExpanded={};       // КП: {templateId:true} — раскрытые карточки шаблонов
+// ── Голосовой ИИ (обзвон лидов) ──
+let voiceSel={};         // {leadId:true} — выбранные лиды для очереди обзвона
+let voiceStageFilter="new"; // фильтр очереди по этапу CRM
+let voiceCalling={};     // {leadId:true} — звонок в процессе (блокирует кнопку)
+const VOICE_VOICES=[
+  {k:"alena", n:"Алёна (ж)", note:"нейро"},
+  {k:"jane",  n:"Джейн (ж)", note:""},
+  {k:"omazh", n:"Омаж (ж)",  note:""},
+  {k:"filipp",n:"Филипп (м)",note:""},
+  {k:"ermil", n:"Ермил (м)", note:""}
+];
+const VOICE_GOALS=[
+  "Записать на просмотр объекта",
+  "Квалифицировать лид (объект, участок, бюджет)",
+  "Напомнить о встрече / просмотре",
+  "Реактивировать (давно не отвечал)"
+];
+const VOICE_DEFAULT_PROMPT="Ты — голосовой ассистент компании КубрДом. Звонишь клиенту, который оставил заявку на баню или дом из контейнера.\n\nЦЕЛЬ ЗВОНКА: записать клиента на просмотр объекта на производстве.\n\nКАК ГОВОРИТЬ:\n- Коротко, по-человечески, дружелюбно. Одна мысль — одна короткая фраза (так звучит живее).\n- Не перебивай; если клиент заговорил — замолкни и слушай.\n- Не называй точную цену без расчёта — предложи приехать и всё увидеть.\n\nСЦЕНАРИЙ:\n1. Поздоровайся, представься: «Здравствуйте, это КубрДом, по вашей заявке на баню. Удобно сейчас говорить?»\n2. Уточни запрос: какой объект (баня/дом, размер), есть ли участок, ориентир по срокам.\n3. Веди к просмотру: «Лучший способ убедиться в качестве — приехать на производство и всё посмотреть. Когда вам удобно — на этой неделе или на следующей?»\n4. Зафиксируй дату и время просмотра.\n5. Поблагодари и попрощайся.\n\nЕсли клиент отказывается — вежливо предложи перезвонить позже и попрощайся.";
+function vaCfg(){ const d={enabled:false,goal:VOICE_GOALS[0],voice:"alena",model:"yandexgpt-lite",maxTokens:120,prompt:VOICE_DEFAULT_PROMPT,calls:[]}; return Object.assign({},d,(settings&&settings.voiceAi)||{}); }
+function vaSet(patch){ settings=Object.assign({},settings,{voiceAi:Object.assign({},vaCfg(),patch)}); fl(); }
 function specRoomCalc(r,H){
   const h=Number(H)||0;
   const floor=(r.w!=null&&r.w!=="")||(r.l!=null&&r.l!=="") ? Math.round((Number(r.w)||0)*(Number(r.l)||0)*100)/100 : (Number(r.floor)||0);
@@ -2987,7 +3008,7 @@ ${showPinChange?`<div style="background:#fff;border-bottom:1px solid #eef2f7;pad
   ${TABS.length>4?`<div style="font-size:9px;color:#9aabbf;text-align:center;margin-top:4px;letter-spacing:0.5px">← смахни для других вкладок →</div>`:""}
 </div>
 <div style="padding:14px">
-  ${tab==="assign"?tObjects():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tab==="kp"?tKP():tCRM()}
+  ${tab==="assign"?tObjects():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tab==="kp"?tKP():tab==="voiceai"?tVoiceAi():tCRM()}
 </div>
 <div id="save-toast" style="position:fixed;bottom:24px;right:24px;background:#27ae60;color:#fff;border-radius:12px;padding:10px 18px;font-size:13px;font-weight:700;box-shadow:0 4px 16px rgba(39,174,96,0.35);opacity:0;transform:translateY(8px);transition:opacity 0.2s,transform 0.2s;pointer-events:none;z-index:999">✓ Сохранено</div>
 <div style="text-align:center;font-size:9px;color:#c0ccd8;padding:10px 0 16px">КубрДом · v${APP_BUILD}</div>
@@ -5726,6 +5747,111 @@ function buildKP(){
   const w=window.open("","_blank");
   if(!w){ alert("Разрешите всплывающие окна, чтобы сформировать КП (PDF)."); return; }
   w.document.open(); w.document.write(html); w.document.close(); w.focus();
+}
+
+// ── Голосовой ИИ · пульт обзвона ─────────────────────────────────────
+function vaLeads(){ const all=crmClients.filter(function(c){return (c.phone||"").trim();}); return voiceStageFilter==="all"?all:all.filter(function(c){return c.stage===voiceStageFilter;}); }
+function tVoiceAi(){
+  const cfg=vaCfg();
+  const on=!!cfg.enabled;
+  let html='<div>';
+  html+='<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">🎙 ГОЛОСОВОЙ ИИ · ОБЗВОН</div>';
+  html+='<div style="font-size:12px;color:#5a7a9a;margin-bottom:14px">Робот звонит лидам, ведёт разговор голосом и записывает на просмотр. Настройте ассистента, соберите очередь — запускайте обзвон.</div>';
+  // Вкл/выкл
+  html+='<div data-a="va-toggle" style="display:flex;align-items:center;gap:10px;padding:11px 13px;background:#fff;border:1px solid '+(on?"#27ae6066":"#dde6f0")+';border-radius:12px;cursor:pointer;margin-bottom:12px">'+
+    '<div style="flex:1"><div style="font-size:13px;font-weight:700;color:#1a2a3a">Голосовой робот '+(on?"🟢 включён":"⚪ выключен")+'</div>'+
+      '<div style="font-size:11px;color:#9aabbf">'+(on?"можно запускать звонки":"включите, чтобы разрешить обзвон")+'</div></div>'+
+    '<div style="width:42px;height:24px;border-radius:12px;background:'+(on?"#27ae60":"#cdd6e0")+';position:relative;flex-shrink:0"><div style="width:20px;height:20px;border-radius:50%;background:#fff;position:absolute;top:2px;left:'+(on?"20px":"2px")+';transition:left .15s"></div></div>'+
+  '</div>';
+  // Конфигурация ассистента
+  html+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:12px 14px;margin-bottom:12px">';
+  html+='<div style="font-size:12px;font-weight:800;color:#1a2a3a;margin-bottom:10px">⚙️ Ассистент</div>';
+  html+='<div style="font-size:10px;font-weight:700;color:#9aabbf;margin-bottom:5px">ЦЕЛЬ ЗВОНКА</div>';
+  html+='<select data-a="va-goal" style="width:100%;padding:9px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;margin-bottom:10px;background:#fff;box-sizing:border-box">'+
+    VOICE_GOALS.map(function(g){return '<option'+(cfg.goal===g?' selected':'')+'>'+esc(g)+'</option>';}).join("")+'</select>';
+  html+='<div style="font-size:10px;font-weight:700;color:#9aabbf;margin-bottom:5px">ГОЛОС (Yandex SpeechKit)</div>';
+  html+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">'+VOICE_VOICES.map(function(v){var sel=cfg.voice===v.k;return '<button data-a="va-voice" data-v="'+v.k+'" style="flex:1;min-width:84px;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;border:1.5px solid '+(sel?"#8e44ad":"#dde6f0")+';background:'+(sel?"#8e44ad":"#fff")+';color:'+(sel?"#fff":"#7a9aaa")+'">'+v.n+'</button>';}).join("")+'</div>';
+  html+='<div style="display:flex;gap:8px;margin-bottom:10px">';
+  html+='<div style="flex:1"><div style="font-size:10px;font-weight:700;color:#9aabbf;margin-bottom:5px">МОДЕЛЬ</div><div style="display:flex;gap:6px">'+
+    [["yandexgpt-lite","Lite ⚡"],["yandexgpt","Pro 🧠"]].map(function(m){var sel=cfg.model===m[0];return '<button data-a="va-model" data-m="'+m[0]+'" style="flex:1;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;border:1.5px solid '+(sel?"#fc3f1d":"#dde6f0")+';background:'+(sel?"#fc3f1d":"#fff")+';color:'+(sel?"#fff":"#7a9aaa")+'">'+m[1]+'</button>';}).join("")+'</div></div>';
+  html+='<div style="width:96px"><div style="font-size:10px;font-weight:700;color:#9aabbf;margin-bottom:5px">МАКС. ТОКЕНОВ</div><input data-a="va-maxtokens" id="va-maxtokens" type="number" step="10" value="'+(Number(cfg.maxTokens)||120)+'" title="Короче ответы = живее" style="width:100%;padding:8px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;text-align:center;outline:none;box-sizing:border-box"></div>';
+  html+='</div>';
+  html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px"><div style="font-size:10px;font-weight:700;color:#9aabbf">СИСТЕМНЫЙ ПРОМПТ (роль и сценарий)</div><button data-a="va-prompt-reset" style="font-size:10px;color:#8e44ad;background:none;border:none;cursor:pointer;font-weight:700">↺ сбросить</button></div>';
+  html+='<textarea data-a="va-prompt" id="va-prompt" rows="8" style="width:100%;padding:9px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;line-height:1.5;outline:none;box-sizing:border-box;resize:vertical;font-family:inherit">'+esc(cfg.prompt)+'</textarea>';
+  html+='</div>';
+  // Очередь обзвона
+  const leadsAll=crmClients.filter(function(c){return (c.phone||"").trim();});
+  const leads=vaLeads();
+  const selIds=leads.filter(function(c){return voiceSel[c.id];}).map(function(c){return c.id;});
+  const stages=[["new","Входящие"],["qualified","Квалифиц."],["kp","КП отпр."],["meeting","Встреча"],["all","Все"]];
+  html+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:12px 14px;margin-bottom:12px">';
+  html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div style="font-size:12px;font-weight:800;color:#1a2a3a">📞 Очередь обзвона</div><div style="font-size:11px;color:#9aabbf">с телефоном: '+leadsAll.length+'</div></div>';
+  html+='<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px">'+stages.map(function(s){var sel=voiceStageFilter===s[0];var cnt=s[0]==="all"?leadsAll.length:leadsAll.filter(function(c){return c.stage===s[0];}).length;return '<button data-a="va-stage" data-s="'+s[0]+'" style="padding:5px 10px;border-radius:7px;cursor:pointer;font-size:11px;font-weight:700;border:1.5px solid '+(sel?"#2980b9":"#dde6f0")+';background:'+(sel?"#2980b9":"#fff")+';color:'+(sel?"#fff":"#7a9aaa")+'">'+s[1]+' '+cnt+'</button>';}).join("")+'</div>';
+  if(!leads.length){
+    html+='<div style="text-align:center;color:#9aabbf;font-size:12px;padding:14px;border:1px dashed #d0dae8;border-radius:10px">Нет лидов с телефоном на этом этапе.</div>';
+  } else {
+    const allSel=selIds.length===leads.length;
+    html+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
+      '<button data-a="va-sel-all" style="font-size:11px;font-weight:700;color:#2980b9;background:#eef4fb;border:1px solid #2980b933;border-radius:7px;padding:5px 10px;cursor:pointer">'+(allSel?"Снять выбор":"Выбрать все")+'</button>'+
+      '<div style="flex:1"></div>'+
+      '<button data-a="va-call-selected" '+(on&&selIds.length?"":"disabled")+' style="font-size:12px;font-weight:700;color:#fff;background:'+(on&&selIds.length?"#27ae60":"#cdd6e0")+';border:none;border-radius:8px;padding:7px 12px;cursor:'+(on&&selIds.length?"pointer":"not-allowed")+'">📞 Обзвонить ('+selIds.length+')</button>'+
+    '</div>';
+    leads.forEach(function(c){ var chk=!!voiceSel[c.id]; var busy=!!voiceCalling[c.id];
+      html+='<div style="display:flex;align-items:center;gap:9px;padding:8px 4px;border-top:1px solid #f0f4f8">'+
+        '<div data-a="va-sel" data-id="'+c.id+'" style="width:19px;height:19px;border-radius:5px;border:2px solid '+(chk?"#27ae60":"#cdd8e6")+';background:'+(chk?"#27ae60":"#fff")+';display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:800;flex-shrink:0;cursor:pointer">'+(chk?"✓":"")+'</div>'+
+        '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.name||"Лид")+'</div>'+
+          '<div style="font-size:11px;color:#7a9aaa">'+esc(c.phone||"")+'</div></div>'+
+        '<button data-a="va-call" data-id="'+c.id+'" '+(on&&!busy?"":"disabled")+' style="flex-shrink:0;font-size:11px;font-weight:700;color:'+(on&&!busy?"#27ae60":"#aaa")+';background:'+(on&&!busy?"#eafaf0":"#f3f3f3")+';border:1px solid '+(on&&!busy?"#27ae6044":"#e0e0e0")+';border-radius:7px;padding:6px 11px;cursor:'+(on&&!busy?"pointer":"not-allowed")+'">'+(busy?"⏳…":"📞 Позвонить")+'</button>'+
+      '</div>';
+    });
+  }
+  html+='</div>';
+  // Результаты
+  const calls=(cfg.calls||[]).slice().reverse();
+  html+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:12px 14px;margin-bottom:12px">';
+  html+='<div style="font-size:12px;font-weight:800;color:#1a2a3a;margin-bottom:8px">📋 Результаты звонков</div>';
+  if(!calls.length){
+    html+='<div style="text-align:center;color:#9aabbf;font-size:12px;padding:14px;border:1px dashed #d0dae8;border-radius:10px">Пока нет звонков. Результаты (статус, дата просмотра, расшифровка) появятся здесь после подключения бэкенда обзвона.</div>';
+  } else {
+    const INT={booked:["✅ записан","#27ae60"],callback:["🔁 перезвон","#f39c12"],refused:["❌ отказ","#e74c3c"]};
+    calls.forEach(function(r){ var it=INT[r.intent]||["… в работе","#7a9aaa"];
+      html+='<div style="padding:9px 0;border-top:1px solid #f0f4f8">'+
+        '<div style="display:flex;align-items:center;gap:8px"><span style="flex:1;font-size:13px;font-weight:600;color:#1a2a3a">'+esc(r.name||r.phone||"Лид")+'</span>'+
+          '<span style="font-size:11px;font-weight:700;color:'+it[1]+'">'+it[0]+'</span></div>'+
+        (r.bookedAt?'<div style="font-size:11px;color:#27ae60;margin-top:2px">📅 просмотр: '+esc(String(r.bookedAt))+'</div>':'')+
+        (r.transcript?'<div style="font-size:11px;color:#7a9aaa;margin-top:3px;white-space:pre-wrap">'+esc(String(r.transcript).slice(0,400))+'</div>':'')+
+      '</div>';
+    });
+  }
+  html+='</div>';
+  // Как это работает
+  html+='<div style="background:#f6f0fb;border:1px solid #d9c4ea;border-radius:12px;padding:12px 14px;margin-bottom:12px">';
+  html+='<div style="font-size:11px;font-weight:800;color:#6d3b8e;margin-bottom:6px">ℹ️ КАК ЭТО РАБОТАЕТ</div>';
+  html+='<div style="font-size:11.5px;color:#5a4a6a;line-height:1.6">Кнопка «Позвонить» шлёт лид в Worker (<code>/api/voice-call</code>), тот запускает сценарий на <b>Voximplant</b>: набор номера → распознавание речи (<b>SpeechKit STT</b>) → ответ <b>YandexGPT</b> → синтез голоса (<b>SpeechKit TTS</b>), с перебиванием. Итог звонка возвращается вебхуком и показывается в «Результатах».<br><br><b>Чтобы заработало по-настоящему</b>, нужен этот бэкенд (эндпоинты Worker + сценарий VoxEngine) и ключи Voximplant / Yandex Cloud. Сейчас это пульт управления — нажатие «Позвонить» обращается к эндпоинту; пока он не подключён, показывается понятная ошибка.</div>';
+  html+='</div>';
+  return html+'</div>';
+}
+async function voiceCall(ids){
+  const cfg=vaCfg();
+  if(!cfg.enabled){ alert("Сначала включите голосового робота (тумблер вверху)."); return; }
+  const leads=crmClients.filter(function(c){return ids.indexOf(c.id)>=0&&(c.phone||"").trim();});
+  if(!leads.length){ alert("Нет лидов с телефоном."); return; }
+  ids.forEach(function(id){voiceCalling[id]=true;}); render();
+  let okN=0, failNote="";
+  for(const c of leads){
+    try{
+      const r=await fetch(API_BASE+"/api/voice-call",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({
+        lead:{id:c.id,name:c.name,phone:c.phone,msg:c.msg||"",notes:c.notes||""},
+        config:{goal:cfg.goal,voice:cfg.voice,model:cfg.model,maxTokens:Number(cfg.maxTokens)||120,prompt:cfg.prompt}
+      })});
+      const j=await r.json().catch(function(){return null;});
+      if(r.ok&&j&&j.success){okN++;} else {failNote=(j&&(j.note||j.error))||("HTTP "+r.status);}
+    }catch(e){ failNote=(e&&e.message)||"нет связи"; }
+    delete voiceCalling[c.id];
+  }
+  render();
+  if(okN){ alert("Запущено звонков: "+okN+(failNote?(" · часть не прошла: "+failNote):"")); }
+  else { alert("Звонок не запущен.\n\nБэкенд обзвона ещё не подключён (нужен Worker /api/voice-call + сценарий Voximplant).\nДетали: "+failNote); }
 }
 function tFinance(){
   if(finOpenContractId) return tFinanceContractPnL(finOpenContractId);
@@ -9584,6 +9710,18 @@ function bind(){
     else if(a==="kp-markup-q"){el.onclick=()=>{ kpMarkup=Number(el.dataset.p)||0; render(); };}
     else if(a==="kp-field"){el.oninput=()=>{ const f=el.dataset.f; if(f==="client")kpClient=el.value; else if(f==="objname")kpObjName=el.value; };}
     else if(a==="kp-build"){el.onclick=()=>{ buildKP(); };}
+    else if(a==="va-toggle"){el.onclick=()=>{ vaSet({enabled:!vaCfg().enabled}); };}
+    else if(a==="va-goal"){el.onchange=()=>{ vaSet({goal:el.value}); };}
+    else if(a==="va-voice"){el.onclick=()=>{ vaSet({voice:el.dataset.v}); };}
+    else if(a==="va-model"){el.onclick=()=>{ vaSet({model:el.dataset.m}); };}
+    else if(a==="va-maxtokens"){el.onchange=()=>{ vaSet({maxTokens:Math.max(20,parseInt(el.value,10)||120)}); };}
+    else if(a==="va-prompt"){el.onchange=()=>{ vaSet({prompt:el.value}); };}
+    else if(a==="va-prompt-reset"){el.onclick=()=>{ if(confirm("Вернуть стандартный промпт? Ваши правки будут потеряны.")) vaSet({prompt:VOICE_DEFAULT_PROMPT}); };}
+    else if(a==="va-stage"){el.onclick=()=>{ voiceStageFilter=el.dataset.s; render(); };}
+    else if(a==="va-sel"){el.onclick=()=>{ const id=el.dataset.id; if(voiceSel[id])delete voiceSel[id]; else voiceSel[id]=true; render(); };}
+    else if(a==="va-sel-all"){el.onclick=()=>{ const ls=vaLeads(); const allSel=ls.length&&ls.every(c=>voiceSel[c.id]); ls.forEach(c=>{ if(allSel)delete voiceSel[c.id]; else voiceSel[c.id]=true; }); render(); };}
+    else if(a==="va-call"){el.onclick=()=>{ voiceCall([el.dataset.id]); };}
+    else if(a==="va-call-selected"){el.onclick=()=>{ const ids=vaLeads().filter(c=>voiceSel[c.id]).map(c=>c.id); voiceCall(ids); };}
     else if(a==="ew-plan-add"){el.onclick=function(){
       const cid=el.dataset.cid;
       const ti=document.getElementById("ew-plan-title-"+cid);
