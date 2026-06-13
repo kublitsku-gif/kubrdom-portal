@@ -40,3 +40,12 @@ OPENAI_MODEL = "gpt-4o-mini"
 # YandexGPT (Yandex Cloud). Ключ — секрет YANDEX_API_KEY. FOLDER_ID — каталог (не секрет, задаёт пользователь).
 YANDEX_MODEL = "yandexgpt/latest"
 YANDEX_FOLDER_ID = "b1gh7n0m534hu478vc3u"
+# ── Голосовой обзвон (Voximplant) ──
+# Мозг звонка использует YandexGPT (секрет YANDEX_API_KEY + YANDEX_FOLDER_ID выше — уже есть).
+# Вебхуки VoxEngine (/api/voice-brain, /api/voice-result) защищены секретом WEBHOOK_SECRET (уже есть).
+# Раскомментируйте и впишите значения из кабинета Voximplant:
+#   секрет:  wrangler secret put VOX_API_KEY        (API key приложения Voximplant)
+# VOX_ACCOUNT_ID = "1234567"      # ID аккаунта Voximplant
+# VOX_RULE_ID    = "7654321"      # ID правила (rule), привязанного к сценарию kubrdom-voice
+# VOX_CALLER_ID  = "74951234567"  # подтверждённый исходящий номер (caller id), только цифры
+# PUBLIC_BASE_URL = "https://kubrdom-portal-api.kublitsku.workers.dev"  # база для вебхуков VoxEngine (по умолчанию origin Worker)

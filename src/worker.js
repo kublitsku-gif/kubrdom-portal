@@ -434,6 +434,83 @@ async function aiSellerReply(env, history, sel) {
   return { reply: reply, needsApproval: p.needsApproval !== false, reason: p.reason || "", usage: out.usage };
 }
 
+// ── Голосовой обзвон (Voximplant + YandexGPT) ───────────────────────────
+// Мозг робота: одна реплика. Reuse aiChat (YandexGPT уже настроен). VoxEngine зовёт
+// этот эндпоинт каждый ход диалога и получает {reply,intent,date} строгим JSON.
+const VOICE_JSON_INSTRUCTION = "\n\nВ КОНЦЕ верни СТРОГО JSON одной строкой: {\"reply\":\"что сказать клиенту вслух\",\"intent\":\"talking|booked|callback|refused\",\"date\":\"дата и время просмотра текстом, или пусто\"}. intent=booked — если договорились о просмотре И есть дата; callback — если просят перезвонить позже; refused — если отказ; иначе talking. reply — короткая разговорная фраза, без разметки и эмодзи.";
+function voiceProvider(model) { return (/lite/i.test(model || "")) ? "yandexlite" : "yandexpro"; }
+async function voiceBrain(env, request) {
+  const body = await request.json().catch(function () { return {}; });
+  const cfg = body.config || {};
+  const history = Array.isArray(body.history) ? body.history : [];
+  const sys = (cfg.prompt || "Ты — голосовой ассистент компании КубрДом.") + "\n\nЦель звонка: " + (cfg.goal || "записать на просмотр") + "." + VOICE_JSON_INSTRUCTION;
+  const messages = [{ role: "system", content: sys }].concat(history.map(function (m) {
+    return { role: (m.role === "assistant" || m.role === "bot") ? "assistant" : "user", content: String((m.content != null ? m.content : m.text) || "") };
+  }));
+  let out;
+  try { out = await aiChat(env, messages, { provider: voiceProvider(cfg.model), max_tokens: Number(cfg.maxTokens) || 120, temperature: 0.5 }); }
+  catch (e) { return json({ success: false, error: String((e && e.message) || e) }, 200); }
+  let p = null;
+  try { p = JSON.parse(out.text); }
+  catch (e) { try { const mm = out.text.match(/\{[\s\S]*\}/); if (mm) p = JSON.parse(mm[0]); } catch (_) {} }
+  if (!p) p = { reply: out.text, intent: "talking", date: "" };
+  const reply = (p.reply || out.text || "").trim() || "Извините, повторите, пожалуйста.";
+  const intent = ["talking", "booked", "callback", "refused"].indexOf(p.intent) >= 0 ? p.intent : "talking";
+  return json({ success: true, reply: reply, intent: intent, date: p.date || "" });
+}
+// Результаты звонков — work_id=voiceCalls (владеет Worker; панель НЕ перезаписывает, читает через GET).
+async function voiceLoad(env) {
+  const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind("admin_panel", "voiceCalls").first();
+  if (!row || !row.data) return [];
+  try { const a = JSON.parse(row.data); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+}
+async function voiceSave(env, list) {
+  await env.DB.prepare("INSERT INTO work_states (storage_key, work_id, data, updated_at) VALUES (?,?,?,?) ON CONFLICT(storage_key, work_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at")
+    .bind("admin_panel", "voiceCalls", JSON.stringify(list.slice(-500)), Date.now()).run();
+}
+async function voiceResult(env, request) {
+  const b = await request.json().catch(function () { return {}; });
+  const lead = b.lead || {};
+  const list = await voiceLoad(env);
+  list.push({
+    id: "vc_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+    leadId: lead.id || "", name: lead.name || "", phone: lead.phone || "",
+    status: String(b.status || "").slice(0, 40),
+    intent: String(b.intent || "").slice(0, 20),
+    bookedAt: String(b.bookedAt || b.date || "").slice(0, 80),
+    transcript: String(b.transcript || "").slice(0, 4000),
+    ts: Date.now()
+  });
+  await voiceSave(env, list);
+  return json({ success: true });
+}
+async function voiceCallsList(env) { return json({ success: true, calls: await voiceLoad(env) }); }
+// Старт исходящего звонка: Voximplant Management API StartScenarios + customData (лид, конфиг, callback).
+async function voiceStartCall(env, request, url) {
+  const b = await request.json().catch(function () { return {}; });
+  const lead = b.lead || {}, cfg = b.config || {};
+  const phone = String(lead.phone || "").replace(/[^\d+]/g, "");
+  if (!phone) return json({ success: false, note: "у лида нет телефона" }, 200);
+  if (!env.VOX_ACCOUNT_ID || !env.VOX_API_KEY || !env.VOX_RULE_ID) {
+    return json({ success: false, note: "Voximplant не настроен (нужны секреты VOX_ACCOUNT_ID, VOX_API_KEY и var VOX_RULE_ID)" }, 200);
+  }
+  const callbackBase = env.PUBLIC_BASE_URL || url.origin;
+  const customData = JSON.stringify({
+    lead: { id: lead.id || "", name: lead.name || "", phone: phone, msg: lead.msg || "", notes: lead.notes || "" },
+    config: { goal: cfg.goal || "", voice: cfg.voice || "alena", model: cfg.model || "yandexgpt-lite", maxTokens: Number(cfg.maxTokens) || 120, prompt: cfg.prompt || "" },
+    callerId: env.VOX_CALLER_ID || "", callbackBase: callbackBase, secret: env.WEBHOOK_SECRET || ""
+  });
+  const api = "https://api.voximplant.com/platform_api/StartScenarios/?account_id=" + encodeURIComponent(env.VOX_ACCOUNT_ID) +
+    "&api_key=" + encodeURIComponent(env.VOX_API_KEY) + "&rule_id=" + encodeURIComponent(env.VOX_RULE_ID) +
+    "&script_custom_data=" + encodeURIComponent(customData);
+  let r, raw = "";
+  try { r = await fetch(api, { method: "POST" }); raw = await r.text(); }
+  catch (e) { return json({ success: false, error: "Voximplant: " + String((e && e.message) || e) }, 200); }
+  let j = null; try { j = JSON.parse(raw); } catch (e) {}
+  if (!r.ok || !j || j.error) return json({ success: false, error: "Voximplant: " + String((j && j.error && j.error.msg) || raw).replace(/\s+/g, " ").slice(0, 160) }, 200);
+  return json({ success: true, mediaSessionAccessUrl: j.media_session_access_url || "", result: j.result || null });
+}
+
 // ── Telegram sales-бот (отдельный от видео-бота) ──
 function salesTg(env, method, payload) {
   return fetch("https://api.telegram.org/bot" + env.TG_SALES_BOT_TOKEN + "/" + method, {
@@ -778,6 +855,21 @@ export default {
       catch (err) { return json({ ok: false, error: String(err) }, 200); }
     }
 
+    // Голосовой робот: мозг (VoxEngine зовёт каждую реплику диалога). Секрет в ?s=.
+    if (url.pathname === "/api/voice-brain" && request.method === "POST") {
+      const vs = url.searchParams.get("s") || "";
+      if (!env.WEBHOOK_SECRET || !safeEqual(vs, env.WEBHOOK_SECRET)) return unauthorized();
+      try { return await voiceBrain(env, request); }
+      catch (err) { return json({ success: false, error: String(err) }, 200); }
+    }
+    // Голосовой робот: итог звонка (VoxEngine по завершении). Секрет в ?s=.
+    if (url.pathname === "/api/voice-result" && request.method === "POST") {
+      const vs = url.searchParams.get("s") || "";
+      if (!env.WEBHOOK_SECRET || !safeEqual(vs, env.WEBHOOK_SECRET)) return unauthorized();
+      try { return await voiceResult(env, request); }
+      catch (err) { return json({ success: false, error: String(err) }, 200); }
+    }
+
     // Авторизация для всего остального. Fail-closed.
     const token = request.headers.get("X-Admin-Token") || "";
     if (!env.ADMIN_TOKEN || !safeEqual(token, env.ADMIN_TOKEN)) {
@@ -819,6 +911,17 @@ export default {
     // AI: список диалогов для CRM (с токеном).
     if (url.pathname === "/api/ai/chats" && request.method === "GET") {
       try { return await aiChatsList(env); }
+      catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+
+    // Голосовой робот: старт исходящего звонка (с токеном).
+    if (url.pathname === "/api/voice-call" && request.method === "POST") {
+      try { return await voiceStartCall(env, request, url); }
+      catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+    // Голосовой робот: результаты звонков для панели (с токеном).
+    if (url.pathname === "/api/voice-calls" && request.method === "GET") {
+      try { return await voiceCallsList(env); }
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
 
