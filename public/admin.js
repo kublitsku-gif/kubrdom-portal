@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.92";
+const APP_BUILD = "2026-06-12.93";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4385,9 +4385,9 @@ function renderEstimates(){
       var lts=document.getElementById("est-lt-"+i); if(lts)lts.textContent=estLineTotal(e.lines[i]).toLocaleString("ru-RU")+" ₽";
       var gt=document.getElementById("est-grand"); if(gt)gt.textContent=estTotal(e).toLocaleString("ru-RU")+" ₽";
     };});
-    el.querySelectorAll(".est-del").forEach(function(b){b.onclick=function(){var i=+b.dataset.i;e.lines.splice(i,1);renderEstimates();};});
+    el.querySelectorAll(".est-del").forEach(function(b){b.onclick=function(){var i=+b.dataset.i;var _y=window.pageYOffset||document.documentElement.scrollTop||0;e.lines.splice(i,1);renderEstimates();requestAnimationFrame(function(){window.scrollTo(0,_y);});};});
     el.querySelectorAll(".est-line-mat").forEach(function(b){b.onclick=function(){ var pid=b.dataset.pid; if(!expProducts.find(function(x){return x.id===pid;}))return; dbSection="mats"; expOpenId=pid; render(); window.scrollTo(0,0); };});
-    var dl=document.getElementById("est-delete"); if(dl)dl.onclick=function(){estimates=estimates.filter(function(x){return x.id!==e.id;});estOpenId=null;renderEstimates();};
+    var dl=document.getElementById("est-delete"); if(dl)dl.onclick=function(){ if(!confirm("Удалить смету «"+(e.name||"")+"»? Это действие необратимо."))return; estimates=estimates.filter(function(x){return x.id!==e.id;});estOpenId=null;renderEstimates();var _y=estScrollY||0;requestAnimationFrame(function(){window.scrollTo(0,_y);});};
     return;
   }
   var _q=(estSearch||"").trim().toLowerCase();
