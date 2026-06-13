@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.93";
+const APP_BUILD = "2026-06-12.94";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1762,6 +1762,10 @@ function copyTemplate(tid){
 }
 
 function deleteTemplate(tid){
+  const t=templates.find(x=>x.id===tid);
+  const usedIn=objects.filter(o=>o.templateId===tid).length;
+  const extra=usedIn>0?("\n\nНа этом шаблоне основано объектов: "+usedIn+" (они не удалятся)."):"";
+  if(!confirm("Удалить шаблон «"+((t&&t.name)||"")+"»?"+extra+"\n\nЭто действие необратимо."))return;
   templates=templates.filter(t=>t.id!==tid);fl();
 }
 
