@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.94";
+const APP_BUILD = "2026-06-12.95";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1448,6 +1448,8 @@ let voiceSel={};         // {leadId:true} — выбранные лиды для
 let voiceStageFilter="new"; // фильтр очереди по этапу CRM
 let voiceCalling={};     // {leadId:true} — звонок в процессе (блокирует кнопку)
 let voiceCallsCache=null; // результаты звонков с сервера (work_id=voiceCalls), null = ещё не грузили
+let voiceTestHistory=[]; // песочница теста голосового мозга: [{role,content,intent,date}]
+let voiceTestBusy=false;
 const VOICE_VOICES=[
   {k:"alena", n:"Алёна (ж)", note:"нейро"},
   {k:"jane",  n:"Джейн (ж)", note:""},
@@ -5780,6 +5782,27 @@ function tVoiceAi(){
   html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px"><div style="font-size:10px;font-weight:700;color:#9aabbf">СИСТЕМНЫЙ ПРОМПТ (роль и сценарий)</div><button data-a="va-prompt-reset" style="font-size:10px;color:#8e44ad;background:none;border:none;cursor:pointer;font-weight:700">↺ сбросить</button></div>';
   html+='<textarea data-a="va-prompt" id="va-prompt" rows="8" style="width:100%;padding:9px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;line-height:1.5;outline:none;box-sizing:border-box;resize:vertical;font-family:inherit">'+esc(cfg.prompt)+'</textarea>';
   html+='</div>';
+  // Тест диалога (без звонка) — проверка мозга
+  html+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:12px 14px;margin-bottom:12px">';
+  html+='<div style="font-size:12px;font-weight:800;color:#1a2a3a;margin-bottom:4px">🧪 Тест диалога <span style="font-weight:400;color:#9aabbf">(без звонка — проверка ответов робота)</span></div>';
+  html+='<div style="font-size:11px;color:#9aabbf;margin-bottom:8px">Напишите реплику «клиента» — робот ответит по текущей настройке (модель '+(cfg.model==="yandexgpt"?"Pro":"Lite")+').</div>';
+  if(voiceTestHistory.length){
+    const INT={booked:["✅ записан","#27ae60"],callback:["🔁 перезвон","#f39c12"],refused:["❌ отказ","#e74c3c"],talking:["💬 разговор","#7a9aaa"]};
+    voiceTestHistory.forEach(function(m){
+      const me=m.role==="user";
+      html+='<div style="display:flex;justify-content:'+(me?"flex-end":"flex-start")+';margin-bottom:6px">'+
+        '<div style="max-width:80%;padding:8px 11px;border-radius:12px;font-size:12.5px;line-height:1.4;background:'+(me?"#2980b9":"#f0f4f8")+';color:'+(me?"#fff":"#1a2a3a")+'">'+esc(m.content)+
+          (!me&&m.intent?(function(){var it=INT[m.intent]||["",""];return '<div style="font-size:10px;font-weight:700;color:'+it[1]+';margin-top:4px">'+it[0]+(m.date?' · 📅 '+esc(m.date):'')+'</div>';})():'')+
+        '</div>'+
+      '</div>';
+    });
+  }
+  html+='<div style="display:flex;gap:6px;margin-top:8px">'+
+    '<input id="va-test-input" data-a="va-test-input" placeholder="Реплика клиента…" '+(voiceTestBusy?"disabled":"")+' style="flex:1;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box">'+
+    '<button data-a="va-test-send" '+(voiceTestBusy?"disabled":"")+' style="padding:9px 14px;background:'+(voiceTestBusy?"#cdd6e0":"#8e44ad")+';border:none;border-radius:9px;cursor:'+(voiceTestBusy?"default":"pointer")+';color:#fff;font-size:13px;font-weight:700;white-space:nowrap">'+(voiceTestBusy?"⏳":"Отправить")+'</button>'+
+    (voiceTestHistory.length?'<button data-a="va-test-clear" style="padding:9px 11px;background:transparent;border:1px solid #d0dae8;border-radius:9px;cursor:pointer;color:#7a9aaa;font-size:13px">✕</button>':'')+
+  '</div>';
+  html+='</div>';
   // Очередь обзвона
   const leadsAll=crmClients.filter(function(c){return (c.phone||"").trim();});
   const leads=vaLeads();
@@ -5859,6 +5882,25 @@ async function voiceLoadCalls(){
   try{ const r=await fetch(API_BASE+"/api/voice-calls",{headers:authHeaders()}); const j=await r.json(); voiceCallsCache=(j&&j.success&&Array.isArray(j.calls))?j.calls:[]; }
   catch(e){ if(voiceCallsCache===null)voiceCallsCache=[]; }
   render();
+}
+async function voiceTestSend(){
+  if(voiceTestBusy)return;
+  const inp=document.getElementById("va-test-input");
+  const text=((inp&&inp.value)||"").trim();
+  if(!text)return;
+  const cfg=vaCfg();
+  voiceTestHistory=voiceTestHistory.concat([{role:"user",content:text}]);
+  voiceTestBusy=true; render();
+  try{
+    const r=await fetch(API_BASE+"/api/voice-test",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({
+      config:{prompt:cfg.prompt,goal:cfg.goal,model:cfg.model,maxTokens:cfg.maxTokens},
+      history:voiceTestHistory.map(function(m){return {role:m.role,content:m.content};})
+    })});
+    const j=await r.json();
+    if(j&&j.success){ voiceTestHistory=voiceTestHistory.concat([{role:"assistant",content:j.reply||"—",intent:j.intent||"talking",date:j.date||""}]); }
+    else { const err=(j&&j.error)||"нет ответа"; voiceTestHistory=voiceTestHistory.concat([{role:"assistant",content:"⚠️ "+err+(/(yandex|api|key|folder|token|quota|401|403)/i.test(err)?" — проверьте ключи Yandex Cloud (YANDEX_API_KEY/FOLDER_ID)":""),intent:"",date:""}]); }
+  }catch(e){ voiceTestHistory=voiceTestHistory.concat([{role:"assistant",content:"⚠️ Сеть: "+((e&&e.message)||e),intent:"",date:""}]); }
+  voiceTestBusy=false; render();
 }
 function tFinance(){
   if(finOpenContractId) return tFinanceContractPnL(finOpenContractId);
@@ -9730,6 +9772,9 @@ function bind(){
     else if(a==="va-call"){el.onclick=()=>{ voiceCall([el.dataset.id]); };}
     else if(a==="va-call-selected"){el.onclick=()=>{ const ids=vaLeads().filter(c=>voiceSel[c.id]).map(c=>c.id); voiceCall(ids); };}
     else if(a==="va-refresh"){el.onclick=()=>{ voiceLoadCalls(); };}
+    else if(a==="va-test-clear"){el.onclick=()=>{ voiceTestHistory=[]; render(); };}
+    else if(a==="va-test-input"){el.onkeydown=(ev)=>{ if(ev&&ev.key==="Enter"){ ev.preventDefault(); voiceTestSend(); } };}
+    else if(a==="va-test-send"){el.onclick=()=>{ voiceTestSend(); };}
     else if(a==="ew-plan-add"){el.onclick=function(){
       const cid=el.dataset.cid;
       const ti=document.getElementById("ew-plan-title-"+cid);

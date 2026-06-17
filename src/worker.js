@@ -898,6 +898,11 @@ export default {
       try { return await aiTest(env, request); }
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
+    // Голосовой ИИ: тест мозга из панели (с токеном, без Voximplant) — тот же voiceBrain.
+    if (url.pathname === "/api/voice-test" && request.method === "POST") {
+      try { return await voiceBrain(env, request); }
+      catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
     // AI: входящее сообщение (симулятор/Avito) → черновик в Telegram-ветку (с токеном).
     if (url.pathname === "/api/ai/incoming" && request.method === "POST") {
       try { return await aiIncoming(env, request); }
