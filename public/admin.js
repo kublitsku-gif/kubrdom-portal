@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.97";
+const APP_BUILD = "2026-06-12.98";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1723,7 +1723,7 @@ function renderTplCards(){
       ? usedIn.map(function(o){return '<span style="font-size:11px;background:#e8f0fa;color:#2a5298;border-radius:8px;padding:2px 8px">'+o.icon+' '+o.name+'</span>';}).join("")
       : '<span style="font-size:11px;color:#aaa">Не использован</span>';
     const card=document.createElement("div");
-    card.style.cssText="background:#fff;border-radius:14px;border:1px solid #dde6f0;padding:16px;box-sizing:border-box;width:100%;overflow:hidden";
+    card.style.cssText="background:#fff;border-radius:14px;border:1px solid #9b59b633;border-left:4px solid #9b59b6;padding:16px;box-sizing:border-box;width:100%;overflow:hidden";
     card.innerHTML=
       '<div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px">'+
         '<span style="font-size:32px">'+t.icon+'</span>'+
@@ -4013,11 +4013,11 @@ ${tplPickFor?`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);dis
 </div>`;
   }
 
-  return`<div>
+  return`<div style="background:linear-gradient(180deg,#f6eefb,#fcf9fe);border:1.5px solid #9b59b644;border-radius:16px;padding:14px;margin-top:12px">
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
   <div>
-    <div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">ШАБЛОНЫ ОБЪЕКТОВ</div>
-    <div style="font-size:12px;color:#5a7a9a;margin-top:2px">Создайте шаблон — используйте для новых объектов</div>
+    <div style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#fff;font-weight:800;letter-spacing:0.5px;background:#9b59b6;border-radius:7px;padding:4px 10px">📋 ШАБЛОНЫ ОБЪЕКТОВ</div>
+    <div style="font-size:11px;color:#8a6aa0;margin-top:5px">Это не объекты — заготовки, из которых создаются новые объекты</div>
   </div>
   <button data-a="show-nt" style="padding:7px 16px;background:#9b59b6;border:none;border-radius:9px;cursor:pointer;font-size:13px;color:#fff;font-weight:700">+ Шаблон</button>
 </div>
