@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.96";
+const APP_BUILD = "2026-06-12.97";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1437,6 +1437,7 @@ function lenSelectOptions(cur){
 let specSel={};          // {roomId:true} — выделенные помещения для суммы «Выбрано»
 let specActiveRoom={};   // {oid: roomId} — активная вкладка-помещение
 let specsCollapsed={};   // {oid:true} — свёрнут ли блок характеристик
+let objPrevExpanded={};  // {oid:true} — развёрнута ли карточка объекта в списке (по умолч. свёрнута)
 let tplWorkSearch="";    // поиск по работам и материалам в сборщике смет
 let objWorkSearch="";    // поиск по работам и материалам в карточке объекта
 let kpTemplateId="";     // КП: выбранный шаблон
@@ -3030,13 +3031,14 @@ function renderObjCard(obj, isAdmin){
   const matsBoughtCost=allMats.filter(function(m){return!!purchased[m.id];}).reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
   const matsLeftCost=matsTotalCost-matsBoughtCost;
   const pct=matsTotalCost>0?Math.round(matsBoughtCost/matsTotalCost*100):(st&&st.done===st.total&&st.total>0?100:0);
+  const _exp=objPrevExpanded[obj.id]===true; // по умолчанию свёрнута — видна только шапка
 
   let html='<div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;overflow:hidden">';
-  // Header
-  html+='<div style="padding:10px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #f0f4f8">';
+  // Header (тап по названию — свернуть/развернуть)
+  html+='<div style="padding:10px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid '+(_exp?"#f0f4f8":"transparent")+'">';
   html+='<span style="font-size:24px;flex-shrink:0">'+obj.icon+'</span>';
-  html+='<div style="flex:1;min-width:0">';
-  html+='<div style="font-size:14px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+obj.name+'</div>';
+  html+='<div data-a="obj-prev-toggle" data-oid="'+obj.id+'" style="flex:1;min-width:0;cursor:pointer">';
+  html+='<div style="font-size:14px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(_exp?"▾ ":"▸ ")+obj.name+'</div>';
   html+='<div style="font-size:11px;color:#7a9aaa;margin-top:2px">'+allWorks.length+' работ · '+allMats.length+' материалов · '+fmt(totalCost)+'</div>';
   // Дедлайн от начальника производства (из договоров объекта)
   (function(){
@@ -3084,6 +3086,7 @@ function renderObjCard(obj, isAdmin){
   html+='</div>';
   html+='<button data-a="open-obj" data-oid="'+obj.id+'" style="padding:7px 14px;background:#e8f0fa;border:1px solid #4a7ac844;border-radius:8px;cursor:pointer;font-size:12px;color:#2a5298;font-weight:600;flex-shrink:0;white-space:nowrap">✏️ Открыть</button>';
   html+='</div>';
+  if(!_exp){ html+='</div>'; return html; } // свёрнуто — показываем только шапку
   // Purchase progress with money amounts
   if(st){
     html+='<div style="padding:7px 14px 8px;border-top:1px solid #f4f6f9">';
@@ -9443,6 +9446,7 @@ function bind(){
       showNObj=false;fl();
     };}
     else if(a==="open-obj"){el.onclick=()=>{openObject=el.dataset.oid;render();};}
+    else if(a==="obj-prev-toggle"){el.onclick=()=>{ const oid=el.dataset.oid; objPrevExpanded=Object.assign({},objPrevExpanded,{[oid]:!objPrevExpanded[oid]}); render(); };}
     else if(a==="close-obj"){el.onclick=()=>{openObject=null;render();};}
     else if(a==="tog-obj"){el.onclick=()=>{const uid=el.dataset.uid,oid=el.dataset.oid;users=users.map(u=>{if(u.id!==uid)return u;const o=u.objs.includes(oid)?u.objs.filter(x=>x!==oid):[...u.objs,oid];return{...u,objs:o};});fl();};}
     else if(a==="tog-user-obj"){el.onclick=()=>{const uid=el.dataset.uid,oid=el.dataset.oid;users=users.map(u=>{if(u.id!==uid)return u;const o=u.objs.includes(oid)?u.objs.filter(x=>x!==oid):[...u.objs,oid];return{...u,objs:o};});fl();};}
