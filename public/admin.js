@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.95";
+const APP_BUILD = "2026-06-12.96";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1346,6 +1346,7 @@ let expProducts=[
 let purchased={}; // {matId: true} — отмечено снабженцем как куплено
 let supplySearch=''; // поиск по материалам
 let supplyStoreFilter=''; // фильтр по магазину
+let supplyHideDone=false; // показывать только не купленное
 let dbEditWork=null,dbEditMat=null,dbDragWork=null,dbDragMat=null; // "works" | "mats"
 let showNDBWork=false,showNDBMat=null; // showNDBMat = work id
 // === ПЛАНИРОВКИ (база) ===
@@ -7583,15 +7584,23 @@ function tSupplyDetail(sel, sortBy){
   const q=supplySearch.trim().toLowerCase();
   if(q) allMats=allMats.filter(function(m){return m.n.toLowerCase().includes(q)||(m.store||'').toLowerCase().includes(q)||(m.note||'').toLowerCase().includes(q)||(m.wn||'').toLowerCase().includes(q);});
   if(supplyStoreFilter) allMats=allMats.filter(function(m){return(m.store||'Без магазина')===supplyStoreFilter;});
+  if(supplyHideDone) allMats=allMats.filter(function(m){return !purchased[m.id];}); // только не купленное
 
   // Sort tabs
   const _sortBtn=function(k,label,col){return '<button data-a="supply-sort" data-s="'+k+'" style="flex:1;padding:11px 6px;border-radius:12px;cursor:pointer;font-size:12px;font-weight:700;border:2px solid '+(sortBy2===k?col:"#dde6f0")+';background:'+(sortBy2===k?col:"#fff")+';color:'+(sortBy2===k?"#fff":"#7a9aaa")+';transition:all 0.15s;white-space:nowrap">'+label+'</button>';};
   html+=
-    '<div style="display:flex;gap:6px;margin-bottom:16px">'+
+    '<div style="display:flex;gap:6px;margin-bottom:8px">'+
       _sortBtn("merge","🛒 Закупка","#e67e22")+
       _sortBtn("stage","📋 Этапы","#2980b9")+
       _sortBtn("store","🏪 Магазины","#27ae60")+
     '</div>';
+  // Фильтр «Не куплено»
+  html+='<div style="display:flex;justify-content:flex-end;margin-bottom:14px">'+
+    '<button data-a="supply-hide-done" style="display:inline-flex;align-items:center;gap:7px;padding:7px 13px;border-radius:9px;cursor:pointer;font-size:12px;font-weight:700;border:1.5px solid '+(supplyHideDone?"#e74c3c":"#dde6f0")+';background:'+(supplyHideDone?"#e74c3c":"#fff")+';color:'+(supplyHideDone?"#fff":"#7a9aaa")+'">'+
+      '<span style="width:16px;height:16px;border-radius:4px;border:2px solid '+(supplyHideDone?"#fff":"#c8d8e8")+';background:'+(supplyHideDone?"rgba(255,255,255,0.25)":"#fff")+';display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff">'+(supplyHideDone?"✓":"")+'</span>'+
+      '🛒 Только не куплено'+
+    '</button>'+
+  '</div>';
 
   // Store summary — use full unfiltered mats for pills
   const storesAll=[...new Set(allMats.map(function(m){return m.store||"Без магазина";}))];
@@ -9647,8 +9656,9 @@ function bind(){
       render();
     };}
     else if(a==="supply-view"){el.onclick=()=>{window._supplyViewing=true;render();};}
-    else if(a==="supply-back"){el.onclick=()=>{window._supplyViewing=false;supplySearch='';supplyStoreFilter='';render();};}
-    else if(a==="supply-store-filter"){el.onclick=()=>{supplyStoreFilter=supplyStoreFilter===el.dataset.store?'':el.dataset.store;render();};}  
+    else if(a==="supply-back"){el.onclick=()=>{window._supplyViewing=false;supplySearch='';supplyStoreFilter='';supplyHideDone=false;render();};}
+    else if(a==="supply-store-filter"){el.onclick=()=>{supplyStoreFilter=supplyStoreFilter===el.dataset.store?'':el.dataset.store;render();};}
+    else if(a==="supply-hide-done"){el.onclick=()=>{supplyHideDone=!supplyHideDone;render();};}  
     else if(a==="supply-check"){el.onclick=()=>{
       const mid=el.dataset.mid;
       const _y=window.pageYOffset||document.documentElement.scrollTop||0;
