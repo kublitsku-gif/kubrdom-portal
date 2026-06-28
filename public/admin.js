@@ -172,6 +172,7 @@ function serializeState(){
     { work_id: "templates",       data: templates       },
     { work_id: "estimates",       data: estimates       },
     { work_id: "estStages",       data: EST_STAGES      },
+    { work_id: "estKinds",        data: EST_KINDS       },
     { work_id: "users",           data: users           },
     { work_id: "roles",           data: roles           },
     { work_id: "rolePermissions", data: rolePermissions },
@@ -207,6 +208,7 @@ function applyState(items){
   templates       = arr("templates",       templates);
   estimates       = arr("estimates",       estimates);
   EST_STAGES      = arr("estStages",       EST_STAGES);
+  EST_KINDS       = arr("estKinds",        EST_KINDS);
   users           = arr("users",           users);
   roles           = arr("roles",           roles);
   dbWorks         = arr("dbWorks",         dbWorks);
@@ -1062,6 +1064,36 @@ let EST_STAGES=[
   {n:2, label:"Черновые работы",  short:"Этап 2", color:"#2980b9", emoji:"🔧"},
   {n:3, label:"Чистовые работы",  short:"Этап 3", color:"#16a085", emoji:"✨", finish:true}
 ];
+// ── ВИДЫ СМЕТ (banya | house | пользовательские) ──
+// Единый источник видов для раздела «Сметы» и формы шаблона. Синхронизируется
+// через work_id "estKinds" (как EST_STAGES). seedFrom — разовая копия смет из
+// другого вида при первом появлении (одноразово, флаг settings.seededKinds).
+let EST_KINDS=[
+  {k:"banya",    n:"Баня",              emoji:"🛁"},
+  {k:"house",    n:"Дом",               emoji:"🏠"},
+  {k:"minibrus", n:"Бани из минибруса", emoji:"🪵", seedFrom:"banya"}
+];
+function estKindMeta(k){return EST_KINDS.find(function(x){return x.k===k;})||EST_KINDS[0];}
+function estKindLabel(k){var m=estKindMeta(k);return m.emoji+" "+m.n;}
+// Разовый посев нового вида копией смет вида-источника (seedFrom). Идемпотентно:
+// помечаем выполненные виды в settings.seededKinds → не копируем повторно и не
+// размножаем между устройствами. Источник пуст → откладываем (флаг не ставим).
+function ensureEstKindSeeds(){
+  if(!Array.isArray(settings.seededKinds))settings.seededKinds=[];
+  var changed=false;
+  EST_KINDS.forEach(function(kd){
+    if(!kd.seedFrom)return;
+    if(settings.seededKinds.indexOf(kd.k)>=0)return;                       // уже посеян
+    if(estimates.some(function(e){return (e.kind||"banya")===kd.k;})){     // уже есть свои сметы — не трогаем
+      settings.seededKinds.push(kd.k); changed=true; return;
+    }
+    var src=estimates.filter(function(e){return (e.kind||"banya")===kd.seedFrom;});
+    if(!src.length)return;                                                 // источник пуст — попробуем позже
+    src.forEach(function(e){var c=JSON.parse(JSON.stringify(e));c.id=gid();c.kind=kd.k;estimates.push(c);});
+    settings.seededKinds.push(kd.k); changed=true;
+  });
+  return changed;
+}
 // Чистовой этап (на нём сметы разбиваются по комнатам). По флагу finish, а не по n===3 —
 // чтобы этапы можно было добавлять/удалять, не ломая привязку комнат.
 function isFinishStage(n){var s=EST_STAGES.find(function(x){return x.n===Number(n);});return !!(s&&s.finish);}
@@ -3911,7 +3943,7 @@ function tTemplates(){
   <div style="font-size:12px;color:#7a9aaa">${allW.length} работ · <span id="tpl-grand">${fmt(grand)}</span> · в ${objects.filter(o=>o.templateId===t.id).length} объектах</div>
 </div>
 ${specsEditorHtml(t)}
-<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">СОБРАТЬ ИЗ СМЕТ (${tKind==="house"?"🏠 дом":"🛁 баня"}) — отметьте работы галочками</div>
+<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">СОБРАТЬ ИЗ СМЕТ (${esc(estKindLabel(tKind))}) — отметьте работы галочками</div>
 <div style="position:relative;margin-bottom:8px">
   <input id="tpl-work-search" data-a="tpl-work-search" value="${(tplWorkSearch||'').replace(/"/g,'&quot;')}" placeholder="🔍 Поиск по работам и материалам…" style="width:100%;padding:9px 32px 9px 12px;border-radius:10px;border:1.5px solid #dde6f0;font-size:13px;outline:none;box-sizing:border-box">
   ${tplWorkSearch?`<button data-a="tpl-work-search-clear" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:22px;height:22px;border:none;background:#eef2f7;border-radius:50%;cursor:pointer;color:#7a9aaa;font-size:12px">✕</button>`:''}
@@ -4031,9 +4063,8 @@ ${showNT?`<div style="background:#fff;border-radius:14px;border:2px solid #9b59b
     <input id="nt-name" placeholder="Название шаблона (напр. Баня 6х4)" style="flex:1;padding:9px 12px;border-radius:8px;border:1px solid #d0dae8;font-size:14px;outline:none">
   </div>
   <div style="font-size:11px;color:#7a9aaa;font-weight:700;margin-bottom:6px">Сметы какого вида использовать</div>
-  <div style="display:flex;gap:6px;margin-bottom:12px">
-    <button data-a="nt-kind" data-k="banya" style="flex:1;padding:8px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:700;border:2px solid ${(nt.kind||"banya")==="banya"?"#16a085":"#dde6f0"};background:${(nt.kind||"banya")==="banya"?"#16a085":"#fff"};color:${(nt.kind||"banya")==="banya"?"#fff":"#7a9aaa"}">🛁 Баня</button>
-    <button data-a="nt-kind" data-k="house" style="flex:1;padding:8px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:700;border:2px solid ${nt.kind==="house"?"#16a085":"#dde6f0"};background:${nt.kind==="house"?"#16a085":"#fff"};color:${nt.kind==="house"?"#fff":"#7a9aaa"}">🏠 Дом</button>
+  <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">
+    ${EST_KINDS.map(function(kd){var on=(nt.kind||"banya")===kd.k;return `<button data-a="nt-kind" data-k="${kd.k}" style="flex:1 0 auto;padding:8px 10px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:700;border:2px solid ${on?"#16a085":"#dde6f0"};background:${on?"#16a085":"#fff"};color:${on?"#fff":"#7a9aaa"}">${kd.emoji} ${esc(kd.n)}</button>`;}).join("")}
   </div>
   <div style="display:flex;gap:8px">
     <button data-a="add-tpl" style="flex:1;padding:9px;background:#9b59b6;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">Создать шаблон</button>
@@ -4343,6 +4374,7 @@ function _tplRebuild(t, ids){
 function renderEstimates(){
   var el=document.getElementById("dbest-list");
   if(!el)return;
+  ensureEstKindSeeds(); // разовый посев новых видов (напр. «Бани из минибруса» ← копия Бани)
   var _act=(document.activeElement&&document.activeElement.id)||"";
   if(estOpenId){
     var e=estimates.find(function(x){return x.id===estOpenId;});
@@ -4458,9 +4490,11 @@ function renderEstimates(){
   var _noStage=_fl.filter(function(e){return !EST_STAGES.find(function(x){return x.n===Number(e.stage);});});
   if(_noStage.length)_groups.push({st:null,items:_noStage});
   el.innerHTML=
-    '<div style="display:flex;gap:6px;margin-bottom:10px">'+
-      '<button class="est-kind" data-k="banya" style="flex:1;padding:9px 6px;border-radius:10px;cursor:pointer;font-size:13px;font-weight:700;border:2px solid '+(estKind==="banya"?"#16a085":"#dde6f0")+';background:'+(estKind==="banya"?"#16a085":"#fff")+';color:'+(estKind==="banya"?"#fff":"#7a9aaa")+'">🛁 Баня</button>'+
-      '<button class="est-kind" data-k="house" style="flex:1;padding:9px 6px;border-radius:10px;cursor:pointer;font-size:13px;font-weight:700;border:2px solid '+(estKind==="house"?"#16a085":"#dde6f0")+';background:'+(estKind==="house"?"#16a085":"#fff")+';color:'+(estKind==="house"?"#fff":"#7a9aaa")+'">🏠 Дом</button>'+
+    '<div style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;padding-bottom:2px">'+
+      EST_KINDS.map(function(kd){var on=estKind===kd.k;
+        return '<button class="est-kind" data-k="'+kd.k+'" style="flex:1 0 auto;white-space:nowrap;padding:9px 13px;border-radius:10px;cursor:pointer;font-size:13px;font-weight:700;border:2px solid '+(on?"#16a085":"#dde6f0")+';background:'+(on?"#16a085":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+'">'+kd.emoji+' '+esc(kd.n)+'</button>';
+      }).join("")+
+      '<button id="est-kind-add" title="Добавить вид смет" style="flex:0 0 auto;padding:9px 14px;border-radius:10px;cursor:pointer;font-size:16px;font-weight:700;border:2px dashed #16a085;background:#fff;color:#16a085">+</button>'+
     '</div>'+
     '<div style="margin-bottom:10px"><input id="est-search" value="'+(estSearch||"").replace(/"/g,"&quot;")+'" placeholder="🔍 Поиск по работе или материалу..." style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid #dde6f0;font-size:13px;outline:none;box-sizing:border-box"></div>'+
     '<button id="est-new" style="width:100%;margin-bottom:6px;padding:11px;background:#16a085;border:none;border-radius:11px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">+ Новая смета</button>'+
@@ -4473,6 +4507,18 @@ function renderEstimates(){
     }).join(""):'<div style="text-align:center;color:#aaa;font-size:13px;padding:20px">'+(_q?'Ничего не найдено':'Смет пока нет')+'</div>')+
     '<button id="est-fab" title="Новая смета" style="position:fixed;right:18px;bottom:84px;z-index:500;display:flex;align-items:center;gap:7px;padding:13px 20px;background:linear-gradient(135deg,#16a085,#0e6e5a);border:none;border-radius:26px;cursor:pointer;color:#fff;font-size:14px;font-weight:800;box-shadow:0 6px 20px rgba(22,160,133,0.5)"><span style="font-size:18px;line-height:1">+</span> Смета</button>';
   el.querySelectorAll(".est-kind").forEach(function(b){b.onclick=function(){estKind=b.dataset.k;estSearch="";renderEstimates();};});
+  var eka=document.getElementById("est-kind-add"); if(eka)eka.onclick=function(){
+    var nm=prompt("Название нового вида смет (напр. «Бани из бруса»):","");
+    if(!nm||!nm.trim())return;
+    var k="k"+gid();
+    EST_KINDS=EST_KINDS.concat([{k:k,n:nm.trim(),emoji:"🧾"}]);
+    if(estimates.some(function(e){return (e.kind||"banya")===estKind;}) &&
+       confirm("Скопировать в новый вид сметы из текущего вида («"+estKindMeta(estKind).n+"»)?")){
+      var src=estimates.filter(function(e){return (e.kind||"banya")===estKind;});
+      src.forEach(function(e){var c=JSON.parse(JSON.stringify(e));c.id=gid();c.kind=k;estimates.push(c);});
+    }
+    estKind=k; estSearch=""; renderEstimates();
+  };
   var es=document.getElementById("est-search");
   if(es){ es.oninput=function(){estSearch=this.value;renderEstimates();}; if(_act==="est-search"){es.focus();var L2=es.value.length;try{es.setSelectionRange(L2,L2);}catch(_e){}} }
   var nw=document.getElementById("est-new"); if(nw)nw.onclick=function(){var ne={id:gid(),kind:estKind,name:"Новая смета",lines:[]};estimates.unshift(ne);estOpenId=ne.id;renderEstimates();};
