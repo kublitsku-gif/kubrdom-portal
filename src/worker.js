@@ -795,17 +795,52 @@ function parsePriceFromHtml(html){
   const v = Math.round(parseFloat(num));
   return (v>0 && v<100000000) ? v : null;
 }
+// SSRF-защита /api/price: приватные/служебные IP и нестандартные порты недопустимы.
+// Эндпоинт за ADMIN_TOKEN, но токен общий на всех — не даём использовать Worker как прокси
+// к внутренним/облачным адресам (напр. link-local 169.254.169.254 — метадата).
+function _ipv4Blocked(ip){
+  const p = ip.split(".").map(Number);
+  if(p.length!==4 || p.some(function(x){ return isNaN(x)||x<0||x>255; })) return true;
+  const a=p[0], b=p[1];
+  if(a===0||a===127||a===10) return true;            // this-host / loopback / private
+  if(a===169&&b===254) return true;                  // link-local (в т.ч. cloud metadata)
+  if(a===172&&b>=16&&b<=31) return true;             // private
+  if(a===192&&b===168) return true;                  // private
+  if(a===100&&b>=64&&b<=127) return true;            // CGNAT
+  if(a>=224) return true;                            // multicast/reserved
+  return false;
+}
+function _hostIsBlocked(hostname){
+  const h=(hostname||"").toLowerCase().replace(/^\[/,"").replace(/\]$/,"");   // снять скобки IPv6
+  if(!h) return true;
+  if(h==="localhost"||h.endsWith(".localhost")||h.endsWith(".local")||h==="metadata.google.internal") return true;
+  if(h==="::1"||h==="::"||h.startsWith("fe80:")||h.startsWith("fc")||h.startsWith("fd")) return true;  // IPv6 loopback/link-local/ULA
+  const m6=h.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);          // IPv4-mapped IPv6
+  if(m6) return _ipv4Blocked(m6[1]);
+  if(/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return _ipv4Blocked(h);               // IPv4-литерал
+  return false;   // обычный домен магазина — разрешаем
+}
 async function getPrice(url){
   let u; try{ u=new URL(url); }catch(e){ return { success:false, error:"некорректная ссылка" }; }
-  if(u.protocol!=="http:" && u.protocol!=="https:") return { success:false, error:"некорректная ссылка" };
-  let r;
-  try{
-    r = await fetch(u.toString(), { redirect:"follow", headers:{
-      "User-Agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      "Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language":"ru-RU,ru;q=0.9,en;q=0.8"
-    }});
-  }catch(e){ return { success:false, error:"магазин недоступен ("+String(e.message||e).slice(0,60)+")" }; }
+  // Редиректы ведём ВРУЧНУЮ (redirect:manual), проверяя КАЖДЫЙ хоп — иначе редирект на
+  // приватный адрес обошёл бы проверку начального URL.
+  let r, hops=0;
+  while(true){
+    if(u.protocol!=="http:" && u.protocol!=="https:") return { success:false, error:"некорректная ссылка" };
+    if(u.port && u.port!=="80" && u.port!=="443") return { success:false, error:"недопустимый порт" };
+    if(_hostIsBlocked(u.hostname)) return { success:false, error:"адрес недоступен" };
+    try{
+      r = await fetch(u.toString(), { redirect:"manual", headers:{
+        "User-Agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language":"ru-RU,ru;q=0.9,en;q=0.8"
+      }});
+    }catch(e){ return { success:false, error:"магазин недоступен ("+String(e.message||e).slice(0,60)+")" }; }
+    const loc = (r.status>=300 && r.status<400) ? r.headers.get("location") : null;
+    if(!loc) break;
+    if(++hops>4) return { success:false, error:"слишком много редиректов" };
+    try{ u=new URL(loc, u); }catch(e){ return { success:false, error:"некорректный редирект" }; }
+  }
   if(!r.ok) return { success:false, error:"магазин блокирует доступ (HTTP "+r.status+")" };
   let html=""; try{ html=(await r.text()).slice(0, 2_000_000); }catch(e){ return { success:false, error:"не удалось прочитать страницу" }; }
   const price = parsePriceFromHtml(html);
