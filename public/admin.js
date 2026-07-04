@@ -3017,7 +3017,8 @@ function page(){
   ];
   const _accessible=new Set(TABS.map(function(t){return t[0];}));
   const _bottomItems=BOTTOM_NAV.filter(function(x){return _accessible.has(x[0]);});
-  const bottomBar=_bottomItems.length>1?`<div style="position:fixed;left:0;right:0;bottom:0;z-index:60;pointer-events:none">
+  // Нижний таб-бар — только для админа.
+  const bottomBar=(isAdmin&&_bottomItems.length>1)?`<div style="position:fixed;left:0;right:0;bottom:0;z-index:60;pointer-events:none">
   <div style="max-width:480px;margin:0 auto;background:rgba(255,255,255,0.92);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);border-top:1px solid #e2e8f0;display:flex;padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px));pointer-events:auto;box-shadow:0 -1px 10px rgba(13,27,46,0.06)">
   ${_bottomItems.map(function(it){
     const k=it[0],label=it[1],icon=it[2],on=tab===k;
@@ -3029,7 +3030,7 @@ function page(){
   </div>
 </div>`:"";
   const SC={"Озон":"#005bff","Белка":"#d68910","pechki.su":"#c0392b","Егорьевск":"#8e44ad","Лемана":"#e30613","Авито":"#00aaff","Нижний Новгород":"#27ae60"};
-  return`<div style="max-width:480px;margin:0 auto;min-height:100vh;background:#f6f8fa;padding-bottom:calc(76px + env(safe-area-inset-bottom,0px));box-sizing:border-box">
+  return`<div style="max-width:480px;margin:0 auto;min-height:100vh;background:#f6f8fa;padding-bottom:${isAdmin?"calc(76px + env(safe-area-inset-bottom,0px))":"80px"};box-sizing:border-box">
 <div style="background:#fff;border-bottom:1px solid #eef2f7;padding:10px 14px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:50">
   <div style="width:32px;height:32px;border-radius:8px;background:${currentUser.c};display:flex;align-items:center;justify-content:center;font-size:16px">${currentUser.av}</div>
   <div style="flex:1;min-width:0">
