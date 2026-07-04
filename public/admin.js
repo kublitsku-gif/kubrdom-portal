@@ -165,6 +165,26 @@ function showLogin(message){
 // Счётчики коллекций по последнему ответу сервера — страж apiSave сверяется с ними.
 let _serverCounts=null;
 const GUARDED_KEYS=["objects","templates","contractDocs","crmClients","dbWorks","dbPlans","expProducts","finTxns","users"];
+// Страж v2 (после потери данных 15–28.06.2026, когда стейл-вкладка затёрла облако демо-данными):
+// _serverVerified — true только после УСПЕШНОГО GET /api/state с настоящего сервера.
+// Кэш localStorage сюда НЕ попадает: раньше applyState(кэш) заполнял _serverCounts, и
+// стейл-вкладка «сверялась» сама с собой — страж всегда проходил. Эталон — только сервер.
+let _serverVerified=false;
+let _serverIds=null;         // Set id-шников гардируемых коллекций по последнему ответу сервера
+function updateServerCounts(items){
+  _serverCounts={}; _serverIds={};
+  const byId={};
+  (items||[]).forEach(function(it){ byId[it.work_id]=it.data; });
+  GUARDED_KEYS.forEach(function(k){
+    const v=byId[k];
+    _serverCounts[k]=Array.isArray(v)?v.length:null;
+    _serverIds[k]=new Set(Array.isArray(v)?v.map(function(x){return x&&x.id;}):[]);
+  });
+  _serverVerified=true;
+}
+// Демо-id из сида: если на сервере их уже НЕТ (пользователь удалял), а вкладка их шлёт —
+// вкладка живёт на старом состоянии, её сейв затёр бы реальные данные демкой.
+const SEED_STALE_IDS={ objects:["obj_banya_kievka","obj_dom_dmitrovka"], contractDocs:["ct001","ct002"], templates:["t1","t2"] };
 
 function serializeState(){
   return [
@@ -202,8 +222,8 @@ function applyState(items){
   // отсеиваем null/undefined-элементы — один битый элемент иначе роняет рендер вкладки
   const arr = function(k, cur){ return Array.isArray(byId[k]) ? byId[k].filter(function(x){ return x != null; }) : cur; };
   const obj = function(k, cur){ return (byId[k] && typeof byId[k] === "object" && !Array.isArray(byId[k])) ? byId[k] : cur; };
-  _serverCounts={};
-  GUARDED_KEYS.forEach(function(k){ const v=byId[k]; _serverCounts[k]=Array.isArray(v)?v.length:null; });
+  // ВАЖНО: _serverCounts здесь НЕ трогаем — applyState зовётся и с localStorage-кэшем,
+  // а эталон стража должен приходить только с сервера (updateServerCounts).
   objects         = arr("objects",         objects);
   templates       = arr("templates",       templates);
   estimates       = arr("estimates",       estimates);
@@ -254,7 +274,7 @@ async function apiLoad(){
   if (r.status === 401) { const e = new Error("unauthorized"); e.unauthorized = true; throw e; }
   if (!r.ok) throw new Error("HTTP " + r.status);
   const data = await r.json();
-  if (data && Array.isArray(data.items)) { writeCache(data.items); return data.items; }
+  if (data && Array.isArray(data.items)) { updateServerCounts(data.items); writeCache(data.items); return data.items; }
   return null;
 }
 
@@ -380,26 +400,50 @@ async function apiSave(){
   const items = serializeState();
   const snap  = JSON.stringify(items);
   if (snap === _lastSavedJson) return { success: true, skipped: true };  // нечего сохранять
-  // СТРАЖ: если сервер давал непустую коллекцию, а мы собрались отправить пустую —
-  // это почти наверняка вкладка с неполными данными (стейл/сбой загрузки), а не
-  // намеренное удаление всего. Не затираем чужую работу — блокируем сейв с баннером.
-  if (_serverCounts) {
+  // СТРАЖ v2. Правило: «не пиши туда, чего не видел».
+  // (1) Пока не было успешного GET с НАСТОЯЩЕГО сервера — в облако не пишем вообще:
+  //     вкладка, поднятая из localStorage-кэша, не знает актуального состояния и
+  //     может затереть его старьём (так 15–28.06.2026 пропали договора и объекты).
+  if (!_serverVerified && !window._forceSaveOnce) {
+    writeCache(items);   // правки целы локально; уйдут сами после первой сверки с сервером
+    showSaveError("Ждём ответа сервера для сверки данных. Правки сохранены на устройстве и уйдут в облако автоматически после проверки связи.");
+    return { success: false, blocked: "unverified" };
+  }
+  if (_serverVerified && !window._forceSaveOnce) {
     const itemsById = {};
     items.forEach(function(it){ itemsById[it.work_id] = it.data; });
     const allow = window._allowEmptyOnce || {};
+    // (2) Полное обнуление разделов (страж v1): пусто локально, не пусто в облаке.
     const emptied = GUARDED_KEYS.filter(function(k){
       const la = itemsById[k];
       return _serverCounts[k] > 0 && Array.isArray(la) && la.length === 0 && !allow[k];
     });
-    // Явное удаление пользователем (флаг) или одна мелкая коллекция — пропускаем.
-    // Блокируем признаки СТЕЙЛ-ВКЛАДКИ: опустели сразу несколько разделов или большой раздел разом.
     const mass = emptied.length >= 2 || emptied.some(function(k){ return _serverCounts[k] >= 3; });
-    if (mass) {
-      showSaveError("Защита данных: разделы «" + emptied.join(", ") + "» пусты локально, но не пусты в облаке. Похоже, вкладка устарела — обновите страницу. Сохранение остановлено, чтобы не затереть чужую работу.");
-      return { success: false, blocked: emptied.join(",") };
+    // (3) УСУШКА: раздел стал заметно меньше серверного. Потеря 06.2026 была «4 реальных → 2 демо» —
+    //     v1 ловил только «до нуля». Одиночное удаление (−1) и парное в мелком разделе пропускаем.
+    const shrunk = GUARDED_KEYS.filter(function(k){
+      const la = itemsById[k];
+      if (!Array.isArray(la) || !(_serverCounts[k] > 0) || allow[k]) return false;
+      const d = _serverCounts[k] - la.length;
+      return d >= 3 || (d >= 2 && d / _serverCounts[k] >= 0.3);
+    });
+    // (4) РЕГРЕССИЯ К ДЕМО: шлём демо-запись, которой на сервере уже нет, — верный признак стейл-вкладки.
+    const seedy = Object.keys(SEED_STALE_IDS).filter(function(k){
+      const la = itemsById[k];
+      if (!Array.isArray(la) || !(_serverCounts[k] > 0) || !_serverIds || !_serverIds[k]) return false;
+      return SEED_STALE_IDS[k].some(function(id){
+        return !_serverIds[k].has(id) && la.some(function(x){ return x && x.id === id; });
+      });
+    });
+    if (mass || shrunk.length > 0 || seedy.length > 0) {
+      writeCache(items);   // локально ничего не теряем
+      const what = [].concat(emptied, shrunk, seedy).filter(function(v, i, a){ return a.indexOf(v) === i; });
+      showSaveError("Защита данных: разделы «" + what.join(", ") + "» локально беднее или старее, чем в облаке. Похоже, вкладка устарела. Сохранение остановлено, чтобы не затереть данные.", 0, true);
+      return { success: false, blocked: what.join(",") };
     }
     window._allowEmptyOnce = {};   // одноразовые разрешения израсходованы
   }
+  window._forceSaveOnce = false;   // форс-сохранение одноразовое
   _saving = true;
   writeCache(items);                       // optimistic: локально всегда свежо
   try {
@@ -417,6 +461,7 @@ async function apiSave(){
     const j = await r.json();
     if (j && j.updated_at) _lastSeen = j.updated_at;   // свой save — не считаем чужой правкой
     _lastSavedJson = snap;                             // запомнили, что отправили
+    updateServerCounts(items);                         // сервер теперь равен локальному — обновляем эталон стража
     clearSaveError();                                  // успех — убираем баннер ошибки, если был
     return j;
   } catch (err) {
@@ -428,7 +473,9 @@ async function apiSave(){
 }
 
 // Заметный баннер: данные не уходят в облако. Не глотаем ошибки сохранения молча.
-function showSaveError(detail, snapLen){
+// withActions=true — блокировка стража: даём кнопки «Обновить страницу» (правильный выход
+// для стейл-вкладки) и «Сохранить как есть» (осознанная перезапись облака, одноразовая).
+function showSaveError(detail, snapLen, withActions){
   let b = document.getElementById("save-error-banner");
   if (!b){
     b = document.createElement("div");
@@ -445,6 +492,18 @@ function showSaveError(detail, snapLen){
   b.innerHTML = "⚠️ Изменения НЕ сохраняются в облако!<br><span style='font-weight:400;font-size:12px'>" + esc(human)
     + (tooBig ? "<br>Снимок слишком большой (тяжёлые фото в base64). Обновите страницу (Cmd+Shift+R) — новая версия хранит фото отдельно в облаке." : "")
     + "<br>Правки сохранены на устройстве и уйдут в облако сами, когда появится связь.</span>";
+  if (withActions){
+    const row = document.createElement("div");
+    row.style.cssText = "margin-top:8px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap";
+    row.innerHTML = '<button id="seb-reload" style="border:0;border-radius:8px;padding:7px 14px;background:#fff;color:#c0392b;font-weight:700;font-size:12px;cursor:pointer">🔄 Обновить страницу</button>'
+      + '<button id="seb-force" style="border:1px solid rgba(255,255,255,.5);border-radius:8px;padding:7px 14px;background:transparent;color:#fff;font-weight:600;font-size:12px;cursor:pointer">Сохранить как есть (перезапишет облако)</button>';
+    b.appendChild(row);
+    document.getElementById("seb-reload").onclick = function(){ location.reload(); };
+    document.getElementById("seb-force").onclick = function(){
+      if (!confirm("Точно перезаписать облако данными этой вкладки? Если вкладка устарела, более свежие данные с других устройств будут потеряны.")) return;
+      window._forceSaveOnce = true; clearSaveError(); apiSave().catch(function(){});
+    };
+  }
 }
 function clearSaveError(){
   const b = document.getElementById("save-error-banner");
@@ -480,6 +539,7 @@ async function pollOnce(){
   if (!r.ok) return;
   const data = await r.json();
   if (!data || !Array.isArray(data.items)) return;
+  updateServerCounts(data.items);   // страж всегда знает СВЕЖИЕ серверные счётчики (даже без применения стейта)
   const serverV = maxUpdatedAt(data.items);
   if (serverV > _lastSeen) showUpdateBanner(data.items, serverV);
 }
