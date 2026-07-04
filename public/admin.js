@@ -1055,6 +1055,16 @@ let loginMode=null;   // null = выбор Сотрудник/Клиент; "emp
 let loginPinFor=null; // id сотрудника, у которого запрашиваем PIN при входе
 let loginPinError=""; // текст ошибки ввода PIN
 let empPhoneError=""; // ошибка входа сотрудника по телефону
+let loginUsers=[];        // публичный список сотрудников (id/имя/аватар) для пикера входа
+let loginUsersLoading=false;
+function _loadLoginUsers(){
+  if(loginUsersLoading) return;
+  loginUsersLoading=true;
+  fetch(API_BASE+"/api/employees").then(function(r){return r.json();}).then(function(j){
+    loginUsers=(j&&j.success&&Array.isArray(j.employees))?j.employees:[];
+    loginUsersLoading=false; render();
+  }).catch(function(){ loginUsers=[]; loginUsersLoading=false; render(); });
+}
 let showPinChange=false; // открыт диалог смены своего PIN
 // === КЛИЕНТСКИЙ ВХОД ===
 let clientLoginStep="find";   // "find" (ввод номера/фамилии) | "pin"
@@ -2344,16 +2354,49 @@ function loginPage(){
     return wrap(inner);
   }
 
-  // Экран входа сотрудника — телефон + PIN на одном экране
+  // Экран входа сотрудника. Шаг PIN — когда сотрудник выбран из списка (loginPinFor).
+  if(loginPinFor){
+    const u=loginUsers.find(function(x){return x.id===loginPinFor;})||{name:"Сотрудник",av:"👷"};
+    const inner='<div style="background:#fff;border-radius:20px;padding:24px;box-shadow:0 4px 24px rgba(0,0,0,0.08);border:1px solid #e8eef5;text-align:center">'+
+        '<div style="width:56px;height:56px;border-radius:14px;background:'+((u.c||"#2980b9"))+'22;display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto 10px">'+(u.av||"👷")+'</div>'+
+        '<div style="font-size:16px;font-weight:700;color:#0d1b2e">'+esc(u.name||"")+'</div>'+
+        '<div style="font-size:12px;color:#7a9aaa;margin-bottom:16px">Введите свой PIN</div>'+
+        '<input id="login-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="••••" style="width:170px;padding:12px;border-radius:12px;border:1.5px solid '+(loginPinError?"#e74c3c":"#d0dae8")+';font-size:22px;text-align:center;letter-spacing:8px;outline:none;margin:0 auto;display:block;box-sizing:border-box">'+
+        (loginPinError?'<div style="font-size:12px;color:#e74c3c;font-weight:600;margin-top:8px">'+esc(loginPinError)+'</div>':'')+
+        '<label style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:12px;font-size:13px;color:#5a7a9a;cursor:pointer;user-select:none"><input type="checkbox" id="remember-me" checked style="width:17px;height:17px;cursor:pointer">Запомнить меня</label>'+
+        '<button data-a="login-pin-submit" style="width:100%;margin-top:12px;padding:12px;background:#2980b9;border:none;border-radius:12px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">Войти</button>'+
+        '<button data-a="login-pin-back" style="width:100%;margin-top:8px;padding:10px;background:#f0f4f8;border:1px solid #dde6f0;border-radius:10px;cursor:pointer;font-size:13px;color:#7a9aaa;font-weight:600">← К списку</button>'+
+      '</div>';
+    return wrap(inner);
+  }
+  // Список сотрудников — тапни себя, дальше PIN. Загружается с /api/employees (публично, без токена).
+  if(loginUsers.length){
+    const cards=loginUsers.map(function(u){
+      return '<button data-a="login-as" data-uid="'+esc(u.id)+'" data-color="'+esc(u.c||"#2980b9")+'" style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:12px;border:1.5px solid #e8eef5;background:#fff;cursor:pointer;text-align:left;width:100%;box-sizing:border-box;margin-bottom:8px">'+
+        '<div style="width:40px;height:40px;border-radius:11px;background:'+((u.c||"#2980b9"))+'22;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">'+(u.av||"👷")+'</div>'+
+        '<div style="flex:1;min-width:0;font-size:15px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(u.name||"")+'</div>'+
+        '<span style="font-size:18px;color:#c8d8e8">›</span>'+
+      '</button>';
+    }).join("");
+    const inner='<div style="background:#fff;border-radius:20px;padding:20px;box-shadow:0 4px 24px rgba(0,0,0,0.08);border:1px solid #e8eef5">'+
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">'+
+          '<button data-a="login-back" style="width:28px;height:28px;background:#f0f4f8;border:1px solid #dde6f0;border-radius:8px;cursor:pointer;font-size:13px;color:#7a9aaa;flex-shrink:0">←</button>'+
+          '<div style="font-size:14px;font-weight:700;color:#1a2a3a">Выберите себя</div>'+
+        '</div>'+
+        cards+
+      '</div>';
+    return wrap(inner);
+  }
+  // Фолбэк (список не загрузился/офлайн) — вход по телефону + PIN.
   const inner='<div style="background:#fff;border-radius:20px;padding:24px;box-shadow:0 4px 24px rgba(0,0,0,0.08);border:1px solid #e8eef5">'+
       '<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">'+
         '<button data-a="login-back" style="width:28px;height:28px;background:#f0f4f8;border:1px solid #dde6f0;border-radius:8px;cursor:pointer;font-size:13px;color:#7a9aaa;flex-shrink:0">←</button>'+
         '<div style="font-size:14px;font-weight:700;color:#1a2a3a">Вход для сотрудников</div>'+
       '</div>'+
-      '<div style="font-size:12px;color:#7a9aaa;margin:4px 0 14px 36px">Телефон и PIN (последние 4 цифры номера)</div>'+
+      '<div style="font-size:12px;color:#7a9aaa;margin:4px 0 14px 36px">'+(loginUsersLoading?"Загрузка списка…":"Телефон и PIN (последние 4 цифры номера)")+'</div>'+
       '<input id="emp-phone" data-phone-mask="1" type="tel" inputmode="tel" autocomplete="off" placeholder="+7 (___) ___-__-__" style="width:100%;padding:12px;border-radius:12px;border:1.5px solid '+(empPhoneError?"#e74c3c":"#d0dae8")+';font-size:16px;outline:none;box-sizing:border-box;margin-bottom:10px">'+
       '<input id="login-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="PIN" style="width:100%;padding:12px;border-radius:12px;border:1.5px solid '+(empPhoneError?"#e74c3c":"#d0dae8")+';font-size:18px;text-align:center;letter-spacing:6px;outline:none;box-sizing:border-box">'+
-      (empPhoneError?'<div style="font-size:12px;color:#e74c3c;font-weight:600;margin-top:8px">'+empPhoneError+'</div>':'')+
+      (empPhoneError?'<div style="font-size:12px;color:#e74c3c;font-weight:600;margin-top:8px">'+esc(empPhoneError)+'</div>':'')+
       '<label style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:14px;font-size:13px;color:#5a7a9a;cursor:pointer;user-select:none"><input type="checkbox" id="remember-me" checked style="width:17px;height:17px;cursor:pointer">Запомнить меня</label>'+
       '<button data-a="emp-login-go" style="width:100%;margin-top:12px;padding:13px;background:#2980b9;border:none;border-radius:12px;cursor:pointer;color:#fff;font-size:15px;font-weight:700">Войти</button>'+
     '</div>';
@@ -2374,7 +2417,7 @@ function _setInitialTab(){
 
 function bindLogin(){
   document.querySelectorAll("[data-a='login-mode']").forEach(function(el){
-    el.onclick=function(){ loginMode=el.dataset.m; render(); };
+    el.onclick=function(){ loginMode=el.dataset.m; if(el.dataset.m==="employee"){ loginPinFor=null; empPhoneError=""; _loadLoginUsers(); } render(); };
   });
   document.querySelectorAll("[data-a='login-back']").forEach(function(el){
     el.onclick=function(){ loginMode=null; clientLoginStep="find"; clientLoginMatch=null; clientLoginError=""; render(); };
@@ -2461,23 +2504,28 @@ function bindLogin(){
   document.querySelectorAll("[data-a='login-pin-back']").forEach(function(el){
     el.onclick=function(){ loginPinFor=null; loginPinError=""; render(); };
   });
-  // Проверка PIN и вход
+  // Проверка PIN и вход — на сервере (/api/login по userId выбранного сотрудника).
   document.querySelectorAll("[data-a='login-pin-submit']").forEach(function(el){
-    const doLogin=function(){
-      const u=users.find(function(x){return x.id===loginPinFor;});
-      if(!u)return;
+    const doLogin=async function(){
+      const uid=loginPinFor;
       const inp=document.getElementById("login-pin");
       const val=(inp?inp.value:"").trim();
-      if(val!==(u.pin||"1111")){
-        loginPinError="Неверный PIN";
-        render();
-        return;
-      }
-      currentUser=u;
-      try{ const rm=document.getElementById("remember-me"); if(!rm||rm.checked) localStorage.setItem("kubr_remember",u.id); else localStorage.removeItem("kubr_remember"); }catch(e){}
-      loginPinFor=null; loginPinError="";
-      _setInitialTab();
-      render();
+      if(!val){ loginPinError="Введите PIN"; render(); return; }
+      const rm=document.getElementById("remember-me"); const remember=(!rm||rm.checked);
+      loginPinError="Проверяем…"; render();
+      try{
+        const r=await fetch(API_BASE+"/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({userId:uid,pin:val})});
+        const j=await r.json();
+        if(!j||!j.success){ loginPinError=(j&&j.error)||"Ошибка входа"; render(); return; }
+        setToken(j.token);
+        try{ if(remember) localStorage.setItem("kubr_remember",j.user.id); else localStorage.removeItem("kubr_remember"); }catch(e){}
+        const items=await apiLoad();
+        if(items){ applyState(items); _lastSeen=maxUpdatedAt(items); }
+        currentUser=users.find(function(x){return x.id===j.user.id;})||j.user;
+        _lastSavedJson=JSON.stringify(serializeState());
+        _hydrated=true; loginPinFor=null; loginPinError="";
+        _startLoops(); _setInitialTab(); render();
+      }catch(e){ loginPinError="Нет связи с сервером."; render(); }
     };
     el.onclick=doLogin;
   });

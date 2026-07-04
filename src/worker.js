@@ -78,36 +78,104 @@ async function resolveAuth(env, request) {
   if (!token) return null;
   if (env.ADMIN_TOKEN && safeEqual(token, env.ADMIN_TOKEN)) return { kind: "master", uid: "__master__", adm: true, fin: true };
   const p = await verifyUserToken(env, token);
+  if (p && p.typ === "client") return { kind: "client", cid: p.cid, adm: false, fin: false, client: true };
   if (p) return { kind: "user", uid: p.u, adm: !!p.adm, fin: !!p.fin };
   return null;
 }
-// POST /api/login { userId, pin } → персональный токен с зашитыми правами. Без токена (сотрудник его и получает).
+// POST /api/login { userId?|phone?, pin } → персональный токен с зашитыми правами. Без токена (сотрудник его и получает).
+// Вход по телефону: клиент шлёт телефон+PIN, сервер сам находит сотрудника — публичный список не нужен.
 async function loginUser(env, request) {
   let body; try { body = await request.json(); } catch { return json({ success: false, error: "bad json" }, 400); }
   const userId = String((body && body.userId) || "");
+  const phone = String((body && body.phone) || "");
   const pin = String((body && body.pin) || "");
-  if (!userId || !pin) return json({ success: false, error: "need userId+pin" }, 400);
-  // Читаем users и rolePermissions из D1 (снимок панели).
+  if ((!userId && !phone) || !pin) return json({ success: false, error: "need userId/phone + pin" }, 400);
   const rows = await env.DB.prepare("SELECT work_id, data FROM work_states WHERE storage_key='admin_panel' AND work_id IN ('users','rolePermissions')").all();
   let users = [], rolePerms = {};
   for (const r of rows.results) {
     try { const d = JSON.parse(r.data); if (r.work_id === "users") users = d || []; else rolePerms = d || {}; } catch {}
   }
-  const u = users.find(function (x) { return x && x.id === userId; });
+  const norm = function (s) { return String(s || "").replace(/\D/g, "").slice(-10); };
+  const u = userId
+    ? users.find(function (x) { return x && x.id === userId; })
+    : users.find(function (x) { return x && x.phone && norm(x.phone) === norm(phone) && norm(phone).length >= 10; });
   if (!u) return json({ success: false, error: "Сотрудник не найден" }, 401);
   const realPin = String(u.pin || "1111");
   if (!safeEqual(pin, realPin)) return json({ success: false, error: "Неверный PIN" }, 401);
   const roles = u.roles || [];
   const adm = roles.indexOf("admin") >= 0;
   const fin = adm || roles.some(function (r) { return (rolePerms[r] || []).indexOf("finance") >= 0; });
-  const token = await makeUserToken(env, { u: userId, adm: adm, fin: fin, exp: Date.now() + 30 * 24 * 3600 * 1000 });
+  const token = await makeUserToken(env, { u: u.id, adm: adm, fin: fin, exp: Date.now() + 30 * 24 * 3600 * 1000 });
   return json({ success: true, token: token, user: { id: u.id, name: u.name, roles: roles, av: u.av, c: u.c } });
+}
+
+// Читает нужные разделы снимка из D1 разом. Возвращает { work_id: data }.
+async function readSnapshot(env, keys) {
+  const ph = keys.map(function () { return "?"; }).join(",");
+  const rows = await env.DB.prepare("SELECT work_id, data FROM work_states WHERE storage_key='admin_panel' AND work_id IN (" + ph + ")").bind(...keys).all();
+  const out = {};
+  for (const r of rows.results) { try { out[r.work_id] = JSON.parse(r.data); } catch { out[r.work_id] = null; } }
+  return out;
+}
+
+// Срез данных для кабинета клиента: только ЕГО договор, объект, crmClient, планировки и доходные платежи.
+// Больше клиент не получает НИЧЕГО (ни других клиентов/договоров, ни зарплат, ни пользователей).
+async function buildClientSlice(env, cid) {
+  const s = await readSnapshot(env, ["contractDocs", "objects", "crmClients", "dbPlans", "finTxns"]);
+  const contracts = s.contractDocs || [];
+  const c = contracts.find(function (x) { return x && x.id === cid; });
+  if (!c) return null;
+  const obj = (s.objects || []).find(function (o) { return o && o.id === c.objId; });
+  const crmCl = (s.crmClients || []).find(function (x) { return x && x.id === c.crmClientId; });
+  const planIds = (crmCl && crmCl.planIds) ? crmCl.planIds : [];
+  const plans = (s.dbPlans || []).filter(function (p) { return p && planIds.indexOf(p.id) >= 0; });
+  const txns = (s.finTxns || []).filter(function (t) { return t && t.type === "income" && ((c.objId && t.objId === c.objId) || t.contractId === c.id); });
+  const now = Date.now();
+  const item = function (k, d) { return { work_id: k, data: d, updated_at: now }; };
+  return [
+    item("contractDocs", [c]),
+    item("objects", obj ? [obj] : []),
+    item("crmClients", crmCl ? [crmCl] : []),
+    item("dbPlans", plans),
+    item("finTxns", txns),
+  ];
+}
+
+// POST /api/client-login { query, pin } → клиентский токен (scope=один договор) + его срез. Без токена.
+async function clientLogin(env, request) {
+  let body; try { body = await request.json(); } catch { return json({ success: false, error: "bad json" }, 400); }
+  const query = String((body && body.query) || "").trim().toLowerCase();
+  const pin = String((body && body.pin) || "").trim();
+  if (!query || !pin) return json({ success: false, error: "need query+pin" }, 400);
+  const s = await readSnapshot(env, ["contractDocs", "crmClients"]);
+  const contracts = s.contractDocs || [], crm = s.crmClients || [];
+  const qd = query.replace(/\D/g, "");
+  const c = contracts.find(function (x) {
+    const nm = (x.name || "").toLowerCase(), cl = (x.client || "").toLowerCase();
+    const cm = crm.find(function (y) { return y.id === x.crmClientId; });
+    const ph = ((cm && cm.phone) ? cm.phone : "").replace(/\D/g, "");
+    return nm.indexOf(query) >= 0 || cl.indexOf(query) >= 0 || (qd.length >= 4 && ph.indexOf(qd) >= 0);
+  });
+  if (!c) return json({ success: false, error: "Договор не найден" }, 401);
+  const cm = crm.find(function (y) { return y.id === c.crmClientId; });
+  const phoneLast4 = ((cm && cm.phone) ? cm.phone : "").replace(/\D/g, "").slice(-4);
+  const realPin = (c.clientPin && c.clientPin.trim()) ? c.clientPin.trim() : phoneLast4;
+  if (!realPin) return json({ success: false, error: "PIN не задан. Обратитесь к менеджеру по сопровождению." }, 401);
+  if (!safeEqual(pin, realPin)) return json({ success: false, error: "Неверный PIN" }, 401);
+  const token = await makeUserToken(env, { typ: "client", cid: c.id, exp: Date.now() + 30 * 24 * 3600 * 1000 });
+  const slice = await buildClientSlice(env, c.id);
+  return json({ success: true, token: token, cid: c.id, items: slice });
 }
 
 // GET /api/state/:storageKey — с фильтрацией по правам (auth):
 //   • не-admin не получает PIN-ы (вырезаем поле pin из users);
 //   • роль без finance не получает финансовые разделы вовсе.
 async function getState(env, storageKey, auth) {
+  // Клиент видит ТОЛЬКО срез своего договора (объект/платежи/планировки), больше ничего.
+  if (auth && auth.client) {
+    const slice = await buildClientSlice(env, auth.cid);
+    return json({ success: true, storage_key: storageKey, items: slice || [] });
+  }
   const result = await env.DB
     .prepare("SELECT work_id, data, updated_at FROM work_states WHERE storage_key = ?")
     .bind(storageKey)
@@ -175,6 +243,10 @@ async function postState(env, storageKey, request, auth) {
     }
   }
 
+  // Клиент — строго read-only: ничего не пишем (иначе его частичный срез затёр бы всю базу).
+  if (auth && auth.client) {
+    return json({ success: true, written: 0, updated_at: now, skipped: ["*client-readonly*"] });
+  }
   // Пропускаем запись разделов, на которые у отправителя нет прав. НЕ отклоняем весь запрос
   // (клиент всегда шлёт полный снимок) — просто не трогаем защищённый раздел. Так рабочий,
   // сохраняя объект, не может переписать зарплаты/пользователей/роли, а его сейв проходит.
@@ -995,9 +1067,22 @@ export default {
       catch (err) { return json({ success: false, error: String(err) }, 200); }
     }
 
-    // Вход сотрудника (userId+PIN → персональный токен) — ДО авторизации: токен тут и выдаётся.
+    // Публичный список сотрудников для экрана входа (только имя/аватар — без PIN/телефона/ролей). ДО авторизации.
+    if (url.pathname === "/api/employees" && request.method === "GET") {
+      try {
+        const s = await readSnapshot(env, ["users"]);
+        const list = (s.users || []).map(function (u) { return { id: u.id, name: u.name, av: u.av, c: u.c }; });
+        return json({ success: true, employees: list });
+      } catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+    // Вход сотрудника (userId/телефон + PIN → персональный токен) — ДО авторизации: токен тут и выдаётся.
     if (url.pathname === "/api/login" && request.method === "POST") {
       try { return await loginUser(env, request); }
+      catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+    // Вход клиента (номер договора/фамилия + PIN → клиентский токен + срез) — ДО авторизации.
+    if (url.pathname === "/api/client-login" && request.method === "POST") {
+      try { return await clientLogin(env, request); }
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
 
