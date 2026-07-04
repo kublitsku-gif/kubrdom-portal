@@ -31,19 +31,98 @@ function safeEqual(a, b) {
   return diff === 0;
 }
 
-// GET /api/state/:storageKey
-async function getState(env, storageKey) {
+// ─── Персональные токены (серверная авторизация) ─────────────────────────────
+// Модель: сотрудник логинится (userId+PIN) → сервер выдаёт ПОДПИСАННЫЙ токен с его
+// правами (adm/fin), зашитыми на момент входа. HMAC-ключ = ADMIN_TOKEN (отдельный
+// секрет не нужен; ротация ADMIN_TOKEN разом инвалидирует все токены — это и есть отсечка).
+// Разделы, которые нельзя переписывать/читать без прав — ниже. Запись чужого раздела не
+// отклоняется (иначе полноснимковый сейв ломается), а МОЛЧА пропускается сервером.
+const ADMIN_KEYS = ["users", "roles", "rolePermissions", "settings"];   // писать — только admin
+const FIN_KEYS   = ["finSalaries", "finTxns", "finContracts", "finExtraWorks"]; // писать/читать — только роль с правом finance
+
+function b64urlEncode(bytes) {
+  let s = "";
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function b64urlDecodeToStr(s) {
+  s = s.replace(/-/g, "+").replace(/_/g, "/");
+  while (s.length % 4) s += "=";
+  return atob(s);
+}
+async function hmacRaw(env, msg) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(env.ADMIN_TOKEN || ""),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(msg));
+  return b64urlEncode(new Uint8Array(sig));
+}
+// payload: { u:userId, adm:bool, fin:bool, exp:ms }
+async function makeUserToken(env, payload) {
+  const p = b64urlEncode(new TextEncoder().encode(JSON.stringify(payload)));
+  const sig = await hmacRaw(env, p);
+  return "v1." + p + "." + sig;
+}
+async function verifyUserToken(env, token) {
+  if (typeof token !== "string" || token.indexOf("v1.") !== 0) return null;
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const expSig = await hmacRaw(env, parts[1]);
+  if (!safeEqual(parts[2], expSig)) return null;          // подпись не сошлась
+  let payload; try { payload = JSON.parse(b64urlDecodeToStr(parts[1])); } catch { return null; }
+  if (!payload || typeof payload.exp !== "number" || payload.exp < Date.now()) return null;  // протух
+  return payload;
+}
+// Резолвим кто это: мастер (общий ADMIN_TOKEN — full admin, break-glass владельца) или персональный токен.
+async function resolveAuth(env, request) {
+  const token = request.headers.get("X-Admin-Token") || "";
+  if (!token) return null;
+  if (env.ADMIN_TOKEN && safeEqual(token, env.ADMIN_TOKEN)) return { kind: "master", uid: "__master__", adm: true, fin: true };
+  const p = await verifyUserToken(env, token);
+  if (p) return { kind: "user", uid: p.u, adm: !!p.adm, fin: !!p.fin };
+  return null;
+}
+// POST /api/login { userId, pin } → персональный токен с зашитыми правами. Без токена (сотрудник его и получает).
+async function loginUser(env, request) {
+  let body; try { body = await request.json(); } catch { return json({ success: false, error: "bad json" }, 400); }
+  const userId = String((body && body.userId) || "");
+  const pin = String((body && body.pin) || "");
+  if (!userId || !pin) return json({ success: false, error: "need userId+pin" }, 400);
+  // Читаем users и rolePermissions из D1 (снимок панели).
+  const rows = await env.DB.prepare("SELECT work_id, data FROM work_states WHERE storage_key='admin_panel' AND work_id IN ('users','rolePermissions')").all();
+  let users = [], rolePerms = {};
+  for (const r of rows.results) {
+    try { const d = JSON.parse(r.data); if (r.work_id === "users") users = d || []; else rolePerms = d || {}; } catch {}
+  }
+  const u = users.find(function (x) { return x && x.id === userId; });
+  if (!u) return json({ success: false, error: "Сотрудник не найден" }, 401);
+  const realPin = String(u.pin || "1111");
+  if (!safeEqual(pin, realPin)) return json({ success: false, error: "Неверный PIN" }, 401);
+  const roles = u.roles || [];
+  const adm = roles.indexOf("admin") >= 0;
+  const fin = adm || roles.some(function (r) { return (rolePerms[r] || []).indexOf("finance") >= 0; });
+  const token = await makeUserToken(env, { u: userId, adm: adm, fin: fin, exp: Date.now() + 30 * 24 * 3600 * 1000 });
+  return json({ success: true, token: token, user: { id: u.id, name: u.name, roles: roles, av: u.av, c: u.c } });
+}
+
+// GET /api/state/:storageKey — с фильтрацией по правам (auth):
+//   • не-admin не получает PIN-ы (вырезаем поле pin из users);
+//   • роль без finance не получает финансовые разделы вовсе.
+async function getState(env, storageKey, auth) {
   const result = await env.DB
     .prepare("SELECT work_id, data, updated_at FROM work_states WHERE storage_key = ?")
     .bind(storageKey)
     .all();
 
-  const items = result.results.map(row => ({
-    work_id:    row.work_id,
-    data:       JSON.parse(row.data),
-    updated_at: row.updated_at,
-  }));
-
+  const adm = !!(auth && auth.adm), fin = !!(auth && auth.fin);
+  const items = [];
+  for (const row of result.results) {
+    if (!fin && FIN_KEYS.indexOf(row.work_id) >= 0) continue;   // финансы скрыты от не-finance
+    let data = JSON.parse(row.data);
+    if (!adm && row.work_id === "users" && Array.isArray(data)) {
+      data = data.map(function (u) { const c = Object.assign({}, u); delete c.pin; return c; });  // PIN-ы — только admin
+    }
+    items.push({ work_id: row.work_id, data: data, updated_at: row.updated_at });
+  }
   return json({ success: true, storage_key: storageKey, items });
 }
 
@@ -76,7 +155,7 @@ async function getState(env, storageKey) {
 //
 // Я выставил TODO там, где нужна твоя имплементация. Это 5-10 строк кода в зависимости
 // от выбранного варианта. Если сомневаешься — бери (A): это самый гибкий и безопасный.
-async function postState(env, storageKey, request) {
+async function postState(env, storageKey, request, auth) {
   let body;
   try {
     body = await request.json();
@@ -96,8 +175,19 @@ async function postState(env, storageKey, request) {
     }
   }
 
-  if (body.items.length === 0) {
-    return json({ success: true, written: 0, updated_at: now });
+  // Пропускаем запись разделов, на которые у отправителя нет прав. НЕ отклоняем весь запрос
+  // (клиент всегда шлёт полный снимок) — просто не трогаем защищённый раздел. Так рабочий,
+  // сохраняя объект, не может переписать зарплаты/пользователей/роли, а его сейв проходит.
+  const adm = !!(auth && auth.adm), fin = !!(auth && auth.fin);
+  const skipped = [];
+  const allowed = body.items.filter(function (item) {
+    if (!adm && ADMIN_KEYS.indexOf(item.work_id) >= 0) { skipped.push(item.work_id); return false; }
+    if (!fin && FIN_KEYS.indexOf(item.work_id) >= 0)   { skipped.push(item.work_id); return false; }
+    return true;
+  });
+
+  if (allowed.length === 0) {
+    return json({ success: true, written: 0, updated_at: now, skipped });
   }
 
   const upsert = env.DB.prepare(`
@@ -107,13 +197,13 @@ async function postState(env, storageKey, request) {
     DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
   `);
 
-  const batch = body.items.map(item =>
+  const batch = allowed.map(item =>
     upsert.bind(storageKey, item.work_id, JSON.stringify(item.data ?? null), now)
   );
 
   await env.DB.batch(batch);
 
-  return json({ success: true, written: batch.length, updated_at: now });
+  return json({ success: true, written: batch.length, updated_at: now, skipped });
 }
 
 // Разрешённые типы (тип задаём САМИ по расширению, не доверяя клиенту — иначе можно
@@ -905,9 +995,16 @@ export default {
       catch (err) { return json({ success: false, error: String(err) }, 200); }
     }
 
-    // Авторизация для всего остального. Fail-closed.
-    const token = request.headers.get("X-Admin-Token") || "";
-    if (!env.ADMIN_TOKEN || !safeEqual(token, env.ADMIN_TOKEN)) {
+    // Вход сотрудника (userId+PIN → персональный токен) — ДО авторизации: токен тут и выдаётся.
+    if (url.pathname === "/api/login" && request.method === "POST") {
+      try { return await loginUser(env, request); }
+      catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+
+    // Авторизация для всего остального. Fail-closed. Принимаем мастер-ADMIN_TOKEN (break-glass
+    // владельца) ИЛИ персональный токен сотрудника. Права (adm/fin) — в объекте auth.
+    const auth = await resolveAuth(env, request);
+    if (!auth) {
       return unauthorized();
     }
 
@@ -1008,8 +1105,8 @@ export default {
     const storageKey = decodeURIComponent(match[1]);
 
     try {
-      if (request.method === "GET")  return await getState(env, storageKey);
-      if (request.method === "POST") return await postState(env, storageKey, request);
+      if (request.method === "GET")  return await getState(env, storageKey, auth);
+      if (request.method === "POST") return await postState(env, storageKey, request, auth);
       return json({ success: false, error: "Method not allowed" }, 405);
     } catch (err) {
       return json({ success: false, error: err.message ?? String(err) }, 500);
