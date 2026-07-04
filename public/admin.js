@@ -3007,8 +3007,29 @@ function page(){
     TABS=ALL_TABS.filter(([k])=>tabSet.has(k));
     if(!TABS.length) TABS=[["assign","🏗️ Объекты"]];
   }
+  // iOS-style нижний таб-бар — быстрый доступ к 4 главным разделам.
+  // Пункты фильтруются по доступным вкладкам (TABS), чтобы не показать недоступный роли раздел.
+  const BOTTOM_NAV=[
+    ["assign","Объекты","🏗️"],
+    ["works","База данных","🗄️"],
+    ["finance","Финансы","💰"],
+    ["supply","Снабжение","📦"],
+  ];
+  const _accessible=new Set(TABS.map(function(t){return t[0];}));
+  const _bottomItems=BOTTOM_NAV.filter(function(x){return _accessible.has(x[0]);});
+  const bottomBar=_bottomItems.length>1?`<div style="position:fixed;left:0;right:0;bottom:0;z-index:60;pointer-events:none">
+  <div style="max-width:480px;margin:0 auto;background:rgba(255,255,255,0.92);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);border-top:1px solid #e2e8f0;display:flex;padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px));pointer-events:auto;box-shadow:0 -1px 10px rgba(13,27,46,0.06)">
+  ${_bottomItems.map(function(it){
+    const k=it[0],label=it[1],icon=it[2],on=tab===k;
+    return '<button data-a="tab" data-k="'+k+'" style="flex:1;border:none;background:transparent;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 2px;-webkit-tap-highlight-color:transparent">'
+      +'<span style="font-size:22px;line-height:1;transition:transform 0.12s;transform:scale('+(on?"1.06":"1")+');filter:'+(on?"none":"grayscale(45%) opacity(0.7)")+'">'+icon+'</span>'
+      +'<span style="font-size:10px;font-weight:'+(on?700:500)+';color:'+(on?"#2980b9":"#8a97a6")+';letter-spacing:0.1px;white-space:nowrap">'+label+'</span>'
+      +'</button>';
+  }).join("")}
+  </div>
+</div>`:"";
   const SC={"Озон":"#005bff","Белка":"#d68910","pechki.su":"#c0392b","Егорьевск":"#8e44ad","Лемана":"#e30613","Авито":"#00aaff","Нижний Новгород":"#27ae60"};
-  return`<div style="max-width:480px;margin:0 auto;min-height:100vh;background:#f6f8fa;padding-bottom:80px;box-sizing:border-box">
+  return`<div style="max-width:480px;margin:0 auto;min-height:100vh;background:#f6f8fa;padding-bottom:calc(76px + env(safe-area-inset-bottom,0px));box-sizing:border-box">
 <div style="background:#fff;border-bottom:1px solid #eef2f7;padding:10px 14px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:50">
   <div style="width:32px;height:32px;border-radius:8px;background:${currentUser.c};display:flex;align-items:center;justify-content:center;font-size:16px">${currentUser.av}</div>
   <div style="flex:1;min-width:0">
@@ -3049,6 +3070,7 @@ ${showPinChange?`<div style="background:#fff;border-bottom:1px solid #eef2f7;pad
 </div>
 <div id="save-toast" style="position:fixed;bottom:24px;right:24px;background:#27ae60;color:#fff;border-radius:12px;padding:10px 18px;font-size:13px;font-weight:700;box-shadow:0 4px 16px rgba(39,174,96,0.35);opacity:0;transform:translateY(8px);transition:opacity 0.2s,transform 0.2s;pointer-events:none;z-index:999">✓ Сохранено</div>
 <div style="text-align:center;font-size:9px;color:#c0ccd8;padding:10px 0 16px">КубрДом · v${APP_BUILD}</div>
+${bottomBar}
 </div>`;
 }
 
