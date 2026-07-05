@@ -106,7 +106,27 @@ async function loginUser(env, request) {
   const adm = roles.indexOf("admin") >= 0;
   const fin = adm || roles.some(function (r) { return (rolePerms[r] || []).indexOf("finance") >= 0; });
   const token = await makeUserToken(env, { u: u.id, adm: adm, fin: fin, exp: Date.now() + 30 * 24 * 3600 * 1000 });
-  return json({ success: true, token: token, user: { id: u.id, name: u.name, roles: roles, av: u.av, c: u.c } });
+  return json({ success: true, token: token, user: { id: u.id, name: u.name, roles: roles, av: u.av, c: u.c, mustChangePin: !!u.mustChangePin } });
+}
+
+// POST /api/change-pin { oldPin, newPin } — сотрудник меняет СВОЙ PIN (auth = его личный токен).
+// Нужен отдельный эндпоинт: раздел users пишет только админ, а самому себе PIN сменить надо всем.
+async function changePin(env, request, auth) {
+  if (!auth || auth.kind !== "user") return json({ success: false, error: "Нужен вход сотрудника" }, 403);
+  let body; try { body = await request.json(); } catch { return json({ success: false, error: "bad json" }, 400); }
+  const oldPin = String((body && body.oldPin) || ""), newPin = String((body && body.newPin) || "");
+  if (!/^[0-9]{4,6}$/.test(newPin)) return json({ success: false, error: "Новый PIN — 4–6 цифр" }, 400);
+  const s = await readSnapshot(env, ["users"]);
+  const users = s.users || [];
+  const idx = users.findIndex(function (u) { return u && u.id === auth.uid; });
+  if (idx < 0) return json({ success: false, error: "Сотрудник не найден" }, 404);
+  const u = users[idx];
+  if (!safeEqual(oldPin, String(u.pin || "1111"))) return json({ success: false, error: "Текущий PIN неверный" }, 401);
+  if (safeEqual(newPin, String(u.pin || "1111"))) return json({ success: false, error: "Новый PIN совпадает со старым" }, 400);
+  users[idx] = Object.assign({}, u, { pin: newPin, mustChangePin: false });
+  await env.DB.prepare("INSERT INTO work_states (storage_key, work_id, data, updated_at) VALUES ('admin_panel','users',?,?) ON CONFLICT(storage_key,work_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at")
+    .bind(JSON.stringify(users), Date.now()).run();
+  return json({ success: true });
 }
 
 // Читает нужные разделы снимка из D1 разом. Возвращает { work_id: data }.
@@ -1083,6 +1103,12 @@ export default {
     const auth = await resolveAuth(env, request);
     if (!auth) {
       return unauthorized();
+    }
+
+    // Смена своего PIN (с токеном сотрудника).
+    if (url.pathname === "/api/change-pin" && request.method === "POST") {
+      try { return await changePin(env, request, auth); }
+      catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
 
     // Загрузка файла в R2 (с токеном).

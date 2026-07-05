@@ -2366,6 +2366,23 @@ function loginPage(){
 }
 
 
+// Полноэкранный принудительный экран смены PIN при первом входе (нельзя закрыть, пока не сменил).
+// Переиспользует поля pin-cur/pin-new/pin-new2 и обработчик pin-change-save.
+function forcedPinPage(){
+  const inner='<div style="min-height:100vh;background:linear-gradient(160deg,#f0f4f8 0%,#e8eef5 100%);display:flex;align-items:center;justify-content:center;padding:20px">'+
+    '<div style="width:100%;max-width:340px;background:#fff;border-radius:18px;padding:26px;box-shadow:0 8px 30px rgba(0,0,0,.1)">'+
+      '<div style="text-align:center;margin-bottom:6px;font-size:34px">🔑</div>'+
+      '<div style="text-align:center;font-size:17px;font-weight:800;color:#0d1b2e">Смените PIN</div>'+
+      '<div style="text-align:center;font-size:12px;color:#7a9aaa;margin:4px 0 16px">Первый вход: задайте свой PIN вместо стандартного (последние 4 цифры телефона).</div>'+
+      '<input id="pin-cur" type="password" inputmode="numeric" maxlength="6" placeholder="Текущий PIN (последние 4 цифры)" style="width:100%;padding:11px 12px;border-radius:10px;border:1px solid #d0dae8;font-size:14px;outline:none;box-sizing:border-box;margin-bottom:8px">'+
+      '<input id="pin-new" type="password" inputmode="numeric" maxlength="6" placeholder="Новый PIN (4–6 цифр)" style="width:100%;padding:11px 12px;border-radius:10px;border:1px solid #d0dae8;font-size:14px;outline:none;box-sizing:border-box;margin-bottom:8px">'+
+      '<input id="pin-new2" type="password" inputmode="numeric" maxlength="6" placeholder="Повторите новый PIN" style="width:100%;padding:11px 12px;border-radius:10px;border:1px solid #d0dae8;font-size:14px;outline:none;box-sizing:border-box;margin-bottom:14px">'+
+      '<button data-a="pin-change-save" style="width:100%;padding:12px;background:#27ae60;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">Сохранить и войти</button>'+
+      '<button data-a="logout" style="width:100%;margin-top:8px;padding:10px;background:#f0f4f8;border:1px solid #dde6f0;border-radius:10px;cursor:pointer;font-size:12px;color:#7a9aaa;font-weight:600">Выйти</button>'+
+    '</div></div>';
+  return inner;
+}
+
 function _setInitialTab(){
   const _isAdmin=currentUser.roles.includes("admin");
   if(_isAdmin){ tab="assign"; return; }
@@ -2933,6 +2950,8 @@ function render(){
     return;
   }
   if(!currentUser){ a.innerHTML=loginPage(); bindLogin(); return; }
+  // Первый вход: пока не сменил PIN — блокируем портал экраном смены PIN.
+  if(currentUser.mustChangePin){ a.innerHTML=forcedPinPage(); bind(); return; }
   // Запоминаем позицию прокрутки ленты вкладок до перерисовки,
   // иначе при клике по крайним вкладкам («Команда»/«Маркетинг») лента прыгает влево.
   const _tabsScrollPrev=(function(){const e=document.getElementById("tabs-scroll");return e?e.scrollLeft:null;})();
@@ -8048,7 +8067,8 @@ function tTeam(){
       <input id="eu-n-${u.id}" value="${u.name}" style="flex:1;padding:6px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;font-weight:600;outline:none">
     </div>
     <input id="eu-phone-${u.id}" value="${u.phone||''}" data-phone-mask="1" type="tel" inputmode="tel" placeholder="+7 (___) ___-__-__" style="width:100%;padding:6px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:8px">
-    <div style="font-size:10px;color:#9aabbf;margin-bottom:8px">PIN для входа = последние 4 цифры телефона</div>
+    <input id="eu-pin-${u.id}" value="${esc(u.pin||'')}" inputmode="numeric" maxlength="6" placeholder="PIN (по умолчанию — последние 4 цифры телефона)" style="width:100%;padding:6px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:6px">
+    <label style="display:flex;align-items:center;gap:7px;font-size:11px;color:#5a7a9a;margin-bottom:8px;cursor:pointer"><input type="checkbox" id="eu-forcepin-${u.id}" ${u.mustChangePin?"checked":""} style="width:15px;height:15px;cursor:pointer">Потребовать смену PIN при входе</label>
     <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">${COLS.map(c=>`<div data-a="eu-c" data-uid="${u.id}" data-c="${c}" style="width:20px;height:20px;border-radius:50%;background:${c};cursor:pointer;border:${u.c===c?"3px solid #0d1b2e":"2px solid transparent"}"></div>`).join("")}</div>
     <div style="font-size:10px;color:#7a9aaa;font-weight:600;margin-bottom:5px">РОЛИ</div>
     <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">${roles.map(r=>{const on=u.roles.includes(r.id);return`<div data-a="eu-role" data-uid="${u.id}" data-rid="${r.id}" style="padding:4px 10px;border-radius:16px;cursor:pointer;font-size:11px;font-weight:600;background:${on?r.c:"transparent"};color:${on?"#fff":r.c};border:1.5px solid ${r.c}">${r.n}</div>`;}).join("")}</div>
@@ -9447,7 +9467,7 @@ function bind(){
     else if(a==="logout"){el.onclick=()=>{try{localStorage.removeItem("kubr_remember");}catch(e){}clearToken();currentUser=null;loginMode=null;loginPinFor=null;loginPinError="";showPinChange=false;tab="assign";render();};}
     else if(a==="pin-change-open"){el.onclick=()=>{showPinChange=true;render();};}
     else if(a==="pin-change-close"){el.onclick=()=>{showPinChange=false;render();};}
-    else if(a==="pin-change-save"){el.onclick=()=>{
+    else if(a==="pin-change-save"){el.onclick=async ()=>{
       const cur=(document.getElementById("pin-cur")||{}).value||"";
       const n1=(document.getElementById("pin-new")||{}).value||"";
       const n2=(document.getElementById("pin-new2")||{}).value||"";
@@ -9460,12 +9480,17 @@ function bind(){
           setTimeout(function(){try{document.body.removeChild(t);}catch(e){}},2200);
         }catch(e){}
       }
-      if(cur!==(currentUser.pin||"1111")){ toast("⚠️ Текущий PIN неверный","#e67e22"); return; }
       if(!/^[0-9]{4,6}$/.test(n1)){ toast("⚠️ Новый PIN — 4–6 цифр","#e67e22"); return; }
       if(n1!==n2){ toast("⚠️ PIN не совпадают","#e67e22"); return; }
-      currentUser.pin=n1;
-      users=users.map(function(u){return u.id===currentUser.id?Object.assign({},u,{pin:n1}):u;});
-      currentUser=users.find(function(u){return u.id===currentUser.id;});
+      // Смена PIN — на сервере (раздел users пишет только админ, а свой PIN менять надо всем).
+      try{
+        const r=await fetch(API_BASE+"/api/change-pin",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({oldPin:cur,newPin:n1})});
+        const j=await r.json();
+        if(!j||!j.success){ toast("⚠️ "+((j&&j.error)||"Ошибка смены PIN"),"#e67e22"); return; }
+      }catch(e){ toast("⚠️ Нет связи с сервером","#e67e22"); return; }
+      const _id=currentUser&&currentUser.id;
+      users=users.map(function(u){return u.id===_id?Object.assign({},u,{pin:n1,mustChangePin:false}):u;});
+      if(currentUser) currentUser=Object.assign({},currentUser,{pin:n1,mustChangePin:false});
       showPinChange=false;
       toast("✅ PIN изменён","#27ae60");
       render();
@@ -9873,12 +9898,24 @@ function bind(){
     else if(a==="cancel-nu"){el.onclick=()=>{showNU=false;render();};}
     else if(a==="nu-c"){el.onclick=()=>{nu.c=el.dataset.c;render();};}
     else if(a==="nu-role"){el.onclick=()=>{const rid=el.dataset.rid;nu.roles=nu.roles.includes(rid)?nu.roles.filter(x=>x!==rid):[...nu.roles,rid];render();};}
-    else if(a==="add-u"){el.onclick=()=>{const n=document.getElementById("nu-name")?.value?.trim();const av=document.getElementById("nu-av")?.value||"👷";const phone=(document.getElementById("nu-phone")?.value||"").trim();if(!n)return;const pin=(phone.match(/\d/g)||[]).join("").slice(-4);users.push({id:gid(),name:n,av,c:nu.c,roles:[...nu.roles],objs:[],phone:phone,pin:pin||"1111"});showNU=false;fl();};}
+    else if(a==="add-u"){el.onclick=()=>{const n=document.getElementById("nu-name")?.value?.trim();const av=document.getElementById("nu-av")?.value||"👷";const phone=(document.getElementById("nu-phone")?.value||"").trim();if(!n)return;const pin=(phone.match(/\d/g)||[]).join("").slice(-4);users.push({id:gid(),name:n,av,c:nu.c,roles:[...nu.roles],objs:[],phone:phone,pin:pin||"1111",mustChangePin:true});showNU=false;fl();};}
     else if(a==="edit-u"){el.onclick=()=>{editU=el.dataset.uid;render();};}
     else if(a==="cancel-eu"){el.onclick=()=>{editU=null;render();};}
     else if(a==="eu-c"){el.onclick=()=>{users=users.map(u=>u.id===el.dataset.uid?{...u,c:el.dataset.c}:u);render();};}
     else if(a==="eu-role"){el.onclick=()=>{const uid=el.dataset.uid,rid=el.dataset.rid;users=users.map(u=>{if(u.id!==uid)return u;const r=u.roles.includes(rid)?u.roles.filter(x=>x!==rid):[...u.roles,rid];return{...u,roles:r};});render();};}
-    else if(a==="save-u"){el.onclick=()=>{const uid=el.dataset.uid;const n=document.getElementById("eu-n-"+uid)?.value?.trim();const av=document.getElementById("eu-av-"+uid)?.value;const phone=(document.getElementById("eu-phone-"+uid)?.value||"").trim();const pin=(phone.match(/\d/g)||[]).join("").slice(-4);if(n)users=users.map(u=>u.id===uid?{...u,name:n,av:av||u.av,phone:phone,pin:(pin||u.pin||"1111")}:u);editU=null;fl();};}
+    else if(a==="save-u"){el.onclick=()=>{
+      const uid=el.dataset.uid;
+      const n=document.getElementById("eu-n-"+uid)?.value?.trim();
+      const av=document.getElementById("eu-av-"+uid)?.value;
+      const phone=(document.getElementById("eu-phone-"+uid)?.value||"").trim();
+      const last4=(phone.match(/\d/g)||[]).join("").slice(-4);
+      const customPin=(document.getElementById("eu-pin-"+uid)?.value||"").trim();
+      const force=!!document.getElementById("eu-forcepin-"+uid)?.checked;
+      // PIN: явно введённый (4–6 цифр) → он; иначе последние 4 цифры телефона; иначе прежний/1111.
+      const pin=/^[0-9]{4,6}$/.test(customPin)?customPin:(last4||undefined);
+      if(n)users=users.map(u=>u.id===uid?{...u,name:n,av:av||u.av,phone:phone,pin:(pin||u.pin||"1111"),mustChangePin:force}:u);
+      editU=null;fl();
+    };}
     else if(a==="del-u"){el.onclick=()=>{users=users.filter(u=>u.id!==el.dataset.uid);fl();};}
     else if(a==="show-nr"){el.onclick=()=>{showNR=true;nr={n:"",c:"#9b59b6",group:"other"};render();};}
     else if(a==="cancel-nr"){el.onclick=()=>{showNR=false;render();};}
