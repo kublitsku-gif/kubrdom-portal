@@ -4137,7 +4137,7 @@ ${groups.map(g=>{
             </div>
             ${_bdLocked
               ? `<input value="${numRu(_effQty)}" readonly title="Считается из разбивки по хлыстам ниже" style="width:46px;padding:5px 4px;border-radius:6px;border:1px solid #e6ecf3;background:#f4f6f9;color:#5a7a9a;font-size:12px;text-align:center;outline:none;cursor:not-allowed">`
-              : `<input data-a="tpl-mq" data-eid="${e.id}" data-mid="${m.id}" type="number" step="any" value="${m.qty}" style="width:46px;padding:5px 4px;border-radius:6px;border:1px solid #d0dae8;font-size:12px;text-align:center;outline:none">`}
+              : `<input data-a="tpl-mq" data-eid="${e.id}" data-mid="${m.id}" inputmode="decimal" value="${numRu(m.qty)}" title="Можно дробное: 0,5" style="width:46px;padding:5px 4px;border-radius:6px;border:1px solid #d0dae8;font-size:12px;text-align:center;outline:none">`}
             <span style="font-size:10px;color:#9aabbf;width:22px">${mo.unit}</span>
             <span id="tplm-lt-${e.id}-${m.id}" style="font-size:12px;font-weight:700;color:#0d1b2e;width:60px;text-align:right;white-space:nowrap">${_effLt.toLocaleString('ru-RU')} ₽</span>
             <button data-a="tpl-mat-del" data-eid="${e.id}" data-mid="${m.id}" title="Удалить материал" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>
@@ -4566,7 +4566,7 @@ function renderEstimates(){
               '</div>'+
               (conv?'<div style="font-size:10px;color:#7a9aaa;margin-top:3px">'+conv.footer+'</div>':'')+
               '</div>'+
-              '<input class="est-q" data-i="'+i+'" type="number" step="any" value="'+(l.qty)+'" style="width:52px;padding:6px 4px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;text-align:center;outline:none">'+
+              '<input class="est-q" data-i="'+i+'" inputmode="decimal" value="'+numRu(l.qty)+'" title="Можно дробное: 0,5" style="width:52px;padding:6px 4px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;text-align:center;outline:none">'+
               '<span style="font-size:10px;color:#9aabbf;width:26px">'+mo.unit+'</span>'+
               '<span id="est-lt-'+i+'" style="font-size:13px;font-weight:800;color:#0d1b2e;width:72px;text-align:right;white-space:nowrap">'+estLineTotal(l).toLocaleString("ru-RU")+' ₽</span>'+
               '<button class="est-del" data-i="'+i+'" style="width:24px;height:24px;flex-shrink:0;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button>'+
@@ -4587,7 +4587,7 @@ function renderEstimates(){
     var du=document.getElementById("est-dup"); if(du)du.onclick=function(){var c=JSON.parse(JSON.stringify(e)); c.id=gid(); c.name=(e.name||"Смета")+" (копия)"; estimates.unshift(c); estOpenId=c.id; renderEstimates();};
     el.querySelectorAll(".est-stage").forEach(function(b){b.onclick=function(){e.stage=+b.dataset.st;renderEstimates();};});
     el.querySelectorAll(".est-q").forEach(function(inp){inp.oninput=function(){
-      var i=+inp.dataset.i; e.lines[i].qty=parseFloat(this.value)||0;
+      var i=+inp.dataset.i; e.lines[i].qty=parseFloat(String(this.value).replace(",","."))||0;
       var lts=document.getElementById("est-lt-"+i); if(lts)lts.textContent=estLineTotal(e.lines[i]).toLocaleString("ru-RU")+" ₽";
       var gt=document.getElementById("est-grand"); if(gt)gt.textContent=estTotal(e).toLocaleString("ru-RU")+" ₽";
     };});
@@ -9779,7 +9779,7 @@ function bind(){
       const eid=el.dataset.eid,mid=el.dataset.mid;
       const w=(t.stages||[]).flatMap(s=>s.works||[]).find(x=>x.estId===eid);if(!w)return;
       const m=(w.mats||[]).find(x=>x.id===mid);if(!m)return;
-      m.qty=parseFloat(el.value)||0;
+      m.qty=parseFloat(String(el.value).replace(",","."))||0; // принимаем и запятую (0,5)
       const lt=Math.round((Number(m.cost)||0)*(m.qty||0));
       const lts=document.getElementById("tplm-lt-"+eid+"-"+mid);if(lts)lts.textContent=lt.toLocaleString("ru-RU")+" ₽";
       const sum=(w.mats||[]).reduce((a,mm)=>a+(Number(mm.cost)||0)*(mm.qty||0),0);
