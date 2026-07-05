@@ -1527,6 +1527,10 @@ function normMatName(m){
   }
   return n;
 }
+// Магазины-поставщики, которым готовим ТЗ (PDF) для отправки, а не онлайн-корзину.
+// Онлайн (Озон/Лемана/Авито) — покупка по ссылке; остальные — спецификация поставщику.
+const TZ_STORES=["Белка","pechki.su","Егорьевск","Славянский мир","Нижний Новгород"];
+function isTZStore(s){return TZ_STORES.indexOf(s)>=0;}
 // Сумма метража из разбивки по хлыстам [{len,n}] и читаемый текст для примечания.
 function breakdownTotal(bd){ return Array.isArray(bd)?Math.round(bd.reduce(function(a,r){return a+(Number(r.len)||0)*(Number(r.n)||0);},0)*100)/100:0; }
 function breakdownNote(bd){
@@ -1827,7 +1831,7 @@ function renderTplCards(){
     const totalCost=allW.reduce(function(a,w){return a+w.cost;},0);
     const usedIn=objects.filter(function(o){return o.templateId===t.id;});
     const usedHtml=usedIn.length>0
-      ? usedIn.map(function(o){return '<span style="font-size:11px;background:#e8f0fa;color:#2a5298;border-radius:8px;padding:2px 8px">'+o.icon+' '+o.name+'</span>';}).join("")
+      ? usedIn.map(function(o){return '<span style="font-size:11px;background:#e8f0fa;color:#2a5298;border-radius:8px;padding:2px 8px">'+o.icon+' '+esc(o.name)+'</span>';}).join("")
       : '<span style="font-size:11px;color:#aaa">Не использован</span>';
     const card=document.createElement("div");
     card.style.cssText="background:#fff;border-radius:14px;border:1px solid #9b59b633;border-left:4px solid #9b59b6;padding:16px;box-sizing:border-box;width:100%;overflow:hidden";
@@ -1835,7 +1839,7 @@ function renderTplCards(){
       '<div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px">'+
         '<span style="font-size:32px">'+t.icon+'</span>'+
         '<div style="flex:1;min-width:0">'+
-          '<div style="font-size:15px;font-weight:700;color:#1a2a3a">'+t.name+'</div>'+
+          '<div style="font-size:15px;font-weight:700;color:#1a2a3a">'+esc(t.name)+'</div>'+
           '<div style="font-size:11px;color:#7a9aaa;margin-top:3px">'+t.stages.length+' этапов · '+allW.length+' работ</div>'+
           '<div style="font-size:11px;color:#5a7a9a;margin-top:2px">'+totalCost.toLocaleString("ru-RU")+' ₽</div>'+
         '</div>'+
@@ -1863,14 +1867,14 @@ function renderDbStageOptions(tid){
     const sc=SC_MAP[stage]||"#7f8c8d";
     const totalMats=sw.reduce(function(a,w){return a+(w.mats||[]).length;},0);
     const totalCost=sw.reduce(function(a,w){return a+w.cost;},0);
-    const preview=sw.slice(0,3).map(function(w){return'<span style="font-size:10px;background:#f0f4f8;color:#5a7a9a;border-radius:5px;padding:1px 6px">'+w.n.substring(0,28)+(w.n.length>28?"…":"")+'</span>';}).join("");
+    const preview=sw.slice(0,3).map(function(w){return'<span style="font-size:10px;background:#f0f4f8;color:#5a7a9a;border-radius:5px;padding:1px 6px">'+esc(w.n.substring(0,28))+(w.n.length>28?"…":"")+'</span>';}).join("");
     const more=sw.length>3?'<span style="font-size:10px;color:#7a9aaa">+'+( sw.length-3)+' ещё</span>':"";
     const safeStage=stage.replace(/&/g,"&amp;").replace(/"/g,"&quot;");
     const checked=!!dbStagePicks[stage];
     html+='<div data-a="tpl-pick-stage" data-stage="'+safeStage+'" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;cursor:pointer;margin-bottom:6px;border:1.5px solid '+(checked?sc:sc+"44")+';background:'+(checked?sc+"15":sc+"08")+'">'+
       '<div style="width:22px;height:22px;border-radius:6px;border:2px solid '+(checked?sc:"#c0d0e0")+';background:'+(checked?sc:"#fff")+';flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:700;margin-top:1px">'+(checked?"✓":"")+'</div>'+
       '<div style="flex:1;min-width:0">'+
-        '<div style="font-size:13px;font-weight:700;color:#1a2a3a">'+stage+'</div>'+
+        '<div style="font-size:13px;font-weight:700;color:#1a2a3a">'+esc(stage)+'</div>'+
         '<div style="font-size:11px;color:#7a9aaa;margin-top:3px">'+sw.length+' работ · '+totalMats+' материалов · '+totalCost.toLocaleString("ru-RU")+' ₽</div>'+
         '<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:5px">'+preview+more+'</div>'+
       '</div>'+
@@ -1928,7 +1932,7 @@ function renderDBLists(){
         const sc3=stageC[lastStage]||"#7f8c8d";
         const divider=document.createElement("div");
         divider.style.cssText="display:flex;align-items:center;gap:8px;padding:7px 12px 5px;margin-top:"+(wi>0?"14px":"0");
-        divider.innerHTML='<div style="flex:1;height:1px;background:'+sc3+'44"></div><span style="font-size:10px;font-weight:700;color:'+sc3+';letter-spacing:0.5px;white-space:nowrap">'+lastStage+'</span><div style="flex:1;height:1px;background:'+sc3+'44"></div>';
+        divider.innerHTML='<div style="flex:1;height:1px;background:'+sc3+'44"></div><span style="font-size:10px;font-weight:700;color:'+sc3+';letter-spacing:0.5px;white-space:nowrap">'+esc(lastStage)+'</span><div style="flex:1;height:1px;background:'+sc3+'44"></div>';
         wl.appendChild(divider);
       }
       const isEditW=dbEditWork===w.id;
@@ -2006,9 +2010,9 @@ function renderDBLists(){
         hdr.innerHTML=
           '<span style="font-size:14px;color:#b0b8c8">⋮⋮</span>'+
           '<div style="flex:1;min-width:0">'+
-            '<div style="font-size:13px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+w.n+'</div>'+
+            '<div style="font-size:13px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(w.n)+'</div>'+
             '<div style="display:flex;align-items:center;gap:6px;margin-top:3px;flex-wrap:wrap">'+
-              '<span style="font-size:10px;font-weight:700;color:'+sc2+';background:'+sc2+'18;border-radius:8px;padding:1px 7px;border:1px solid '+sc2+'44">'+(w.stage||"")+'</span>'+
+              '<span style="font-size:10px;font-weight:700;color:'+sc2+';background:'+sc2+'18;border-radius:8px;padding:1px 7px;border:1px solid '+sc2+'44">'+esc(w.stage||"")+'</span>'+
               (function(){var ql=workQtyLabel(w);return ql?'<span style="font-size:10px;color:#16a085;background:#16a08515;border-radius:8px;padding:1px 7px;font-weight:600">'+ql+'</span>':'';})()+
               (w.cost>0?'<span style="font-size:11px;color:#7a9aaa;font-weight:700">= '+w.cost.toLocaleString("ru-RU")+' ₽</span>':'')+
               '<span style="font-size:11px;color:#7a9aaa">'+( w.mats||[]).length+' матер.</span>'+
@@ -2117,11 +2121,11 @@ function renderDBLists(){
             '<div style="display:flex;align-items:flex-start;gap:8px;padding:7px 0">'+
               '<span style="font-size:12px;color:#ccc;margin-top:3px;cursor:grab">⋮⋮</span>'+
               '<div style="flex:1;min-width:0">'+
-                '<div style="font-size:12px;font-weight:600;color:#2a3a4a">'+m.n+'</div>'+
+                '<div style="font-size:12px;font-weight:600;color:#2a3a4a">'+esc(m.n)+'</div>'+
                 '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:3px;align-items:center">'+
-                  (m.store?'<span style="font-size:10px;font-weight:700;background:'+(SC[m.store]||"#555")+';color:#fff;border-radius:4px;padding:1px 6px">'+m.store+'</span>':'')+
+                  (m.store?'<span style="font-size:10px;font-weight:700;background:'+(SC[m.store]||"#555")+';color:#fff;border-radius:4px;padding:1px 6px">'+esc(m.store)+'</span>':'')+
                   (m.cost>0?'<span style="font-size:11px;color:#7a9aaa">'+m.cost.toLocaleString("ru-RU")+' ₽</span>':'')+
-                  (m.note?'<span style="font-size:10px;color:#9aabbf;font-style:italic">'+m.note+'</span>':'')+
+                  (m.note?'<span style="font-size:10px;color:#9aabbf;font-style:italic">'+esc(m.note)+'</span>':'')+
                   (m.url?'<a href="'+m.url+'" target="_blank" style="font-size:10px;color:#fff;background:#2980b9;border-radius:4px;padding:1px 7px;text-decoration:none;font-weight:600">🔗 купить</a>':'')+
                 '</div>'+
               '</div>'+
@@ -2533,7 +2537,7 @@ function tBuildAnalysis(){
     html+='<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">';
     objs.forEach(function(o){
       const on=o.id===obj.id;
-      html+='<button data-a="analysis-obj" data-oid="'+o.id+'" style="padding:8px 12px;border-radius:10px;cursor:pointer;font-size:12px;font-weight:700;border:1.5px solid '+(on?"#2980b9":"#dde6f0")+';background:'+(on?"#2980b9":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+'">'+o.icon+' '+o.name+'</button>';
+      html+='<button data-a="analysis-obj" data-oid="'+o.id+'" style="padding:8px 12px;border-radius:10px;cursor:pointer;font-size:12px;font-weight:700;border:1.5px solid '+(on?"#2980b9":"#dde6f0")+';background:'+(on?"#2980b9":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+'">'+o.icon+' '+esc(o.name)+'</button>';
     });
     html+='</div>';
   }
@@ -2646,7 +2650,7 @@ function tBuildAnalysis(){
       html+='<div style="display:flex;border-bottom:1px solid #eef2f7;background:'+r.color+'14">'+
         '<div style="width:'+LABEL+'px;flex-shrink:0;padding:7px 8px;border-right:1px solid #eef2f7;display:flex;align-items:center;gap:5px;position:sticky;left:0;z-index:3;background:'+r.color+'14">'+
           '<span style="width:8px;height:8px;border-radius:2px;background:'+r.color+';flex-shrink:0"></span>'+
-          '<span style="font-size:10px;font-weight:800;color:'+r.color+';line-height:1.15;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+r.name+'</span>'+
+          '<span style="font-size:10px;font-weight:800;color:'+r.color+';line-height:1.15;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+esc(r.name)+'</span>'+
         '</div>'+
         '<div style="width:'+gridW+'px;flex-shrink:0;background:'+r.color+'08"></div>'+
       '</div>';
@@ -2655,7 +2659,7 @@ function tBuildAnalysis(){
     // работа
     html+='<div style="display:flex;border-bottom:1px solid #f4f6f9">';
     html+='<div style="width:'+LABEL+'px;flex-shrink:0;padding:7px 8px 7px 16px;background:#fff;border-right:1px solid #eef2f7;position:sticky;left:0;z-index:3">'+
-      '<div style="font-size:11px;font-weight:600;color:#1a2a3a;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+r.name+'</div>'+
+      '<div style="font-size:11px;font-weight:600;color:#1a2a3a;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+esc(r.name)+'</div>'+
       '<div style="font-size:9px;font-weight:700;margin-top:2px;color:'+(r.total>0?"#16a085":(r.done?"#27ae60":"#c8d8e8"))+'">'+(r.total>0?r.total+" ч":(r.done?"✓ выполнено":"—"))+'</div>'+
     '</div>';
     days.forEach(function(d){
@@ -2706,7 +2710,7 @@ function tClients(){
       let html='<div>';
       html+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'+
         '<button data-a="mgr-client-back" style="padding:6px 14px;background:transparent;border:1px solid #d0dae8;border-radius:20px;cursor:pointer;font-size:12px;color:#7a9aaa">← Клиенты</button>'+
-        '<div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(c.client||"Клиент")+'</div><div style="font-size:11px;color:#7a9aaa">'+esc(c.name)+'</div></div>'+
+        '<div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.client||"Клиент")+'</div><div style="font-size:11px;color:#7a9aaa">'+esc(c.name)+'</div></div>'+
       '</div>';
       html+='<div style="background:#eef7ff;border:1px solid #c9e2f7;border-radius:10px;padding:8px 12px;margin-bottom:12px;font-size:11px;color:#2980b9">👁️ Так этот раздел видит клиент в своём кабинете</div>';
       html+=clientSubTabs(mgrClientTab,"mgr-client-tab");
@@ -2734,7 +2738,7 @@ function tClients(){
     html+='<button data-a="mgr-client-open" data-cid="'+c.id+'" style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:12px;border:1px solid #e8eef5;background:#fff;cursor:pointer;text-align:left;width:100%;box-sizing:border-box">'+
       '<div style="width:42px;height:42px;border-radius:11px;background:#27ae6015;display:flex;align-items:center;justify-content:center;font-size:21px;flex-shrink:0">'+(obj?obj.icon:"🤝")+'</div>'+
       '<div style="flex:1;min-width:0">'+
-        '<div style="font-size:14px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(c.client||"Клиент")+'</div>'+
+        '<div style="font-size:14px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.client||"Клиент")+'</div>'+
         '<div style="font-size:11px;color:#7a9aaa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.name)+'</div>'+
         '<div style="display:flex;gap:5px;margin-top:4px;flex-wrap:wrap">'+
           '<span style="font-size:9px;font-weight:700;color:'+st.color+';background:'+st.color+'18;border-radius:5px;padding:1px 7px">'+st.label+'</span>'+
@@ -2806,7 +2810,7 @@ function clientProjectContent(c, activeTab){
       '<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">'+
         '<span style="font-size:32px">'+(obj?obj.icon:"🏗️")+'</span>'+
         '<div style="flex:1;min-width:0">'+
-          '<div style="font-size:17px;font-weight:700;color:#0d1b2e">'+(obj?obj.name:"Ваш проект")+'</div>'+
+          '<div style="font-size:17px;font-weight:700;color:#0d1b2e">'+esc(obj?obj.name:"Ваш проект")+'</div>'+
           '<div style="display:inline-flex;align-items:center;gap:5px;margin-top:4px;background:'+st.color+'18;border-radius:7px;padding:2px 9px"><span style="width:7px;height:7px;border-radius:50%;background:'+st.color+'"></span><span style="font-size:11px;font-weight:700;color:'+st.color+'">'+st.label+'</span></div>'+
         '</div>'+
       '</div>'+
@@ -2825,7 +2829,7 @@ function clientProjectContent(c, activeTab){
         plans.forEach(function(p){
           html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;overflow:hidden">'+
             (p.img?'<a href="'+p.img+'" target="_blank" rel="noopener" style="display:block"><img src="'+p.img+'" style="width:100%;max-height:260px;object-fit:contain;background:#f8fafc;display:block"></a>':'<div style="padding:30px;text-align:center;color:#c8d8e8;font-size:30px;background:#f8fafc">📐</div>')+
-            '<div style="padding:10px 12px;font-size:13px;font-weight:700;color:#1a2a3a">'+(p.name||"Планировка")+'</div>'+
+            '<div style="padding:10px 12px;font-size:13px;font-weight:700;color:#1a2a3a">'+esc(p.name||"Планировка")+'</div>'+
           '</div>';
         });
         html+='</div>';
@@ -2858,7 +2862,7 @@ function clientProjectContent(c, activeTab){
       extraWorks.forEach(function(w,i){
         const wc=(w.cost||0)+(w.mats||[]).reduce(function(b,m){return b+(m.cost||0)*(m.qty||1);},0);
         html+='<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;'+(i>0?"border-top:1px solid #f0f3f7;":"")+'">'+
-          '<div style="flex:1;min-width:0;font-size:13px;color:#1a2a3a">'+(w.n||w.name||"Работа")+'</div>'+
+          '<div style="flex:1;min-width:0;font-size:13px;color:#1a2a3a">'+esc(w.n||w.name||"Работа")+'</div>'+
           '<div style="font-size:13px;font-weight:700;color:#0d1b2e;white-space:nowrap">'+money(wc)+'</div>'+
         '</div>';
       });
@@ -2894,7 +2898,7 @@ function clientProjectContent(c, activeTab){
           '<div style="width:34px;height:34px;border-radius:9px;background:#27ae6015;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">'+(t.method==="cash"?"💵":"🏦")+'</div>'+
           '<div style="flex:1;min-width:0">'+
             '<div style="font-size:13px;font-weight:700;color:#1a2a3a">'+money(t.amount)+'</div>'+
-            '<div style="font-size:10px;color:#9aabbf">'+(t.date||"")+(ml?' · '+ml:'')+(t.note?' · '+t.note:'')+'</div>'+
+            '<div style="font-size:10px;color:#9aabbf">'+(t.date||"")+(ml?' · '+ml:'')+(t.note?' · '+esc(t.note):'')+'</div>'+
           '</div>'+
         '</div>';
       });
@@ -2919,7 +2923,7 @@ function clientPortal(){
   let html='<div style="max-width:480px;margin:0 auto;min-height:100vh;background:#f6f8fa;padding-bottom:40px;box-sizing:border-box">';
   html+='<div style="background:#fff;border-bottom:1px solid #eef2f7;padding:12px 14px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:50">'+
     '<div style="width:34px;height:34px;border-radius:9px;background:#27ae60;display:flex;align-items:center;justify-content:center;font-size:17px">🤝</div>'+
-    '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700;color:#0d1b2e">'+(c.client||"Клиент")+'</div><div style="font-size:10px;color:#7a9aaa">'+esc(c.name)+'</div></div>'+
+    '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700;color:#0d1b2e">'+esc(c.client||"Клиент")+'</div><div style="font-size:10px;color:#7a9aaa">'+esc(c.name)+'</div></div>'+
     '<button data-a="client-logout" style="padding:5px 10px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:11px;color:#7a9aaa">Выйти</button>'+
   '</div>';
   const tabs=[["objects","🏗️ Объект"],["contract","📄 Договор"],["finance","💰 Финансы"]];
@@ -2987,7 +2991,7 @@ function render(){
       let modal='<div id="ct-mat-modal" style="position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:flex-end;justify-content:center;padding:0">';
       modal+='<div style="background:#fff;width:100%;max-width:500px;max-height:80vh;border-radius:16px 16px 0 0;display:flex;flex-direction:column;overflow:hidden">';
       modal+='<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #e8eef5">'+
-        '<div><div style="font-size:14px;font-weight:700;color:#1a2a3a">📦 Материал из базы</div><div style="font-size:11px;color:#7a9aaa">'+obj.icon+' '+obj.name+' · '+uniqMats.length+' материалов</div></div>'+
+        '<div><div style="font-size:14px;font-weight:700;color:#1a2a3a">📦 Материал из базы</div><div style="font-size:11px;color:#7a9aaa">'+obj.icon+' '+esc(obj.name)+' · '+uniqMats.length+' материалов</div></div>'+
         '<button data-a="ct-mat-close" style="padding:6px 12px;background:#f0f4f8;border:none;border-radius:8px;cursor:pointer;font-size:13px;color:#7a9aaa;font-weight:600">✕</button>'+
       '</div>';
       modal+='<div style="padding:10px 16px"><input id="ct-mat-search" value="'+(ctMatPicker.search||"")+'" placeholder="🔍 Поиск материала..." style="width:100%;padding:9px 12px;border-radius:8px;border:1.5px solid #27ae6044;font-size:13px;outline:none;box-sizing:border-box"></div>';
@@ -2998,7 +3002,7 @@ function render(){
         filtered.forEach(function(m){
           modal+='<div data-a="ct-mat-pick" data-mid="'+m.id+'" style="display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:8px;cursor:pointer;margin-bottom:3px;background:#fafbfc;border:1px solid #f0f3f7">'+
             '<div style="flex:1;min-width:0">'+
-              '<div style="font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+m.name+'</div>'+
+              '<div style="font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(m.name)+'</div>'+
             '</div>'+
             '<div style="font-size:13px;font-weight:700;color:#27ae60;white-space:nowrap">'+fmt(m.cost*(m.qty||1))+' ₽</div>'+
           '</div>';
@@ -3140,7 +3144,7 @@ function page(){
 <div style="background:#fff;border-bottom:1px solid #eef2f7;padding:10px 14px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:50">
   <div style="width:32px;height:32px;border-radius:8px;background:${currentUser.c};display:flex;align-items:center;justify-content:center;font-size:16px">${currentUser.av}</div>
   <div style="flex:1;min-width:0">
-    <div style="font-size:13px;font-weight:700;color:#0d1b2e">${currentUser.name}</div>
+    <div style="font-size:13px;font-weight:700;color:#0d1b2e">${esc(currentUser.name)}</div>
     <div style="font-size:10px;color:#7a9aaa">${currentUser.roles.map(rid=>{const r=roles.find(x=>x.id===rid);return r?r.n:"";}).filter(Boolean).join(", ")}</div>
   </div>
   <button data-a="pin-change-open" title="Сменить PIN" style="width:30px;height:30px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:13px;color:#7a9aaa;flex-shrink:0">🔑</button>
@@ -3199,7 +3203,7 @@ function renderObjCard(obj, isAdmin){
   html+='<div style="padding:10px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid '+(_exp?"#f0f4f8":"transparent")+'">';
   html+='<span style="font-size:24px;flex-shrink:0">'+obj.icon+'</span>';
   html+='<div data-a="obj-prev-toggle" data-oid="'+obj.id+'" style="flex:1;min-width:0;cursor:pointer">';
-  html+='<div style="font-size:14px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(_exp?"▾ ":"▸ ")+obj.name+'</div>';
+  html+='<div style="font-size:14px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(_exp?"▾ ":"▸ ")+esc(obj.name)+'</div>';
   html+='<div style="font-size:11px;color:#7a9aaa;margin-top:2px">'+allWorks.length+' работ · '+allMats.length+' материалов · '+fmt(totalCost)+'</div>';
   // Дедлайн от начальника производства (из договоров объекта)
   (function(){
@@ -3398,7 +3402,7 @@ function buildWorkSummary(obj){
            '<span style="font-size:16px">'+r.u.av+'</span>'+
            '<div style="flex:1;min-width:0">'+
              '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px">'+
-               '<span style="font-size:12px;font-weight:700;color:#1a2a3a">'+r.u.name+'</span>'+
+               '<span style="font-size:12px;font-weight:700;color:#1a2a3a">'+esc(r.u.name)+'</span>'+
                '<span style="font-size:11px;font-weight:700;color:#16a085">'+r.hours+' ч</span>'+
              '</div>'+
              '<div style="height:5px;background:#eef2f7;border-radius:3px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+r.u.c+';border-radius:3px"></div></div>'+
@@ -3413,7 +3417,7 @@ function buildWorkSummary(obj){
     stageRows.forEach(function(sr){
       h+='<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:'+sr.color+'08;border:1px solid '+sr.color+'22;border-radius:8px;margin-bottom:4px">'+
            '<div style="width:8px;height:8px;border-radius:50%;background:'+sr.color+';flex-shrink:0"></div>'+
-           '<div style="flex:1;min-width:0"><div style="font-size:11px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+sr.name+'</div></div>'+
+           '<div style="flex:1;min-width:0"><div style="font-size:11px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(sr.name)+'</div></div>'+
            '<span style="font-size:10px;color:#27ae60;font-weight:700;white-space:nowrap">✓ '+sr.count+'</span>'+
            '<span style="font-size:10px;color:#16a085;font-weight:700;white-space:nowrap;min-width:38px;text-align:right">'+sr.hours+' ч</span>'+
            '<span style="font-size:10px;color:#7a9aaa;white-space:nowrap;min-width:64px;text-align:right">'+sr.cost.toLocaleString("ru-RU")+' ₽</span>'+
@@ -3457,13 +3461,13 @@ function tObjects(){
     <select id="obj-icon-${obj.id}" style="padding:4px 2px;border-radius:8px;border:1px solid #d0dae8;font-size:22px;outline:none;cursor:pointer;flex-shrink:0;width:54px;text-align:center">
       ${["🛁","🏠","🌾","🏗️","🏡","🏘️","🏢","🔨","⚡","🌊"].map(i=>`<option value="${i}" ${obj.icon===i?"selected":""}>${i}</option>`).join("")}
     </select>
-    <input id="obj-name-${obj.id}" value="${obj.name}" style="flex:1;min-width:0;padding:9px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:15px;font-weight:700;outline:none;color:#0d1b2e">
+    <input id="obj-name-${obj.id}" value="${esc(obj.name)}" style="flex:1;min-width:0;padding:9px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:15px;font-weight:700;outline:none;color:#0d1b2e">
     <button data-a="save-obj-info" data-oid="${obj.id}" style="width:42px;height:42px;background:#27ae60;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:18px;font-weight:700;flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:0">💾</button>
   </div>`:`
   <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
     <span style="font-size:32px">${obj.icon}</span>
     <div style="flex:1;min-width:0">
-      <div style="font-size:18px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${obj.name}</div>
+      <div style="font-size:18px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(obj.name)}</div>
     </div>
   </div>`}
   <div style="font-size:12px;color:#7a9aaa;margin-bottom:12px">
@@ -3493,8 +3497,8 @@ function tObjects(){
         return `<div style="display:flex;align-items:center;gap:6px;padding:7px 12px;border-radius:18px;background:${u.c}15;border:1.5px solid ${u.c}55">
           <span style="font-size:14px">${u.av}</span>
           <div style="display:flex;flex-direction:column;line-height:1.1">
-            <span style="font-size:11px;font-weight:700;color:#1a2a3a">${u.name}</span>
-            <span style="font-size:9px;color:${u.c}">${primaryRole}</span>
+            <span style="font-size:11px;font-weight:700;color:#1a2a3a">${esc(u.name)}</span>
+            <span style="font-size:9px;color:${u.c}">${esc(primaryRole)}</span>
           </div>
         </div>`;
       }).join("")}
@@ -3548,7 +3552,7 @@ ${(()=>{
     out+='<div style="background:#fafbfc;border-radius:10px;border:1px solid #e5ebf2;padding:10px 12px;margin-bottom:6px">';
     out+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:9px">';
     out+='<span style="font-size:18px">'+u.av+'</span>';
-    out+='<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:#1a2a3a">'+u.name+(u.id===currentUser.id?' (вы)':'')+'</div>';
+    out+='<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:#1a2a3a">'+esc(u.name)+(u.id===currentUser.id?' (вы)':'')+'</div>';
     if(isOff){
       out+='<div style="font-size:10px;color:#9b59b6;font-weight:600;margin-top:1px">🏖 Выходной</div>';
     } else if(cleanupPhotos.length>0){
@@ -3622,7 +3626,7 @@ ${(()=>{
           const u=users.find(x=>x.id===r.userId);
           const bonusD=getCleanupBonusPaid(obj.id,r.userId,d);
           out+='<div style="display:flex;align-items:center;gap:6px;font-size:10px;padding:3px 0;color:#5a7a9a">';
-          out+='<span>'+(u?u.av:"👤")+'</span><span style="font-weight:600">'+(u?u.name:"—")+'</span>';
+          out+='<span>'+(u?u.av:"👤")+'</span><span style="font-weight:600">'+esc(u?u.name:"—")+'</span>';
           if(r.dayOff){out+='<span style="color:#9b59b6">· 🏖 Выходной</span>';}
           else if((r.cleanupPhotos||[]).length>0){out+='<span style="color:#27ae60">· ✓ '+r.cleanupPhotos.length+' фото · +'+bonusD+' ₽</span>';}
           out+='</div>';
@@ -3672,7 +3676,7 @@ ${(()=>{
     out+='<div style="background:#fafbfc;border-radius:10px;border:1px solid #e5ebf2;padding:10px 12px;margin-bottom:6px">';
     out+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:'+(info.hasDeadline?'8px':'0')+'">';
     out+='<span style="font-size:18px">'+u.av+'</span>';
-    out+='<span style="flex:1;font-size:13px;font-weight:700;color:#1a2a3a">'+u.name+(isMe?' (вы)':'')+'</span>';
+    out+='<span style="flex:1;font-size:13px;font-weight:700;color:#1a2a3a">'+esc(u.name)+(isMe?' (вы)':'')+'</span>';
     if(!info.hasDeadline){
       out+='<span style="font-size:10px;color:#9aabbf;background:#f0f4f8;padding:3px 9px;border-radius:5px;font-weight:600">⚪ Не задан</span>';
     } else if(info.overdueDays>0){
@@ -3771,7 +3775,7 @@ ${obj.stages.map(s=>{
   return `<div style="background:#fff;border-radius:12px;border:1px solid ${s.c}44;margin-bottom:10px;overflow:hidden">
   <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:linear-gradient(135deg,${s.c}15,transparent);border-bottom:1px solid ${s.c}22">
     <div style="width:8px;height:8px;border-radius:50%;background:${s.c}"></div>
-    <span style="font-size:13px;font-weight:700;color:#1a2a3a;flex:1">${s.n}</span>
+    <span style="font-size:13px;font-weight:700;color:#1a2a3a;flex:1">${esc(s.n)}</span>
     ${(()=>{const sm=s.works.flatMap(w=>w.mats||[]);const st=getMatStatus(sm);return st?`<span style="font-size:10px;font-weight:700;color:${st.color};background:${st.bg};border-radius:6px;padding:2px 8px;margin-right:6px">${st.label} ${st.done}/${st.total}</span>`:"";})()}
     <span style="font-size:11px;color:${s.c};font-weight:600;margin-right:8px">${_q?(_vw.length+" из "+s.works.length):s.works.length} работ · ${fmt(s.works.reduce((a,w)=>a+w.cost,0))}</span>
     ${isAdmin?`<button data-a="obj-del-stage" data-oid="${obj.id}" data-sid="${s.id}" style="padding:2px 7px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;font-size:10px;color:#e74c3c">✕</button>`:""}
@@ -3794,11 +3798,11 @@ ${obj.stages.map(s=>{
       <div style="display:flex;align-items:center;gap:8px;padding:7px 10px">
         ${canComplete?(canCheck?`<button data-a="obj-toggle-done" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="width:24px;height:24px;flex-shrink:0;background:${isDone?'#27ae60':'#fff'};border:2px solid ${isDone?'#27ae60':'#c0d0e0'};border-radius:6px;cursor:pointer;color:#fff;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0;line-height:1">${isDone?'✓':''}</button>`:`<button data-a="obj-need-time" data-wid="${w.id}" style="width:24px;height:24px;flex-shrink:0;background:#f8fafc;border:2px dashed #d0dae8;border-radius:6px;cursor:pointer;color:#9aabbf;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0;line-height:1" title="Сначала отметьте часы">🔒</button>`):`<div style="width:24px;height:24px;flex-shrink:0;background:${isDone?'#27ae60':'#f0f4f8'};border:2px solid ${isDone?'#27ae60':'#dde6f0'};border-radius:6px;color:#fff;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1">${isDone?'✓':''}</div>`}
         <div style="flex:1;min-width:0">
-          <div style="font-size:13px;font-weight:600;color:${isDone?'#27ae60':'#1a2a3a'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isDone?'text-decoration:line-through;text-decoration-color:#27ae6066':''}">${w.n}</div>
+          <div style="font-size:13px;font-weight:600;color:${isDone?'#27ae60':'#1a2a3a'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isDone?'text-decoration:line-through;text-decoration-color:#27ae6066':''}">${esc(w.n)}</div>
           <div style="display:flex;gap:6px;margin-top:2px;align-items:center;flex-wrap:wrap">
             ${(()=>{const ql=workQtyLabel(w);return ql?`<span style="font-size:10px;color:#16a085;background:#16a08515;border-radius:5px;padding:2px 7px;font-weight:600">${ql}</span>`:"";})()}
             ${w.cost>0?`<span style="font-size:11px;color:#7a9aaa;font-weight:700">${fmt(w.cost)}</span>`:""}
-            ${(()=>{const st=getMatStatus(w.mats||[]);const cnt=(w.mats||[]).length;const c=st?st.color:'#2980b9';const bg=st?st.bg:'rgba(41,128,185,0.1)';const lbl=st&&st.done===st.total&&st.total>0?'✓':(st&&st.done>0?st.done+'/'+st.total+' ':'');return`<button data-a="obj-open-mats" data-oid="${obj.id}" data-wid="${w.id}" data-wn="${w.n}" style="padding:2px 7px;background:${bg};border:1px solid ${c}44;border-radius:5px;cursor:pointer;font-size:10px;color:${c};font-weight:600">${lbl}📦 ${cnt}</button>`;})()}
+            ${(()=>{const st=getMatStatus(w.mats||[]);const cnt=(w.mats||[]).length;const c=st?st.color:'#2980b9';const bg=st?st.bg:'rgba(41,128,185,0.1)';const lbl=st&&st.done===st.total&&st.total>0?'✓':(st&&st.done>0?st.done+'/'+st.total+' ':'');return`<button data-a="obj-open-mats" data-oid="${obj.id}" data-wid="${w.id}" data-wn="${esc(w.n)}" style="padding:2px 7px;background:${bg};border:1px solid ${c}44;border-radius:5px;cursor:pointer;font-size:10px;color:${c};font-weight:600">${lbl}📦 ${cnt}</button>`;})()}
             ${(()=>{
               const canLogTime=currentUser&&(currentUser.roles.includes("admin")||currentUser.roles.includes("financier")||currentUser.roles.includes("brigadier")||currentUser.roles.includes("worker")||currentUser.roles.includes("prod_head"));
               if(!canLogTime&&totalH===0)return "";
@@ -3843,7 +3847,7 @@ ${obj.stages.map(s=>{
               const u=users.find(x=>x.id===l.userId);
               return `<div style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:#fff;border-radius:6px;margin-bottom:3px;font-size:11px;border:1px solid #16a08522">
                 <span style="font-size:13px">${u?u.av:'👤'}</span>
-                <div style="flex:1;min-width:0"><div style="font-weight:600;color:#1a2a3a">${u?u.name:'—'}</div><div style="font-size:9px;color:#9aabbf">${l.date}</div></div>
+                <div style="flex:1;min-width:0"><div style="font-weight:600;color:#1a2a3a">${esc(u?u.name:'—')}</div><div style="font-size:9px;color:#9aabbf">${l.date}</div></div>
                 <span style="font-weight:700;color:#16a085;font-size:12px">${l.hours} ч</span>
                 <button data-a="obj-del-time" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" data-lid="${l.id}" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c33;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button>
               </div>`;
@@ -3852,7 +3856,7 @@ ${obj.stages.map(s=>{
           <div style="background:#fff;border-radius:8px;padding:8px;border:1px dashed #16a08555">
             <div style="font-size:9px;color:#9aabbf;font-weight:700;margin-bottom:5px">ДОБАВИТЬ ЗАПИСЬ</div>
             ${eligibleUsers.length?`<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px" id="tl-users-${w.id}">
-              ${eligibleUsers.map((u,ui)=>`<button data-a="obj-tl-user" data-uid="${u.id}" data-wid="${w.id}" style="padding:4px 9px;border-radius:14px;cursor:pointer;font-size:11px;font-weight:600;background:${(newTimeLog.userId===u.id||(!newTimeLog.userId&&ui===0))?u.c:'#f0f4f8'};color:${(newTimeLog.userId===u.id||(!newTimeLog.userId&&ui===0))?'#fff':'#5a7a9a'};border:1.5px solid ${u.c}55">${u.av} ${u.name}</button>`).join("")}
+              ${eligibleUsers.map((u,ui)=>`<button data-a="obj-tl-user" data-uid="${u.id}" data-wid="${w.id}" style="padding:4px 9px;border-radius:14px;cursor:pointer;font-size:11px;font-weight:600;background:${(newTimeLog.userId===u.id||(!newTimeLog.userId&&ui===0))?u.c:'#f0f4f8'};color:${(newTimeLog.userId===u.id||(!newTimeLog.userId&&ui===0))?'#fff':'#5a7a9a'};border:1.5px solid ${u.c}55">${u.av} ${esc(u.name)}</button>`).join("")}
             </div>`:`<div style="font-size:10px;color:#e74c3c;margin-bottom:6px">Нет назначенных бригадиров (через Договора)</div>`}
             <div style="display:flex;gap:5px;margin-bottom:6px;align-items:center">
               <span style="font-size:10px;color:#9aabbf;font-weight:600;width:36px">ДАТА:</span>
@@ -3917,7 +3921,7 @@ ${obj.stages.map(s=>{
 ${objMatModal?`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:flex-start;justify-content:center;padding:60px 16px;z-index:200">
   <div style="background:#fff;border-radius:16px;width:100%;max-width:440px;padding:20px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-      <div><div style="font-size:14px;font-weight:700;color:#0d1b2e">📦 Материалы</div><div style="font-size:12px;color:#7a9aaa">${objMatModal.wn}</div></div>
+      <div><div style="font-size:14px;font-weight:700;color:#0d1b2e">📦 Материалы</div><div style="font-size:12px;color:#7a9aaa">${esc(objMatModal.wn)}</div></div>
       <button data-a="close-obj-mm" style="width:30px;height:30px;border-radius:50%;background:#f0f4f8;border:none;cursor:pointer;font-size:16px">✕</button>
     </div>
     ${(()=>{const o=objects.find(x=>x.id===objMatModal.oid);const work=o?.stages.flatMap(s=>s.works).find(w=>w.id===objMatModal.wid);const wMats=work?.mats||[];
@@ -3932,9 +3936,9 @@ ${objMatModal?`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);di
       return `<div style="padding:8px 10px;border-radius:8px;margin-bottom:5px;background:#f8fafc;border:1px solid #dde6f0">
       <div style="display:flex;align-items:center;gap:8px">
         <div style="flex:1;min-width:0">
-          <div style="font-size:13px;font-weight:600;color:#1a2a3a">${m.n}</div>
+          <div style="font-size:13px;font-weight:600;color:#1a2a3a">${esc(m.n)}</div>
           <div style="display:flex;align-items:center;gap:5px;margin-top:3px;flex-wrap:wrap">
-            ${m.store?`<span style="font-size:10px;font-weight:700;background:${SC[m.store]||"#666"};color:#fff;border-radius:4px;padding:1px 5px">${m.store}</span>`:""}
+            ${m.store?`<span style="font-size:10px;font-weight:700;background:${SC[m.store]||"#666"};color:#fff;border-radius:4px;padding:1px 5px">${esc(m.store)}</span>`:""}
             <span style="font-size:10px;font-weight:700;color:#5a7a9a;background:#eef2f7;border-radius:4px;padding:1px 6px">${mode.icon} ${mode.unit}</span>
             ${m.cost>0?`<span style="font-size:11px;color:#7a9aaa">${price.toLocaleString("ru-RU")} ₽/${unit}</span>`:""}
             <span style="font-size:11px;color:#7a9aaa">×</span>
@@ -4004,7 +4008,7 @@ ${showNObj?`<div style="background:#fff;border-radius:14px;border:2px solid #c03
       ${templates.map(t=>{const sel=nobj.templateId===t.id;return`<div data-a="pick-nobj-t" data-tid="${t.id}" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:10px;cursor:pointer;border:2px solid ${sel?t.stages[0]?.c||"#4a7ac8":"#dde6f0"};background:${sel?"#f0f6ff":"#f8fafc"}">
         <span style="font-size:24px">${t.icon}</span>
         <div style="flex:1">
-          <div style="font-size:14px;font-weight:700;color:#1a2a3a">${t.name}</div>
+          <div style="font-size:14px;font-weight:700;color:#1a2a3a">${esc(t.name)}</div>
           <div style="font-size:11px;color:#7a9aaa">${t.stages.length} этапов · ${t.stages.flatMap(s=>s.works).length} работ</div>
         </div>
         ${sel?`<span style="font-size:14px;color:#27ae60;font-weight:700">✓</span>`:""}
@@ -4066,7 +4070,7 @@ function tTemplates(){
     <select id="tpl-icon-${t.id}" style="padding:6px;border-radius:8px;border:1px solid #d0dae8;font-size:26px;outline:none;cursor:pointer">
       ${["🛁","🏠","🌾","🏗️","🏡","🏘️","🏢","🔨","⚡","🌊"].map(i=>`<option value="${i}" ${t.icon===i?"selected":""}>${i}</option>`).join("")}
     </select>
-    <input id="tpl-name-${t.id}" value="${t.name}" placeholder="Название шаблона" style="flex:1;padding:9px 12px;border-radius:8px;border:1px solid #d0dae8;font-size:16px;font-weight:700;outline:none;color:#0d1b2e">
+    <input id="tpl-name-${t.id}" value="${esc(t.name)}" placeholder="Название шаблона" style="flex:1;padding:9px 12px;border-radius:8px;border:1px solid #d0dae8;font-size:16px;font-weight:700;outline:none;color:#0d1b2e">
     <button data-a="save-tpl-info" data-tid="${t.id}" style="padding:9px 18px;background:#27ae60;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:13px;font-weight:700;white-space:nowrap;flex-shrink:0">💾 Сохранить</button>
   </div>
   <div style="font-size:12px;color:#7a9aaa">${allW.length} работ · <span id="tpl-grand">${fmt(grand)}</span> · в ${objects.filter(o=>o.templateId===t.id).length} объектах</div>
@@ -4100,7 +4104,7 @@ ${groups.map(g=>{
       return`<div style="margin-bottom:4px">
       <div data-a="tpl-est" data-eid="${e.id}" style="display:flex;align-items:center;gap:9px;padding:8px;border-radius:8px;cursor:pointer;background:${on?color+"10":"transparent"}">
         <div style="width:19px;height:19px;border-radius:5px;border:2px solid ${on?color:"#cdd8e6"};background:${on?color:"#fff"};display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:800;flex-shrink:0">${on?"✓":""}</div>
-        <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;color:#1a2a3a;line-height:1.25">${e.name}</div>
+        <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;color:#1a2a3a;line-height:1.25">${esc(e.name)}</div>
         <div style="font-size:10px;color:#9aabbf;margin-top:1px">${on?`<span data-a="tpl-mat-toggle" data-eid="${e.id}" style="cursor:pointer;color:#2980b9;font-weight:700;border-bottom:1px dashed #2980b955">${tplMatExpand[e.id]?"▾":"▸"} ${(e.lines||[]).length} мат.</span>`:`${(e.lines||[]).length} мат.`}</div></div>
         ${(function(){ if(!on)return ""; var fa=workFillArea(e, t.specs, t.kind); if(!fa)return ""; return `<button data-a="tpl-fill-area" data-eid="${e.id}" title="Подставить площадь ${fa.label} (${numRu(fa.value)} м²) в материалы" style="flex-shrink:0;background:#16a08515;border:1px solid #16a08544;border-radius:6px;color:#16a085;font-size:10px;font-weight:700;padding:2px 7px;cursor:pointer;margin-left:4px;white-space:nowrap">📐 ${numRu(fa.value)} м²</button>`; })()}<span id="tplw-t-${e.id}" style="font-size:12px;font-weight:700;color:#0d1b2e;white-space:nowrap">${fmt(wTotal)}</span>${currentUser&&currentUser.roles.includes("admin")?`<button data-a="tpl-est-del" data-eid="${e.id}" title="Убрать работу из этого шаблона (в каталоге смет остаётся)" style="width:24px;height:24px;flex-shrink:0;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;margin-left:4px">🗑</button>`:""}
       </div>
@@ -4115,9 +4119,9 @@ ${groups.map(g=>{
           const _effLt=Math.round((Number(m.cost)||0)*_effQty);
           return`<div style="padding:6px 0;border-top:1px solid #f0f4f8">
             <div style="display:flex;align-items:center;gap:6px">
-            <div style="flex:1;min-width:0"><div data-a="tpl-mat-open" data-name="${esc(m.n).replace(/"/g,"&quot;")}" style="font-size:12px;color:#2980b9;font-weight:600;line-height:1.2;cursor:pointer;display:inline-flex;align-items:center;gap:4px;border-bottom:1px dashed #2980b955">${m.n}<span style="font-size:9px">✏️</span></div>
+            <div style="flex:1;min-width:0"><div data-a="tpl-mat-open" data-name="${esc(m.n).replace(/"/g,"&quot;")}" style="font-size:12px;color:#2980b9;font-weight:600;line-height:1.2;cursor:pointer;display:inline-flex;align-items:center;gap:4px;border-bottom:1px dashed #2980b955">${esc(m.n)}<span style="font-size:9px">✏️</span></div>
             <div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:2px">
-              ${m.store?`<span style="font-size:9px;font-weight:700;background:${SC[m.store]||'#666'};color:#fff;border-radius:4px;padding:1px 6px">${m.store}</span>`:''}
+              ${m.store?`<span style="font-size:9px;font-weight:700;background:${SC[m.store]||'#666'};color:#fff;border-radius:4px;padding:1px 6px">${esc(m.store)}</span>`:''}
               <span style="font-size:10px;color:#9aabbf">${(Number(m.cost)||0).toLocaleString('ru-RU')} ₽/${mo.unit}</span>
               ${m.url?`<a href="${m.url}" target="_blank" rel="noopener" style="font-size:9px;color:#fff;background:#2980b9;border-radius:4px;padding:1px 6px;text-decoration:none;font-weight:700">🔗 купить</a>`:''}
             </div>
@@ -4435,7 +4439,7 @@ function expRowHtml(p){
     <div style="display:flex;gap:11px;align-items:flex-start">
       <div style="width:46px;height:46px;border-radius:11px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:22px;background:linear-gradient(135deg,${grad})">${p.photo?`<img src="${p.photo}" style="width:100%;height:100%;border-radius:11px;object-fit:cover">`:p.emoji}</div>
       <div style="flex:1;min-width:0">
-        <div style="font-size:13.5px;font-weight:700;color:#0d1b2e;line-height:1.25">${p.name}</div>
+        <div style="font-size:13.5px;font-weight:700;color:#0d1b2e;line-height:1.25">${esc(p.name)}</div>
         <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:5px;align-items:center">
           ${safeUrl?`<a href="${safeUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:10px;font-weight:700;background:${storeColor};color:#fff;border-radius:5px;padding:1px 7px;text-decoration:none">${esc(p.store)} ↗</a>`:`<span style="font-size:10px;font-weight:700;background:${storeColor};color:#fff;border-radius:5px;padding:1px 7px">${esc(p.store)}</span>`}
           <span style="font-size:10px;font-weight:700;color:#5a7a9a;background:#eef2f7;border-radius:5px;padding:1px 7px">${mode.icon} ${mode.label}</span>
@@ -4546,9 +4550,9 @@ function renderEstimates(){
         '<div style="padding:0 12px">'+
           (e.lines.length?e.lines.map(function(l,i){var p=estProd(l.pid);if(!p)return '';var mo=EXP_MODES.find(function(x){return x.k===(p.mode||"piece");})||EXP_MODES[0];var conv=expConv(p);
             return '<div style="display:flex;align-items:center;gap:7px;padding:9px 4px;border-bottom:1px solid #f0f4f8">'+
-              '<div style="flex:1;min-width:0"><div class="est-line-mat" data-pid="'+p.id+'" style="font-size:12.5px;font-weight:600;color:#2980b9;line-height:1.25;cursor:pointer;display:inline-flex;align-items:center;gap:4px;border-bottom:1px dashed #2980b955">'+p.name+'<span style="font-size:10px">✏️</span></div>'+
+              '<div style="flex:1;min-width:0"><div class="est-line-mat" data-pid="'+p.id+'" style="font-size:12.5px;font-weight:600;color:#2980b9;line-height:1.25;cursor:pointer;display:inline-flex;align-items:center;gap:4px;border-bottom:1px dashed #2980b955">'+esc(p.name)+'<span style="font-size:10px">✏️</span></div>'+
               '<div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin-top:3px">'+
-                (p.store?'<span style="font-size:9px;font-weight:700;background:'+(SC[p.store]||"#666")+';color:#fff;border-radius:4px;padding:1px 6px">'+p.store+'</span>':'')+
+                (p.store?'<span style="font-size:9px;font-weight:700;background:'+(SC[p.store]||"#666")+';color:#fff;border-radius:4px;padding:1px 6px">'+esc(p.store)+'</span>':'')+
                 '<span style="font-size:10px;color:#9aabbf">'+(Number(p.unitCost)||0).toLocaleString("ru-RU")+' ₽/'+mo.unit+'</span>'+
                 (p.url?'<a href="'+p.url+'" target="_blank" rel="noopener" style="font-size:9px;color:#fff;background:#2980b9;border-radius:4px;padding:1px 6px;text-decoration:none;font-weight:700">🔗 купить</a>':'')+
               '</div>'+
@@ -4884,7 +4888,7 @@ function buildClientSelector(selId, selectedName, searchId){
 
   let html='<div style="margin-bottom:10px">'+
     '<div style="font-size:9px;color:#27ae60;font-weight:700;letter-spacing:0.5px;margin-bottom:5px">👤 КЛИЕНТ ИЗ CRM</div>'+
-    '<input id="'+searchId+'" value="'+(ctClientSearch||'')+'" placeholder="🔍 Поиск по имени или телефону..." style="width:100%;padding:8px 10px;border-radius:8px;border:1.5px solid #27ae6044;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:6px">'+
+    '<input id="'+searchId+'" value="'+esc(ctClientSearch||'')+'" placeholder="🔍 Поиск по имени или телефону..." style="width:100%;padding:8px 10px;border-radius:8px;border:1.5px solid #27ae6044;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:6px">'+
     '<div style="max-height:180px;overflow-y:auto;border:1px solid #d0dae8;border-radius:8px;background:#fff;position:relative;z-index:10">';
 
   if(!filtered.length) html+='<div style="padding:10px;text-align:center;font-size:12px;color:#aaa">Ничего не найдено</div>';
@@ -4898,10 +4902,10 @@ function buildClientSelector(selId, selectedName, searchId){
       'background:'+(isSelected?'#27ae6015':'transparent')+';border-bottom:1px solid #f4f6f9">'+
         '<div style="flex:1;min-width:0;pointer-events:none">'+
           '<div style="font-size:13px;font-weight:'+(isSelected?700:500)+';color:'+(isSelected?'#27ae60':'#1a2a3a')+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;pointer-events:none">'+
-            (isSelected?'✓ ':'')+cl.name+
+            (isSelected?'✓ ':'')+esc(cl.name)+
           '</div>'+
           '<div style="font-size:10px;color:#7a9aaa;margin-top:1px;pointer-events:none">'+cl.phone+
-            (isContract?' · <span style="color:#27ae60;font-weight:700">Договор ✓</span>':' · <span style="color:#aaa">'+cl.stage+'</span>')+
+            (isContract?' · <span style="color:#27ae60;font-weight:700">Договор ✓</span>':' · <span style="color:#aaa">'+esc(cl.stage)+'</span>')+
           '</div>'+
         '</div>'+
       '</div>';
@@ -4925,12 +4929,12 @@ function buildClientSelector(selId, selectedName, searchId){
     html+='<div style="display:flex;align-items:flex-start;gap:10px">'+
       '<div style="width:36px;height:36px;border-radius:10px;background:#27ae6020;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">👤</div>'+
       '<div style="flex:1;min-width:0">'+
-        '<div style="font-size:13px;font-weight:700;color:#1a2a3a">'+selectedClient.name+'</div>'+
+        '<div style="font-size:13px;font-weight:700;color:#1a2a3a">'+esc(selectedClient.name)+'</div>'+
         '<div style="font-size:11px;color:#5a7a9a;margin-top:2px">'+selectedClient.phone+'</div>'+
         '<div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap">'+
-          '<span style="font-size:10px;background:#27ae6015;color:#27ae60;border-radius:6px;padding:1px 8px;font-weight:700">📝 Этап: '+(stageNames[selectedClient.stage]||selectedClient.stage)+'</span>'+
+          '<span style="font-size:10px;background:#27ae6015;color:#27ae60;border-radius:6px;padding:1px 8px;font-weight:700">📝 Этап: '+esc(stageNames[selectedClient.stage]||selectedClient.stage)+'</span>'+
         '</div>'+
-        (selectedClient.msg?'<div style="font-size:11px;color:#7a9aaa;margin-top:4px;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">«'+selectedClient.msg+'»</div>':'')+
+        (selectedClient.msg?'<div style="font-size:11px;color:#7a9aaa;margin-top:4px;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">«'+esc(selectedClient.msg)+'»</div>':'')+
       '</div>'+
     '</div>';
 
@@ -4952,7 +4956,7 @@ function buildClientSelector(selId, selectedName, searchId){
     html+='</div>';
   } else if(selectedName){
     // Manual entry, no CRM match
-    html+='<div style="margin-top:5px;font-size:12px;color:#7a9aaa;font-weight:600">Клиент: '+selectedName+' <span style="color:#aaa;font-weight:400">(вручную)</span></div>';
+    html+='<div style="margin-top:5px;font-size:12px;color:#7a9aaa;font-weight:600">Клиент: '+esc(selectedName)+' <span style="color:#aaa;font-weight:400">(вручную)</span></div>';
   }
   html+=''+
     '<input id="'+selId+'" type="hidden" value="'+(selectedName||'').replace(/"/g,"&quot;")+'"></div>';
@@ -4992,7 +4996,7 @@ function tContractList(){
           '<option value=""'+(!contractNew.objId?' selected':'')+'>— Без объекта (черновик) —</option>'+
           objects.map(function(o){
             const sel=(contractNew.objId===o.id)?' selected':'';
-            return'<option value="'+o.id+'"'+sel+'>'+o.icon+' '+o.name+'</option>';
+            return'<option value="'+o.id+'"'+sel+'>'+o.icon+' '+esc(o.name)+'</option>';
           }).join("")+
         '</select>'+
         // Type
@@ -5000,7 +5004,7 @@ function tContractList(){
           '<button data-a="ct-type" data-t="main" style="flex:1;padding:6px;border-radius:7px;border:none;cursor:pointer;font-size:12px;font-weight:700;background:'+(contractNew.type==="main"?'#2980b9':'#f0f4f8')+';color:'+(contractNew.type==="main"?'#fff':'#7a9aaa')+'">Основной</button>'+
           '<button data-a="ct-type" data-t="extra" style="flex:1;padding:6px;border-radius:7px;border:none;cursor:pointer;font-size:12px;font-weight:700;background:'+(contractNew.type==="extra"?'#8e44ad':'#f0f4f8')+';color:'+(contractNew.type==="extra"?'#fff':'#7a9aaa')+'">Доп. работы</button>'+
         '</div>'+
-        '<input id="ct-name" value="'+contractNew.name+'" placeholder="Название / номер договора" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;margin-bottom:8px;outline:none;box-sizing:border-box">'+
+        '<input id="ct-name" value="'+esc(contractNew.name)+'" placeholder="Название / номер договора" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;margin-bottom:8px;outline:none;box-sizing:border-box">'+
         buildClientSelector('ct-client-sel', contractNew.client, 'ct-client-search')+
         '<div style="display:flex;gap:8px;margin-bottom:4px">'+
           '<input id="ct-amount" type="text" inputmode="numeric" data-money="1" value="'+fmtMoney(contractNew.amount)+'" placeholder="Сумма ₽" style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none">'+
@@ -5009,7 +5013,7 @@ function tContractList(){
           '<div style="flex:1"><div style="font-size:9px;color:#7a9aaa;font-weight:700;margin-bottom:3px">📅 ПОДПИСАНИЕ</div><input id="ct-date" type="date" value="'+contractNew.signDate+'" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box"></div>'+
           '<div style="flex:1"><div style="font-size:9px;color:#e67e22;font-weight:700;margin-bottom:3px">🏁 ДЕДЛАЙН</div><input id="ct-deadline" type="date" value="'+(contractNew.deadlineDate||"")+'" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #e67e2255;font-size:13px;outline:none;box-sizing:border-box"></div>'+
         '</div>'+
-        '<textarea id="ct-note" placeholder="Примечания" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;height:60px;resize:none;outline:none;margin-bottom:10px;box-sizing:border-box">'+contractNew.note+'</textarea>'+
+        '<textarea id="ct-note" placeholder="Примечания" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;height:60px;resize:none;outline:none;margin-bottom:10px;box-sizing:border-box">'+esc(contractNew.note)+'</textarea>'+
         // Файлы (договор + планировка) — буфер contractNew.files
         (function(){
           function miniSection(kind,title,color){
@@ -5027,7 +5031,7 @@ function tContractList(){
               files.forEach(function(f){
                 h+='<div style="display:flex;align-items:center;gap:6px;padding:4px 6px;background:#fff;border:1px solid #f0f3f7;border-radius:6px;margin-bottom:3px">'+
                      '<span style="font-size:13px">📄</span>'+
-                     '<span style="flex:1;min-width:0;font-size:11px;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+f.name+'</span>'+
+                     '<span style="flex:1;min-width:0;font-size:11px;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name)+'</span>'+
                      '<button data-a="ct-new-file-del" data-fid="'+f.id+'" style="width:22px;height:22px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button>'+
                    '</div>';
               });
@@ -5060,8 +5064,8 @@ function tContractList(){
               extraHtml+='<div style="background:#fff;border-radius:8px;padding:8px 10px;margin-bottom:6px;border-left:3px solid #8e44ad">';
               extraHtml+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">'+
                 '<div style="flex:1;min-width:0">'+
-                  '<div style="font-size:12px;font-weight:700;color:#1a2a3a">'+(ew.name||"Работа")+'</div>'+
-                  '<div style="font-size:9px;color:#9aabbf">Этап: '+(ew.stage||"—")+'</div>'+
+                  '<div style="font-size:12px;font-weight:700;color:#1a2a3a">'+esc(ew.name||"Работа")+'</div>'+
+                  '<div style="font-size:9px;color:#9aabbf">Этап: '+esc(ew.stage||"—")+'</div>'+
                 '</div>'+
                 '<div style="font-size:12px;font-weight:700;color:#8e44ad;white-space:nowrap">'+fmt(wTotal)+'</div>'+
                 '<button data-a="ct-new-ew-del" data-ewi="'+ewi+'" style="padding:3px 7px;background:#e74c3c12;border:1px solid #e74c3c33;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:9px">🗑</button>'+
@@ -5077,7 +5081,7 @@ function tContractList(){
                 mats.forEach(function(m,mi){
                   const mTotal=(m.cost||0)*(m.qty||1);
                   extraHtml+='<div style="display:flex;align-items:center;gap:4px;padding:3px 5px;background:#fafbfc;border-radius:5px;margin-bottom:2px;border:1px solid #f0f3f7">'+
-                    '<div style="flex:1;min-width:0;font-size:10px;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+m.name+'</div>'+
+                    '<div style="flex:1;min-width:0;font-size:10px;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(m.name)+'</div>'+
                     '<input id="ct-new-ewm-qty-'+ewi+'-'+mi+'" type="number" value="'+(m.qty||1)+'" style="width:38px;padding:2px 4px;border-radius:4px;border:1px solid #d0dae8;font-size:10px;outline:none;text-align:center">'+
                     '<span style="font-size:9px;color:#9aabbf">×</span>'+
                     '<input id="ct-new-ewm-cost-'+ewi+'-'+mi+'" type="text" inputmode="numeric" data-money="1" value="'+fmtMoney(m.cost||0)+'" style="width:60px;padding:2px 4px;border-radius:4px;border:1px solid #d0dae8;font-size:10px;outline:none;text-align:right">'+
@@ -5199,7 +5203,7 @@ function tContractList(){
   objects.forEach(function(obj){
     const docs=byObj[obj.id];
     if(!docs||!docs.length)return;
-    html+='<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px;margin-top:14px">'+obj.icon+' '+obj.name.toUpperCase()+'</div>';
+    html+='<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px;margin-top:14px">'+obj.icon+' '+esc(obj.name.toUpperCase())+'</div>';
     docs.forEach(function(c){ html+=renderContractCard(c); });
   });
 
@@ -5277,7 +5281,7 @@ function buildContractFiles(c){
           h+='<div style="width:34px;height:34px;border-radius:6px;background:'+color+'15;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0">'+fileIcon(f)+'</div>';
         }
         h+='<div style="flex:1;min-width:0">'+
-             '<div style="font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+f.name+'</div>'+
+             '<div style="font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name)+'</div>'+
              '<div style="font-size:9px;color:#9aabbf">'+(f.date||"")+(f.size?' · '+fmtSize(f.size):'')+'</div>'+
            '</div>'+
            '<a href="'+f.data+'" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;cursor:pointer;color:'+color+';font-size:11px;font-weight:700;text-decoration:none;white-space:nowrap">Открыть</a>'+
@@ -5363,13 +5367,13 @@ function tContractDetail(cid){
       '<div style="background:linear-gradient(135deg,#27ae6012,#27ae6006);border:1px solid #27ae6033;border-radius:12px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:flex-start;gap:10px">'+
         '<div style="width:36px;height:36px;border-radius:10px;background:#27ae6020;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">👤</div>'+
         '<div style="flex:1;min-width:0">'+
-          '<div style="font-size:13px;font-weight:700;color:#1a2a3a">'+crmLinked.name+'</div>'+
+          '<div style="font-size:13px;font-weight:700;color:#1a2a3a">'+esc(crmLinked.name)+'</div>'+
           '<div style="font-size:11px;color:#5a7a9a;margin-top:2px">'+crmLinked.phone+'</div>'+
           '<div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap">'+
             '<span style="font-size:10px;background:#27ae6015;color:#27ae60;border-radius:6px;padding:1px 8px;font-weight:700">📝 Этап: '+(CRM_STAGE_NAMES[crmLinked.stage]||crmLinked.stage)+'</span>'+
-            (crmLinked.notes?'<span style="font-size:10px;color:#7a9aaa;font-style:italic">'+crmLinked.notes+'</span>':'')+
+            (crmLinked.notes?'<span style="font-size:10px;color:#7a9aaa;font-style:italic">'+esc(crmLinked.notes)+'</span>':'')+
           '</div>'+
-          (crmLinked.msg?'<div style="font-size:11px;color:#7a9aaa;margin-top:4px;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">«'+crmLinked.msg+'»</div>':'')+
+          (crmLinked.msg?'<div style="font-size:11px;color:#7a9aaa;margin-top:4px;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">«'+esc(crmLinked.msg)+'»</div>':'')+
         '</div>'+
         '<button data-a="ct-goto-crm" data-crmid="'+crmLinked.id+'" style="padding:4px 8px;background:#27ae60;border:none;border-radius:6px;cursor:pointer;font-size:10px;color:#fff;font-weight:700;flex-shrink:0;white-space:nowrap">→ CRM</button>'+
       '</div>';
@@ -5399,14 +5403,14 @@ function tContractDetail(cid){
     html+=
       '<select id="ct-edit-obj" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;margin-bottom:8px;outline:none;background:#fff;box-sizing:border-box">'+
         '<option value=""'+(!ed.objId?' selected':'')+'>— Без объекта —</option>'+
-        objects.map(function(o){return'<option value="'+o.id+'"'+(ed.objId===o.id?' selected':'')+'>'+o.icon+' '+o.name+'</option>';}).join("")+
+        objects.map(function(o){return'<option value="'+o.id+'"'+(ed.objId===o.id?' selected':'')+'>'+o.icon+' '+esc(o.name)+'</option>';}).join("")+
       '</select>'+
       '<div style="display:flex;gap:6px;margin-bottom:8px">'+
         '<button data-a="ct-edit-type" data-cid="'+cid+'" data-t="main" style="flex:1;padding:6px;border-radius:7px;border:none;cursor:pointer;font-size:12px;font-weight:700;background:'+(c.type==="main"?'#2980b9':'#f0f4f8')+';color:'+(c.type==="main"?'#fff':'#7a9aaa')+'">Основной</button>'+
         '<button data-a="ct-edit-type" data-cid="'+cid+'" data-t="extra" style="flex:1;padding:6px;border-radius:7px;border:none;cursor:pointer;font-size:12px;font-weight:700;background:'+(c.type==="extra"?'#8e44ad':'#f0f4f8')+';color:'+(c.type==="extra"?'#fff':'#7a9aaa')+'">Доп. работы</button>'+
       '</div>'+
       '<input id="ct-edit-name" value="'+String(ed.name||"").replace(/"/g,"&quot;")+'" placeholder="Название / номер" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;margin-bottom:8px;outline:none;box-sizing:border-box">'+
-      (c.status==="draft"?buildClientSelector('ct-edit-client-sel', c.client, 'ct-edit-client-search'):'<div style="margin-bottom:8px"><div style="font-size:9px;color:#7a9aaa;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">КЛИЕНТ</div><div style="font-size:13px;font-weight:600;color:#1a2a3a;padding:8px 10px;background:#f8fafc;border-radius:8px;border:1px solid #e8eef5">'+(ctClientName(c)||'—')+'</div></div>')+
+      (c.status==="draft"?buildClientSelector('ct-edit-client-sel', c.client, 'ct-edit-client-search'):'<div style="margin-bottom:8px"><div style="font-size:9px;color:#7a9aaa;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">КЛИЕНТ</div><div style="font-size:13px;font-weight:600;color:#1a2a3a;padding:8px 10px;background:#f8fafc;border-radius:8px;border:1px solid #e8eef5">'+esc(ctClientName(c)||'—')+'</div></div>')+
       '<div style="display:flex;gap:8px;margin-bottom:4px">'+
         '<input id="ct-edit-amount" type="text" inputmode="numeric" data-money="1" value="'+(ed.amount?fmtMoney(ed.amount):'')+'" placeholder="Сумма ₽" style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none">'+
       '</div>'+
@@ -5459,7 +5463,7 @@ function tContractDetail(cid){
       '</div>';
     html+='</div>';
 
-    if(c.note) html+='<div style="margin-top:8px;font-size:12px;color:#5a7a9a;background:#f8fafc;border-radius:8px;padding:8px">'+c.note+'</div>';
+    if(c.note) html+='<div style="margin-top:8px;font-size:12px;color:#5a7a9a;background:#f8fafc;border-radius:8px;padding:8px">'+esc(c.note)+'</div>';
   }
   html+='</div>';
 
@@ -5472,7 +5476,7 @@ function tContractDetail(cid){
     html+=
       '<div data-a="ct-resp-toggle" data-cid="'+c.id+'" data-uid="'+u.id+'" style="display:flex;align-items:center;gap:5px;padding:5px 10px;border-radius:16px;cursor:pointer;background:'+(on?u.c:'#f4f6f8')+';border:1.5px solid '+(on?u.c:'#dde6f0')+'">'+
         '<span style="font-size:13px">'+u.av+'</span>'+
-        '<span style="font-size:11px;font-weight:600;color:'+(on?'#fff':'#7a9aaa')+'">'+u.name+'</span>'+
+        '<span style="font-size:11px;font-weight:600;color:'+(on?'#fff':'#7a9aaa')+'">'+esc(u.name)+'</span>'+
         (on?'<span style="font-size:10px;color:rgba(255,255,255,0.8)">✓</span>':'')+
       '</div>';
   });
@@ -5495,8 +5499,8 @@ function tContractDetail(cid){
           '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
             '<div style="width:30px;height:30px;border-radius:8px;background:'+u.c+';display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0">'+u.av+'</div>'+
             '<div style="flex:1;min-width:0">'+
-              '<div style="font-size:12px;font-weight:700;color:#1a2a3a">'+u.name+'</div>'+
-              '<div style="font-size:10px;color:#9aabbf">'+u.roles.map(function(r){const ro=roles.find(function(x){return x.id===r;});return ro?ro.n:"";}).filter(Boolean).join(", ")+'</div>'+
+              '<div style="font-size:12px;font-weight:700;color:#1a2a3a">'+esc(u.name)+'</div>'+
+              '<div style="font-size:10px;color:#9aabbf">'+u.roles.map(function(r){const ro=roles.find(function(x){return x.id===r;});return ro?esc(ro.n):"";}).filter(Boolean).join(", ")+'</div>'+
             '</div>'+
             (left>0?
               '<span style="font-size:10px;color:#e67e22;font-weight:700;background:#e67e2212;border-radius:6px;padding:2px 7px;white-space:nowrap">−'+left.toLocaleString("ru-RU")+'</span>':
@@ -5566,7 +5570,7 @@ function tContractDetail(cid){
       html+='<div style="background:#fafbfc;border-radius:8px;border:1px solid #e5ebf2;padding:10px;margin-bottom:6px">';
       html+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">';
       html+='<span style="font-size:16px">'+u.av+'</span>';
-      html+='<span style="flex:1;font-size:13px;font-weight:700;color:#1a2a3a">'+u.name+'</span>';
+      html+='<span style="flex:1;font-size:13px;font-weight:700;color:#1a2a3a">'+esc(u.name)+'</span>';
       html+='<span style="font-size:10px;font-weight:700;color:'+status.color+';background:'+status.bg+';padding:3px 8px;border-radius:5px">'+status.label+'</span>';
       html+='</div>';
       if(canEdit){
@@ -5655,7 +5659,7 @@ function tContractDetail(cid){
       planItems.forEach(function(it){
         html+='<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#16a08508;border-radius:8px;margin-bottom:4px;border:1px solid #16a08522">'+
           '<span style="font-size:14px">🛠</span>'+
-          '<div style="flex:1;min-width:0"><div style="font-size:11px;font-weight:700;color:#1a2a3a">'+(it.title||"Доп работа")+'</div></div>'+
+          '<div style="flex:1;min-width:0"><div style="font-size:11px;font-weight:700;color:#1a2a3a">'+esc(it.title||"Доп работа")+'</div></div>'+
           '<div style="font-size:12px;font-weight:700;color:#16a085;white-space:nowrap">'+(it.amount||0).toLocaleString("ru-RU")+' ₽</div>'+
           '<button data-a="ew-plan-del" data-cid="'+cid+'" data-wid="'+it.id+'" style="width:28px;height:28px;background:#e74c3c12;border:1.5px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:13px;font-weight:700;line-height:1;flex-shrink:0">✕</button>'+
         '</div>';
@@ -5689,7 +5693,7 @@ function tContractDetail(cid){
 
     if(obj){
       // Show stages from object
-      html+='<div style="font-size:11px;color:#7a9aaa;margin-bottom:8px">Объект: '+obj.icon+' '+obj.name+'</div>';
+      html+='<div style="font-size:11px;color:#7a9aaa;margin-bottom:8px">Объект: '+obj.icon+' '+esc(obj.name)+'</div>';
     }
 
     if(!extraWorks.length){
@@ -5702,8 +5706,8 @@ function tContractDetail(cid){
         html+='<div style="background:#fafbfc;border-radius:10px;padding:10px 12px;margin-bottom:8px;border-left:3px solid #8e44ad">';
         html+='<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:6px">'+
           '<div style="flex:1;min-width:0">'+
-            '<div style="font-size:12px;font-weight:700;color:#1a2a3a">'+(ew.name||"Работа")+'</div>'+
-            '<div style="font-size:10px;color:#9aabbf">Этап: '+(ew.stage||"—")+'</div>'+
+            '<div style="font-size:12px;font-weight:700;color:#1a2a3a">'+esc(ew.name||"Работа")+'</div>'+
+            '<div style="font-size:10px;color:#9aabbf">Этап: '+esc(ew.stage||"—")+'</div>'+
           '</div>'+
           '<div style="font-size:13px;font-weight:700;color:#8e44ad;white-space:nowrap">'+fmt(wTotal)+' ₽</div>'+
           '<button data-a="ct-extra-del" data-cid="'+cid+'" data-ewi="'+ewi+'" style="padding:4px 8px;background:#e74c3c12;border:1px solid #e74c3c33;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:10px">🗑</button>'+
@@ -5723,7 +5727,7 @@ function tContractDetail(cid){
           mats.forEach(function(m,mi){
             const mTotal=(m.cost||0)*(m.qty||1);
             html+='<div style="display:flex;align-items:center;gap:5px;padding:4px 6px;background:#fff;border-radius:6px;margin-bottom:3px;border:1px solid #f0f3f7">'+
-              '<div style="flex:1;min-width:0;font-size:11px;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+m.name+'</div>'+
+              '<div style="flex:1;min-width:0;font-size:11px;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(m.name)+'</div>'+
               '<input id="ct-ewm-qty-'+cid+'-'+ewi+'-'+mi+'" type="number" value="'+(m.qty||1)+'" style="width:42px;padding:3px 5px;border-radius:5px;border:1px solid #d0dae8;font-size:11px;outline:none;text-align:center">'+
               '<span style="font-size:10px;color:#9aabbf">×</span>'+
               '<input id="ct-ewm-cost-'+cid+'-'+ewi+'-'+mi+'" type="text" inputmode="numeric" data-money="1" value="'+fmtMoney(m.cost||0)+'" style="width:60px;padding:3px 5px;border-radius:5px;border:1px solid #d0dae8;font-size:11px;outline:none;text-align:right">'+
@@ -6395,7 +6399,7 @@ function _bddsByContract(){
   Object.keys(objMap).forEach(function(oid){
     const obj=objects.find(function(o){return o.id===oid;});
     if(!obj)return;
-    html+='<div style="display:flex;align-items:center;gap:8px;margin:14px 0 6px"><span style="font-size:18px">'+obj.icon+'</span><div style="font-size:12px;font-weight:700;color:#1a2a3a;letter-spacing:0.3px">'+obj.name.toUpperCase()+'</div></div>';
+    html+='<div style="display:flex;align-items:center;gap:8px;margin:14px 0 6px"><span style="font-size:18px">'+obj.icon+'</span><div style="font-size:12px;font-weight:700;color:#1a2a3a;letter-spacing:0.3px">'+esc(obj.name.toUpperCase())+'</div></div>';
 
     objMap[oid].forEach(function(c){
       // Fact: income (received) and expense (paid out) for this contract
@@ -6593,7 +6597,7 @@ function tFinanceList(){
       html+='<div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;margin-bottom:12px;padding:12px 14px">'+
         '<div style="display:flex;align-items:center;gap:10px;opacity:0.6">'+
           '<span style="font-size:22px">'+obj.icon+'</span>'+
-          '<div style="flex:1"><div style="font-size:14px;font-weight:700;color:#1a2a3a">'+obj.name+'</div>'+
+          '<div style="flex:1"><div style="font-size:14px;font-weight:700;color:#1a2a3a">'+esc(obj.name)+'</div>'+
           '<div style="font-size:11px;color:#9aabbf">нет подписанных договоров</div></div>'+
         '</div>'+
       '</div>';
@@ -6603,7 +6607,7 @@ function tFinanceList(){
     // Object header
     html+='<div style="display:flex;align-items:center;gap:8px;margin:18px 0 8px 4px">'+
       '<span style="font-size:18px">'+obj.icon+'</span>'+
-      '<span style="font-size:12px;font-weight:700;color:#7a9aaa;letter-spacing:0.5px">'+obj.name.toUpperCase()+'</span>'+
+      '<span style="font-size:12px;font-weight:700;color:#7a9aaa;letter-spacing:0.5px">'+esc(obj.name.toUpperCase())+'</span>'+
       '<span style="font-size:11px;color:#9aabbf">· '+signedContracts.length+' договор'+(signedContracts.length===1?"":"а")+'</span>'+
     '</div>';
 
@@ -6711,7 +6715,7 @@ function tFinanceList(){
             '<div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.5px;margin:10px 0 4px">ИСТОРИЯ ВЫПЛАТ ('+myTxns.length+')</div>'+
             myTxns.map(function(t){
               return '<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#fafbfc;border-radius:8px;margin-bottom:4px;font-size:11px">'+
-                '<div style="flex:1"><div style="font-weight:600;color:#1a2a3a">'+t.category+'</div><div style="font-size:9px;color:#9aabbf;margin-top:1px">'+t.date+(t.note?" · "+t.note:"")+'</div></div>'+
+                '<div style="flex:1"><div style="font-weight:600;color:#1a2a3a">'+t.category+'</div><div style="font-size:9px;color:#9aabbf;margin-top:1px">'+t.date+(t.note?" · "+esc(t.note):"")+'</div></div>'+
                 '<div style="font-weight:700;color:#e74c3c">−'+t.amount.toLocaleString("ru-RU")+' ₽</div>'+
               '</div>';
             }).join(""):
@@ -6739,7 +6743,7 @@ function tFinanceList(){
                 run+=(t.amount||0);
                 html+='<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#27ae6008;border:1px solid #27ae6022;border-radius:8px;font-size:11px">'+
                   '<span style="font-size:13px">🧹</span>'+
-                  '<div style="flex:1;min-width:0"><div style="font-weight:600;color:#1a2a3a">'+(t.date||"")+'</div>'+(t.note?'<div style="font-size:9px;color:#9aabbf;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+t.note+'</div>':'')+'</div>'+
+                  '<div style="flex:1;min-width:0"><div style="font-weight:600;color:#1a2a3a">'+(t.date||"")+'</div>'+(t.note?'<div style="font-size:9px;color:#9aabbf;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(t.note)+'</div>':'')+'</div>'+
                   '<div style="text-align:right;flex-shrink:0"><div style="font-weight:700;color:#27ae60">+'+(t.amount||0).toLocaleString("ru-RU")+'</div><div style="font-size:9px;color:#9aabbf">итого '+run.toLocaleString("ru-RU")+' ₽</div></div>'+
                 '</div>';
               });
@@ -6791,7 +6795,7 @@ function tFinanceList(){
               '<div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.5px;margin:8px 0 4px">ВЫПЛАТЫ</div>'+
               myExtraTxns.map(function(t){
                 return '<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#fafbfc;border-radius:8px;margin-bottom:4px;font-size:11px">'+
-                  '<div style="flex:1"><div style="font-weight:600;color:#1a2a3a">'+t.category+'</div><div style="font-size:9px;color:#9aabbf;margin-top:1px">'+t.date+(t.note?" · "+t.note:"")+'</div></div>'+
+                  '<div style="flex:1"><div style="font-weight:600;color:#1a2a3a">'+t.category+'</div><div style="font-size:9px;color:#9aabbf;margin-top:1px">'+t.date+(t.note?" · "+esc(t.note):"")+'</div></div>'+
                   '<div style="font-weight:700;color:#16a085">+'+t.amount.toLocaleString("ru-RU")+' ₽</div>'+
                 '</div>';
               }).join(""):"")+
@@ -6820,7 +6824,7 @@ function tFinanceList(){
             '</div>'+
             '<div style="font-size:13px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.name)+'</div>'+
             '<div style="font-size:11px;color:#5a7a9a;margin-top:3px">'+
-              '<span style="font-weight:600">👤 '+(c.client||"—")+'</span>'+
+              '<span style="font-weight:600">👤 '+esc(c.client||"—")+'</span>'+
               (phone?'<span style="color:#9aabbf"> · '+phone+'</span>':'')+
             '</div>'+
             (c.signDate?'<div style="font-size:10px;color:#9aabbf;margin-top:2px">📅 '+c.signDate+'</div>':'')+
@@ -6903,7 +6907,7 @@ function tFinanceList(){
           html+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;padding:5px 7px;background:#fafbfc;border-radius:7px;border:1px solid #f0f3f7">'+
             '<span style="font-size:14px">'+u.av+'</span>'+
             '<div style="flex:1;min-width:0">'+
-              '<div style="font-size:11px;font-weight:700;color:#1a2a3a">'+u.name+'</div>'+
+              '<div style="font-size:11px;font-weight:700;color:#1a2a3a">'+esc(u.name)+'</div>'+
               '<div style="font-size:9px;color:#9aabbf">'+u.roles.map(function(r){const ro=roles.find(function(x){return x.id===r;});return ro?ro.n:"";}).filter(Boolean).join(", ")+'</div>'+
             '</div>'+
             '<div style="text-align:right">'+
@@ -6932,7 +6936,7 @@ function tFinanceList(){
           html+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;padding:5px 7px;background:#fafbfc;border-radius:7px;border:1px solid #f0f3f7">'+
             '<span style="font-size:14px">'+u.av+'</span>'+
             '<div style="flex:1;min-width:0">'+
-              '<div style="font-size:11px;font-weight:700;color:#1a2a3a">'+u.name+'</div>'+
+              '<div style="font-size:11px;font-weight:700;color:#1a2a3a">'+esc(u.name)+'</div>'+
               '<div style="font-size:9px;color:#9aabbf">РОП</div>'+
             '</div>'+
             '<div style="text-align:right">'+
@@ -6963,7 +6967,7 @@ function tFinanceList(){
             extraPlanItems.map(function(it){
               return '<div style="display:flex;align-items:center;gap:6px;margin-top:4px;padding:5px 8px;background:#fff;border-radius:7px;border:1px solid #f0f3f7;font-size:10.5px">'+
                 '<span style="font-size:12px">🛠</span>'+
-                '<div style="flex:1;min-width:0;color:#1a2a3a;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(it.title||"Доп работа")+'</div>'+
+                '<div style="flex:1;min-width:0;color:#1a2a3a;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(it.title||"Доп работа")+'</div>'+
                 '<div style="color:#16a085;font-weight:700;white-space:nowrap">'+(it.amount||0).toLocaleString("ru-RU")+' ₽</div>'+
               '</div>';
             }).join(""):"")+
@@ -6976,7 +6980,7 @@ function tFinanceList(){
         html+='<div style="padding:7px 12px;background:#fafbfc;display:flex;align-items:center;gap:6px;flex-wrap:wrap;border-top:1px solid #f0f3f7">'+
           '<span style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.3px">ОТВЕТСТВЕННЫЕ:</span>'+
           respUsers.map(function(u){
-            return '<span style="display:inline-flex;align-items:center;gap:3px;background:#fff;border:1px solid '+u.c+'33;border-radius:10px;padding:1px 7px;font-size:10px;color:'+u.c+';font-weight:600">'+u.av+" "+u.name+'</span>';
+            return '<span style="display:inline-flex;align-items:center;gap:3px;background:#fff;border:1px solid '+u.c+'33;border-radius:10px;padding:1px 7px;font-size:10px;color:'+u.c+';font-weight:600">'+u.av+" "+esc(u.name)+'</span>';
           }).join("")+
         '</div>';
       }
@@ -7071,7 +7075,7 @@ function tFinanceContractPnL(cid){
     '<button data-a="fin-back" style="padding:6px 14px;background:transparent;border:1px solid #d0dae8;border-radius:20px;cursor:pointer;font-size:12px;color:#7a9aaa">← Назад</button>'+
     '<div style="flex:1;min-width:0">'+
       '<div style="font-size:14px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.name)+'</div>'+
-      '<div style="font-size:11px;color:#7a9aaa;margin-top:1px">'+obj.icon+' '+obj.name+' · 👤 '+(c.client||"—")+(crmCl?" · "+crmCl.phone:"")+'</div>'+
+      '<div style="font-size:11px;color:#7a9aaa;margin-top:1px">'+obj.icon+' '+obj.name+' · 👤 '+esc(c.client||"—")+(crmCl?" · "+crmCl.phone:"")+'</div>'+
     '</div>'+
   '</div>';
 
@@ -7277,7 +7281,7 @@ function renderContractSection(opts){
       items.forEach(function(it){
         html+='<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#16a08508;border-radius:8px;margin-bottom:4px;border:1px solid #16a08522">'+
           '<span style="font-size:14px">🛠</span>'+
-          '<div style="flex:1;min-width:0"><div style="font-size:11px;font-weight:700;color:#1a2a3a">'+(it.title||"Доп работа")+'</div></div>'+
+          '<div style="flex:1;min-width:0"><div style="font-size:11px;font-weight:700;color:#1a2a3a">'+esc(it.title||"Доп работа")+'</div></div>'+
           '<div style="font-size:12px;font-weight:700;color:#16a085">'+(it.amount||0).toLocaleString("ru-RU")+' ₽</div>'+
         '</div>';
       });
@@ -7301,7 +7305,7 @@ function renderContractSection(opts){
       html+='<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#fafbfc;border-radius:8px;margin-bottom:4px;border:1px solid #f0f3f7">'+
         '<span style="font-size:16px">'+u.av+'</span>'+
         '<div style="flex:1;min-width:0">'+
-          '<div style="font-size:12px;font-weight:700;color:#1a2a3a">'+u.name+'</div>'+
+          '<div style="font-size:12px;font-weight:700;color:#1a2a3a">'+esc(u.name)+'</div>'+
           '<div style="display:flex;gap:10px;align-items:center;margin-top:3px;font-size:10px">'+
             '<span style="color:#9aabbf">ПЛАН <b style="color:#1a2a3a">'+(sal.plan||0).toLocaleString("ru-RU")+'</b></span>'+
             '<span style="color:#9aabbf">ВЫПЛ <b style="color:'+(sal.paid>0?"#27ae60":"#9aabbf")+'">'+(sal.paid||0).toLocaleString("ru-RU")+'</b></span>'+
@@ -7321,7 +7325,7 @@ function renderContractSection(opts){
         '<div style="width:24px;height:24px;border-radius:6px;background:'+(isIncome?"#27ae6018":"#e74c3c18")+';display:flex;align-items:center;justify-content:center;color:'+(isIncome?"#27ae60":"#e74c3c")+';font-size:13px;flex-shrink:0">'+(isIncome?"↑":"↓")+'</div>'+
         '<div style="flex:1;min-width:0">'+
           '<div style="font-size:11px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(t.category||"")+'</div>'+
-          '<div style="font-size:9px;color:#9aabbf">'+t.date+(t.note?" · "+t.note:"")+'</div>'+
+          '<div style="font-size:9px;color:#9aabbf">'+t.date+(t.note?" · "+esc(t.note):"")+'</div>'+
         '</div>'+
         '<div style="font-size:11px;font-weight:700;color:'+(isIncome?"#27ae60":"#e74c3c")+';white-space:nowrap">'+(isIncome?"+":"−")+t.amount.toLocaleString("ru-RU")+'</div>'+
         '<button data-a="fin-del" data-tid="'+t.id+'" style="padding:6px 10px;background:#e74c3c12;border:1.5px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:14px;font-weight:700;min-width:36px;min-height:36px;line-height:1">✕</button>'+
@@ -7397,7 +7401,7 @@ function tFinancePnL(oid){
     '<button data-a="fin-back" style="padding:6px 14px;background:transparent;border:1px solid #d0dae8;border-radius:20px;cursor:pointer;font-size:12px;color:#7a9aaa">← Назад</button>'+
     '<span style="font-size:22px">'+obj.icon+'</span>'+
     '<div style="flex:1;min-width:0">'+
-      '<div style="font-size:15px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+obj.name+'</div>'+
+      '<div style="font-size:15px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(obj.name)+'</div>'+
     '</div>'+
     '<button data-a="fin-add" data-oid="'+oid+'" style="padding:6px 14px;background:#2980b9;border:none;border-radius:9px;cursor:pointer;font-size:12px;color:#fff;font-weight:700">+ Транзакция</button>'+
   '</div>';
@@ -7457,8 +7461,8 @@ function tFinancePnL(oid){
     html+=
       '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid #f4f6f9">'+
         '<div style="flex:1;min-width:0">'+
-          '<div style="font-size:12px;font-weight:600;color:#1a2a3a">'+w.name+'</div>'+
-          '<div style="font-size:10px;color:#9aabbf">'+w.date+(w.note?' · '+w.note:'')+'</div>'+
+          '<div style="font-size:12px;font-weight:600;color:#1a2a3a">'+esc(w.name)+'</div>'+
+          '<div style="font-size:10px;color:#9aabbf">'+w.date+(w.note?' · '+esc(w.note):'')+'</div>'+
         '</div>'+
         '<span style="font-size:13px;font-weight:700;color:#8e44ad">+'+w.amount.toLocaleString("ru-RU")+' ₽</span>'+
         '<button data-a="fin-del-extra" data-oid="'+oid+'" data-eid="'+w.id+'" style="width:22px;height:22px;background:transparent;border:1px solid #e74c3c33;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button>'+
@@ -7499,7 +7503,7 @@ function tFinancePnL(oid){
           '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'+
             '<div style="width:30px;height:30px;border-radius:8px;background:'+u.c+';display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0">'+u.av+'</div>'+
             '<div style="flex:1">'+
-              '<div style="font-size:12px;font-weight:700;color:#1a2a3a">'+u.name+'</div>'+
+              '<div style="font-size:12px;font-weight:700;color:#1a2a3a">'+esc(u.name)+'</div>'+
               '<div style="font-size:10px;color:#7a9aaa">'+u.roles.map(function(rid){const r=roles.find(function(x){return x.id===rid;});return r?r.n:'';}).filter(Boolean).join(', ')+'</div>'+
             '</div>'+
             (uLeft>0?'<span style="font-size:10px;color:#e67e22;font-weight:700;background:#e67e2212;border-radius:6px;padding:2px 7px">осталось: '+uLeft.toLocaleString("ru-RU")+' ₽</span>':
@@ -7576,7 +7580,7 @@ function tFinancePnL(oid){
           '</div>'+
           '<div style="display:flex;align-items:center;gap:6px;margin-top:2px">'+
             '<span style="font-size:11px;color:#9aabbf">'+t.date+'</span>'+
-            (t.note?'<span style="font-size:11px;color:#9aabbf;font-style:italic">· '+t.note+'</span>':'')+
+            (t.note?'<span style="font-size:11px;color:#9aabbf;font-style:italic">· '+esc(t.note)+'</span>':'')+
           '</div>'+
         '</div>'+
         '<div style="text-align:right;flex-shrink:0">'+
@@ -7630,13 +7634,13 @@ function tSupplySelect(sel){
           '</div>'+
           '<span style="font-size:28px;flex-shrink:0">'+obj.icon+'</span>'+
           '<div style="flex:1;min-width:0">'+
-            '<div style="font-size:15px;font-weight:700;color:#0d1b2e">'+obj.name+'</div>'+
+            '<div style="font-size:15px;font-weight:700;color:#0d1b2e">'+esc(obj.name)+'</div>'+
             '<div style="font-size:11px;color:#7a9aaa;margin-top:2px">'+allMats.length+' матер. · '+totalCost.toLocaleString("ru-RU")+' ₽</div>'+
             (leftCost>0.5
               ? '<div style="margin-top:5px;font-size:11px;font-weight:700;color:#e67e22">🛒 Осталось купить: '+leftCost.toLocaleString("ru-RU")+' ₽</div>'+
                 '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">'+stagesLeft.map(function(sl){return '<span style="font-size:9px;font-weight:700;color:'+sl.c+';background:'+sl.c+'12;border:1px solid '+sl.c+'33;border-radius:6px;padding:1px 7px">'+esc(sl.n)+': '+sl.cost.toLocaleString("ru-RU")+' ₽</span>';}).join("")+'</div>'
               : '<div style="margin-top:5px;font-size:11px;font-weight:700;color:#27ae60">✓ Всё куплено</div>')+
-            (assigned.length?'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">'+assigned.map(function(u){return'<span style="font-size:10px;background:'+u.c+'18;color:'+u.c+';border-radius:8px;padding:1px 7px;border:1px solid '+u.c+'33">'+u.av+' '+u.name+'</span>';}).join("")+'</div>':'')+
+            (assigned.length?'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">'+assigned.map(function(u){return'<span style="font-size:10px;background:'+u.c+'18;color:'+u.c+';border-radius:8px;padding:1px 7px;border:1px solid '+u.c+'33">'+u.av+' '+esc(u.name)+'</span>';}).join("")+'</div>':'')+
           '</div>'+
         '</div>'+
       '</div>';
@@ -7796,6 +7800,13 @@ function tSupplyDetail(sel, sortBy){
   });
   html+='</div>';
 
+  // ТЗ поставщику (PDF) — когда отфильтровано по офлайн-магазину (Белка/Егорьевск/…).
+  // Суммирует одинаковые позиции всех выбранных объектов и открывает печать в PDF.
+  if(supplyStoreFilter && isTZStore(supplyStoreFilter)){
+    const _tzc=STORECOL[supplyStoreFilter]||"#555";
+    html+='<div style="margin-bottom:14px"><button data-a="supply-tz" data-store="'+supplyStoreFilter.replace(/"/g,'&quot;')+'" style="width:100%;padding:12px;border-radius:12px;border:none;cursor:pointer;font-size:13px;font-weight:700;color:#fff;background:'+_tzc+'">📄 Сформировать ТЗ поставщику «'+esc(supplyStoreFilter)+'» (PDF)</button></div>';
+  }
+
   // Progress bar — in money
   const costTotal=allMats.reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
   const costDone=allMats.filter(function(m){return!!purchased[m.id];}).reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
@@ -7842,14 +7853,14 @@ function tSupplyDetail(sel, sortBy){
         '</div>'+
       '</div>'+
       '<div style="flex:1;min-width:0">'+
-        '<div style="font-size:13px;font-weight:600;color:'+(done?'#7a9aaa':'#1a2a3a')+';text-decoration:'+(done?'line-through':'none')+'">'+m.n+'</div>'+
+        '<div style="font-size:13px;font-weight:600;color:'+(done?'#7a9aaa':'#1a2a3a')+';text-decoration:'+(done?'line-through':'none')+'">'+esc(m.n)+'</div>'+
         '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:3px;align-items:center">'+
-          (multiMode?'<span style="font-size:10px;background:#e8f0fa;color:#2a5298;border-radius:4px;padding:1px 6px">'+m.objIcon+' '+m.objName+'</span>':'')+
-          '<span style="font-size:10px;color:#9aabbf">↳ '+m.wn+'</span>'+
+          (multiMode?'<span style="font-size:10px;background:#e8f0fa;color:#2a5298;border-radius:4px;padding:1px 6px">'+m.objIcon+' '+esc(m.objName)+'</span>':'')+
+          '<span style="font-size:10px;color:#9aabbf">↳ '+esc(m.wn)+'</span>'+
           (m.store?'<span style="font-size:10px;font-weight:700;background:'+sc+';color:#fff;border-radius:4px;padding:1px 6px;opacity:'+(done?'0.5':'1')+'">'+m.store+'</span>':'')+
           '<span style="font-size:10px;font-weight:700;color:#5a7a9a;background:#eef2f7;border-radius:4px;padding:1px 6px">'+mode.icon+' '+mode.unit+'</span>'+
           (m.cost>0?'<span style="font-size:11px;color:'+(done?'#b0c8b0':'#7a9aaa')+'">'+price.toLocaleString("ru-RU")+' ₽/'+unit+' × '+numRu(qty)+' = <b style="color:'+(done?'#b0c8b0':'#0d1b2e')+'">'+lineTotal+' ₽</b></span>':'')+
-          (m.note&&!(Array.isArray(m.breakdown)&&m.breakdown.length)?'<span style="font-size:10px;color:#9aabbf;font-style:italic">'+m.note+'</span>':'')+
+          (m.note&&!(Array.isArray(m.breakdown)&&m.breakdown.length)?'<span style="font-size:10px;color:#9aabbf;font-style:italic">'+esc(m.note)+'</span>':'')+
           (!done&&m.url?'<a href="'+m.url+'" target="_blank" style="font-size:10px;color:#fff;background:#2980b9;border-radius:4px;padding:1px 7px;text-decoration:none;font-weight:600" onclick="event.stopPropagation()">🔗 купить</a>':'')+
           (done?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>':'')+
           '<button data-a="supply-edit-mat" data-mid="'+m.id+'" style="font-size:10px;color:#7a9aaa;background:#fff;border:1px solid #d0dae8;border-radius:5px;padding:1px 7px;cursor:pointer" onclick="event.stopPropagation()">✏️ изм.</button>'+
@@ -7899,25 +7910,36 @@ function tSupplyDetail(sel, sortBy){
           (g.cost>0?'<span style="font-size:11px;color:#7a9aaa">'+(Number(g.cost)||0).toLocaleString("ru-RU")+' ₽/'+mode.unit+' × '+numRu(qty)+' = <b style="color:#0d1b2e">'+lineTotal+' ₽</b></span>':'')+
           (!allDone&&g.url?'<a href="'+g.url+'" target="_blank" style="font-size:10px;color:#fff;background:#2980b9;border-radius:4px;padding:1px 7px;text-decoration:none;font-weight:600" onclick="event.stopPropagation()">🔗 купить</a>':'')+
           (allDone?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>':'')+
+          (ids.length===1?'<button data-a="supply-edit-mat" data-mid="'+ids[0]+'" style="font-size:10px;color:#7a9aaa;background:#fff;border:1px solid #d0dae8;border-radius:5px;padding:1px 7px;cursor:pointer" onclick="event.stopPropagation()">✏️ изм.</button>':'')+
         '</div>'+
         (function(){var rows=bdRowsOf(g.bd); if(rows.length)return hlystBlock(rows); return conv?'<div style="margin-top:5px"><span style="font-size:10px;font-weight:700;color:#e67e22;background:#fff3e0;border-radius:6px;padding:2px 8px">🛒 Купить: '+conv.altTotal(qty)+'</span></div>':'';})()+
       '</div>'+
     '</div>';
   }
+  // Слияние одинаковых материалов (магазин+имя+режим+цена) в одну строку с суммой
+  // количеств — единый помощник для «Закупки», «Этапов» и «Магазинов» при
+  // объединении объектов (ОСП Любови + ОСП Олега → одна строка на 40 листов).
+  function _mergeMats(mats){
+    const gm={};
+    mats.forEach(function(m){
+      const nn=normMatName(m);
+      const key=(m.store||"")+'|'+nn+'|'+(m.mode||"piece")+'|'+(Number(m.cost)||0);
+      if(!gm[key])gm[key]={n:nn,mode:m.mode,cost:m.cost,store:m.store,packPer:m.packPer,packBase:m.packBase,sheetM2:m.sheetM2,lenPer:m.lenPer,url:m.url,sn:m.sn,sc:m.sc,qty:0,ids:[],notes:[],bd:{}};
+      const g=gm[key]; g.qty+=(m.qty||1); g.ids.push(m.id);
+      if(!g.url&&m.url&&String(m.url).startsWith("http"))g.url=m.url;
+      if(m.note&&String(m.note).trim()&&g.notes.indexOf(m.note)<0)g.notes.push(m.note);
+      (Array.isArray(m.breakdown)?m.breakdown:[]).forEach(function(r){ const L=Number(r.len)||0,N=Number(r.n)||0; if(L>0&&N>0)g.bd[L]=(g.bd[L]||0)+N; });
+    });
+    return Object.keys(gm).map(function(k){return gm[k];}).sort(function(a,b){return (a.n||"").localeCompare(b.n||"","ru");});
+  }
+  // Кнопка «ТЗ (PDF)» для офлайн-поставщиков — единая вёрстка.
+  function _tzBtn(store,sc){return isTZStore(store)?'<button data-a="supply-tz" data-store="'+store.replace(/"/g,"&quot;")+'" style="font-size:11px;color:#fff;background:'+sc+';border:none;border-radius:6px;padding:4px 10px;cursor:pointer;font-weight:700;flex-shrink:0">📄 ТЗ (PDF)</button>':'';}
   if(sortBy2==="merge"){
     const stores=[...new Set(allMats.map(function(m){return m.store||"Без магазина";}))];
     stores.forEach(function(store){
       const sm=allMats.filter(function(m){return(m.store||"Без магазина")===store;});
       const sc=STORECOL[store]||"#555";
-      const groupsMap={};
-      sm.forEach(function(m){
-        const nn=normMatName(m);
-        const key=nn+'|'+(m.mode||"piece")+'|'+(Number(m.cost)||0);
-        if(!groupsMap[key])groupsMap[key]={n:nn,mode:m.mode,cost:m.cost,store:m.store,packPer:m.packPer,packBase:m.packBase,sheetM2:m.sheetM2,lenPer:m.lenPer,url:m.url,qty:0,ids:[],notes:[],bd:{}};
-        const g=groupsMap[key]; g.qty+=(m.qty||1); g.ids.push(m.id); if(m.note&&String(m.note).trim()&&g.notes.indexOf(m.note)<0)g.notes.push(m.note);
-        (Array.isArray(m.breakdown)?m.breakdown:[]).forEach(function(r){ const L=Number(r.len)||0,N=Number(r.n)||0; if(L>0&&N>0)g.bd[L]=(g.bd[L]||0)+N; });
-      });
-      const rows=Object.keys(groupsMap).map(function(k){return groupsMap[k];});
+      const rows=_mergeMats(sm);
       const storeCost=rows.reduce(function(a,g){return a+(Number(g.cost)||0)*g.qty;},0);
       const storeUrl=rows.find(function(g){return g.url&&String(g.url).startsWith("http");});
       const baseUrl=storeUrl?(storeUrl.url.match(/https?:\/\/[^/]+/)||[""])[0]:"";
@@ -7926,7 +7948,7 @@ function tSupplyDetail(sel, sortBy){
           '<span style="font-size:12px;font-weight:700;background:'+sc+';color:#fff;border-radius:6px;padding:2px 10px">'+store+'</span>'+
           '<span style="flex:1"></span>'+
           '<span style="font-size:11px;color:'+sc+';font-weight:600">'+rows.length+' поз. · '+storeCost.toLocaleString("ru-RU")+' ₽</span>'+
-          (store==="Белка"||store==="pechki.su"?'<button data-a="supply-tz" data-store="'+store.replace(/"/g,"&quot;")+'" style="font-size:11px;color:#fff;background:'+sc+';border:none;border-radius:6px;padding:4px 10px;cursor:pointer;font-weight:700;flex-shrink:0">📄 ТЗ (PDF)</button>':'')+
+          _tzBtn(store,sc)+
           (baseUrl?'<a href="'+baseUrl+'" target="_blank" style="font-size:11px;color:#fff;background:'+sc+';border-radius:6px;padding:4px 10px;text-decoration:none;font-weight:600;flex-shrink:0">🛒 Открыть</a>':'')+
         '</div>'+
         '<div style="padding:8px 12px">'+rows.map(mergeRow).join("")+'</div>'+
@@ -7941,16 +7963,18 @@ function tSupplyDetail(sel, sortBy){
       const stageAllDone=sm.length>0&&sm.every(function(m){return!!purchased[m.id];});
       const stageDoneCount=sm.filter(function(m){return!!purchased[m.id];}).length;
       const safeIds=sm.map(function(m){return m.id;}).join(',');
+      const mrows=_mergeMats(sm); // слить одинаковые материалы между объектами
+      const mDone=mrows.filter(function(g){return g.ids.every(function(id){return!!purchased[id];});}).length;
       html+='<div style="background:#fff;border-radius:14px;border:1px solid '+(stageAllDone?'#27ae60':sc+'44')+';margin-bottom:12px;overflow:hidden;transition:border-color 0.2s">'+
         '<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:'+(stageAllDone?'linear-gradient(135deg,#27ae6018,transparent)':'linear-gradient(135deg,'+sc+'15,transparent)')+';border-bottom:1px solid '+(stageAllDone?'#27ae6022':sc+'22')+'">'+
           '<div style="width:8px;height:8px;border-radius:50%;background:'+(stageAllDone?'#27ae60':sc)+'"></div>'+
-          '<span style="font-size:13px;font-weight:700;color:#1a2a3a;flex:1">'+sn+'</span>'+
-          '<span style="font-size:11px;color:'+(stageAllDone?'#27ae60':sc)+';font-weight:600;margin-right:6px">'+stageDoneCount+'/'+sm.length+' · '+stageCost.toLocaleString("ru-RU")+' ₽</span>'+
+          '<span style="font-size:13px;font-weight:700;color:#1a2a3a;flex:1">'+esc(sn)+'</span>'+
+          '<span style="font-size:11px;color:'+(stageAllDone?'#27ae60':sc)+';font-weight:600;margin-right:6px">'+mDone+'/'+mrows.length+' · '+stageCost.toLocaleString("ru-RU")+' ₽</span>'+
           '<button data-a="supply-stage-check" data-ids="'+safeIds+'" data-done="'+(stageAllDone?'1':'0')+'" style="padding:4px 10px;border-radius:7px;cursor:pointer;font-size:11px;font-weight:700;border:1.5px solid '+(stageAllDone?'#27ae60':'#c8d8e8')+';background:'+(stageAllDone?'#27ae60':'#fff')+';color:'+(stageAllDone?'#fff':'#7a9aaa')+';transition:all 0.15s;white-space:nowrap">'+
             (stageAllDone?'✓ Всё куплено':'☐ Отметить всё')+
           '</button>'+
         '</div>'+
-        '<div style="padding:8px 12px">'+sm.map(matRow).join("")+'</div>'+
+        '<div style="padding:8px 12px">'+mrows.map(mergeRow).join("")+'</div>'+
       '</div>';
     });
   } else {
@@ -7958,6 +7982,7 @@ function tSupplyDetail(sel, sortBy){
     storesForGroup.forEach(function(store){
       const sm=allMats.filter(function(m){return(m.store||"Без магазина")===store;});
       const sc=STORECOL[store]||"#555";
+      const rows=_mergeMats(sm); // слить одинаковые материалы между объектами
       const storeCost=sm.reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
       const storeUrl=sm.find(function(m){return m.url&&m.url.startsWith("http");});
       const baseUrl=storeUrl?(storeUrl.url.match(/https?:\/\/[^/]+/)||[""])[0]:"";
@@ -7965,10 +7990,11 @@ function tSupplyDetail(sel, sortBy){
         '<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:'+sc+'10;border-bottom:1px solid '+sc+'22">'+
           '<span style="font-size:12px;font-weight:700;background:'+sc+';color:#fff;border-radius:6px;padding:2px 10px">'+store+'</span>'+
           '<span style="flex:1"></span>'+
-          '<span style="font-size:11px;color:'+sc+';font-weight:600">'+sm.length+' поз. · '+storeCost.toLocaleString("ru-RU")+' ₽</span>'+
+          '<span style="font-size:11px;color:'+sc+';font-weight:600">'+rows.length+' поз. · '+storeCost.toLocaleString("ru-RU")+' ₽</span>'+
+          _tzBtn(store,sc)+
           (baseUrl?'<a href="'+baseUrl+'" target="_blank" style="font-size:11px;color:#fff;background:'+sc+';border-radius:6px;padding:4px 10px;text-decoration:none;font-weight:600;flex-shrink:0">🛒 Открыть</a>':'')+
         '</div>'+
-        '<div style="padding:8px 12px">'+sm.map(matRow).join("")+'</div>'+
+        '<div style="padding:8px 12px">'+rows.map(mergeRow).join("")+'</div>'+
       '</div>';
     });
   }
@@ -8008,7 +8034,7 @@ function tSupplyDetail(sel, sortBy){
     (targetObjs.length?targetObjs:objects).forEach(function(o){
       (o.stages||[]).forEach(function(s){
         (s.works||[]).forEach(function(w){
-          tgtOpts+='<option value="'+o.id+'|'+w.id+'">'+(o.icon||"")+' '+o.name+' — '+w.n+'</option>';
+          tgtOpts+='<option value="'+o.id+'|'+w.id+'">'+(o.icon||"")+' '+esc(o.name)+' — '+esc(w.n)+'</option>';
         });
       });
     });
@@ -8055,7 +8081,7 @@ function tTeam(){
     <input id="nu-phone" data-phone-mask="1" type="tel" inputmode="tel" placeholder="+7 (___) ___-__-__" style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:8px">
     <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">${COLS.map(c=>`<div data-a="nu-c" data-c="${c}" style="width:22px;height:22px;border-radius:50%;background:${c};cursor:pointer;border:${nu.c===c?"3px solid #0d1b2e":"2px solid transparent"}"></div>`).join("")}</div>
     <div style="font-size:10px;color:#7a9aaa;font-weight:600;margin-bottom:5px">РОЛИ</div>
-    <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">${roles.map(r=>{const on=nu.roles.includes(r.id);return`<div data-a="nu-role" data-rid="${r.id}" style="padding:4px 10px;border-radius:16px;cursor:pointer;font-size:11px;font-weight:600;background:${on?r.c:"transparent"};color:${on?"#fff":r.c};border:1.5px solid ${r.c}">${r.n}</div>`;}).join("")}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">${roles.map(r=>{const on=nu.roles.includes(r.id);return`<div data-a="nu-role" data-rid="${r.id}" style="padding:4px 10px;border-radius:16px;cursor:pointer;font-size:11px;font-weight:600;background:${on?r.c:"transparent"};color:${on?"#fff":r.c};border:1.5px solid ${r.c}">${esc(r.n)}</div>`;}).join("")}</div>
     <div style="display:flex;gap:6px">
       <button data-a="add-u" style="flex:1;padding:7px;background:#27ae60;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Добавить</button>
       <button data-a="cancel-nu" style="padding:7px 12px;background:transparent;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:12px;color:#7a9aaa">✕</button>
@@ -8064,23 +8090,23 @@ function tTeam(){
   ${users.map(u=>{const isE=editU===u.id;return`<div style="background:#fff;border-radius:12px;border:${isE?"2px solid #4a7ac8":"1px solid #dde6f0"};padding:12px;margin-bottom:8px">
     ${isE?`<div style="display:flex;gap:6px;margin-bottom:8px">
       <select id="eu-av-${u.id}" style="padding:5px;border-radius:7px;border:1px solid #d0dae8;font-size:15px;outline:none">${AVS.map(a=>`<option ${u.av===a?"selected":""}>${a}</option>`).join("")}</select>
-      <input id="eu-n-${u.id}" value="${u.name}" style="flex:1;padding:6px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;font-weight:600;outline:none">
+      <input id="eu-n-${u.id}" value="${esc(u.name)}" style="flex:1;padding:6px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;font-weight:600;outline:none">
     </div>
     <input id="eu-phone-${u.id}" value="${u.phone||''}" data-phone-mask="1" type="tel" inputmode="tel" placeholder="+7 (___) ___-__-__" style="width:100%;padding:6px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:8px">
     <input id="eu-pin-${u.id}" value="${esc(u.pin||'')}" inputmode="numeric" maxlength="6" placeholder="PIN (по умолчанию — последние 4 цифры телефона)" style="width:100%;padding:6px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:6px">
     <label style="display:flex;align-items:center;gap:7px;font-size:11px;color:#5a7a9a;margin-bottom:8px;cursor:pointer"><input type="checkbox" id="eu-forcepin-${u.id}" ${u.mustChangePin?"checked":""} style="width:15px;height:15px;cursor:pointer">Потребовать смену PIN при входе</label>
     <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">${COLS.map(c=>`<div data-a="eu-c" data-uid="${u.id}" data-c="${c}" style="width:20px;height:20px;border-radius:50%;background:${c};cursor:pointer;border:${u.c===c?"3px solid #0d1b2e":"2px solid transparent"}"></div>`).join("")}</div>
     <div style="font-size:10px;color:#7a9aaa;font-weight:600;margin-bottom:5px">РОЛИ</div>
-    <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">${roles.map(r=>{const on=u.roles.includes(r.id);return`<div data-a="eu-role" data-uid="${u.id}" data-rid="${r.id}" style="padding:4px 10px;border-radius:16px;cursor:pointer;font-size:11px;font-weight:600;background:${on?r.c:"transparent"};color:${on?"#fff":r.c};border:1.5px solid ${r.c}">${r.n}</div>`;}).join("")}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">${roles.map(r=>{const on=u.roles.includes(r.id);return`<div data-a="eu-role" data-uid="${u.id}" data-rid="${r.id}" style="padding:4px 10px;border-radius:16px;cursor:pointer;font-size:11px;font-weight:600;background:${on?r.c:"transparent"};color:${on?"#fff":r.c};border:1.5px solid ${r.c}">${esc(r.n)}</div>`;}).join("")}</div>
     <div style="display:flex;gap:6px">
       <button data-a="save-u" data-uid="${u.id}" style="flex:1;padding:7px;background:#27ae60;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Сохранить</button>
       <button data-a="cancel-eu" style="padding:7px 12px;background:transparent;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:12px;color:#7a9aaa">✕</button>
     </div>`:`<div style="display:flex;align-items:center;gap:8px">
       <div style="width:38px;height:38px;border-radius:50%;background:${u.c};display:flex;align-items:center;justify-content:center;font-size:18px;color:#fff;flex-shrink:0">${u.av}</div>
       <div style="flex:1;min-width:0">
-        <div style="font-size:13px;font-weight:700;color:#1a2a3a">${u.name}${u.phone?` <span style="font-weight:600;color:#7a9aaa;font-size:11px">· ${esc(u.phone)}</span>`:''}</div>
+        <div style="font-size:13px;font-weight:700;color:#1a2a3a">${esc(u.name)}${u.phone?` <span style="font-weight:600;color:#7a9aaa;font-size:11px">· ${esc(u.phone)}</span>`:''}</div>
         <div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:3px">
-          ${u.roles.map(rid=>{const r=roles.find(x=>x.id===rid);return r?`<span style="font-size:10px;background:${r.c}18;color:${r.c};border-radius:10px;padding:1px 6px;border:1px solid ${r.c}33">${r.n}</span>`:""}).join("")}
+          ${u.roles.map(rid=>{const r=roles.find(x=>x.id===rid);return r?`<span style="font-size:10px;background:${r.c}18;color:${r.c};border-radius:10px;padding:1px 6px;border:1px solid ${r.c}33">${esc(r.n)}</span>`:""}).join("")}
           ${u.objs.length>0?`<span style="font-size:10px;color:#5a7a9a;background:#e8f0fa;border-radius:10px;padding:1px 6px">${u.objs.map(id=>objects.find(o=>o.id===id)?.icon||"").join("")}</span>`:""}
         </div>
       </div>
@@ -8113,7 +8139,7 @@ function tTeam(){
       const isE=editR===r.id;
       const wr=users.filter(u=>u.roles.includes(r.id));
       return `<div style="background:#fff;border-radius:12px;border:${isE?"2px solid #9b59b6":"1px solid #dde6f0"};padding:12px;margin-bottom:8px">
-    ${isE?`<input id="er-n-${r.id}" value="${r.n}" style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;font-weight:600;margin-bottom:8px;outline:none;box-sizing:border-box">
+    ${isE?`<input id="er-n-${r.id}" value="${esc(r.n)}" style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;font-weight:600;margin-bottom:8px;outline:none;box-sizing:border-box">
     <div style="font-size:10px;color:#7a9aaa;font-weight:600;margin-bottom:5px">ЦВЕТ</div>
     <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px">${COLS.map(c=>`<div data-a="er-c" data-rid="${r.id}" data-c="${c}" style="width:20px;height:20px;border-radius:50%;background:${c};cursor:pointer;border:${r.c===c?"3px solid #0d1b2e":"2px solid transparent"}"></div>`).join("")}</div>
     <div style="font-size:10px;color:#7a9aaa;font-weight:600;margin-bottom:5px">БЛОК</div>
@@ -8128,10 +8154,10 @@ function tTeam(){
       <button data-a="save-r" data-rid="${r.id}" style="flex:1;padding:7px;background:#9b59b6;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Сохранить</button>
       <button data-a="cancel-er" style="padding:7px 12px;background:transparent;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:12px;color:#7a9aaa">✕</button>
     </div>`:`<div style="display:flex;align-items:center;gap:8px">
-      <div style="width:38px;height:38px;border-radius:50%;background:${r.c};display:flex;align-items:center;justify-content:center;font-size:16px;color:#fff;font-weight:700;flex-shrink:0">${r.n.charAt(0)}</div>
+      <div style="width:38px;height:38px;border-radius:50%;background:${r.c};display:flex;align-items:center;justify-content:center;font-size:16px;color:#fff;font-weight:700;flex-shrink:0">${esc(r.n.charAt(0))}</div>
       <div style="flex:1;min-width:0">
-        <div style="font-size:13px;font-weight:700;color:#1a2a3a">${r.n}</div>
-        <div style="font-size:11px;color:#7a9aaa;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${wr.length>0?wr.map(u=>`${u.av} ${u.name}`).join(", "):"Никому не назначена"}</div>
+        <div style="font-size:13px;font-weight:700;color:#1a2a3a">${esc(r.n)}</div>
+        <div style="font-size:11px;color:#7a9aaa;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${wr.length>0?wr.map(u=>`${u.av} ${esc(u.name)}`).join(", "):"Никому не назначена"}</div>
       </div>
       <span style="font-size:11px;background:${r.c}18;color:${r.c};border-radius:6px;padding:2px 7px;font-weight:700;flex-shrink:0">${wr.length} чел.</span>
       <button data-a="edit-r" data-rid="${r.id}" style="padding:4px 9px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:11px;color:#5a7a9a">✏️</button>
@@ -9336,7 +9362,7 @@ function tCRMClient(cid){
           const on=(c.planIds||[]).includes(p.id);
           html+='<div data-a="crm-plan-toggle" data-cid="'+c.id+'" data-pid="'+p.id+'" style="display:flex;align-items:center;gap:8px;padding:6px;border-radius:8px;cursor:pointer;background:'+(on?"#8e44ad15":"#fff")+';border:1.5px solid '+(on?"#8e44ad":"#e8eef5")+'">'+
             (p.img?'<img src="'+p.img+'" style="width:46px;height:36px;border-radius:5px;object-fit:cover;flex-shrink:0;border:1px solid #e0e6ee">':'<div style="width:46px;height:36px;border-radius:5px;background:#f0f4f8;display:flex;align-items:center;justify-content:center;flex-shrink:0">📐</div>')+
-            '<span style="flex:1;min-width:0;font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(p.name||"Планировка")+'<span style="font-size:9px;color:'+((p.cat||"house")==="banya"?"#e67e22":"#2980b9")+';font-weight:700;margin-left:5px">'+((p.cat||"house")==="banya"?"🛁 баня":"🏠 дом")+'</span></span>'+
+            '<span style="flex:1;min-width:0;font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(p.name||"Планировка")+'<span style="font-size:9px;color:'+((p.cat||"house")==="banya"?"#e67e22":"#2980b9")+';font-weight:700;margin-left:5px">'+((p.cat||"house")==="banya"?"🛁 баня":"🏠 дом")+'</span></span>'+
             '<span style="font-size:13px;color:'+(on?"#8e44ad":"#c8d8e8")+';font-weight:700;flex-shrink:0">'+(on?"✓":"+")+'</span>'+
           '</div>';
         });
@@ -9352,7 +9378,7 @@ function tCRMClient(cid){
         html+='<div style="border:1px solid #e8eef5;border-radius:10px;overflow:hidden">'+
           (p.img?'<a href="'+p.img+'" target="_blank" rel="noopener" style="display:block"><img src="'+p.img+'" style="width:100%;max-height:200px;object-fit:contain;background:#f8fafc;display:block"></a>':'')+
           '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px">'+
-            '<span style="flex:1;min-width:0;font-size:12px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(p.name||"Планировка")+'</span>'+
+            '<span style="flex:1;min-width:0;font-size:12px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(p.name||"Планировка")+'</span>'+
             '<button data-a="crm-plan-toggle" data-cid="'+c.id+'" data-pid="'+p.id+'" style="padding:3px 9px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:10px;font-weight:700">Открепить</button>'+
           '</div>'+
         '</div>';
