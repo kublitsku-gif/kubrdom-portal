@@ -10236,7 +10236,14 @@ function bind(){
       const cl=crmClients.find(function(c){return c.name===client;});
       const crmClientId=cl?cl.id:"";
       const escortIds=users.filter(function(u){return u.roles.includes("contract_mgr");}).map(function(u){return u.id;});
-      contractDocs.push({id:gid(),objId,type:contractNew.type,name:name.trim(),amount,signDate:date,deadlineDate,client,status:"draft",note,crmClientId,responsible:escortIds,salaries:{},extraWorks:contractNew.extraWorks||[],files:contractNew.files||[]});
+      // ФОТ (РАБОТА) по умолчанию = РОП 150k + производство 200k. Гарантируем в ответственных
+      // одного sales_head (РОП) и одного worker/brigadier (производство); суммы/людей правят в карточке.
+      const _defResp=escortIds.slice();
+      const _ropU=users.find(function(u){return u.roles.includes("sales_head");});
+      const _prodU=users.find(function(u){return u.roles.some(function(r){return r==="worker"||r==="brigadier";});});
+      if(_ropU&&_defResp.indexOf(_ropU.id)<0)_defResp.push(_ropU.id);
+      if(_prodU&&_defResp.indexOf(_prodU.id)<0)_defResp.push(_prodU.id);
+      contractDocs.push({id:gid(),objId,type:contractNew.type,name:name.trim(),amount,signDate:date,deadlineDate,client,status:"draft",note,crmClientId,responsible:_defResp,salaries:{},extraWorks:contractNew.extraWorks||[],files:contractNew.files||[]});
       contractAddForm=false;
       contractNew={objId:"",type:"main",name:"",amount:"",signDate:new Date().toISOString().slice(0,10),client:"",status:"draft",note:"",deadlineDate:"",extraWorks:[],files:[]};
       fl();
