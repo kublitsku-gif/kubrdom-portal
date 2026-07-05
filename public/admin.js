@@ -194,7 +194,8 @@ function updateServerCounts(items){
 }
 // Демо-id из сида: если на сервере их уже НЕТ (пользователь удалял), а вкладка их шлёт —
 // вкладка живёт на старом состоянии, её сейв затёр бы реальные данные демкой.
-const SEED_STALE_IDS={ objects:["obj_banya_kievka","obj_dom_dmitrovka"], contractDocs:["ct001","ct002"], templates:["t1","t2"] };
+const SEED_STALE_IDS={ objects:["obj_banya_kievka","obj_dom_dmitrovka"], contractDocs:["ct001","ct002"], templates:["t1","t2"],
+  finTxns:["ft1","ft2","ft3","ft4","ft5","ft6","ft7","ft8","ft9","ftleg1","ftleg2","ftleg3","ftb1","ftb2","ftb3","ftb4"] };
 
 function serializeState(){
   return [
@@ -8463,27 +8464,10 @@ let openTimeSid=null;
 let newTimeLog={hours:1,date:""}; // staged values for new time entry
 let finMode="pnl"; // "bdds" | "pnl" | "experiment"
 let bddsView="month"; // "month" or "contract"
-let finTxns=[
-  // Баня на Киевке — sample data
-  {id:"ft1",objId:"obj_banya_kievka",type:"income",  category:"Аванс клиента 1", amount:255000,date:"2026-04-15",note:"Первый аванс 30%",method:"transfer"},
-  {id:"ft2",objId:"obj_banya_kievka",type:"income",  category:"Аванс клиента 2", amount:340000,date:"2026-05-10",note:"Второй аванс 40%",method:"cash"},
-  {id:"ft3",objId:"obj_banya_kievka",type:"expense", category:"Закупка материалов",amount:148000,date:"2026-04-20",note:"Озон, Лемана — 1 этап"},
-  {id:"ft4",objId:"obj_banya_kievka",type:"expense", category:"Зарплата аванс 1", amount:85000, date:"2026-04-28",note:"Бригада Валера+Азис"},
-  {id:"ft5",objId:"obj_banya_kievka",type:"expense", category:"Закупка материалов",amount:62000, date:"2026-05-12",note:"Белка — 2 этап"},
-  {id:"ft6",objId:"obj_banya_kievka",type:"expense", category:"Зарплата аванс 2", amount:70000, date:"2026-05-20",note:"Бригада"},
-  // Дом на Дмитровке — sample data
-  {id:"ft7",objId:"obj_dom_dmitrovka",type:"income",  category:"Аванс клиента 1", amount:600000,date:"2026-04-01",note:"Первый аванс 30%",method:"transfer"},
-  {id:"ft8",objId:"obj_dom_dmitrovka",type:"expense", category:"Закупка материалов",amount:220000,date:"2026-04-10",note:"Лемана — фундамент"},
-  {id:"ft9",objId:"obj_dom_dmitrovka",type:"expense", category:"Зарплата аванс 1", amount:120000,date:"2026-04-25",note:"Бригада Инна"},,
-  // Legacy paid amounts converted to transactions
-  {id:"ftleg1",objId:"obj_banya_kievka",contractId:"ct001",userId:"valera",type:"expense",category:"👷 Зарплата производства",amount:85000,date:"2026-04-20",note:"Аванс производству"},
-  {id:"ftleg2",objId:"obj_banya_kievka",contractId:"ct001",userId:"azis",type:"expense",category:"👷 Зарплата производства",amount:55000,date:"2026-04-20",note:"Аванс производству"},
-  {id:"ftleg3",objId:"obj_dom_dmitrovka",contractId:"ct002",userId:"inna",type:"expense",category:"👷 Зарплата производства",amount:70000,date:"2026-04-15",note:"Аванс производству"},
-  {id:"ftb1",objId:"obj_banya_kievka",contractId:"ct001",userId:"valera",type:"expense",category:"🧹 Премия за уборку",amount:500,date:"2026-04-14",note:"Уборка рабочего места · Баня на Киевке · Валера"},
-  {id:"ftb2",objId:"obj_banya_kievka",contractId:"ct001",userId:"valera",type:"expense",category:"🧹 Премия за уборку",amount:500,date:"2026-04-16",note:"Уборка рабочего места · Баня на Киевке · Валера"},
-  {id:"ftb3",objId:"obj_banya_kievka",contractId:"ct001",userId:"valera",type:"expense",category:"🧹 Премия за уборку",amount:500,date:"2026-04-18",note:"Уборка рабочего места · Баня на Киевке · Валера"},
-  {id:"ftb4",objId:"obj_banya_kievka",contractId:"ct001",userId:"valera",type:"expense",category:"🧹 Премия за уборку",amount:500,date:"2026-04-22",note:"Уборка рабочего места · Баня на Киевке · Валера"},
-];
+// Демо-транзакции удалены (были привязаны к сид-объектам obj_banya_kievka/obj_dom_dmitrovka
+// и сид-договорам ct001/ct002, которых в реальной базе нет → показывались как «Вне договоров»).
+// Их id занесены в SEED_STALE_IDS, чтобы стейл-вкладки не вернули их в облако.
+let finTxns=[];
 let finOpenObjId=null;
 let finOpenContractId=null; // contract P&L view
 let cleanupExpanded={}; // {contractId: true} — раскрыт ли список премий за уборку
