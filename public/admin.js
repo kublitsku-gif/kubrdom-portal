@@ -8559,7 +8559,14 @@ function _bindContractFormSync(){
     bind("ct-edit-deadline",function(v){ctEditDraft.deadlineDate=v;});
     bind("ct-edit-note",function(v){ctEditDraft.note=v;});
     bind("ct-edit-amount",function(v){ctEditDraft.amount=unfmtMoney(v);});
-    bind("ct-edit-obj",function(v){ctEditDraft.objId=v;});
+    bind("ct-edit-obj",function(v){
+      ctEditDraft.objId=v;
+      // Привязываем объект к договору СРАЗУ (не ждём «Сохранить»), иначе статус «Подписан»
+      // блокируется (он проверяет сохранённый c.objId). Без ре-рендера (scheduleSave) —
+      // чтобы не сбить остальные незасохранённые правки формы ДЕТАЛИ.
+      contractDocs=contractDocs.map(function(c){return c.id===ctEditDraft.cid?Object.assign({},c,{objId:v}):c;});
+      scheduleSave();
+    });
   }
 }
 let ctClientSearch=""; // search in client dropdown
