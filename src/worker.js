@@ -1067,14 +1067,6 @@ export default {
       catch (err) { return json({ success: false, error: String(err) }, 200); }
     }
 
-    // Публичный список сотрудников для экрана входа (только имя/аватар — без PIN/телефона/ролей). ДО авторизации.
-    if (url.pathname === "/api/employees" && request.method === "GET") {
-      try {
-        const s = await readSnapshot(env, ["users"]);
-        const list = (s.users || []).map(function (u) { return { id: u.id, name: u.name, av: u.av, c: u.c }; });
-        return json({ success: true, employees: list });
-      } catch (err) { return json({ success: false, error: String(err) }, 500); }
-    }
     // Вход сотрудника (userId/телефон + PIN → персональный токен) — ДО авторизации: токен тут и выдаётся.
     if (url.pathname === "/api/login" && request.method === "POST") {
       try { return await loginUser(env, request); }
