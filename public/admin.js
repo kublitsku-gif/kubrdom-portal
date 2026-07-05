@@ -407,6 +407,10 @@ let _lastSavedJson = null;                 // снимок последнего 
 let _saving = false;                       // защита от параллельных сохранений
 async function apiSave(){
   if (_saving) return { success: true, busy: true };
+  // Сохраняет только залогиненный СОТРУДНИК. На экране входа (нет currentUser) или в кабинете
+  // клиента (read-only) — ничего не шлём и не показываем баннер сверки.
+  if (!currentUser) { clearSaveError(); return { success: true, skipped: true }; }
+  if (!getToken())  { clearSaveError(); return { success: true, skipped: true }; }
   const items = serializeState();
   const snap  = JSON.stringify(items);
   if (snap === _lastSavedJson) return { success: true, skipped: true };  // нечего сохранять
@@ -11504,6 +11508,10 @@ function _autoLogin(){
   // авто-вход «Запомнить меня»: восстанавливаем сотрудника из localStorage (данные уже подняты)
   try{ const rid=localStorage.getItem("kubr_remember"); if(rid && !currentUser){ const u=users.find(function(x){return x.id===rid;}); if(u){ currentUser=u; _setInitialTab(); } } }catch(e){}
 }
+// Восстановление сотрудника из uid внутри токена — надёжнее «Запомнить меня» (не зависит от отд. ключа).
+function _restoreUserFromToken(decoded){
+  try{ if(decoded && decoded.u && !currentUser){ const u=users.find(function(x){return x.id===decoded.u;}); if(u){ currentUser=u; _setInitialTab(); } } }catch(e){}
+}
 // Фоновые циклы сотрудника (автосейв/поллинг). Идемпотентно — зовётся из boot И из обработчика входа.
 function _startLoops(){
   if(_startLoops._on) return; _startLoops._on=true;
@@ -11534,6 +11542,8 @@ function _startLoops(){
   if (cached && decoded && decoded.u){
     try{ applyState(cached); _lastSeen = maxUpdatedAt(cached); }catch(e){}
     _autoLogin();
+    _restoreUserFromToken(decoded);   // токен знает, кто вошёл — не зависим от «Запомнить меня»
+    if (!currentUser){ clearToken(); _hydrated = true; render(); return; }  // юзер не восстановлен → экран входа (без циклов)
     _lastSavedJson = JSON.stringify(serializeState());
     _hydrated = true;
     render();
@@ -11555,6 +11565,8 @@ function _startLoops(){
       const items = await apiLoad();
       if (items){ applyState(items); _lastSeen = maxUpdatedAt(items); }
       _autoLogin();
+      _restoreUserFromToken(decoded);
+      if (!currentUser){ clearToken(); _hydrated = true; render(); return; }  // юзер не восстановлен → экран входа
       _lastSavedJson = JSON.stringify(serializeState());
       _hydrated = true;
       render();
