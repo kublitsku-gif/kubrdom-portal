@@ -6219,7 +6219,10 @@ function tFinanceExperiment(){
   // По договорам (объект — дополнение, если привязан)
   html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'+
     '<span style="font-size:12px;font-weight:700;color:#7a9aaa;letter-spacing:0.5px">ПО ДОГОВОРАМ'+(finSelectedContractIds.length?' · выбрано '+finSelectedContractIds.length:'')+'</span>'+
-    (finSelectedContractIds.length?'<button data-a="fin-clear-selection" style="padding:4px 10px;background:#e74c3c12;border:1px solid #e74c3c33;border-radius:7px;cursor:pointer;color:#e74c3c;font-size:11px;font-weight:700">✕ Сбросить выбор</button>':'<span style="font-size:10px;color:#bcc8d6">☑ отметьте, чтобы свести сводку</span>')+
+    '<div style="display:flex;align-items:center;gap:6px">'+
+      (allCts.length&&finSelectedContractIds.length<allCts.length?'<button data-a="fin-select-all" style="padding:4px 10px;background:#2980b912;border:1px solid #2980b933;border-radius:7px;cursor:pointer;color:#2980b9;font-size:11px;font-weight:700">☑ Отметить все</button>':'')+
+      (finSelectedContractIds.length?'<button data-a="fin-clear-selection" style="padding:4px 10px;background:#e74c3c12;border:1px solid #e74c3c33;border-radius:7px;cursor:pointer;color:#e74c3c;font-size:11px;font-weight:700">✕ Сбросить</button>':(allCts.length?'':'<span style="font-size:10px;color:#bcc8d6">☑ отметьте, чтобы свести сводку</span>'))+
+    '</div>'+
   '</div>';
   if(!allCts.length){
     html+='<div style="background:#fff;border-radius:12px;padding:26px;text-align:center;color:#9aabbf;font-size:12px;border:1px dashed #d0dae8">Договоров пока нет — добавьте их во вкладке «📄 Договора».</div>';
@@ -9995,6 +9998,7 @@ function bind(){
       render();
     };}
     else if(a==="fin-clear-selection"){el.onclick=()=>{finSelectedContractIds=[];render();};}
+    else if(a==="fin-select-all"){el.onclick=()=>{finSelectedContractIds=contractDocs.map(function(c){return c.id;});render();};}
     else if(a==="kp-pick"){el.onclick=()=>{ const id=el.dataset.tid; kpTemplateId=id; kpExpanded=Object.assign({},kpExpanded,{[id]:true}); render(); };}
     else if(a==="kp-expand"){el.onclick=()=>{ const id=el.dataset.tid; kpExpanded=Object.assign({},kpExpanded,{[id]:!kpExpanded[id]}); render(); };}
     else if(a==="kp-wmarkup"){el.onchange=()=>{
