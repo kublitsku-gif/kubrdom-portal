@@ -2706,7 +2706,7 @@ function tClients(){
       let html='<div>';
       html+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'+
         '<button data-a="mgr-client-back" style="padding:6px 14px;background:transparent;border:1px solid #d0dae8;border-radius:20px;cursor:pointer;font-size:12px;color:#7a9aaa">← Клиенты</button>'+
-        '<div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(c.client||"Клиент")+'</div><div style="font-size:11px;color:#7a9aaa">'+c.name+'</div></div>'+
+        '<div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(c.client||"Клиент")+'</div><div style="font-size:11px;color:#7a9aaa">'+esc(c.name)+'</div></div>'+
       '</div>';
       html+='<div style="background:#eef7ff;border:1px solid #c9e2f7;border-radius:10px;padding:8px 12px;margin-bottom:12px;font-size:11px;color:#2980b9">👁️ Так этот раздел видит клиент в своём кабинете</div>';
       html+=clientSubTabs(mgrClientTab,"mgr-client-tab");
@@ -2735,7 +2735,7 @@ function tClients(){
       '<div style="width:42px;height:42px;border-radius:11px;background:#27ae6015;display:flex;align-items:center;justify-content:center;font-size:21px;flex-shrink:0">'+(obj?obj.icon:"🤝")+'</div>'+
       '<div style="flex:1;min-width:0">'+
         '<div style="font-size:14px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(c.client||"Клиент")+'</div>'+
-        '<div style="font-size:11px;color:#7a9aaa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+c.name+'</div>'+
+        '<div style="font-size:11px;color:#7a9aaa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.name)+'</div>'+
         '<div style="display:flex;gap:5px;margin-top:4px;flex-wrap:wrap">'+
           '<span style="font-size:9px;font-weight:700;color:'+st.color+';background:'+st.color+'18;border-radius:5px;padding:1px 7px">'+st.label+'</span>'+
           (eff?'<span style="font-size:9px;font-weight:700;color:#d68910;background:#d6891015;border-radius:5px;padding:1px 7px">🔑 PIN '+eff+'</span>':'')+
@@ -2919,7 +2919,7 @@ function clientPortal(){
   let html='<div style="max-width:480px;margin:0 auto;min-height:100vh;background:#f6f8fa;padding-bottom:40px;box-sizing:border-box">';
   html+='<div style="background:#fff;border-bottom:1px solid #eef2f7;padding:12px 14px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:50">'+
     '<div style="width:34px;height:34px;border-radius:9px;background:#27ae60;display:flex;align-items:center;justify-content:center;font-size:17px">🤝</div>'+
-    '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700;color:#0d1b2e">'+(c.client||"Клиент")+'</div><div style="font-size:10px;color:#7a9aaa">'+c.name+'</div></div>'+
+    '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700;color:#0d1b2e">'+(c.client||"Клиент")+'</div><div style="font-size:10px;color:#7a9aaa">'+esc(c.name)+'</div></div>'+
     '<button data-a="client-logout" style="padding:5px 10px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:11px;color:#7a9aaa">Выйти</button>'+
   '</div>';
   const tabs=[["objects","🏗️ Объект"],["contract","📄 Договор"],["finance","💰 Финансы"]];
@@ -4164,8 +4164,8 @@ ${tplPickFor?`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);dis
     </div>
     <input id="tpl-pick-search" value="${(tplPickSearch||'').replace(/"/g,'&quot;')}" placeholder="🔍 Поиск материала..." style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid #dde6f0;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:10px">
     ${(()=>{const q=(tplPickSearch||'').trim().toLowerCase();const list=q?expProducts.filter(p=>(p.name||'').toLowerCase().indexOf(q)>=0||(p.store||'').toLowerCase().indexOf(q)>=0):expProducts;return list.length?list.map(p=>{const mo=EXP_MODES.find(x=>x.k===(p.mode||'piece'))||EXP_MODES[0];const conv=expConv(p);return `<div data-a="tpl-pick-mat" data-pid="${p.id}" style="display:flex;align-items:center;gap:9px;padding:9px 10px;border:1px solid #e6ecf3;border-radius:11px;margin-bottom:7px;cursor:pointer">
-      <div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:700;color:#0d1b2e">${p.name}</div>
-      <div style="font-size:10px;color:#7a9aaa;margin-top:2px">${p.store?p.store+' · ':''}${mo.icon} ${mo.label}</div>
+      <div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:700;color:#0d1b2e">${esc(p.name)}</div>
+      <div style="font-size:10px;color:#7a9aaa;margin-top:2px">${p.store?esc(p.store)+' · ':''}${mo.icon} ${mo.label}</div>
       ${conv?`<div style="font-size:10px;color:#7a9aaa;margin-top:2px">${conv.footer}</div>`:''}</div>
       <div style="font-size:13px;font-weight:800;color:#16a085;white-space:nowrap">${(Number(p.unitCost)||0).toLocaleString('ru-RU')} ₽<span style="font-size:10px;color:#9aabbf;font-weight:600">/${mo.unit}</span></div>
     </div>`;}).join(''):'<div style="text-align:center;color:#aaa;font-size:13px;padding:20px">Ничего не найдено</div>';})()}
@@ -4516,8 +4516,8 @@ function renderEstimates(){
         '<div style="margin-bottom:10px"><input id="est-pick-search" value="'+(estPickSearch||"").replace(/"/g,"&quot;")+'" placeholder="🔍 Поиск материала..." style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid #dde6f0;font-size:13px;outline:none;box-sizing:border-box"></div>'+
         list.map(function(p){var mo=EXP_MODES.find(function(x){return x.k===(p.mode||"piece");})||EXP_MODES[0];var conv=expConv(p);
           return '<div class="est-pick" data-pid="'+p.id+'" style="background:#fff;border:1px solid #e6ecf3;border-radius:11px;padding:9px 11px;margin-bottom:7px;cursor:pointer;display:flex;align-items:center;gap:9px">'+
-            '<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:700;color:#0d1b2e">'+p.name+'</div>'+
-            '<div style="font-size:10px;color:#7a9aaa;margin-top:2px">'+(p.store?p.store+' · ':'')+mo.icon+' '+mo.label+'</div>'+
+            '<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:700;color:#0d1b2e">'+esc(p.name)+'</div>'+
+            '<div style="font-size:10px;color:#7a9aaa;margin-top:2px">'+(p.store?esc(p.store)+' · ':'')+mo.icon+' '+mo.label+'</div>'+
             (conv?'<div style="font-size:10px;color:#7a9aaa;margin-top:2px">'+conv.footer+'</div>':'')+'</div>'+
             '<div style="font-size:13px;font-weight:800;color:#16a085;white-space:nowrap">'+(Number(p.unitCost)||0).toLocaleString("ru-RU")+' ₽<span style="font-size:10px;color:#9aabbf;font-weight:600">/'+mo.unit+'</span></div>'+
           '</div>';
@@ -5169,7 +5169,7 @@ function tContractList(){
               })()+
               (kind==="banya"?'<span style="font-size:10px;font-weight:700;background:#e67e2218;color:#e67e22;border-radius:5px;padding:1px 7px">🛁 Баня</span>':kind==="house"?'<span style="font-size:10px;font-weight:700;background:#2980b918;color:#2980b9;border-radius:5px;padding:1px 7px">🏠 Дом</span>':'')+
             '</div>'+
-            '<div style="font-size:13px;font-weight:700;color:#1a2a3a">'+c.name+'</div>'+
+            '<div style="font-size:13px;font-weight:700;color:#1a2a3a">'+esc(c.name)+'</div>'+
             (function(){
               const cl=c.crmClientId?crmClients.find(function(x){return x.id===c.crmClientId;}):crmClients.find(function(x){return x.name===c.client;});
               const phone=cl&&cl.phone?cl.phone:'';
@@ -5321,7 +5321,7 @@ function tContractDetail(cid){
   html+=
     '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">'+
       '<button data-a="ct-back" style="padding:6px 14px;background:transparent;border:1px solid #d0dae8;border-radius:20px;cursor:pointer;font-size:12px;color:#7a9aaa">← Договора</button>'+
-      '<div style="font-size:14px;font-weight:700;color:#0d1b2e;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+c.name+'</div>'+
+      '<div style="font-size:14px;font-weight:700;color:#0d1b2e;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.name)+'</div>'+
     '</div>';
 
   // Важные даты — подписание и дедлайн
@@ -6695,7 +6695,7 @@ function tFinanceList(){
         html+='<div style="background:#fff;border-radius:14px;border:2px solid '+sColor+'33;margin-bottom:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.06)">';
         // Contract title (small)
         html+='<div style="padding:10px 14px;background:linear-gradient(135deg,#f8fafc,#ffffff);border-bottom:1px solid #f0f3f7">'+
-          '<div style="font-size:12px;font-weight:700;color:#1a2a3a">'+c.name+'</div>'+
+          '<div style="font-size:12px;font-weight:700;color:#1a2a3a">'+esc(c.name)+'</div>'+
         '</div>';
         // Salary block
         html+='<div style="padding:12px 14px">'+
@@ -6818,7 +6818,7 @@ function tFinanceList(){
               '<span style="font-size:9px;font-weight:700;background:'+statusColor+'18;color:'+statusColor+';border-radius:5px;padding:1px 7px">'+statusLabel+'</span>'+
               '<span style="font-size:9px;background:'+(c.type==="main"?"#2980b918":"#8e44ad18")+';color:'+(c.type==="main"?"#2980b9":"#8e44ad")+';border-radius:5px;padding:1px 7px">'+(c.type==="main"?"Основной":"Доп. работы")+'</span>'+
             '</div>'+
-            '<div style="font-size:13px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+c.name+'</div>'+
+            '<div style="font-size:13px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.name)+'</div>'+
             '<div style="font-size:11px;color:#5a7a9a;margin-top:3px">'+
               '<span style="font-weight:600">👤 '+(c.client||"—")+'</span>'+
               (phone?'<span style="color:#9aabbf"> · '+phone+'</span>':'')+
@@ -7070,7 +7070,7 @@ function tFinanceContractPnL(cid){
   html+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">'+
     '<button data-a="fin-back" style="padding:6px 14px;background:transparent;border:1px solid #d0dae8;border-radius:20px;cursor:pointer;font-size:12px;color:#7a9aaa">← Назад</button>'+
     '<div style="flex:1;min-width:0">'+
-      '<div style="font-size:14px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+c.name+'</div>'+
+      '<div style="font-size:14px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.name)+'</div>'+
       '<div style="font-size:11px;color:#7a9aaa;margin-top:1px">'+obj.icon+' '+obj.name+' · 👤 '+(c.client||"—")+(crmCl?" · "+crmCl.phone:"")+'</div>'+
     '</div>'+
   '</div>';
@@ -9095,10 +9095,10 @@ function tCRMFunnel(){
           (crmSelectMode?'<div style="font-size:22px;flex-shrink:0;pointer-events:none">'+(_sel?"☑️":"⬜")+'</div>':'')+
           '<div style="width:38px;height:38px;border-radius:10px;background:'+s.color+'18;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;pointer-events:none">👤</div>'+
           '<div style="flex:1;min-width:0;pointer-events:none">'+
-            '<div style="font-size:13px;font-weight:700;color:#1a2a3a">'+c.name+(chatUnanswered(crmChatFor(c))?' <span style="font-size:9px;font-weight:700;color:#fff;background:#e74c3c;border-radius:5px;padding:1px 6px;vertical-align:middle">● не отвечено</span>':'')+'</div>'+
-            '<div style="font-size:11px;color:#7a9aaa;margin-top:2px">'+(c.phone?'<a href="tel:'+c.phone.replace(/[^0-9+]/g,"")+'" onclick="event.stopPropagation();return true" style="color:#27ae60;text-decoration:none;font-weight:700">📞 '+c.phone+'</a>':'')+'  ·  '+c.source+'  ·  '+c.date+'</div>'+
-            '<div style="font-size:12px;color:#5a7a9a;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+c.msg+'</div>'+
-            (c.notes?'<div style="font-size:10px;color:#9aabbf;margin-top:2px;font-style:italic">📝 '+c.notes+'</div>':'')+
+            '<div style="font-size:13px;font-weight:700;color:#1a2a3a">'+esc(c.name)+(chatUnanswered(crmChatFor(c))?' <span style="font-size:9px;font-weight:700;color:#fff;background:#e74c3c;border-radius:5px;padding:1px 6px;vertical-align:middle">● не отвечено</span>':'')+'</div>'+
+            '<div style="font-size:11px;color:#7a9aaa;margin-top:2px">'+(c.phone?'<a href="tel:'+c.phone.replace(/[^0-9+]/g,"")+'" onclick="event.stopPropagation();return true" style="color:#27ae60;text-decoration:none;font-weight:700">📞 '+esc(c.phone)+'</a>':'')+'  ·  '+esc(c.source)+'  ·  '+esc(c.date)+'</div>'+
+            '<div style="font-size:12px;color:#5a7a9a;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.msg)+'</div>'+
+            (c.notes?'<div style="font-size:10px;color:#9aabbf;margin-top:2px;font-style:italic">📝 '+esc(c.notes)+'</div>':'')+
             // Qualification badges
             (function(){
               const plotMap={"yes":{l:"✅ Участок есть",c:"#27ae60"},"progress":{l:"⏳ Участок в процессе",c:"#f39c12"},"no":{l:"❌ Без участка",c:"#e74c3c"}};
@@ -9171,7 +9171,7 @@ function tCRMClient(cid){
   // Back button + name
   html+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">'+
     '<button data-a="crm-back" style="padding:6px 14px;background:transparent;border:1px solid #d0dae8;border-radius:20px;cursor:pointer;font-size:12px;color:#7a9aaa">← Воронка</button>'+
-    '<div style="flex:1;font-size:15px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+c.name+'</div>'+
+    '<div style="flex:1;font-size:15px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.name)+'</div>'+
   '</div>';
   // Stage section: current badge (clickable to expand) + optional full list
   const curStageIdx=CRM_STAGES.findIndex(function(s){return s.id===c.stage;});
@@ -9223,7 +9223,7 @@ function tCRMClient(cid){
   // Contact info — editable
   html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:12px">'+
     '<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">КОНТАКТ</div>'+
-    '<input id="crm-edit-name-'+c.id+'" value="'+c.name.replace(/"/g,"&quot;")+'" placeholder="Имя клиента" style="width:100%;padding:7px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;font-weight:600;margin-bottom:6px;outline:none;box-sizing:border-box">'+
+    '<input id="crm-edit-name-'+c.id+'" value="'+esc(c.name)+'" placeholder="Имя клиента" style="width:100%;padding:7px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;font-weight:600;margin-bottom:6px;outline:none;box-sizing:border-box">'+
     '<input id="crm-edit-phone-'+c.id+'" data-phone-mask="1" type="tel" inputmode="tel" value="'+c.phone.replace(/"/g,"&quot;")+'" placeholder="+7 (___) ___-__-__" style="width:100%;padding:7px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;margin-bottom:6px;outline:none;box-sizing:border-box">'+
     '<input id="crm-edit-source-'+c.id+'" value="'+c.source.replace(/"/g,"&quot;")+'" placeholder="Источник" style="width:100%;padding:7px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;margin-bottom:6px;outline:none;box-sizing:border-box">'+
     '<button data-a="crm-save-contact" data-cid="'+c.id+'" style="width:100%;padding:7px;background:#2980b9;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">💾 Сохранить контакт</button>'+
@@ -9307,13 +9307,13 @@ function tCRMClient(cid){
   // First message — editable
   html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:12px">'+
     '<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">ПЕРВОЕ СООБЩЕНИЕ</div>'+
-    '<textarea id="crm-edit-msg-'+c.id+'" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;height:80px;resize:none;border-left:3px solid '+stage.color+'">'+c.msg+'</textarea>'+
+    '<textarea id="crm-edit-msg-'+c.id+'" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;height:80px;resize:none;border-left:3px solid '+stage.color+'">'+esc(c.msg)+'</textarea>'+
     '<button data-a="crm-save-msg" data-cid="'+c.id+'" style="width:100%;margin-top:6px;padding:7px;background:#2980b9;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">💾 Сохранить</button>'+
   '</div>';
   // Notes
   html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:12px">'+
     '<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">ЗАМЕТКИ</div>'+
-    '<textarea id="crm-notes-'+c.id+'" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;height:80px;resize:none;background:#f8fafc">'+c.notes+'</textarea>'+
+    '<textarea id="crm-notes-'+c.id+'" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;height:80px;resize:none;background:#f8fafc">'+esc(c.notes)+'</textarea>'+
     '<button data-a="crm-save-notes" data-cid="'+c.id+'" style="width:100%;margin-top:8px;padding:8px;background:#27ae60;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">💾 Сохранить заметку</button>'+
   '</div>';
   // ── ПЛАНИРОВКИ клиента (из базы) ──
