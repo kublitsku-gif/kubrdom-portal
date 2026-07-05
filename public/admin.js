@@ -7970,6 +7970,9 @@ function tSupplyDetail(sel, sortBy){
       const stageCost=sm.reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
       const stageAllDone=sm.length>0&&sm.every(function(m){return!!purchased[m.id];});
       const stageDoneCount=sm.filter(function(m){return!!purchased[m.id];}).length;
+      const stageBought=sm.filter(function(m){return!!purchased[m.id];}).reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
+      const stageLeft=stageCost-stageBought;
+      const stagePct=stageCost>0?Math.round(stageBought/stageCost*100):0;
       const safeIds=sm.map(function(m){return m.id;}).join(',');
       const mrows=_mergeMats(sm); // слить одинаковые материалы между объектами
       const mDone=mrows.filter(function(g){return g.ids.every(function(id){return!!purchased[id];});}).length;
@@ -7981,6 +7984,22 @@ function tSupplyDetail(sel, sortBy){
           '<button data-a="supply-stage-check" data-ids="'+safeIds+'" data-done="'+(stageAllDone?'1':'0')+'" style="padding:4px 10px;border-radius:7px;cursor:pointer;font-size:11px;font-weight:700;border:1.5px solid '+(stageAllDone?'#27ae60':'#c8d8e8')+';background:'+(stageAllDone?'#27ae60':'#fff')+';color:'+(stageAllDone?'#fff':'#7a9aaa')+';transition:all 0.15s;white-space:nowrap">'+
             (stageAllDone?'✓ Всё куплено':'☐ Отметить всё')+
           '</button>'+
+        '</div>'+
+        // Полоска «куплено / осталось» по этапу (в стиле общего «Прогресс закупки»).
+        '<div style="padding:8px 12px 0">'+
+          '<div style="background:#e8eef5;border-radius:6px;height:6px;overflow:hidden;margin-bottom:6px">'+
+            '<div style="height:100%;border-radius:6px;background:'+(stageAllDone?'#27ae60':sc)+';width:'+stagePct+'%;transition:width 0.4s"></div>'+
+          '</div>'+
+          '<div style="display:flex;gap:6px">'+
+            '<div style="flex:1;background:#27ae6010;border:1px solid #27ae6033;border-radius:8px;padding:5px 8px;text-align:center">'+
+              '<div style="font-size:9px;color:#27ae60;font-weight:700;letter-spacing:0.3px">КУПЛЕНО</div>'+
+              '<div style="font-size:12px;font-weight:700;color:#27ae60">'+stageBought.toLocaleString("ru-RU")+' ₽</div>'+
+            '</div>'+
+            '<div style="flex:1;background:'+(stageAllDone?'#27ae6010':'#e74c3c10')+';border:1px solid '+(stageAllDone?'#27ae6033':'#e74c3c33')+';border-radius:8px;padding:5px 8px;text-align:center">'+
+              '<div style="font-size:9px;color:'+(stageAllDone?'#27ae60':'#e74c3c')+';font-weight:700;letter-spacing:0.3px">'+(stageAllDone?'ГОТОВО':'ОСТАЛОСЬ')+'</div>'+
+              '<div style="font-size:12px;font-weight:700;color:'+(stageAllDone?'#27ae60':'#e74c3c')+'">'+(stageAllDone?'✓':stageLeft.toLocaleString("ru-RU")+' ₽')+'</div>'+
+            '</div>'+
+          '</div>'+
         '</div>'+
         '<div style="padding:8px 12px">'+mrows.map(mergeRow).join("")+'</div>'+
       '</div>';
