@@ -1495,6 +1495,18 @@ function fl(){
   }
 }
 function deepCopy(x){return JSON.parse(JSON.stringify(x));}
+// Глубокая копия этапов со СВЕЖИМИ id (этап/работа/материал). Обязательна при
+// копировании (новый объект из шаблона, дубль шаблона): иначе копия делит id с
+// источником, а флаг покупки purchased[m.id] глобальный → покупка материала в одном
+// объекте «протекает» на все объекты из того же шаблона. deepCopy рвёт общие ссылки,
+// затем присваиваем новые id на всех трёх уровнях.
+function reidStages(stages){
+  return deepCopy(stages||[]).map(function(s){
+    s.id=gid();
+    (s.works||[]).forEach(function(w){ w.id=gid(); (w.mats||[]).forEach(function(m){ m.id=gid(); }); });
+    return s;
+  });
+}
 
 // ─── ХАРАКТЕРИСТИКИ ОБЪЕКТА (помещения + проёмы) ─────────────────────────────
 // Хранятся в шаблоне (t.specs) и копируются в объект. Высота потолка — ОДНА общая
@@ -1890,11 +1902,7 @@ function copyTemplate(tid){
   const src=templates.find(t=>t.id===tid);
   if(!src)return;
   const newId=gid();
-  const copyStages=src.stages.map(s=>({
-    ...s,id:gid(),
-    works:s.works.map(w=>({...w,id:gid(),mats:(w.mats||[]).map(m=>({...m,id:gid()}))}))
-  }));
-  templates.push({id:newId,name:"Копия — "+src.name,icon:src.icon,stages:copyStages});
+  templates.push({id:newId,name:"Копия — "+src.name,icon:src.icon,stages:reidStages(src.stages)});
   openTemplate=newId;
   fl();
 }
@@ -9648,7 +9656,7 @@ function bind(){
       if(!name){ alert("Введите название объекта."); return; }
       if(!tmpl){ alert("Выберите шаблон."); return; }
       const newId=gid();
-      objects=objects.concat([{id:newId,name,icon,templateId:nobj.templateId,stages:deepCopy(tmpl.stages),specs:deepCopy(tmpl.specs||{rooms:[],openings:[]})}]);
+      objects=objects.concat([{id:newId,name,icon,templateId:nobj.templateId,stages:reidStages(tmpl.stages),specs:deepCopy(tmpl.specs||{rooms:[],openings:[]})}]);
       // Сотрудники не назначаются здесь — только через ответственных по договору (вкладка «Договора»).
       showNObj=false;fl();
     };}
@@ -9851,12 +9859,7 @@ function bind(){
       const src=templates.find(t=>t.id===el.dataset.tid);
       if(!src)return;
       const newId=gid();
-      // Deep copy stages/works/mats with new ids
-      const copyStages=src.stages.map(s=>({
-        ...s,id:gid(),
-        works:s.works.map(w=>({...w,id:gid(),mats:(w.mats||[]).map(m=>({...m,id:gid()}))}))
-      }));
-      templates.push({id:newId,name:"Копия — "+src.name,icon:src.icon,stages:copyStages});
+      templates.push({id:newId,name:"Копия — "+src.name,icon:src.icon,stages:reidStages(src.stages)});
       openTemplate=newId;
       fl();
     };}
