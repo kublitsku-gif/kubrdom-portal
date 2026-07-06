@@ -40,6 +40,11 @@ OPENAI_MODEL = "gpt-4o-mini"
 # YandexGPT (Yandex Cloud). Ключ — секрет YANDEX_API_KEY. FOLDER_ID — каталог (не секрет, задаёт пользователь).
 YANDEX_MODEL = "yandexgpt/latest"
 YANDEX_FOLDER_ID = "b1gh7n0m534hu478vc3u"
+# Notion (заливка больших файлов через /api/notion/upload). Токен интеграции — секрет NOTION_TOKEN
+#   (Cloudflare → Worker kubrdom-portal-api → Settings → Variables → Add secret; значение — «Internal
+#    Integration Secret» из https://www.notion.so/my-integrations, начинается с "ntn_"). Интеграцию нужно
+#   расшарить на нужные страницы (••• → Connections). NOTION_VERSION можно поднять при обновлении API.
+NOTION_VERSION = "2026-03-11"
 # ── Голосовой обзвон (Voximplant) ──
 # Заполнено через кабинет Voximplant: приложение «kubrdom» (ID 56473283),
 # сценарий «kubrdom-voice», правило «kubrdom-outbound».

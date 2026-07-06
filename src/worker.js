@@ -452,6 +452,140 @@ async function getTgVideo(env, fileId) {
   return new Response(fr.body, { headers });
 }
 
+// ─── Notion (заливка больших файлов через File Upload API) ──────────────────
+// Зачем: R2-загрузка (/api/file) режется на 20 МБ, а в Notion можно лить большие
+// файлы (видео, тяжёлые PDF) — до 5 ГБ. Notion делает это в 3 шага:
+//   1) POST /v1/file_uploads         — создаём объект загрузки (single_part или multi_part)
+//   2) POST /v1/file_uploads/:id/send — шлём содержимое (для multi_part — по частям)
+//   3) POST /v1/file_uploads/:id/complete — «склеиваем» части (только multi_part)
+// Токен интеграции — секрет NOTION_TOKEN (Cloudflare → Worker → Settings → Variables).
+// Версия API — var NOTION_VERSION (по умолчанию актуальная ниже).
+// Большой файл льём СТРИМОМ (память ≈ один кусок 10 МБ), не буферизуя весь файл.
+const NOTION_API        = "https://api.notion.com/v1";
+const NOTION_VERSION    = "2026-03-11";              // дефолт; можно переопределить env.NOTION_VERSION
+const NOTION_PART       = 10 * 1024 * 1024;          // размер части multi-part (диапазон Notion — 5–20 МБ)
+const NOTION_SINGLE_MAX = 20 * 1024 * 1024;          // ≤20 МБ — single_part, больше — multi_part
+const NOTION_MAX        = 5 * 1024 * 1024 * 1024;    // 5 ГБ — потолок Notion (платный воркспейс)
+// Доп. типы под сценарии портала (видео/аудио/архивы) — поверх FILE_TYPES.
+const NOTION_EXTRA_TYPES = {
+  mp4:"video/mp4", mov:"video/quicktime", webm:"video/webm", mkv:"video/x-matroska",
+  mp3:"audio/mpeg", wav:"audio/wav", m4a:"audio/mp4",
+  zip:"application/zip", txt:"text/plain", csv:"text/csv",
+  ppt:"application/vnd.ms-powerpoint",
+  pptx:"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+};
+function notionGuessType(name) {
+  const ext = (String(name || "").split(".").pop() || "").toLowerCase();
+  return FILE_TYPES[ext] || NOTION_EXTRA_TYPES[ext] || "application/octet-stream";
+}
+// Заголовки Notion: авторизация + версия. json=true — добавить Content-Type (для JSON-тел).
+// Для /send (multipart/form-data) Content-Type НЕ ставим — fetch сам задаст boundary.
+function notionHeaders(env, json) {
+  const h = { "Authorization": "Bearer " + env.NOTION_TOKEN, "Notion-Version": env.NOTION_VERSION || NOTION_VERSION };
+  if (json) h["Content-Type"] = "application/json";
+  return h;
+}
+// Шаг 1. Создать объект загрузки. Для multi_part передаём mode + number_of_parts.
+async function notionCreateUpload(env, opts) {
+  const body = { filename: opts.filename, content_type: opts.contentType };
+  if (opts.numberOfParts) { body.mode = "multi_part"; body.number_of_parts = opts.numberOfParts; }
+  const r = await fetch(NOTION_API + "/file_uploads", { method: "POST", headers: notionHeaders(env, true), body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error("Notion create upload: " + (j.message || ("HTTP " + r.status)));
+  return j;   // { id, upload_url, ... }
+}
+// Шаг 2. Отправить содержимое (или одну часть). partNumber задаём только для multi_part.
+async function notionSendPart(env, id, bytes, filename, contentType, partNumber) {
+  const fd = new FormData();
+  fd.append("file", new Blob([bytes], { type: contentType || "application/octet-stream" }), filename || "file");
+  if (partNumber) fd.append("part_number", String(partNumber));
+  const r = await fetch(NOTION_API + "/file_uploads/" + id + "/send", { method: "POST", headers: notionHeaders(env), body: fd });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error("Notion send" + (partNumber ? " part " + partNumber : "") + ": " + (j.message || ("HTTP " + r.status)));
+  return j;
+}
+// Шаг 3. Завершить multi_part-загрузку (для single_part не нужен).
+async function notionComplete(env, id) {
+  const r = await fetch(NOTION_API + "/file_uploads/" + id + "/complete", { method: "POST", headers: notionHeaders(env, true), body: "{}" });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error("Notion complete: " + (j.message || ("HTTP " + r.status)));
+  return j;
+}
+// Multi-part стримом: читаем тело запроса, копим куски по NOTION_PART и шлём их частями.
+// number_of_parts считаем из известного размера (Content-Length). Пик памяти ≈ один кусок.
+async function notionUploadMultipart(env, stream, size, name, contentType) {
+  const numberOfParts = Math.max(1, Math.ceil(size / NOTION_PART));
+  const created = await notionCreateUpload(env, { filename: name, contentType, numberOfParts });
+  const reader = stream.getReader();
+  let buf = new Uint8Array(0), part = 0;
+  const append = (chunk) => { const m = new Uint8Array(buf.length + chunk.length); m.set(buf, 0); m.set(chunk, buf.length); buf = m; };
+  const sendFront = async (n) => { part++; await notionSendPart(env, created.id, buf.subarray(0, n), name, contentType, part); buf = buf.slice(n); };
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (value && value.length) append(value);
+    // Полные части шлём сразу, но последнюю всегда оставляем финальному циклу (она может быть <5 МБ).
+    while (buf.length >= NOTION_PART && part < numberOfParts - 1) await sendFront(NOTION_PART);
+    if (done) break;
+  }
+  while (part < numberOfParts && buf.length > 0) {
+    const isLast = (part === numberOfParts - 1);
+    await sendFront(isLast ? buf.length : Math.min(NOTION_PART, buf.length));
+  }
+  await notionComplete(env, created.id);
+  return created;
+}
+// Прикрепить загруженный файл к странице Notion как дочерний блок (image/video/audio/pdf/file).
+async function notionAttachToPage(env, pageId, uploadId, contentType) {
+  const ref = { type: "file_upload", file_upload: { id: uploadId } };
+  const ct = String(contentType || "").toLowerCase();
+  let kind = "file";
+  if (ct.indexOf("image/") === 0) kind = "image";
+  else if (ct.indexOf("video/") === 0) kind = "video";
+  else if (ct.indexOf("audio/") === 0) kind = "audio";
+  else if (ct === "application/pdf") kind = "pdf";
+  const block = { object: "block", type: kind };
+  block[kind] = ref;
+  const r = await fetch(NOTION_API + "/blocks/" + pageId + "/children", { method: "PATCH", headers: notionHeaders(env, true), body: JSON.stringify({ children: [block] }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error("Notion attach: " + (j.message || ("HTTP " + r.status)));
+  return j;
+}
+// POST /api/notion/upload?name=...&pageId=...  тело = бинарные данные файла. Требует токен портала.
+//   name    — имя файла (для типа и подписи в Notion);
+//   pageId  — (опц.) id страницы/блока: сразу прикрепим файл к ней (иначе загрузка «висит» ~1 час).
+// Возвращает { fileUploadId } — его можно приложить к странице/свойству через Notion API позже.
+async function notionUpload(env, request, url) {
+  if (!env.NOTION_TOKEN) return json({ success: false, error: "Notion не настроен: добавьте секрет NOTION_TOKEN" }, 500);
+  const name = (url.searchParams.get("name") || "file").slice(0, 200);
+  const pageId = (url.searchParams.get("pageId") || "").trim();
+  const contentType = request.headers.get("Content-Type") || notionGuessType(name);
+  // Размер берём из Content-Length (позволяет лить стримом). ?size — запасной вариант.
+  let size = parseInt(request.headers.get("Content-Length") || url.searchParams.get("size") || "0", 10) || 0;
+  if (size > NOTION_MAX) return json({ success: false, error: "Файл больше 5 ГБ (лимит Notion)" }, 413);
+
+  let created;
+  if (size > NOTION_SINGLE_MAX) {
+    // Большой файл — multi-part стримом, без буферизации всего файла в память.
+    created = await notionUploadMultipart(env, request.body, size, name, contentType);
+  } else {
+    // ≤20 МБ или размер неизвестен — буферизуем и решаем single/multi по факту.
+    const buf = new Uint8Array(await request.arrayBuffer());
+    if (buf.byteLength === 0) return json({ success: false, error: "Пустой файл" }, 400);
+    if (buf.byteLength > NOTION_MAX) return json({ success: false, error: "Файл больше 5 ГБ (лимит Notion)" }, 413);
+    size = buf.byteLength;
+    if (size > NOTION_SINGLE_MAX) {
+      created = await notionUploadMultipart(env, new Response(buf).body, size, name, contentType);
+    } else {
+      created = await notionCreateUpload(env, { filename: name, contentType });
+      await notionSendPart(env, created.id, buf, name, contentType, null);   // single_part: complete не нужен
+    }
+  }
+
+  let attached = false;
+  if (pageId) { await notionAttachToPage(env, pageId, created.id, contentType); attached = true; }
+  return json({ success: true, fileUploadId: created.id, filename: name, contentType, size, attached });
+}
+
 // ─── Avito (нейропродавец) ──────────────────────────────────────────
 // OAuth-токен Avito (client_credentials), кэшируем в изоляте (живёт ~24ч).
 let _avitoTok = null, _avitoExp = 0;
@@ -1120,6 +1254,12 @@ export default {
     // Загрузка видео в Telegram-тему объекта (с токеном).
     if (url.pathname === "/api/video" && request.method === "POST") {
       try { return await postVideo(env, request, url); }
+      catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+
+    // Заливка большого файла в Notion (multi-part, с токеном).
+    if (url.pathname === "/api/notion/upload" && request.method === "POST") {
+      try { return await notionUpload(env, request, url); }
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
 
