@@ -2943,6 +2943,25 @@ function clientPortal(){
   return html;
 }
 
+// Частичная перерисовка ТОЛЬКО контейнера текущей вкладки (не весь page()).
+// Нужна для частых микро-действий вроде отметки «куплено» в снабжении: полный
+// render() пересобирает огромный DOM всей страницы (шапка+вкладки+список) → на
+// iOS экран заметно «дёргается» и сбрасывает прокрутку. Своп одного контейнера
+// почти не меняет высоту → окно само сохраняет позицию скролла.
+function rerenderTab(){
+  const c=document.getElementById("tab-content");
+  if(!c){render();return;}                       // фолбэк, если контейнера ещё нет
+  const _y=window.pageYOffset||document.documentElement.scrollTop||0;
+  c.innerHTML=tabContentHtml();
+  bind();
+  scheduleSave();                                // как и render() — дебаунс-автосейв
+  window.scrollTo(0,_y);                          // страховка от клампа высоты
+}
+// Один источник HTML активной вкладки — используется и в page(), и в rerenderTab().
+function tabContentHtml(){
+  return tab==="assign"?tObjects():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tab==="kp"?tKP():tab==="voiceai"?tVoiceAi():tCRM();
+}
+
 function render(){
   scheduleSave();   // любая мутация состояния через render() → debounced автосейв (с dirty-check)
   // ВАЖНО: render() НИЧЕГО не мутирует. Раньше тут на каждую перерисовку доклеивались
@@ -3185,8 +3204,8 @@ ${showPinChange?`<div style="background:#fff;border-bottom:1px solid #eef2f7;pad
   </div>
   ${TABS.length>4?`<div style="font-size:9px;color:#9aabbf;text-align:center;margin-top:4px;letter-spacing:0.5px">← смахни для других вкладок →</div>`:""}
 </div>
-<div style="padding:14px">
-  ${tab==="assign"?tObjects():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tab==="kp"?tKP():tab==="voiceai"?tVoiceAi():tCRM()}
+<div id="tab-content" style="padding:14px">
+  ${tabContentHtml()}
 </div>
 <div id="save-toast" style="position:fixed;bottom:24px;right:24px;background:#27ae60;color:#fff;border-radius:12px;padding:10px 18px;font-size:13px;font-weight:700;box-shadow:0 4px 16px rgba(39,174,96,0.35);opacity:0;transform:translateY(8px);transition:opacity 0.2s,transform 0.2s;pointer-events:none;z-index:999">✓ Сохранено</div>
 <div style="text-align:center;font-size:9px;color:#c0ccd8;padding:10px 0 16px">КубрДом · v${APP_BUILD}</div>
@@ -9888,18 +9907,14 @@ function bind(){
     else if(a==="supply-hide-done"){el.onclick=()=>{supplyHideDone=!supplyHideDone;render();};}  
     else if(a==="supply-check"){el.onclick=()=>{
       const mid=el.dataset.mid;
-      const _y=window.pageYOffset||document.documentElement.scrollTop||0;
       purchased[mid]=!purchased[mid];
-      render();
-      requestAnimationFrame(function(){window.scrollTo(0,_y);}); // не прыгать вверх при отметке «куплено»
+      rerenderTab();   // перерисовать только список снабжения — экран не дёргается
     };}
     else if(a==="supply-stage-check"){el.onclick=()=>{
       const ids=el.dataset.ids.split(',');
       const allDone=el.dataset.done==="1";
-      const _y=window.pageYOffset||document.documentElement.scrollTop||0;
       ids.forEach(function(id){if(id)purchased[id]=!allDone;});
-      render();
-      requestAnimationFrame(function(){window.scrollTo(0,_y);});
+      rerenderTab();
     };}
     else if(a==="supply-sort"){el.onclick=()=>{window._supplySort=el.dataset.s;render();};}
     else if(a==="supply-tz"){el.onclick=(ev)=>{ ev&&ev.stopPropagation(); buildSupplyTZ(el.dataset.store); };}
