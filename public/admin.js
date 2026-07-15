@@ -8687,27 +8687,49 @@ function ctTplExec(){
   return CT_EXECS.find(function(e){return e.k===t.execKey;})||CT_EXECS[0];
 }
 
+// Тип объекта: подставляет предмет договора и штатные тексты этапов платежей.
+// У дома те же этапы, что у бани (оба на базе морского контейнера), но без печного узла.
+const CT_OBJ_TYPES=[
+  {k:"banya", n:"🛁 Баня",
+   subject:"бани в количестве 1 шт. на базе морского контейнера, наружной площадью 20 кв.м",
+   payNotes:[
+     "оплачивается Заказчиком за счет собственных наличных средств в момент подписания настоящего Договора, что подтверждается распиской в получении денежных средств. Данный аванс вносится на первый этап работ по данному договору, а именно на: покупку контейнера, установку подвесов, монтаж закладных под окна и двери, утепление пола, стен и потолка, заказ окон и дверей.",
+     "оплачивается Заказчиком за счет собственных наличных средств в течении 3 (трех) рабочих дней после выполнения первого этапа работ. Данный аванс вносится на второй этап, а именно: монтаж черновой отделки, инженерных коммуникаций и водоснабжения.",
+     "оплачивается Заказчиком за счет собственных наличных средств в течении 3 (трех) рабочих дней после выполнения второго этапа работ. Данный аванс вносится на третий этап, а именно: монтаж чистовой отделки бани, установка окон и дверей, закупка и монтаж сантехники, монтаж печного узла, покраска и внешняя отделка.",
+     "оплачивается Заказчиком за счет собственных средств в течении 3 (трех) рабочих дней по факту выполнения всех работ по данному договору, после предоставления фото и видео отчета."
+   ]},
+  {k:"house", n:"🏠 Дом",
+   subject:"дома в количестве 1 шт. на базе морского контейнера, наружной площадью 30 кв.м",
+   payNotes:[
+     "оплачивается Заказчиком за счет собственных наличных средств в момент подписания настоящего Договора, что подтверждается распиской в получении денежных средств. Данный аванс вносится на первый этап работ по данному договору, а именно на: покупку контейнера, установку подвесов, монтаж закладных под окна и двери, утепление пола, стен и потолка, заказ окон и дверей.",
+     "оплачивается Заказчиком за счет собственных наличных средств в течении 3 (трех) рабочих дней после выполнения первого этапа работ. Данный аванс вносится на второй этап, а именно: монтаж черновой отделки, инженерных коммуникаций и водоснабжения.",
+     "оплачивается Заказчиком за счет собственных наличных средств в течении 3 (трех) рабочих дней после выполнения второго этапа работ. Данный аванс вносится на третий этап, а именно: монтаж чистовой отделки дома, установка окон и дверей, закупка и монтаж сантехники, покраска и внешняя отделка.",
+     "оплачивается Заказчиком за счет собственных средств в течении 3 (трех) рабочих дней по факту выполнения всех работ по данному договору, после предоставления фото и видео отчета."
+   ]}
+];
+function ctTplObjType(){
+  const t=ctTplGet();
+  return CT_OBJ_TYPES.find(function(o){return o.k===t.objType;})||CT_OBJ_TYPES[0];
+}
+
 function ctTplDefaults(){
   const d=new Date();
   const dd=String(d.getDate()).padStart(2,"0"), mm=String(d.getMonth()+1).padStart(2,"0"), yy=String(d.getFullYear()).slice(2);
+  const ot=CT_OBJ_TYPES[0]; // по умолчанию баня
   return {
     num:dd+mm+"-1/"+yy,
     date:d.toISOString().slice(0,10),
     city:"г. Москва",
     execKey:"kublitskaya",
+    objType:ot.k,
     fio:"", dob:"", citizenship:"РФ",
     passport:"", passportIssued:"", passportDate:"", passportCode:"",
     regAddress:"", phone:"",
-    subject:"бани в количестве 1 шт. на базе морского контейнера, наружной площадью 20 кв.м",
+    subject:ot.subject,
     amount:0,
     workDays:45,
     warrantyMonths:12,
-    payments:[
-      {amount:0,note:"оплачивается Заказчиком за счет собственных наличных средств в момент подписания настоящего Договора, что подтверждается распиской в получении денежных средств. Данный аванс вносится на первый этап работ по данному договору, а именно на: покупку контейнера, установку подвесов, монтаж закладных под окна и двери, утепление пола, стен и потолка, заказ окон и дверей."},
-      {amount:0,note:"оплачивается Заказчиком за счет собственных наличных средств в течении 3 (трех) рабочих дней после выполнения первого этапа работ. Данный аванс вносится на второй этап, а именно: монтаж черновой отделки, инженерных коммуникаций и водоснабжения."},
-      {amount:0,note:"оплачивается Заказчиком за счет собственных наличных средств в течении 3 (трех) рабочих дней после выполнения второго этапа работ. Данный аванс вносится на третий этап, а именно: монтаж чистовой отделки бани, установка окон и дверей, закупка и монтаж сантехники, монтаж печного узла, покраска и внешняя отделка."},
-      {amount:0,note:"оплачивается Заказчиком за счет собственных средств в течении 3 (трех) рабочих дней по факту выполнения всех работ по данному договору, после предоставления фото и видео отчета."}
-    ]
+    payments:ot.payNotes.map(function(note){return {amount:0,note:note};})
   };
 }
 let ctTpl=null; // буфер формы (лениво из localStorage)
@@ -8809,17 +8831,20 @@ function tContractTemplate(){
   html+='<select id="ct-tpl-crm" data-a="ct-tpl-crm" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;margin-bottom:12px;outline:none;background:#f8fafc">'+
     '<option value="" selected>👤 Подставить клиента из CRM (ФИО и телефон)…</option>'+crmOpts+'</select>';
 
-  // Переключатель исполнителя (Кублицкая / Петров) — паттерн кнопок «Основной/Доп. работы»
-  const execSel='<div style="margin-bottom:8px">'+
-    '<div style="font-size:9px;color:#7a9aaa;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">ИСПОЛНИТЕЛЬ</div>'+
-    '<div style="display:flex;gap:6px">'+
-    CT_EXECS.map(function(e){
-      const on=ctTplExec().k===e.k;
-      return '<button data-a="ct-tpl-exec" data-k="'+e.k+'" style="flex:1;padding:8px 6px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700;border:1.5px solid '+(on?"#2980b9":"#dde6f0")+';background:'+(on?"#2980b9":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+'">'+esc(e.n)+'</button>';
-    }).join("")+
-    '</div></div>';
+  // Переключатели-кнопки (паттерн «Основной/Доп. работы»): что строим + исполнитель
+  function toggleRow(label,items,activeK,action){
+    return '<div style="margin-bottom:8px">'+
+      '<div style="font-size:9px;color:#7a9aaa;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">'+label+'</div>'+
+      '<div style="display:flex;gap:6px">'+
+      items.map(function(it){
+        const on=activeK===it.k;
+        return '<button data-a="'+action+'" data-k="'+it.k+'" style="flex:1;padding:8px 6px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700;border:1.5px solid '+(on?"#2980b9":"#dde6f0")+';background:'+(on?"#2980b9":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+'">'+esc(it.n)+'</button>';
+      }).join("")+
+      '</div></div>';
+  }
   html+=card("📄 ДОГОВОР",
-    execSel+
+    toggleRow("ЧТО СТРОИМ",CT_OBJ_TYPES,ctTplObjType().k,"ct-tpl-objtype")+
+    toggleRow("ИСПОЛНИТЕЛЬ",CT_EXECS,ctTplExec().k,"ct-tpl-exec")+
     '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">'+
       inp("num","№ ДОГОВОРА",{ph:"1507-1/26"})+
       inp("date","ДАТА",{type:"date"})+
@@ -10746,6 +10771,20 @@ function bind(){
     // ─── Шаблон договора (подвкладка) ───
     else if(a==="ct-subtab"){el.onclick=()=>{ctSubTab=el.dataset.st;render();};}
     else if(a==="ct-tpl-exec"){el.onclick=()=>{ctTplGet().execKey=el.dataset.k;ctTplPersist();render();};}
+    else if(a==="ct-tpl-objtype"){el.onclick=()=>{
+      const t=ctTplGet();
+      const ot=CT_OBJ_TYPES.find(function(o){return o.k===el.dataset.k;});
+      if(!ot||t.objType===ot.k)return;
+      t.objType=ot.k;
+      // Подставляем предмет и штатные тексты первых этапов; суммы и лишние платежи не трогаем
+      t.subject=ot.subject;
+      ot.payNotes.forEach(function(note,i){
+        if(t.payments[i])t.payments[i].note=note;
+        else t.payments.push({amount:0,note:note});
+      });
+      ctTplPersist();
+      render();
+    };}
     else if(a==="ct-tpl-pay-add"){el.onclick=()=>{ctTplGet().payments.push({amount:0,note:""});ctTplPersist();render();};}
     else if(a==="ct-tpl-pay-del"){el.onclick=()=>{ctTplGet().payments.splice(parseInt(el.dataset.i,10),1);ctTplPersist();render();};}
     else if(a==="ct-tpl-print"){el.onclick=()=>ctTplOpenPrint();}
