@@ -8672,9 +8672,20 @@ let contractNew={objId:"",type:"main",name:"",amount:"",signDate:new Date().toIS
 let ctSubTab="list"; // подвкладка раздела «Договора»: "list" | "template"
 const CT_TPL_LS_KEY="kubr_ctTpl";
 
-// Реквизиты Исполнителя — константа (взяты из действующего договора подряда)
-const CT_EXEC_PREAMBLE="Индивидуальный предприниматель Кублицкая Любовь Евгеньевна, пол: женский, место рождения: гор. Полоцк Беларусь, паспорт: серия 4516 номер 951988, выдан ГУ МВД России по г. Москве 22.12.2016 года, код подразделения: 770-106, зарегистрированный по адресу: ул. Кулакова д.15 к.1 кв. 86, ИНН 772317087294, ОГРНИП 322774600706134, в лице представителя гр. Кублицкого Юрия Геннадьевича, 21.07.1981 г.р., паспорт: серия 4521 номер 363664, выдан ГУ МВД России по г. Москве 08.07.2021 г., код подразделения: 770-094, действующий на основании доверенности 77 АЕ 2064773 от 31.01.2026 г.";
-const CT_EXEC_REQ='ИП Кублицкая Любовь Евгеньевна<br>ИНН: 772317087294<br>Расчетный счет: 40802810901500426302<br>Название банка: ООО "Банк Точка"<br>Юридический адрес: 123592, г. Москва, ул Кулакова, дом 15, корпус 1, кв 86<br>Контактный телефон: +79032599333<br>E-mail: Kublitsku@gmail.com';
+// Исполнители на выбор — реквизиты взяты из действующих договоров подряда
+// (Кублицкая — договор 2104-1/26, Петров — договор 1906-1/26)
+const CT_EXECS=[
+  {k:"kublitskaya", n:"ИП Кублицкая Л.Е.",
+   preamble:"Индивидуальный предприниматель Кублицкая Любовь Евгеньевна, пол: женский, место рождения: гор. Полоцк Беларусь, паспорт: серия 4516 номер 951988, выдан ГУ МВД России по г. Москве 22.12.2016 года, код подразделения: 770-106, зарегистрированный по адресу: ул. Кулакова д.15 к.1 кв. 86, ИНН 772317087294, ОГРНИП 322774600706134, в лице представителя гр. Кублицкого Юрия Геннадьевича, 21.07.1981 г.р., паспорт: серия 4521 номер 363664, выдан ГУ МВД России по г. Москве 08.07.2021 г., код подразделения: 770-094, действующий на основании доверенности 77 АЕ 2064773 от 31.01.2026 г.",
+   req:'ИП Кублицкая Любовь Евгеньевна<br>ИНН: 772317087294<br>Расчетный счет: 40802810901500426302<br>Название банка: ООО "Банк Точка"<br>Юридический адрес: 123592, г. Москва, ул Кулакова, дом 15, корпус 1, кв 86<br>Контактный телефон: +79032599333<br>E-mail: Kublitsku@gmail.com'},
+  {k:"petrov", n:"ИП Петров А.В.",
+   preamble:"Индивидуальный предприниматель Петров Александр Владимирович, пол: мужской, место рождения: гор. Оренбург, паспорт: серия 5309 номер 914157, выдан отделом УФМС России по Оренбургской области в Дзержинском районе г. Оренбурга, 13.11.2009 года, код подразделения: 560-001, зарегистрированный по адресу: г. Оренбург, ул. Дружбы д.11/2 кв. 61, ИНН 560908147666, ОГРНИП 323565800106881",
+   req:'ИП Петров Александр Владимирович<br>Адрес регистрации: 460052, г. Оренбург, улица Дружбы, д. 11/2, 61<br>ОГРНИП: 323565800106881<br>ИНН: 560908147666<br>Расчётный счёт: 40802810520001029197<br>Название банка: ООО "Банк Точка"<br>БИК: 044525104<br>Корреспондентский счёт: 30101810745374525104<br>Контактный телефон: +79877891888<br>E-mail: 89877891888@ya.ru'}
+];
+function ctTplExec(){
+  const t=ctTplGet();
+  return CT_EXECS.find(function(e){return e.k===t.execKey;})||CT_EXECS[0];
+}
 
 function ctTplDefaults(){
   const d=new Date();
@@ -8683,6 +8694,7 @@ function ctTplDefaults(){
     num:dd+mm+"-1/"+yy,
     date:d.toISOString().slice(0,10),
     city:"г. Москва",
+    execKey:"kublitskaya",
     fio:"", dob:"", citizenship:"РФ",
     passport:"", passportIssued:"", passportDate:"", passportCode:"",
     regAddress:"", phone:"",
@@ -8797,7 +8809,17 @@ function tContractTemplate(){
   html+='<select id="ct-tpl-crm" data-a="ct-tpl-crm" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;margin-bottom:12px;outline:none;background:#f8fafc">'+
     '<option value="" selected>👤 Подставить клиента из CRM (ФИО и телефон)…</option>'+crmOpts+'</select>';
 
+  // Переключатель исполнителя (Кублицкая / Петров) — паттерн кнопок «Основной/Доп. работы»
+  const execSel='<div style="margin-bottom:8px">'+
+    '<div style="font-size:9px;color:#7a9aaa;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">ИСПОЛНИТЕЛЬ</div>'+
+    '<div style="display:flex;gap:6px">'+
+    CT_EXECS.map(function(e){
+      const on=ctTplExec().k===e.k;
+      return '<button data-a="ct-tpl-exec" data-k="'+e.k+'" style="flex:1;padding:8px 6px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700;border:1.5px solid '+(on?"#2980b9":"#dde6f0")+';background:'+(on?"#2980b9":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+'">'+esc(e.n)+'</button>';
+    }).join("")+
+    '</div></div>';
   html+=card("📄 ДОГОВОР",
+    execSel+
     '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">'+
       inp("num","№ ДОГОВОРА",{ph:"1507-1/26"})+
       inp("date","ДАТА",{type:"date"})+
@@ -8909,6 +8931,7 @@ function _bindCtTplSync(){
 // Все пользовательские значения экранируются esc() — в печатное окно уходит чистый HTML.
 function ctTplDocHtml(){
   const t=ctTplGet();
+  const ex=ctTplExec();
   const num=esc(t.num);
   const amount=Number(t.amount)||0;
   const wd=parseInt(t.workDays,10)||45;
@@ -8966,7 +8989,7 @@ function ctTplDocHtml(){
     '<h1>Договор подряда № '+num+'</h1>'+
     '<div class="dateline"><span>'+esc(t.city||"г. Москва")+'</span><span>'+dateRuWords(t.date)+'</span></div>'+
 
-    '<p>'+CT_EXEC_PREAMBLE+', именуемый в дальнейшем <b>«Исполнитель»</b>, с одной стороны, и '+client+', именуемый (-ая) в дальнейшем <b>«Заказчик»</b>, с другой стороны, далее именуемые «Стороны», заключили настоящий Договор о следующем:</p>'+
+    '<p>'+ex.preamble+', именуемый в дальнейшем <b>«Исполнитель»</b>, с одной стороны, и '+client+', именуемый (-ая) в дальнейшем <b>«Заказчик»</b>, с другой стороны, далее именуемые «Стороны», заключили настоящий Договор о следующем:</p>'+
 
     '<div class="sec">1. Предмет Договора</div>'+
     '<p><b>1.1.</b> По настоящему Договору Заказчик поручает, а Исполнитель обязуется выполнить работы по изготовлению '+subject+':</p>'+
@@ -9076,7 +9099,7 @@ function ctTplDocHtml(){
 
     '<div class="sec">12. Адреса, банковские реквизиты и подписи Сторон</div>'+
     '<table class="req"><tr><td class="rh">Исполнитель</td><td class="rh">Заказчик</td></tr>'+
-    '<tr><td>'+CT_EXEC_REQ+'</td><td>'+clientReq+'</td></tr>'+
+    '<tr><td>'+ex.req+'</td><td>'+clientReq+'</td></tr>'+
     '<tr><td style="height:60px">Исполнитель _________________</td><td>Заказчик _________________</td></tr></table>'+
 
     // Приложение № 2 — График платежей
@@ -9094,7 +9117,7 @@ function ctTplDocHtml(){
     '<div class="app">'+appHead(4)+
     '<div class="sec">Акт приема-передачи выполненных работ<br>по Договору № '+num+'</div>'+
     '<p>Настоящий Акт составлен сегодня, «____» ____________________ 20___ г.</p>'+
-    '<p>'+CT_EXEC_PREAMBLE+', именуемый «Исполнитель», и '+client+', именуемый (-ая) «Заказчик».</p>'+
+    '<p>'+ex.preamble+', именуемый «Исполнитель», и '+client+', именуемый (-ая) «Заказчик».</p>'+
     '<p>Работы по изготовлению '+subject+' выполнены в полном объеме и в срок. Стороны никаких материальных и финансовых претензий друг к другу не имеют.</p>'+
     '<p>Настоящий Акт составлен в 2-х экземплярах, имеющих равную юридическую силу. Один экземпляр находится у Заказчика, второй экземпляр — у Исполнителя.</p>'+
     sig+'</div>'+
@@ -10722,6 +10745,7 @@ function bind(){
     else if(a==="ct-back"){el.onclick=()=>{contractView=null;render();};}
     // ─── Шаблон договора (подвкладка) ───
     else if(a==="ct-subtab"){el.onclick=()=>{ctSubTab=el.dataset.st;render();};}
+    else if(a==="ct-tpl-exec"){el.onclick=()=>{ctTplGet().execKey=el.dataset.k;ctTplPersist();render();};}
     else if(a==="ct-tpl-pay-add"){el.onclick=()=>{ctTplGet().payments.push({amount:0,note:""});ctTplPersist();render();};}
     else if(a==="ct-tpl-pay-del"){el.onclick=()=>{ctTplGet().payments.splice(parseInt(el.dataset.i,10),1);ctTplPersist();render();};}
     else if(a==="ct-tpl-print"){el.onclick=()=>ctTplOpenPrint();}
