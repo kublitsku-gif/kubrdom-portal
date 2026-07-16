@@ -3014,19 +3014,24 @@ function tMyDay(){
   // ЛЕНТА: что записано за день
   html+='<div style="font-size:10px;font-weight:700;letter-spacing:0.8px;color:#9aabbf;margin:12px 2px 7px">ЗАПИСАНО ЗА ДЕНЬ</div>';
   if(!feed.length){
-    html+='<div style="background:#fff;border:1px dashed #d0dae8;border-radius:12px;padding:16px;text-align:center;font-size:12px;color:#9aabbf">Записей пока нет. Наберите часы в табеле ниже и сохраните день одной кнопкой.</div>';
+    html+='<div style="background:#fff;border:1px dashed #d0dae8;border-radius:12px;padding:16px;text-align:center;font-size:12px;color:#9aabbf">Записей пока нет. Наберите часы в табеле ниже и сохраните день одной кнопкой.<br>Тап по названию работы — фото и отметка «Готово».</div>';
   } else {
+    html+='<div style="font-size:10px;color:#b6c2cd;margin:-2px 2px 7px">− ＋ поправить часы · 📷 фото к работе · тап по названию — карточка работы</div>';
     feed.forEach(function(f){
       html+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:9px 11px;margin-bottom:6px">';
-      html+='<div style="display:flex;align-items:center;gap:7px"><span style="width:8px;height:8px;border-radius:50%;background:'+f.s.c+';flex-shrink:0"></span><div style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.w.n)+'</div>'+(f.ph?'<span style="font-size:11px;color:#3498db;font-weight:700;flex-shrink:0">📷 '+f.ph+'</span>':'')+'</div>';
+      html+='<div style="display:flex;align-items:center;gap:7px"><span style="width:8px;height:8px;border-radius:50%;background:'+f.s.c+';flex-shrink:0"></span><div data-a="work-sheet-open" data-oid="'+obj.id+'" data-sid="'+f.s.id+'" data-wid="'+f.w.id+'" style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer">'+esc(f.w.n)+'</div>'+
+        '<label data-a="myday-photo-label" data-oid="'+obj.id+'" data-sid="'+f.s.id+'" data-wid="'+f.w.id+'" style="display:inline-flex;align-items:center;gap:4px;padding:6px 10px;background:'+(f.ph?"#3498db18":"#3498db")+';border:1px solid #3498db55;border-radius:9px;cursor:pointer;font-size:11.5px;color:'+(f.ph?"#3498db":"#fff")+';font-weight:700;flex-shrink:0">📷 '+(f.ph||"+")+'<input id="md-photo-inp-'+f.w.id+'" type="file" accept="image/*" multiple style="display:none"></label></div>';
       f.logs.forEach(function(l){
         const u=users.find(function(x){return x.id===l.userId;});
         const canDel=isAdmFin||(currentUser&&l.userId===currentUser.id);
-        html+='<div style="display:flex;align-items:center;gap:7px;margin-top:6px;padding:6px 8px;background:#f8fafc;border-radius:8px">'+
+        const ids='data-oid="'+obj.id+'" data-sid="'+f.s.id+'" data-wid="'+f.w.id+'" data-lid="'+l.id+'"';
+        html+='<div style="display:flex;align-items:center;gap:6px;margin-top:6px;padding:6px 8px;background:#f8fafc;border-radius:8px">'+
           '<span style="font-size:14px">'+(u?u.av:"👤")+'</span>'+
           '<div style="flex:1;min-width:0;font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(u?u.name:"—")+'</div>'+
-          '<span style="font-size:12.5px;font-weight:800;color:#16a085;flex-shrink:0">⏱ '+_mdH(l.hours||0)+' ч</span>'+
-          (canDel?'<button data-a="myday-del-log" data-oid="'+obj.id+'" data-sid="'+f.s.id+'" data-wid="'+f.w.id+'" data-lid="'+l.id+'" style="width:26px;height:26px;background:transparent;border:1px solid #e74c3c33;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>':'')+
+          (canDel?'<button data-a="myday-log-dec" '+ids+' style="width:32px;height:32px;border-radius:8px;border:none;background:#eef3f8;cursor:pointer;font-size:16px;font-weight:700;color:#5a7a9a;flex-shrink:0">−</button>':'')+
+          '<span style="font-size:12.5px;font-weight:800;color:#16a085;flex-shrink:0;min-width:46px;text-align:center">⏱ '+_mdH(l.hours||0)+' ч</span>'+
+          (canDel?'<button data-a="myday-log-inc" '+ids+' style="width:32px;height:32px;border-radius:8px;border:none;background:#e7f4ef;cursor:pointer;font-size:16px;font-weight:700;color:#16a085;flex-shrink:0">＋</button>':'')+
+          (canDel?'<button data-a="myday-del-log" '+ids+' style="width:26px;height:26px;background:transparent;border:1px solid #e74c3c33;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>':'')+
         '</div>';
       });
       html+='</div>';
@@ -3048,7 +3053,7 @@ function tMyDay(){
     const h=myDayHours[w.id]||0;
     const done=!!w.done;
     return '<div style="display:flex;align-items:center;gap:7px;background:'+(h>0?"#f0faf6":"#fff")+';border:1px solid '+(h>0?"#16a08555":"#dde6f0")+';border-radius:12px;padding:7px 9px;margin-bottom:6px'+(done&&!h?';opacity:0.6':'')+'">'+
-      '<div style="flex:1;min-width:0;font-size:12.5px;font-weight:600;color:#1a2a3a;line-height:1.25">'+esc(w.n)+(done?' <span style="color:#27ae60">✓</span>':'')+'</div>'+
+      '<div data-a="work-sheet-open" data-oid="'+obj.id+'" data-sid="'+s.id+'" data-wid="'+w.id+'" style="flex:1;min-width:0;font-size:12.5px;font-weight:600;color:#1a2a3a;line-height:1.25;cursor:pointer">'+esc(w.n)+(done?' <span style="color:#27ae60">✓</span>':'')+'</div>'+
       '<button data-a="myday-dec" data-wid="'+w.id+'" style="width:42px;height:42px;border-radius:11px;border:none;background:#eef3f8;cursor:pointer;font-size:19px;font-weight:700;color:'+(h>0?"#16a085":"#b8c6d4")+';flex-shrink:0">−</button>'+
       '<b style="min-width:34px;text-align:center;font-size:15px;color:'+(h>0?"#16a085":"#c0d0e0")+';flex-shrink:0">'+_mdH(h)+'</b>'+
       '<button data-a="myday-inc" data-wid="'+w.id+'" style="width:42px;height:42px;border-radius:11px;border:none;background:#e7f4ef;cursor:pointer;font-size:19px;font-weight:700;color:#16a085;flex-shrink:0">＋</button>'+
@@ -13316,6 +13321,74 @@ function bind(){
       rerenderTab();
     };}
     else if(a==="myday-clear"){el.onclick=()=>{myDayHours={};rerenderTab();};}
+    else if(a==="myday-log-inc"||a==="myday-log-dec"){el.onclick=()=>{
+      const oid=el.dataset.oid,sid=el.dataset.sid,wid=el.dataset.wid,lid=el.dataset.lid;
+      const delta=a==="myday-log-inc"?0.5:-0.5;
+      const cu=currentUser;
+      const isAdmFin=cu&&(cu.roles.includes("admin")||cu.roles.includes("financier"));
+      const o0=objects.find(function(x){return x.id===oid;});
+      const st0=o0&&o0.stages.find(function(x){return x.id===sid;});
+      const w0=st0&&st0.works.find(function(x){return x.id===wid;});
+      const log0=w0&&(w0.timeLogs||[]).find(function(x){return x.id===lid;});
+      if(!log0)return;
+      if(!isAdmFin&&(!cu||log0.userId!==cu.id))return; // править можно свою запись; админ/фин — любую
+      objects=objects.map(function(o){
+        if(o.id!==oid)return o;
+        return Object.assign({},o,{stages:o.stages.map(function(st){
+          if(st.id!==sid)return st;
+          return Object.assign({},st,{works:st.works.map(function(w){
+            if(w.id!==wid)return w;
+            return Object.assign({},w,{timeLogs:(w.timeLogs||[]).map(function(l){
+              if(l.id!==lid)return l;
+              return Object.assign({},l,{hours:Math.max(0.5,Math.min(24,(l.hours||0)+delta))});
+            })});
+          })});
+        })});
+      });
+      scheduleSave();rerenderTab();
+    };}
+    else if(a==="myday-photo-label"){
+      const wid=el.dataset.wid;
+      const inp=document.getElementById("md-photo-inp-"+wid);
+      if(inp&&!inp._bound){
+        inp._bound=true;
+        const oid=el.dataset.oid,sid=el.dataset.sid;
+        inp.addEventListener("change",async function(){
+          const files=Array.from(inp.files||[]);
+          if(!files.length)return;
+          const newPhotos=[];const tgFiles=[];
+          for(const f of files){
+            try{
+              let c=f;try{c=await compressImage(f,1024*1024);}catch(e){}
+              const url=await uploadFileR2(c,true);
+              tgFiles.push(c);
+              newPhotos.push({id:gid(),data:url,date:new Date().toISOString().slice(0,16).replace("T"," "),uploader:(users.find(u=>u.id===(currentUser?currentUser.id:""))||{}).name||"—",uploaderId:currentUser?currentUser.id:"",size:f.size,name:f.name});
+            }catch(err){alert("Ошибка загрузки фото: "+((err&&err.message)||err));}
+          }
+          inp._bound=false;
+          mirrorPhotosToTelegram(oid,tgFiles);
+          if(!newPhotos.length){render();return;}
+          objects=objects.map(function(o){
+            if(o.id!==oid)return o;
+            return Object.assign({},o,{stages:o.stages.map(function(st){
+              if(st.id!==sid)return st;
+              return Object.assign({},st,{works:st.works.map(function(w){
+                if(w.id!==wid)return w;
+                return Object.assign({},w,{photos:(w.photos||[]).concat(newPhotos)});
+              })});
+            })});
+          });
+          try{
+            const toast=document.createElement("div");
+            toast.textContent="📷 Загружено "+newPhotos.length+" фото";
+            toast.style.cssText="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#3498db;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:600;z-index:9999";
+            document.body.appendChild(toast);
+            setTimeout(function(){try{document.body.removeChild(toast);}catch(e){}},2000);
+          }catch(e){}
+          fl();
+        });
+      }
+    }
     else if(a==="myday-save"){
       const handler=function(ev){
         if(ev){ev.stopPropagation();ev.preventDefault();}
@@ -13335,7 +13408,13 @@ function bind(){
               const e=list.find(function(x){return x.wid===w.id;});
               if(!e)return w;
               savedH+=e.h;savedN++;
-              return Object.assign({},w,{timeLogs:(w.timeLogs||[]).concat([{id:gid(),userId:uid,date:date,hours:e.h}])});
+              // Повторное сохранение табеля прибавляет часы к записи этого человека за этот день (без дублей)
+              const logs0=w.timeLogs||[];
+              const ex=logs0.find(function(l){return l.userId===uid&&l.date===date;});
+              const newLogs=ex
+                ?logs0.map(function(l){return l===ex?Object.assign({},l,{hours:(l.hours||0)+e.h}):l;})
+                :logs0.concat([{id:gid(),userId:uid,date:date,hours:e.h}]);
+              return Object.assign({},w,{timeLogs:newLogs});
             })});
           })});
         });
