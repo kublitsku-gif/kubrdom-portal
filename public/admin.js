@@ -6237,6 +6237,8 @@ function tFinanceExperiment(){
     '<b>✏️ Эксперимент.</b> Два разных отчёта. <b>P&L</b> — прибыль: выручка по договору минус себестоимость (материалы + работа); показывает, заработаем ли. '+
     '<b>БДДС</b> — живые деньги: сколько поступило и оплачено сейчас. Можно иметь прибыль на бумаге и при этом кассовый разрыв.'+
   '</div>';
+  // 🧾 Чеки рабочих — подотчёт (долг за материалы, купленные рабочими за свои деньги)
+  html+=adminReceiptsBlock();
   // P&L карта
   html+='<div style="background:linear-gradient(135deg,#1e7e5a,#13603e);border-radius:16px;padding:16px;color:#fff;margin-bottom:12px">'+
     '<div style="font-size:11px;font-weight:700;letter-spacing:0.5px;color:#bfe9d4;margin-bottom:12px">📈 P&L · ПРИБЫЛЬ ПО '+(finSelectedContractIds.length?('ВЫБРАННЫМ ('+finSelectedContractIds.length+')'):'ВСЕМ ДОГОВОРАМ')+'</div>'+
@@ -6646,9 +6648,6 @@ function tFinanceList(){
   html+='</div>';
   html+='</div>';
   } // end if(showDashboard)
-
-  // 🧾 Чеки рабочих — подотчёт (видит админ/финансист)
-  if(showDashboard)html+=adminReceiptsBlock();
 
   // Per-contract cards (each signed contract shown separately, grouped by object)
   objects.forEach(function(obj){
