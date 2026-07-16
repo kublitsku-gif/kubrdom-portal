@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-06-12.98";
+const APP_BUILD = "2026-07-16.99";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -127,6 +127,43 @@ function readCache(){
 }
 function writeCache(items){
   try { localStorage.setItem(CACHE_KEY, JSON.stringify(items)); } catch {}
+}
+
+// ─── ДОЖИМ СОХРАНЕНИЯ: маркер несохранённых правок ─────────────────────────
+// Дебаунс scheduleSave + автосейв не успевают, если вкладку перезагрузили/закрыли сразу
+// после правки: отложенный/in-flight POST обрывается, сервер остаётся со старым снимком,
+// а на следующей загрузке «тихая подмена» сервером воскрешает удалённое (реальный случай:
+// удаление записи времени + мгновенный reload). Дожим двухуровневый:
+//   • при уходе со страницы снимок синхронно пишется в кэш + ставится этот маркер, а если
+//     снимок влезает в квоту — уходит keepalive-запросом (см. flushSaveOnLeave);
+//   • на следующем старте boot видит маркер и, если облако с тех пор никто другой не менял,
+//     дожимает кэш в облако вместо тихого принятия устаревшего серверного снимка.
+// base = максимальный updated_at сервера, который вкладка видела на момент правок: по нему
+// boot отличает «облако не двигалось — можно дожимать» от «правки с другого устройства —
+// спросить» (иначе дожим стал бы новым способом затереть облако стейл-вкладкой).
+// Маркер ставится при КАЖДОЙ записи неподтверждённого снимка в кэш (optimistic-запись
+// apiSave, блокировки стража, уход со страницы) и снимается, только когда сервер подтвердил
+// сохранение или его содержимое совпало с локальным.
+const PENDING_SAVE_KEY = "kubr_pending_save";
+function _setPendingSave(){
+  try{
+    if (localStorage.getItem(PENDING_SAVE_KEY)) return;   // база уже зафиксирована первой правкой
+    localStorage.setItem(PENDING_SAVE_KEY, JSON.stringify({ base: _lastSeen || 0, ts: Date.now() }));
+  }catch(e){}
+}
+function _readPendingSave(){
+  try{
+    const p = JSON.parse(localStorage.getItem(PENDING_SAVE_KEY) || "null");
+    return (p && typeof p.base === "number") ? p : null;
+  }catch(e){ return null; }
+}
+function _clearPendingSave(){ try{ localStorage.removeItem(PENDING_SAVE_KEY); }catch(e){} }
+
+// Каноническая подпись СОДЕРЖИМОГО снимка (без updated_at и порядка строк): отличаем
+// «в облаке то же самое» от настоящего расхождения данных.
+function _stateSig(items){
+  return JSON.stringify((items || []).map(function(it){ return [it.work_id, it.data]; })
+    .sort(function(a, b){ return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; }));
 }
 
 // ─── АВТОРИЗАЦИЯ: пароль-гейт ───────────────────────────────────────────────
@@ -408,7 +445,7 @@ function deletePlanFromTelegram(msgId){
 
 let _lastSavedJson = null;                 // снимок последнего успешного сохранения
 let _saving = false;                       // защита от параллельных сохранений
-async function apiSave(){
+async function apiSave(opts){
   if (_saving) return { success: true, busy: true };
   // Сохраняет только залогиненный СОТРУДНИК. На экране входа (нет currentUser) или в кабинете
   // клиента (read-only) — ничего не шлём и не показываем баннер сверки.
@@ -423,6 +460,7 @@ async function apiSave(){
   //     может затереть его старьём (так 15–28.06.2026 пропали договора и объекты).
   if (!_serverVerified && !window._forceSaveOnce) {
     writeCache(items);   // правки целы локально; уйдут сами после первой сверки с сервером
+    _setPendingSave();
     showSaveError("Ждём ответа сервера для сверки данных. Правки сохранены на устройстве и уйдут в облако автоматически после проверки связи.");
     return { success: false, blocked: "unverified" };
   }
@@ -454,6 +492,7 @@ async function apiSave(){
     });
     if (mass || shrunk.length > 0 || seedy.length > 0) {
       writeCache(items);   // локально ничего не теряем
+      _setPendingSave();
       const what = [].concat(emptied, shrunk, seedy).filter(function(v, i, a){ return a.indexOf(v) === i; });
       showSaveError("Защита данных: разделы «" + what.join(", ") + "» локально беднее или старее, чем в облаке. Похоже, вкладка устарела. Сохранение остановлено, чтобы не затереть данные.", 0, true);
       return { success: false, blocked: what.join(",") };
@@ -463,12 +502,19 @@ async function apiSave(){
   window._forceSaveOnce = false;   // форс-сохранение одноразовое
   _saving = true;
   writeCache(items);                       // optimistic: локально всегда свежо
+  _setPendingSave();                       // …но сервером ещё не подтверждено — маркер до успеха
   try {
-    const r = await fetchT(API_BASE + "/api/state/" + encodeURIComponent(STORAGE_KEY), {
+    const url  = API_BASE + "/api/state/" + encodeURIComponent(STORAGE_KEY);
+    const init = {
       method:  "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
       body:    JSON.stringify({ items: items }),
-    }, 30000);   // 30с: на медленном/троттленом канале POST снимка (~1 МБ) может идти долго
+    };
+    // keepalive-режим (дожим при уходе со страницы): такой запрос браузер доотправляет даже
+    // после закрытия вкладки. Без fetchT: abort-таймер после смерти страницы бессмыслен.
+    const r = (opts && opts.keepalive)
+      ? await fetch(url, Object.assign({ keepalive: true }, init))
+      : await fetchT(url, init, 30000);   // 30с: на медленном/троттленом канале POST снимка (~1 МБ) может идти долго
     if (r.status === 401) { clearToken(); location.reload(); return { success: false, error: "unauthorized" }; }
     if (!r.ok) {
       let detail = "HTTP " + r.status;
@@ -478,6 +524,7 @@ async function apiSave(){
     const j = await r.json();
     if (j && j.updated_at) _lastSeen = j.updated_at;   // свой save — не считаем чужой правкой
     _lastSavedJson = snap;                             // запомнили, что отправили
+    _clearPendingSave();                               // облако подтвердило снимок — дожим не нужен
     updateServerCounts(items);                         // сервер теперь равен локальному — обновляем эталон стража
     clearSaveError();                                  // успех — убираем баннер ошибки, если был
     return j;
@@ -535,6 +582,36 @@ function scheduleSave(){
   scheduleSave._t = setTimeout(apiSave, 800);
 }
 
+// ─── ДОЖИМ ПРИ УХОДЕ СО СТРАНИЦЫ ────────────────────────────────────────────
+// pagehide (reload/закрытие) и visibilitychange→hidden (свернули/переключили вкладку):
+// (1) СИНХРОННО пишем снимок в localStorage-кэш и ставим маркер дожима — правки переживают
+//     закрытие всегда, независимо от сети; boot следующей загрузки дошлёт их в облако.
+// (2) Если снимок влезает в браузерную квоту keepalive-запросов (~64 КиБ на все разом) —
+//     шлём fetch с keepalive:true: он доотправляется даже после смерти страницы. Снимок
+//     крупнее квоты браузер отклонил бы на месте, поэтому его не шлём вовсе — работает (1).
+// sendBeacon НЕ используем: он не умеет кастомные заголовки (X-Admin-Token), пришлось бы
+// менять авторизацию Worker'а; keepalive-fetch — тот же beacon, но с заголовками.
+const FLUSH_KEEPALIVE_MAX = 60 * 1024;   // байт; с запасом ниже квоты 64 КиБ
+function flushSaveOnLeave(){
+  try{
+    if (!_hydrated) return;
+    if (!currentUser || !getToken()) return;      // экран входа / кабинет клиента: нечего дожимать
+    const items = serializeState();
+    const snap  = JSON.stringify(items);
+    if (snap === _lastSavedJson) return;          // изменений нет — не дублируем штатный автосейв
+    clearTimeout(scheduleSave._t);                // дебаунс уже не успеет сработать
+    writeCache(items);                            // (1) синхронная страховка
+    _setPendingSave();
+    if (_saving) return;                          // штатный POST уже в полёте; умрёт со страницей — дожмёт boot
+    if (flushSaveOnLeave._sent === snap) return;  // pagehide сразу после visibilitychange — не шлём дважды
+    if (new Blob([snap]).size > FLUSH_KEEPALIVE_MAX) return;   // не влезет в keepalive — остаётся (1)
+    flushSaveOnLeave._sent = snap;
+    apiSave({ keepalive: true }).catch(function(){});   // стражи и учёт _lastSavedJson — внутри apiSave
+  }catch(e){}
+}
+document.addEventListener("visibilitychange", function(){ if (document.hidden) flushSaveOnLeave(); });
+window.addEventListener("pagehide", flushSaveOnLeave);
+
 // ─── LIVE-ОБНОВЛЕНИЕ ────────────────────────────────────────────────────────
 // Опрашиваем сервер раз в POLL_MS. Если updated_at вырос (правка с другого
 // устройства) — показываем баннер. Не авто-применяем: applyState заменяет весь
@@ -576,7 +653,9 @@ function showUpdateBanner(items, version){
     + '<button id="live-apply" style="border:0;border-radius:8px;padding:6px 12px;background:#4a90d9;color:#fff;font-weight:600;cursor:pointer">Обновить</button>'
     + '<button id="live-dismiss" style="border:0;background:transparent;color:#9fb3c8;cursor:pointer;font-size:18px;line-height:1">×</button>';
   document.getElementById("live-apply").onclick = function(){
-    applyState(items); _lastSeen = version; b.remove(); _pollPaused = false; render();
+    applyState(items); _lastSeen = version;
+    writeCache(items); _clearPendingSave();   // кэш = принятый сервер; локальный дожим больше не актуален
+    b.remove(); _pollPaused = false; render();
   };
   document.getElementById("live-dismiss").onclick = function(){
     _lastSeen = version; b.remove(); _pollPaused = false;   // версию подтвердили — больше не напоминаем
@@ -881,7 +960,9 @@ let roles=[
 // === РАЗРЕШЕНИЯ: какие вкладки открывает каждая роль ===
 const TAB_DEFS=[
   {k:"assign",    n:"🏗️ Объекты"},
-  {k:"myday",     n:"📅 Мой день"},
+  {k:"myday",     n:"📅 Табель дня"},
+  {k:"sheetlist", n:"📋 Шторка"},
+  {k:"wizard",    n:"🪄 Мастер"},
   {k:"analysis",  n:"📊 Анализ стройки"},
   {k:"supply",    n:"📦 Снабжение"},
   {k:"finance",   n:"💰 Финансы"},
@@ -898,9 +979,9 @@ const TAB_DEFS=[
 // Админ НЕ входит сюда — он всегда видит все вкладки (зафиксировано).
 // Значения по умолчанию повторяют прежнюю жёстко зашитую логику доступа.
 let rolePermissions={
-  brigadier:   ["assign","myday","analysis","finance"],
-  worker:      ["assign","myday","analysis","finance"],
-  prod_head:   ["contracts","myday","analysis"],
+  brigadier:   ["assign","myday","sheetlist","wizard","analysis","finance"],
+  worker:      ["assign","myday","sheetlist","wizard","analysis","finance"],
+  prod_head:   ["contracts","myday","sheetlist","wizard","analysis"],
   supply:      ["supply","finance"],
   contract_mgr:[],
   client_mgr:  ["assign","contracts","crm","clients"],
@@ -3054,6 +3135,7 @@ function tMyDay(){
     const done=!!w.done;
     return '<div style="display:flex;align-items:center;gap:7px;background:'+(h>0?"#f0faf6":"#fff")+';border:1px solid '+(h>0?"#16a08555":"#dde6f0")+';border-radius:12px;padding:7px 9px;margin-bottom:6px'+(done&&!h?';opacity:0.6':'')+'">'+
       '<div data-a="work-sheet-open" data-oid="'+obj.id+'" data-sid="'+s.id+'" data-wid="'+w.id+'" style="flex:1;min-width:0;font-size:12.5px;font-weight:600;color:#1a2a3a;line-height:1.25;cursor:pointer">'+esc(w.n)+(done?' <span style="color:#27ae60">✓</span>':'')+'</div>'+
+      '<label data-a="myday-photo-label" data-inp="mdt-photo-inp-'+w.id+'" data-oid="'+obj.id+'" data-sid="'+s.id+'" data-wid="'+w.id+'" style="width:40px;height:42px;display:flex;align-items:center;justify-content:center;border:1.5px dashed #b9cbdb;border-radius:11px;background:#f7fafc;cursor:pointer;font-size:15px;flex-shrink:0">📷<input id="mdt-photo-inp-'+w.id+'" type="file" accept="image/*" multiple style="display:none"></label>'+
       '<button data-a="myday-dec" data-wid="'+w.id+'" style="width:42px;height:42px;border-radius:11px;border:none;background:#eef3f8;cursor:pointer;font-size:19px;font-weight:700;color:'+(h>0?"#16a085":"#b8c6d4")+';flex-shrink:0">−</button>'+
       '<b style="min-width:34px;text-align:center;font-size:15px;color:'+(h>0?"#16a085":"#c0d0e0")+';flex-shrink:0">'+_mdH(h)+'</b>'+
       '<button data-a="myday-inc" data-wid="'+w.id+'" style="width:42px;height:42px;border-radius:11px;border:none;background:#e7f4ef;cursor:pointer;font-size:19px;font-weight:700;color:#16a085;flex-shrink:0">＋</button>'+
@@ -3093,6 +3175,71 @@ function tMyDay(){
   return html;
 }
 
+// ── ВКЛАДКА «ШТОРКА» (производство): чистый список работ, тап по строке → шторка ──
+function tSheetList(){
+  const vis=tlVisibleObjects();
+  if(!vis.length)return '<div style="text-align:center;padding:30px 16px;color:#9aabbf;font-size:13px;border:1px dashed #d0dae8;border-radius:12px;margin-top:8px">К вам пока не привязан ни один объект.</div>';
+  const obj=vis.find(function(o){return o.id===myDayObjId;})||vis[0];
+  let html='<div>';
+  html+='<div style="margin-bottom:10px"><div style="font-size:15px;font-weight:800;color:#0d1b2e">📋 Работы объекта</div><div style="font-size:11.5px;color:#9aabbf;margin-top:2px">Тап по работе — записать часы, добавить фото, отметить «Готово».</div></div>';
+  if(vis.length>1){
+    html+='<div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">';
+    vis.forEach(function(o){
+      const on=o.id===obj.id;
+      html+='<button data-a="myday-obj" data-oid="'+o.id+'" style="padding:8px 12px;border-radius:10px;cursor:pointer;font-size:12px;font-weight:700;border:1.5px solid '+(on?"#16a085":"#dde6f0")+';background:'+(on?"#16a085":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+'">'+o.icon+' '+esc(o.name)+'</button>';
+    });
+    html+='</div>';
+  }
+  obj.stages.forEach(function(s){
+    const wsum=s.works.reduce(function(a,w){return a+(w.timeLogs||[]).reduce(function(b,l){return b+(l.hours||0);},0);},0);
+    html+='<div style="display:flex;align-items:center;gap:7px;margin:13px 2px 7px"><span style="width:8px;height:8px;border-radius:50%;background:'+s.c+';flex-shrink:0"></span><span style="font-size:10px;font-weight:700;letter-spacing:0.8px;color:'+s.c+'">'+esc((s.n||"").toUpperCase())+'</span>'+(wsum?'<span style="font-size:10px;color:#b6c2cd">⏱ '+_mdH(wsum)+' ч</span>':'')+'</div>';
+    s.works.forEach(function(w){
+      const logs=w.timeLogs||[];
+      const th=logs.reduce(function(a,l){return a+(l.hours||0);},0);
+      const ph=(w.photos||[]).length;
+      html+='<button data-a="work-sheet-open" data-oid="'+obj.id+'" data-sid="'+s.id+'" data-wid="'+w.id+'" style="display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:'+(w.done?"#f4fbf7":"#fff")+';border:1px solid '+(w.done?"#27ae6044":"#dde6f0")+';border-radius:14px;padding:10px 11px;margin-bottom:6px;cursor:pointer">'+
+        '<span style="width:34px;height:34px;border-radius:10px;background:'+(w.done?"#27ae60":"#eef3f8")+';display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;color:#fff">'+(w.done?"✓":"🔨")+'</span>'+
+        '<span style="flex:1;min-width:0"><span style="display:block;font-size:13.5px;font-weight:600;color:#1a2a3a;line-height:1.3">'+esc(w.n)+'</span>'+
+        '<span style="display:block;font-size:11px;color:#9aabbf;margin-top:1px">'+(th?'⏱ '+_mdH(th)+' ч ('+logs.length+')':'⏱ —')+' · 📷 '+(ph||'—')+'</span></span>'+
+        '<span style="color:#c0d0e0;font-size:17px;flex-shrink:0">›</span></button>';
+    });
+  });
+  html+='</div>';
+  return html;
+}
+
+// ── ВКЛАДКА «МАСТЕР» (производство): большая «＋ Запись» + лента за сегодня ──
+function tWizardTab(){
+  const vis=tlVisibleObjects();
+  if(!vis.length)return '<div style="text-align:center;padding:30px 16px;color:#9aabbf;font-size:13px;border:1px dashed #d0dae8;border-radius:12px;margin-top:8px">К вам пока не привязан ни один объект.</div>';
+  const foid=vis.length===1?vis[0].id:"";
+  const today=todayISO();
+  let html='<div>';
+  html+='<div style="margin-bottom:12px"><div style="font-size:15px;font-weight:800;color:#0d1b2e">🪄 Мастер записи</div><div style="font-size:11.5px;color:#9aabbf;margin-top:2px">Три вопроса: что делали → сколько часов → фото. Часы сохраняются сразу.</div></div>';
+  html+='<button data-a="tl-wiz-open" data-oid="'+foid+'" style="width:100%;background:#16a085;border:none;border-radius:18px;padding:22px;cursor:pointer;color:#fff;font-size:19px;font-weight:800;box-shadow:0 10px 24px rgba(22,160,133,0.35)">＋ Запись</button>';
+  const feed=[];let sumH=0,sumP=0;
+  vis.forEach(function(o){o.stages.forEach(function(s){s.works.forEach(function(w){
+    const logs=(w.timeLogs||[]).filter(function(l){return l.date===today;});
+    const ph=(w.photos||[]).filter(function(p){return (p.date||"").slice(0,10)===today;}).length;
+    logs.forEach(function(l){sumH+=l.hours||0;});
+    sumP+=ph;
+    if(logs.length||ph)feed.push({w:w,logs:logs,ph:ph});
+  });});});
+  html+='<div style="font-size:10px;font-weight:700;letter-spacing:0.8px;color:#9aabbf;margin:16px 2px 7px">СЕГОДНЯ · ⏱ '+_mdH(sumH)+' Ч · 📷 '+sumP+'</div>';
+  if(!feed.length){
+    html+='<div style="background:#fff;border:1px dashed #d0dae8;border-radius:12px;padding:14px;text-align:center;font-size:12px;color:#9aabbf">Записей за сегодня нет — жмите «＋ Запись».</div>';
+  } else {
+    feed.forEach(function(f){
+      html+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:8px 11px;margin-bottom:6px">'+
+        '<div style="font-size:12.5px;font-weight:700;color:#1a2a3a">'+esc(f.w.n)+'</div>'+
+        '<div style="font-size:11px;color:#7a9aaa;margin-top:2px">'+f.logs.map(function(l){const u=users.find(function(x){return x.id===l.userId;});return (u?u.av+' '+esc(u.name):"👤")+' · ⏱ '+_mdH(l.hours||0)+' ч';}).join(" · ")+(f.ph?' · 📷 '+f.ph:'')+'</div>'+
+      '</div>';
+    });
+  }
+  html+='</div>';
+  return html;
+}
+
 // Частичная перерисовка ТОЛЬКО контейнера текущей вкладки (не весь page()).
 // Нужна для частых микро-действий вроде отметки «куплено» в снабжении: полный
 // render() пересобирает огромный DOM всей страницы (шапка+вкладки+список) → на
@@ -3109,7 +3256,7 @@ function rerenderTab(){
 }
 // Один источник HTML активной вкладки — используется и в page(), и в rerenderTab().
 function tabContentHtml(){
-  return tab==="assign"?tObjects():tab==="myday"?tMyDay():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tab==="kp"?tKP():tab==="voiceai"?tVoiceAi():tCRM();
+  return tab==="assign"?tObjects():tab==="myday"?tMyDay():tab==="sheetlist"?tSheetList():tab==="wizard"?tWizardTab():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tab==="kp"?tKP():tab==="voiceai"?tVoiceAi():tCRM();
 }
 
 function render(){
@@ -3316,11 +3463,15 @@ function page(){
     TABS=ALL_TABS.filter(([k])=>tabSet.has(k));
     if(!TABS.length) TABS=[["assign","🏗️ Объекты"]];
   }
-  // «Мой день» гарантирован производственным ролям, даже если в облачном снимке
-  // сохранены старые rolePermissions без ключа "myday".
-  if(!isAdmin&&currentUser&&currentUser.roles.some(function(r){return r==="brigadier"||r==="worker"||r==="prod_head";})&&!TABS.some(function(t){return t[0]==="myday";})){
-    const _ai=TABS.findIndex(function(t){return t[0]==="assign";});
-    TABS.splice(_ai+1,0,["myday","📅 Мой день"]);
+  // «Табель дня» / «Шторка» / «Мастер» гарантированы производственным ролям,
+  // даже если в облачном снимке сохранены старые rolePermissions без этих ключей.
+  if(!isAdmin&&currentUser&&currentUser.roles.some(function(r){return r==="brigadier"||r==="worker"||r==="prod_head";})){
+    const PROD_TABS=[["myday","📅 Табель дня"],["sheetlist","📋 Шторка"],["wizard","🪄 Мастер"]];
+    let _ai=TABS.findIndex(function(t){return t[0]==="assign";});
+    PROD_TABS.forEach(function(pt){
+      if(!TABS.some(function(t){return t[0]===pt[0];})){TABS.splice(_ai+1,0,pt);}
+      _ai=TABS.findIndex(function(t){return t[0]===pt[0];});
+    });
   }
   // iOS-style нижний таб-бар — быстрый доступ к 4 главным разделам.
   // Пункты фильтруются по доступным вкладкам (TABS), чтобы не показать недоступный роли раздел.
@@ -13349,7 +13500,7 @@ function bind(){
     };}
     else if(a==="myday-photo-label"){
       const wid=el.dataset.wid;
-      const inp=document.getElementById("md-photo-inp-"+wid);
+      const inp=document.getElementById(el.dataset.inp||("md-photo-inp-"+wid));
       if(inp&&!inp._bound){
         inp._bound=true;
         const oid=el.dataset.oid,sid=el.dataset.sid;
@@ -13763,7 +13914,24 @@ function _startLoops(){
     apiLoad().then(function(items){
       if (!items) return;
       if (JSON.stringify(serializeState()) === _lastSavedJson){
-        applyState(items); _lastSeen = maxUpdatedAt(items); _lastSavedJson = JSON.stringify(serializeState()); render();
+        // Локально после старта ничего не меняли. Но прежде чем тихо принять сервер, смотрим
+        // маркер дожима: в кэше могут быть правки, не доехавшие до облака (перезагрузка сразу
+        // после правки обрывала отложенный сейв — «удалённая» запись воскресала).
+        const pend    = _readPendingSave();
+        const differs = !!pend && _stateSig(serializeState()) !== _stateSig(items);
+        if (pend && !differs) _clearPendingSave();   // всё уже в облаке (напр., keepalive-дожим долетел)
+        if (pend && differs && maxUpdatedAt(items) <= pend.base){
+          // Наши несохранённые правки новее, и облако с тех пор никто не менял —
+          // дожимаем их в облако вместо принятия его устаревшего снимка.
+          _lastSavedJson = null;                     // иначе apiSave решит «нечего сохранять»
+          apiSave().catch(function(){});
+        } else if (pend && differs){
+          // Расхождение, но облако менялось ПОСЛЕ наших правок (другое устройство) —
+          // не затираем молча ни одну из сторон: штатный баннер выбора.
+          showUpdateBanner(items, maxUpdatedAt(items));
+        } else {
+          applyState(items); _lastSeen = maxUpdatedAt(items); _lastSavedJson = JSON.stringify(serializeState()); render();
+        }
       } else {
         const v = maxUpdatedAt(items); if (v > _lastSeen) showUpdateBanner(items, v);
       }
@@ -13781,6 +13949,7 @@ function _startLoops(){
       _restoreUserFromToken(decoded);
       if (!currentUser){ clearToken(); _hydrated = true; render(); return; }  // юзер не восстановлен → экран входа
       _lastSavedJson = JSON.stringify(serializeState());
+      _clearPendingSave();   // кэша не было — состояние целиком с сервера, дожимать нечего
       _hydrated = true;
       render();
       _startLoops();
