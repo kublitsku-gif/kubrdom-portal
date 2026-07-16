@@ -881,6 +881,7 @@ let roles=[
 // === РАЗРЕШЕНИЯ: какие вкладки открывает каждая роль ===
 const TAB_DEFS=[
   {k:"assign",    n:"🏗️ Объекты"},
+  {k:"myday",     n:"📅 Мой день"},
   {k:"analysis",  n:"📊 Анализ стройки"},
   {k:"supply",    n:"📦 Снабжение"},
   {k:"finance",   n:"💰 Финансы"},
@@ -897,9 +898,9 @@ const TAB_DEFS=[
 // Админ НЕ входит сюда — он всегда видит все вкладки (зафиксировано).
 // Значения по умолчанию повторяют прежнюю жёстко зашитую логику доступа.
 let rolePermissions={
-  brigadier:   ["assign","analysis","finance"],
-  worker:      ["assign","analysis","finance"],
-  prod_head:   ["contracts","analysis"],
+  brigadier:   ["assign","myday","analysis","finance"],
+  worker:      ["assign","myday","analysis","finance"],
+  prod_head:   ["contracts","myday","analysis"],
   supply:      ["supply","finance"],
   contract_mgr:[],
   client_mgr:  ["assign","contracts","crm","clients"],
@@ -1057,6 +1058,11 @@ let objects=[
 
 let tab="assign";
 let analysisObjId=null; // выбранный объект во вкладке «Анализ стройки»
+// Вкладка «Мой день»: дата (""=сегодня), объект, «за кого», буфер степперов табеля {wid:часы}
+let myDayDate="";
+let myDayObjId=null;
+let myDayWho="";
+let myDayHours={};
 let currentUser=null; // null = show login page
 let loginMode=null;   // null = выбор Сотрудник/Клиент; "employee" = список профилей; "client" = заглушка
 let loginPinFor=null; // id сотрудника, у которого запрашиваем PIN при входе
@@ -2945,6 +2951,143 @@ function clientPortal(){
   return html;
 }
 
+// ── ВКЛАДКА «МОЙ ДЕНЬ» (производство): лента записей дня + табель дня со степперами ──
+function _mdH(h){return String(h).replace(".",",");}
+function _mdShiftISO(iso,days){
+  const d=new Date(iso+"T00:00:00");d.setDate(d.getDate()+days);
+  const p=function(n){return (n<10?"0":"")+n;};
+  return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());
+}
+function _mdDayLabel(iso){
+  const today=todayISO();
+  if(iso===today)return "Сегодня";
+  if(iso===_mdShiftISO(today,-1))return "Вчера";
+  try{return new Date(iso+"T00:00:00").toLocaleDateString("ru-RU",{weekday:"short",day:"numeric",month:"long"});}catch(e){return iso;}
+}
+function tMyDay(){
+  const vis=tlVisibleObjects();
+  if(!vis.length)return '<div style="text-align:center;padding:30px 16px;color:#9aabbf;font-size:13px;border:1px dashed #d0dae8;border-radius:12px;margin-top:8px">К вам пока не привязан ни один объект. «Мой день» появится, когда вас назначат на объект.</div>';
+  const isAdmin=currentUser&&currentUser.roles.includes("admin");
+  const today=todayISO();
+  const date=myDayDate||today;
+  const obj=vis.find(function(o){return o.id===myDayObjId;})||vis[0];
+  // «За кого»: админ/фин и бригадир/нач.пр. пишут за исполнителей объекта; мастер — только за себя
+  const isAdmFin=currentUser&&(currentUser.roles.includes("admin")||currentUser.roles.includes("financier"));
+  const isBrigHead=currentUser&&currentUser.roles.some(function(r){return r==="brigadier"||r==="prod_head";});
+  let whoList;
+  if(isAdmFin){whoList=tlEligibleUsers(obj);}
+  else if(isBrigHead){
+    const el=tlEligibleUsers(obj);
+    whoList=el.some(function(u){return u.id===currentUser.id;})?el:[currentUser].concat(el);
+  } else {whoList=currentUser?[currentUser]:[];}
+  if(!whoList.length&&currentUser)whoList=[currentUser];
+  const who=whoList.find(function(u){return u.id===myDayWho;})||whoList.find(function(u){return currentUser&&u.id===currentUser.id;})||whoList[0];
+  const draftTotal=Object.keys(myDayHours).reduce(function(a,k){return a+(myDayHours[k]||0);},0);
+
+  // События выбранного дня по объекту (часы всей бригады + фото)
+  let dayH=0,dayP=0;const feed=[];
+  obj.stages.forEach(function(s){s.works.forEach(function(w){
+    const logs=(w.timeLogs||[]).filter(function(l){return l.date===date;});
+    const ph=(w.photos||[]).filter(function(p){return (p.date||"").slice(0,10)===date;}).length;
+    logs.forEach(function(l){dayH+=l.hours||0;});
+    dayP+=ph;
+    if(logs.length||ph)feed.push({s:s,w:w,logs:logs,ph:ph});
+  });});
+
+  let html='<div>';
+  // Дата-навигация + итог дня
+  html+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">';
+  html+='<button data-a="myday-prev" style="width:42px;height:42px;border-radius:12px;border:1.5px solid #d0dae8;background:#fff;cursor:pointer;font-size:17px;color:#5a7a9a;flex-shrink:0">‹</button>';
+  html+='<div style="flex:1;text-align:center;min-width:0"><div style="font-size:17px;font-weight:800;color:#0d1b2e">📅 '+_mdDayLabel(date)+'</div><div style="font-size:11px;color:#9aabbf;margin-top:1px">⏱ '+_mdH(dayH)+' ч · 📷 '+dayP+' фото за день</div></div>';
+  html+=(date<today)?'<button data-a="myday-next" style="width:42px;height:42px;border-radius:12px;border:1.5px solid #d0dae8;background:#fff;cursor:pointer;font-size:17px;color:#5a7a9a;flex-shrink:0">›</button>':'<div style="width:42px;height:42px;flex-shrink:0"></div>';
+  html+='</div>';
+  // Выбор объекта (если несколько)
+  if(vis.length>1){
+    html+='<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">';
+    vis.forEach(function(o){
+      const on=o.id===obj.id;
+      html+='<button data-a="myday-obj" data-oid="'+o.id+'" style="padding:8px 12px;border-radius:10px;cursor:pointer;font-size:12px;font-weight:700;border:1.5px solid '+(on?"#16a085":"#dde6f0")+';background:'+(on?"#16a085":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+'">'+o.icon+' '+esc(o.name)+'</button>';
+    });
+    html+='</div>';
+  }
+
+  // ЛЕНТА: что записано за день
+  html+='<div style="font-size:10px;font-weight:700;letter-spacing:0.8px;color:#9aabbf;margin:12px 2px 7px">ЗАПИСАНО ЗА ДЕНЬ</div>';
+  if(!feed.length){
+    html+='<div style="background:#fff;border:1px dashed #d0dae8;border-radius:12px;padding:16px;text-align:center;font-size:12px;color:#9aabbf">Записей пока нет. Наберите часы в табеле ниже и сохраните день одной кнопкой.</div>';
+  } else {
+    feed.forEach(function(f){
+      html+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:9px 11px;margin-bottom:6px">';
+      html+='<div style="display:flex;align-items:center;gap:7px"><span style="width:8px;height:8px;border-radius:50%;background:'+f.s.c+';flex-shrink:0"></span><div style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.w.n)+'</div>'+(f.ph?'<span style="font-size:11px;color:#3498db;font-weight:700;flex-shrink:0">📷 '+f.ph+'</span>':'')+'</div>';
+      f.logs.forEach(function(l){
+        const u=users.find(function(x){return x.id===l.userId;});
+        const canDel=isAdmFin||(currentUser&&l.userId===currentUser.id);
+        html+='<div style="display:flex;align-items:center;gap:7px;margin-top:6px;padding:6px 8px;background:#f8fafc;border-radius:8px">'+
+          '<span style="font-size:14px">'+(u?u.av:"👤")+'</span>'+
+          '<div style="flex:1;min-width:0;font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(u?u.name:"—")+'</div>'+
+          '<span style="font-size:12.5px;font-weight:800;color:#16a085;flex-shrink:0">⏱ '+_mdH(l.hours||0)+' ч</span>'+
+          (canDel?'<button data-a="myday-del-log" data-oid="'+obj.id+'" data-sid="'+f.s.id+'" data-wid="'+f.w.id+'" data-lid="'+l.id+'" style="width:26px;height:26px;background:transparent;border:1px solid #e74c3c33;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>':'')+
+        '</div>';
+      });
+      html+='</div>';
+    });
+  }
+
+  // ТАБЕЛЬ: степперы по работам
+  html+='<div style="font-size:10px;font-weight:700;letter-spacing:0.8px;color:#9aabbf;margin:16px 2px 7px">ТАБЕЛЬ — НАБЕРИТЕ ЧАСЫ И СОХРАНИТЕ ДЕНЬ</div>';
+  if(whoList.length>1&&who){
+    html+='<div style="font-size:9px;color:#9aabbf;font-weight:700;margin:0 2px 5px">ЗА КОГО ПИШЕМ</div>';
+    html+='<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:9px">';
+    whoList.forEach(function(u){
+      const on=u.id===who.id;
+      html+='<button data-a="myday-who" data-uid="'+u.id+'" style="padding:7px 12px;border-radius:14px;cursor:pointer;font-size:12px;font-weight:700;background:'+(on?u.c:"#fff")+';color:'+(on?"#fff":"#5a7a9a")+';border:1.5px solid '+(on?u.c:"#dde6f0")+'">'+u.av+' '+esc(u.name)+'</button>';
+    });
+    html+='</div>';
+  }
+  const rowFn=function(s,w){
+    const h=myDayHours[w.id]||0;
+    const done=!!w.done;
+    return '<div style="display:flex;align-items:center;gap:7px;background:'+(h>0?"#f0faf6":"#fff")+';border:1px solid '+(h>0?"#16a08555":"#dde6f0")+';border-radius:12px;padding:7px 9px;margin-bottom:6px'+(done&&!h?';opacity:0.6':'')+'">'+
+      '<div style="flex:1;min-width:0;font-size:12.5px;font-weight:600;color:#1a2a3a;line-height:1.25">'+esc(w.n)+(done?' <span style="color:#27ae60">✓</span>':'')+'</div>'+
+      '<button data-a="myday-dec" data-wid="'+w.id+'" style="width:42px;height:42px;border-radius:11px;border:none;background:#eef3f8;cursor:pointer;font-size:19px;font-weight:700;color:'+(h>0?"#16a085":"#b8c6d4")+';flex-shrink:0">−</button>'+
+      '<b style="min-width:34px;text-align:center;font-size:15px;color:'+(h>0?"#16a085":"#c0d0e0")+';flex-shrink:0">'+_mdH(h)+'</b>'+
+      '<button data-a="myday-inc" data-wid="'+w.id+'" style="width:42px;height:42px;border-radius:11px;border:none;background:#e7f4ef;cursor:pointer;font-size:19px;font-weight:700;color:#16a085;flex-shrink:0">＋</button>'+
+    '</div>';
+  };
+  // ⭐ недавние работы выбранного исполнителя — сверху
+  const rec=[];
+  obj.stages.forEach(function(s){s.works.forEach(function(w){
+    let last="";
+    (w.timeLogs||[]).forEach(function(l){if(who&&l.userId===who.id&&l.date>last)last=l.date;});
+    if(last)rec.push({s:s,w:w,last:last});
+  });});
+  rec.sort(function(a,b){return b.last.localeCompare(a.last);});
+  const top=rec.slice(0,5);
+  const topIds=new Set(top.map(function(r){return r.w.id;}));
+  if(top.length){
+    html+='<div style="font-size:10px;font-weight:700;letter-spacing:0.8px;color:#b8860b;margin:6px 2px 6px">⭐ НЕДАВНИЕ</div>';
+    top.forEach(function(r){html+=rowFn(r.s,r.w);});
+  }
+  obj.stages.forEach(function(s){
+    const ws=s.works.filter(function(w){return !topIds.has(w.id);});
+    if(!ws.length)return;
+    html+='<div style="font-size:10px;font-weight:700;letter-spacing:0.8px;color:'+s.c+';margin:12px 2px 6px">'+esc((s.n||"").toUpperCase())+'</div>';
+    ws.slice().sort(function(a,b){return (a.done?1:0)-(b.done?1:0);}).forEach(function(w){html+=rowFn(s,w);});
+  });
+
+  // Плавающий бар «Сохранить день» + спейсер, чтобы бар не перекрывал последние строки
+  if(draftTotal>0&&who){
+    html+='<div style="height:84px"></div>';
+    html+='<div style="position:fixed;left:50%;transform:translateX(-50%);bottom:'+(isAdmin?"calc(70px + env(safe-area-inset-bottom,0px))":"calc(12px + env(safe-area-inset-bottom,0px))")+';z-index:600;width:min(456px,calc(100vw - 24px));background:#fff;border:1px solid #dde6f0;border-radius:16px;box-shadow:0 10px 30px rgba(13,27,46,0.2);padding:10px 12px;display:flex;align-items:center;gap:10px">'+
+      '<div style="font-size:11px;color:#7a9aaa;line-height:1.3;flex-shrink:0">Итого<br><b style="font-size:16px;color:#0d1b2e">'+_mdH(draftTotal)+' ч</b></div>'+
+      '<button data-a="myday-save" data-oid="'+obj.id+'" data-uid="'+who.id+'" style="flex:1;min-width:0;background:#16a085;border:none;border-radius:12px;padding:13px 8px;cursor:pointer;color:#fff;font-size:14px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">💾 Сохранить день · '+esc(who.name)+'</button>'+
+      '<button data-a="myday-clear" style="width:38px;height:38px;border-radius:10px;border:1px solid #dde6f0;background:#fff;cursor:pointer;color:#9aabbf;font-size:13px;flex-shrink:0" title="Сбросить">✕</button>'+
+    '</div>';
+  }
+  html+='</div>';
+  return html;
+}
+
 // Частичная перерисовка ТОЛЬКО контейнера текущей вкладки (не весь page()).
 // Нужна для частых микро-действий вроде отметки «куплено» в снабжении: полный
 // render() пересобирает огромный DOM всей страницы (шапка+вкладки+список) → на
@@ -2961,7 +3104,7 @@ function rerenderTab(){
 }
 // Один источник HTML активной вкладки — используется и в page(), и в rerenderTab().
 function tabContentHtml(){
-  return tab==="assign"?tObjects():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tab==="kp"?tKP():tab==="voiceai"?tVoiceAi():tCRM();
+  return tab==="assign"?tObjects():tab==="myday"?tMyDay():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tab==="kp"?tKP():tab==="voiceai"?tVoiceAi():tCRM();
 }
 
 function render(){
@@ -3163,6 +3306,12 @@ function page(){
     });
     TABS=ALL_TABS.filter(([k])=>tabSet.has(k));
     if(!TABS.length) TABS=[["assign","🏗️ Объекты"]];
+  }
+  // «Мой день» гарантирован производственным ролям, даже если в облачном снимке
+  // сохранены старые rolePermissions без ключа "myday".
+  if(!isAdmin&&currentUser&&currentUser.roles.some(function(r){return r==="brigadier"||r==="worker"||r==="prod_head";})&&!TABS.some(function(t){return t[0]==="myday";})){
+    const _ai=TABS.findIndex(function(t){return t[0]==="assign";});
+    TABS.splice(_ai+1,0,["myday","📅 Мой день"]);
   }
   // iOS-style нижний таб-бар — быстрый доступ к 4 главным разделам.
   // Пункты фильтруются по доступным вкладкам (TABS), чтобы не показать недоступный роли раздел.
@@ -13049,6 +13198,96 @@ function bind(){
           fl();
         });
       }
+    }
+    // ── Вкладка «Мой день»: дата, объект, «за кого», степперы табеля, сохранение дня ──
+    else if(a==="myday-prev"){el.onclick=()=>{myDayDate=_mdShiftISO(myDayDate||todayISO(),-1);render();};}
+    else if(a==="myday-next"){el.onclick=()=>{const t=todayISO();const n=_mdShiftISO(myDayDate||t,1);myDayDate=(n>=t)?"":n;render();};}
+    else if(a==="myday-obj"){el.onclick=()=>{myDayObjId=el.dataset.oid;myDayHours={};render();};}
+    else if(a==="myday-who"){el.onclick=()=>{myDayWho=el.dataset.uid;rerenderTab();};}
+    else if(a==="myday-inc"){el.onclick=()=>{
+      const w=el.dataset.wid;
+      const next=Object.assign({},myDayHours);
+      next[w]=Math.min(12,(next[w]||0)+1);
+      myDayHours=next;
+      rerenderTab();
+    };}
+    else if(a==="myday-dec"){el.onclick=()=>{
+      const w=el.dataset.wid;
+      const v=Math.max(0,(myDayHours[w]||0)-1);
+      const next=Object.assign({},myDayHours);
+      if(v>0)next[w]=v;else delete next[w];
+      myDayHours=next;
+      rerenderTab();
+    };}
+    else if(a==="myday-clear"){el.onclick=()=>{myDayHours={};rerenderTab();};}
+    else if(a==="myday-save"){
+      const handler=function(ev){
+        if(ev){ev.stopPropagation();ev.preventDefault();}
+        const cu=currentUser;
+        const canSave=cu&&(cu.roles.includes("admin")||cu.roles.includes("financier")||cu.roles.includes("brigadier")||cu.roles.includes("worker")||cu.roles.includes("prod_head"));
+        if(!canSave)return false;
+        const oid=el.dataset.oid,uid=el.dataset.uid;
+        const date=myDayDate||todayISO();
+        const list=[];
+        Object.keys(myDayHours).forEach(function(k){if(myDayHours[k]>0)list.push({wid:k,h:myDayHours[k]});});
+        if(!uid||!list.length)return false;
+        let savedH=0,savedN=0;
+        objects=objects.map(function(o){
+          if(o.id!==oid)return o;
+          return Object.assign({},o,{stages:o.stages.map(function(st){
+            return Object.assign({},st,{works:st.works.map(function(w){
+              const e=list.find(function(x){return x.wid===w.id;});
+              if(!e)return w;
+              savedH+=e.h;savedN++;
+              return Object.assign({},w,{timeLogs:(w.timeLogs||[]).concat([{id:gid(),userId:uid,date:date,hours:e.h}])});
+            })});
+          })});
+        });
+        myDayHours={};
+        try{
+          const u=users.find(function(x){return x.id===uid;});
+          const toast=document.createElement("div");
+          toast.textContent="💾 Записано: "+_mdH(savedH)+" ч · работ: "+savedN+(u?" · "+u.name:"");
+          toast.style.cssText="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#16a085;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:600;z-index:9999;max-width:90%;text-align:center";
+          document.body.appendChild(toast);
+          setTimeout(function(){try{document.body.removeChild(toast);}catch(e){}},2500);
+        }catch(e){}
+        scheduleSave();render();
+        return false;
+      };
+      el.onclick=handler;
+      el.addEventListener("click",handler,true);
+      el.addEventListener("touchend",function(ev){if(ev){ev.stopPropagation();ev.preventDefault();}handler(ev);},true);
+    }
+    else if(a==="myday-del-log"){
+      const handler=function(ev){
+        if(ev){ev.stopPropagation();ev.preventDefault();}
+        const cu=currentUser;
+        const oid=el.dataset.oid,sid=el.dataset.sid,wid=el.dataset.wid,lid=el.dataset.lid;
+        const isAdminOrFin=cu&&(cu.roles.includes("admin")||cu.roles.includes("financier"));
+        if(!isAdminOrFin){
+          const o=objects.find(function(x){return x.id===oid;});
+          const st=o&&o.stages.find(function(x){return x.id===sid;});
+          const w=st&&st.works.find(function(x){return x.id===wid;});
+          const log=w&&(w.timeLogs||[]).find(function(x){return x.id===lid;});
+          if(!log||!cu||log.userId!==cu.id)return false;
+        }
+        objects=objects.map(function(o){
+          if(o.id!==oid)return o;
+          return Object.assign({},o,{stages:o.stages.map(function(st){
+            if(st.id!==sid)return st;
+            return Object.assign({},st,{works:st.works.map(function(w){
+              if(w.id!==wid)return w;
+              return Object.assign({},w,{timeLogs:(w.timeLogs||[]).filter(function(l){return l.id!==lid;})});
+            })});
+          })});
+        });
+        scheduleSave();rerenderTab();
+        return false;
+      };
+      el.onclick=handler;
+      el.addEventListener("click",handler,true);
+      el.addEventListener("touchend",function(ev){if(ev){ev.stopPropagation();ev.preventDefault();}handler(ev);},true);
     }
     else if(a==="obj-tl-save"){
       const handler=function(ev){
