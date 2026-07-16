@@ -8885,7 +8885,20 @@ function ctTplDefaults(){
     amount:0,
     workDays:45,
     warrantyMonths:12,
-    payments:ot.payNotes.map(function(note){return {amount:0,note:note};})
+    payments:ot.payNotes.map(function(note){return {amount:0,note:note};}),
+    // ─── Акт выполненных работ (docType="act") ───
+    docType:"contract",     // "contract" | "act"
+    actStage:0,             // индекс закрываемого этапа в payments; -1 = финальный (весь договор)
+    actDate:d.toISOString().slice(0,10),
+    actAddress:"",          // адрес установки объекта
+    actDeadline:"",         // плановый срок сдачи (дедлайн договора)
+    actActualDate:d.toISOString().slice(0,10), // фактическая дата передачи
+    actExtra:[],            // доп. работы [{name,cost}] (подтягиваются из договоров)
+    actExcluded:[],         // исключённые работы [{name,cost}]
+    actAdvancePaid:0,       // уже внесено авансом (₽)
+    actAdvanceAuto:true,    // аванс считается автоматически из предыдущих этапов
+    actPenaltyRate:0.1,     // неустойка %/день (п.6.1)
+    actPenaltyCapPct:5      // потолок неустойки, % от суммы договора
   };
 }
 let ctTpl=null; // буфер формы (лениво из localStorage)
@@ -8979,8 +8992,18 @@ function tContractTemplate(){
     return '<div style="background:#fff;border-radius:12px;border:1px solid #e6ecf3;padding:14px;margin-bottom:12px">'+
       '<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:10px">'+title+'</div>'+inner+'</div>';
   }
+  const isAct=t.docType==="act";
   let html='<div>';
-  html+='<div style="font-size:11px;color:#5a7a9a;margin-bottom:12px">Заполните реквизиты — договор соберётся по образцу действующего договора подряда и откроется для печати / сохранения в PDF.</div>';
+  // Тип документа: договор / акт выполненных работ
+  html+='<div style="display:flex;gap:6px;margin-bottom:12px">'+
+    ['contract','act'].map(function(dt){
+      const on=(isAct?"act":"contract")===dt;
+      const label=dt==="act"?"📋 Акт выполненных работ":"📄 Договор";
+      return '<button data-a="ct-tpl-doctype" data-dt="'+dt+'" style="flex:1;padding:9px 6px;border-radius:9px;cursor:pointer;font-size:12.5px;font-weight:700;border:1.5px solid '+(on?"#27ae60":"#dde6f0")+';background:'+(on?"#27ae60":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+'">'+label+'</button>';
+    }).join("")+'</div>';
+  html+='<div style="font-size:11px;color:#5a7a9a;margin-bottom:12px">'+
+    (isAct?"Заполните реквизиты и подтяните договор из портала — акт сдачи-приёмки соберётся с расчётом (доп. работы, просрочка, нарастающий итог) и откроется для печати / сохранения в PDF."
+          :"Заполните реквизиты — договор соберётся по образцу действующего договора подряда и откроется для печати / сохранения в PDF.")+'</div>';
 
   // Подстановка клиента из CRM (ФИО + телефон)
   const crmOpts=crmClients.map(function(c){return '<option value="'+c.id+'">'+esc(c.name)+(c.phone?" · "+esc(c.phone):"")+'</option>';}).join("");
@@ -9053,6 +9076,17 @@ function tContractTemplate(){
   payHtml+='<button data-a="ct-tpl-pay-add" style="width:100%;padding:8px;background:#f0f4f8;border:1px dashed #b0c4d8;border-radius:8px;cursor:pointer;font-size:12px;color:#5a7a9a;font-weight:700;margin-bottom:8px">+ Платёж</button>';
   payHtml+='<div id="ct-tpl-pay-check" style="font-size:11px">'+ctTplPayCheckHtml()+'</div>';
   html+=card("📅 ГРАФИК ПЛАТЕЖЕЙ (п. 3.2 и Приложение № 2)",payHtml);
+
+  // ─── Режим АКТА: форма акта + кнопка «Сформировать акт», без редактора текста договора ───
+  if(isAct){
+    html+=ctActFormCard(card);
+    html+='<div style="display:flex;gap:8px;margin-bottom:20px">'+
+      '<button data-a="ct-act-print" style="flex:1;padding:12px;background:#27ae60;border:none;border-radius:10px;cursor:pointer;font-size:14px;color:#fff;font-weight:700">🖨 Сформировать акт (PDF)</button>'+
+      '<button data-a="ct-tpl-reset" style="padding:12px 16px;background:#f0f4f8;border:none;border-radius:10px;cursor:pointer;font-size:12px;color:#7a9aaa;font-weight:700">Сбросить</button>'+
+    '</div>';
+    html+='</div>';
+    return html;
+  }
 
   // Редактор текста договора (шаблон текущего типа объекта)
   const texts=ctTplTexts();
@@ -9160,6 +9194,43 @@ function _bindCtTplSync(){
   bindTplText("[data-tpltext-act]",function(el){
     ctTplTextsEnsure().act=el.value;
   });
+  // Поля акта: простые (data-actfld) и списки доп.работ/исключений (data-actlist)
+  document.querySelectorAll("[data-actfld]").forEach(function(el){
+    if(el._tplSync)return;
+    el._tplSync=true;
+    const isMoney=el.dataset.money==="1";
+    const isNumRate=el.dataset.actfld==="actPenaltyRate"||el.dataset.actfld==="actPenaltyCapPct";
+    const sync=function(){
+      let v=el.value;
+      if(isMoney)v=unfmtMoney(v);
+      else if(isNumRate)v=parseFloat(String(v).replace(",","."))||0;
+      t[el.dataset.actfld]=v;
+      ctTplPersist();
+      _ctActRecalc();
+    };
+    el.addEventListener("input",sync);
+    el.addEventListener("change",sync);
+  });
+  document.querySelectorAll("[data-actlist]").forEach(function(el){
+    if(el._tplSync)return;
+    el._tplSync=true;
+    const sync=function(){
+      const list=t[el.dataset.actlist]||(t[el.dataset.actlist]=[]);
+      const w=list[parseInt(el.dataset.i,10)];
+      if(!w)return;
+      if(el.dataset.f==="cost")w.cost=unfmtMoney(el.value);
+      else w.name=el.value;
+      ctTplPersist();
+      _ctActRecalc();
+    };
+    el.addEventListener("input",sync);
+    el.addEventListener("change",sync);
+  });
+}
+// Перерисовать только карточку расчёта акта (без полного render → фокус в поле не теряется)
+function _ctActRecalc(){
+  const box=document.getElementById("ct-act-calc-box");
+  if(box)box.innerHTML=ctActCalcBoxHtml();
 }
 
 // Печатная форма договора. Текст разделов — из действующего договора подряда ИП Кублицкой,
@@ -9289,6 +9360,343 @@ function ctTplOpenPrint(){
   w.document.close();
   // Авто-диалог печати после отрисовки; кнопка в тулбаре окна — запасной путь (iOS)
   setTimeout(function(){ try{ w.focus(); w.print(); }catch(e){} },600);
+}
+
+// ═══ АКТ ВЫПОЛНЕННЫХ РАБОТ ═══════════════════════════════════════════════════
+// Поэтапный акт сдачи-приёмки (перед следующим авансом) с нарастающим итогом:
+// стоимость закрытых этапов + доп. работы − исключения − неустойка − авансы = остаток.
+// Доп. работы и просрочка подтягиваются из подписанных договоров портала.
+
+// Короткий номер договора из его названия («Договор подряда № 1404-1/26» → «1404-1/26»)
+function ctShortNum(name){
+  const m=String(name||"").match(/№\s*([0-9][0-9A-Za-zА-Яа-я\-\/\.]*)/);
+  return m?m[1]:(name||"");
+}
+// Тип объекта (banya/house) по objId договора
+function ctObjKindOf(objId){
+  const o=objects.find(function(x){return x.id===objId;});
+  return (o&&o.kind==="house")?"house":"banya";
+}
+// Собрать доп. работы для акта: extraWorks выбранного договора + связанные договоры «Доп. работы» на том же объекте
+function ctActGatherExtra(c){
+  const out=[];
+  function pushEW(w,suffix){
+    const matsTotal=(w.mats||[]).reduce(function(a,m){return a+(Number(m.cost)||0)*(Number(m.qty)||1);},0);
+    out.push({name:(w.name||"Доп. работа")+(suffix||""), cost:(Number(w.cost)||0)+matsTotal});
+  }
+  (c.extraWorks||[]).forEach(function(w){ pushEW(w,""); });
+  if(c.objId){
+    contractDocs.filter(function(d){
+      return d.id!==c.id && d.objId===c.objId && d.type==="extra" && (d.status==="signed"||d.status==="closed");
+    }).forEach(function(d){
+      const ews=d.extraWorks||[];
+      if(ews.length){ ews.forEach(function(w){ pushEW(w," (дог. № "+ctShortNum(d.name)+")"); }); }
+      else { out.push({name:(d.name||"Доп. работы"), cost:Number(d.amount)||0}); }
+    });
+  }
+  return out;
+}
+// Дней просрочки: фактическая дата сдачи − плановый срок (>0)
+function ctActOverdueDays(){
+  const t=ctTplGet();
+  if(!t.actDeadline||!t.actActualDate)return 0;
+  const d1=new Date(t.actDeadline+"T00:00:00"), d2=new Date(t.actActualDate+"T00:00:00");
+  if(isNaN(d1.getTime())||isNaN(d2.getTime()))return 0;
+  const diff=Math.round((d2-d1)/86400000);
+  return diff>0?diff:0;
+}
+// Сумма ранее внесённых авансов (по умолчанию): все этапы до закрываемого
+function ctActAdvanceAuto(){
+  const t=ctTplGet();
+  const pays=t.payments||[];
+  const idx=t.actStage;
+  if(idx<0)return pays.slice(0,Math.max(0,pays.length-1)).reduce(function(a,p){return a+(Number(p.amount)||0);},0);
+  return pays.slice(0,idx).reduce(function(a,p){return a+(Number(p.amount)||0);},0);
+}
+// Флаг «финальный акт» (закрывается последний этап или выбран «весь договор»)
+function ctActIsFinal(){
+  const t=ctTplGet();
+  const pays=t.payments||[];
+  return t.actStage<0 || t.actStage>=pays.length-1;
+}
+// Полный расчёт акта (нарастающим итогом)
+function ctActCalc(){
+  const t=ctTplGet();
+  const pays=t.payments||[];
+  const amount=Number(t.amount)||0;
+  const idx=t.actStage;
+  // Стоимость работ по закрытым этапам (нарастающим итогом)
+  const stagesCost=(idx<0)
+    ? (amount||pays.reduce(function(a,p){return a+(Number(p.amount)||0);},0))
+    : pays.slice(0,idx+1).reduce(function(a,p){return a+(Number(p.amount)||0);},0);
+  const extraTotal=(t.actExtra||[]).reduce(function(a,w){return a+(Number(w.cost)||0);},0);
+  const exclTotal=(t.actExcluded||[]).reduce(function(a,w){return a+(Number(w.cost)||0);},0);
+  const factCost=stagesCost+extraTotal-exclTotal; // стоимость фактически выполненных работ
+  const days=ctActOverdueDays();
+  const rate=Number(t.actPenaltyRate)||0;
+  const capPct=Number(t.actPenaltyCapPct)||0;
+  let penalty=Math.round(days*(rate/100)*factCost);
+  const cap=Math.round((capPct/100)*amount);
+  if(cap>0&&penalty>cap)penalty=cap;
+  const accrued=factCost-penalty;                  // итого начислено
+  const advance=t.actAdvanceAuto?ctActAdvanceAuto():(Number(t.actAdvancePaid)||0);
+  const toPay=accrued-advance;                     // к оплате сейчас (следующий аванс)
+  return {stagesCost:stagesCost,extraTotal:extraTotal,exclTotal:exclTotal,factCost:factCost,
+          days:days,rate:rate,penalty:penalty,cap:cap,accrued:accrued,advance:advance,toPay:toPay,amount:amount};
+}
+// Номер закрываемого этапа для текста: «3.2.2»
+function ctActStageNo(){
+  const t=ctTplGet();
+  return t.actStage<0?"":("3.2."+(t.actStage+1));
+}
+
+// HTML печатной формы акта
+function ctActDocHtml(){
+  const t=ctTplGet();
+  const ex=ctTplExec();
+  const num=esc(t.num);
+  const calc=ctActCalc();
+  const isFinal=ctActIsFinal();
+  const stageNo=ctActStageNo();
+  const objWord=(ctTplObjType().k==="house")?"дома":"бани";
+  // Преамбула заказчика (как в договоре)
+  let client="Гражданин "+esc(t.citizenship||"РФ")+" "+esc(t.fio);
+  client+=", паспорт "+esc(t.passport||"____________");
+  if(t.passportIssued)client+=", выдан "+esc(t.passportIssued);
+  if(t.passportDate)client+=" "+dateRuShort(t.passportDate)+" г.";
+  // Строки таблицы расчёта
+  const rows=[];
+  rows.push(["Стоимость работ по "+(isFinal?"Договору (п. 3.1)":("закрытым этапам (по "+stageNo+")")), fmtMoney(calc.stagesCost)+" ₽"]);
+  (t.actExtra||[]).forEach(function(w){ rows.push(["+ Доп. работы: "+esc(w.name), "+ "+fmtMoney(Number(w.cost)||0)+" ₽"]); });
+  (t.actExcluded||[]).forEach(function(w){ rows.push(["− Исключено: "+esc(w.name), "− "+fmtMoney(Number(w.cost)||0)+" ₽"]); });
+  rows.push(["Стоимость фактически выполненных работ", fmtMoney(calc.factCost)+" ₽"]);
+  if(calc.penalty>0)rows.push(["− Неустойка за просрочку "+calc.days+" дн ("+numRu(calc.rate)+" %/день, п. 6.1)", "− "+fmtMoney(calc.penalty)+" ₽"]);
+  rows.push(["Итого начислено", fmtMoney(calc.accrued)+" ₽"]);
+  if(calc.advance>0)rows.push(["− Получено авансом", "− "+fmtMoney(calc.advance)+" ₽"]);
+  const lastLabel=isFinal?"ОСТАТОК К ДОПЛАТЕ":("К ОПЛАТЕ"+(t.actStage<pays_len(t)-1?" (аванс "+ctActNextStageNo()+")":""));
+  rows.push([lastLabel, fmtMoney(calc.toPay)+" ₽", true]);
+  const calcTable='<table class="calc">'+rows.map(function(r){
+    return '<tr'+(r[2]?' class="tot"':'')+'><td>'+r[0]+'</td><td class="num">'+r[1]+'</td></tr>';
+  }).join("")+'</table>';
+
+  const sig='<div class="sig"><span>Исполнитель _________________</span><span>Заказчик _________________</span></div>';
+  // Реквизиты подписей
+  const signBlock='<table class="req"><tr><td class="rh">Исполнитель</td><td class="rh">Заказчик</td></tr>'+
+    '<tr><td>'+ex.req+'</td><td>'+esc(t.fio)+'<br>Паспорт '+esc(t.citizenship||"РФ")+' '+esc(t.passport||"—")+
+      (t.phone?'<br>тел. '+esc(t.phone):'')+(t.actAddress?'<br>адрес: '+esc(t.actAddress):'')+'</td></tr>'+
+    '<tr><td style="height:52px">____________ / '+esc(ctExecSignName(ex))+' /<br>М.П.</td><td>____________ / ________________ /<br>(подпись)</td></tr></table>';
+
+  const titleLine=isFinal
+    ? "АКТ сдачи-приёмки выполненных работ"
+    : "АКТ сдачи-приёмки выполненных работ (этап "+stageNo+")";
+
+  let secs="";
+  // 1. Приёмка работ этапа/договора
+  secs+='<p><b>1.</b> В соответствии с условиями Договора подряда № '+num+' от '+dateRuWords(t.date)+' (далее — «Договор») Исполнитель выполнил, а Заказчик принял '+
+    (isFinal?("работы по изготовлению "+objWord+" на базе морского контейнера в полном объёме")
+            :("работы этапа "+stageNo+" по изготовлению "+objWord+" на базе морского контейнера"))+
+    (t.actAddress?(", объект установлен по адресу: "+esc(t.actAddress)):", объект установлен по адресу: _______________________________________________")+
+    ' (далее — «Объект»). '+(isFinal?"Объект передан":"Этап работ сдан")+' Исполнителем и принят Заказчиком '+dateRuWords(t.actActualDate)+'.</p>';
+  secs+='<p><b>2.</b> Работы '+(isFinal?"по Договору ":"этапа "+stageNo+" ")+'выполнены Исполнителем в полном объёме и надлежащего качества, соответствуют условиям Договора, планировке (Приложение № 1) и Спецификации (Приложение № 3) с учётом изменений, согласованных Сторонами в переписке в мессенджерах Telegram или Max (п. 1.1 Договора). Заказчик подтверждает, что объём и качество работ им приняты.</p>';
+  // Раздел расчёта
+  secs+='<div class="sec">Изменение объёма работ, неустойка и расчёт</div>';
+  secs+='<p><b>3.</b> Цена работ по Договору составляет '+fmtMoney(calc.amount)+' ('+rubWords(calc.amount)+') (п. 3.1 Договора). Стоимость работ по '+(isFinal?"Договору":("закрытым на дату акта этапам (по "+stageNo+")"))+' составляет '+fmtMoney(calc.stagesCost)+' ('+rubWords(calc.stagesCost)+').</p>';
+  let n=4;
+  if((t.actExtra||[]).length){
+    const items=(t.actExtra||[]).map(function(w){return esc(w.name)+" — "+fmtMoney(Number(w.cost)||0)+" ("+rubWords(Number(w.cost)||0)+")";});
+    secs+='<p><b>'+n+'.</b> По согласованию Сторон (п. 1.1, п. 3.4 Договора) в объём работ включены дополнительные работы на общую сумму '+fmtMoney(calc.extraTotal)+' ('+rubWords(calc.extraTotal)+'): '+items.join("; ")+'. На указанную сумму стоимость работ увеличивается.</p>';
+    n++;
+  }
+  if((t.actExcluded||[]).length){
+    const items=(t.actExcluded||[]).map(function(w){return esc(w.name)+" — "+fmtMoney(Number(w.cost)||0)+" ("+rubWords(Number(w.cost)||0)+")";});
+    secs+='<p><b>'+n+'.</b> По согласованию Сторон (п. 1.1, п. 3.4 Договора) из объёма работ исключены: '+items.join("; ")+', на общую сумму '+fmtMoney(calc.exclTotal)+' ('+rubWords(calc.exclTotal)+'). На указанную сумму стоимость работ уменьшается.</p>';
+    n++;
+  }
+  secs+='<p><b>'+n+'.</b> Стоимость фактически выполненных и принятых работ на дату настоящего Акта составляет '+fmtMoney(calc.factCost)+' ('+rubWords(calc.factCost)+').</p>'; n++;
+  if(calc.days>0){
+    secs+='<p><b>'+n+'.</b> Плановый срок сдачи — '+dateRuWords(t.actDeadline)+' (п. 4.2 Договора); фактически работы сданы '+dateRuWords(t.actActualDate)+'. Просрочка составила '+calc.days+' ('+numWordsRu(calc.days,false)+') календарных дней. Неустойка (пеня) начисляется по п. 6.1 Договора в размере '+numRu(calc.rate)+' % за каждый день просрочки от стоимости фактически выполненных работ и составляет '+fmtMoney(calc.penalty)+' ('+rubWords(calc.penalty)+') ('+calc.days+' дн × '+numRu(calc.rate)+' % × '+fmtMoney(calc.factCost)+' ₽), что не превышает установленный п. 6.1 Договора предел '+numRu(t.actPenaltyCapPct)+' % от суммы Договора. Указанный размер неустойки является полным и окончательным.</p>'; n++;
+    secs+='<p><b>'+n+'.</b> Начисленная неустойка в размере '+fmtMoney(calc.penalty)+' рублей удерживается из суммы, подлежащей уплате Заказчиком. Итого начислено с учётом неустойки: '+fmtMoney(calc.accrued)+' ('+rubWords(calc.accrued)+').</p>'; n++;
+  } else {
+    secs+='<p><b>'+n+'.</b> Нарушения срока выполнения работ на дату настоящего Акта не имеется, неустойка не начисляется. Итого начислено: '+fmtMoney(calc.accrued)+' ('+rubWords(calc.accrued)+').</p>'; n++;
+  }
+  secs+='<p><b>'+n+'.</b> На дату подписания настоящего Акта Заказчиком внесено авансом '+fmtMoney(calc.advance)+' ('+rubWords(calc.advance)+'), получение которого Исполнитель подтверждает. '+
+    (calc.toPay>=0
+      ? (isFinal?"Остаток к доплате":"К оплате Заказчиком (очередной аванс по п. "+(ctActNextStageNo()||"3.2")+")")+" составляет "+fmtMoney(calc.toPay)+" ("+rubWords(calc.toPay)+")."
+      : "Переплата Заказчика составляет "+fmtMoney(Math.abs(calc.toPay))+" ("+rubWords(Math.abs(calc.toPay))+"), подлежит зачёту в счёт последующих платежей.")+
+    (isFinal?" После уплаты указанного остатка финансовые обязательства Сторон по Договору считаются исполненными в полном объёме.":"")+'</p>';
+  n++;
+  // Таблица расчёта
+  secs+=calcTable;
+  // Приёмка / отсутствие претензий
+  secs+='<div class="sec">Приёмка и отсутствие претензий</div>';
+  secs+='<p><b>'+n+'.</b> Заказчик лично осмотрел результаты работ, проверил объём, качество, комплектность и внешний вид и претензий к Исполнителю не имеет. Работы приняты Заказчиком без замечаний.</p>'; n++;
+  secs+='<p><b>'+n+'.</b> Заказчик подтверждает, что был извещён о завершении '+(isFinal?"промежуточных и итогового этапов":"этапа")+' работ, получал фото- и (или) видеоотчёты и что '+(isFinal?"все промежуточные (в том числе скрытые) работы им приняты":"работы данного этапа им приняты")+' (п. 2.2.5, 2.3.3, 6.3 Договора).</p>'; n++;
+  if(isFinal){
+    secs+='<p><b>'+n+'.</b> Стороны подтверждают, что доставка, разгрузка и установка Объекта произведены и Заказчиком приняты; претензий по доставке, разгрузке и установке Заказчик не имеет. Заказчик уведомлён, что в силу п. 3.5 Договора расходы по доставке, разгрузке и установке в стоимость работ не входят.</p>'; n++;
+    secs+='<p><b>'+n+'.</b> Заказчик уведомлён и согласен, что Объект изготовлен на базе бывшего в употреблении морского контейнера (п. 5.8 Договора); наличие незначительных вмятин и дефектов, а также повреждений отделки, вызванных транспортировкой, не является недостатком работ и основанием для отказа от приёмки.</p>'; n++;
+    secs+='<div class="sec">Гарантийные обязательства</div>';
+    secs+='<p><b>'+n+'.</b> Гарантийный срок на Объект составляет '+ (parseInt(t.warrantyMonths,10)||12) +' ('+numWordsRu(parseInt(t.warrantyMonths,10)||12,false)+') '+pluralRu(parseInt(t.warrantyMonths,10)||12,"месяц","месяца","месяцев")+' и исчисляется с момента подписания Сторонами настоящего Акта (п. 5.1 Договора).</p>'; n++;
+    secs+='<p><b>'+n+'.</b> Гарантийные обязательства не распространяются на случаи, предусмотренные п. 5.2, 5.3 Договора (естественные свойства древесины; фундаменты и материалы Заказчика; ущерб третьих лиц; несоблюдение режима эксплуатации; несогласованные изменения). На окна, двери, мебель, сантехнику и инженерное оборудование распространяются гарантии их производителей.</p>'; n++;
+    secs+='<div class="sec">Заключительные положения</div>';
+    secs+='<p><b>'+n+'.</b> Подписанием настоящего Акта Стороны подтверждают, что обязательства по Договору исполнены надлежащим образом, объём и цена согласованы, размер неустойки определён и окончателен, и Стороны не имеют друг к другу материальных, финансовых и иных претензий, за исключением гарантийных обязательств Исполнителя.</p>'; n++;
+  } else {
+    secs+='<p><b>'+n+'.</b> Настоящий Акт закрывает этап '+stageNo+' работ и является основанием для внесения Заказчиком очередного авансового платежа по Договору. Обязательства Сторон по Договору в остальной части сохраняются.</p>'; n++;
+  }
+  secs+='<p><b>'+n+'.</b> Настоящий Акт составлен в 2 (двух) экземплярах, имеющих равную юридическую силу, по одному для каждой из Сторон, и является неотъемлемой частью Договора.</p>';
+
+  return '<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>Акт по договору № '+num+'</title><style>'+
+    '@page{size:A4;margin:16mm 15mm 20mm}'+
+    'body{font-family:"Times New Roman",Times,serif;font-size:12.5px;line-height:1.5;color:#000;margin:0;padding:24px 28px 50px}'+
+    '.top{text-align:right;font-size:11px;margin-bottom:4px}'+
+    'h1{font-size:15px;text-align:center;margin:8px 0 2px}'+
+    '.sub{text-align:center;font-size:12px;margin:0 0 12px}'+
+    '.dateline{display:flex;justify-content:space-between;margin:10px 0 14px;font-weight:bold}'+
+    '.sec{font-weight:bold;margin:16px 0 6px;font-size:13px}'+
+    'p{margin:5px 0;text-align:justify}'+
+    '.calc{width:100%;border-collapse:collapse;margin:12px 0}'+
+    '.calc td{border:1px solid #000;padding:6px 9px;font-size:12px}'+
+    '.calc td.num{text-align:right;white-space:nowrap;width:32%}'+
+    '.calc tr.tot td{font-weight:bold;background:#f0f0f0}'+
+    '.sig{display:flex;justify-content:space-between;margin:22px 0 8px;font-weight:bold}'+
+    '.req{width:100%;border-collapse:collapse;margin-top:14px}'+
+    '.req td{width:50%;vertical-align:top;padding:8px 10px;border:1px solid #000;font-size:11.5px}'+
+    '.req .rh{font-weight:bold;text-align:center}'+
+    '.toolbar{position:fixed;top:0;left:0;right:0;background:#1a2a3a;color:#fff;padding:10px 16px;display:flex;gap:10px;align-items:center;font-family:-apple-system,sans-serif;font-size:13px;z-index:10}'+
+    '.toolbar button{padding:8px 18px;background:#27ae60;border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer}'+
+    '@media print{.toolbar{display:none}body{padding:0}}'+
+    '@media screen{body{max-width:800px;margin:0 auto;padding-top:70px;background:#fff}}'+
+    '</style></head><body>'+
+    '<div class="toolbar"><button onclick="window.print()">🖨 Печать / Сохранить в PDF</button><span>В диалоге печати выберите «Сохранить как PDF»</span></div>'+
+    '<div class="top">к Договору подряда № '+num+' от '+dateRuWords(t.date)+'</div>'+
+    '<h1>'+titleLine+'</h1>'+
+    '<div class="sub">по Договору подряда № '+num+' от '+dateRuWords(t.date)+'</div>'+
+    '<div class="dateline"><span>'+esc(t.city||"г. Москва")+'</span><span>'+dateRuWords(t.actDate)+'</span></div>'+
+    '<p>'+ex.preamble+', именуемый в дальнейшем «Исполнитель», с одной стороны, и '+client+', именуемый в дальнейшем «Заказчик», с другой стороны, а вместе «Стороны», составили настоящий Акт о нижеследующем:</p>'+
+    secs+
+    sig+
+    '<div class="sec">ПОДПИСИ СТОРОН</div>'+
+    signBlock+
+    '</body></html>';
+}
+// Имя подписанта исполнителя для строки подписи
+function ctExecSignName(ex){
+  return ex.k==="petrov"?"Петров А. В.":"Кублицкий Ю. Г.";
+}
+// Номер следующего этапа (для «к оплате аванс 3.2.N»)
+function ctActNextStageNo(){
+  const t=ctTplGet();
+  const pays=t.payments||[];
+  if(t.actStage<0||t.actStage>=pays.length-1)return "";
+  return "3.2."+(t.actStage+2);
+}
+function pays_len(t){ return (t.payments||[]).length; }
+
+function ctActOpenPrint(){
+  const t=ctTplGet();
+  const missing=[];
+  if(!String(t.num||"").trim())missing.push("№ договора");
+  if(!String(t.fio||"").trim())missing.push("ФИО заказчика");
+  if(!(Number(t.amount)>0))missing.push("сумма договора");
+  if(missing.length){ alert("Заполните: "+missing.join(", ")); return; }
+  const w=window.open("","_blank");
+  if(!w){ alert("Браузер заблокировал новое окно. Разрешите всплывающие окна для портала."); return; }
+  w.document.write(ctActDocHtml());
+  w.document.close();
+  setTimeout(function(){ try{ w.focus(); w.print(); }catch(e){} },600);
+}
+
+// HTML расчётного блока акта (используется в форме и при частичной перерисовке)
+function ctActCalcBoxHtml(){
+  const c=ctActCalc();
+  function row(l,v,tot){return '<div style="display:flex;justify-content:space-between;gap:10px;padding:'+(tot?"7px 0 0":"3px 0")+';font-size:12px;'+(tot?"border-top:1px solid #dde6f0;margin-top:4px;font-weight:800;color:#1a2a3a":"color:#5a6a7a")+'"><span>'+l+'</span><span style="white-space:nowrap;font-weight:'+(tot?"800":"600")+'">'+v+'</span></div>';}
+  let calcH="";
+  calcH+=row("Стоимость работ ("+(ctActIsFinal()?"весь договор":"по этапам")+")",fmtMoney(c.stagesCost)+" ₽");
+  if(c.extraTotal)calcH+=row("+ Доп. работы",fmtMoney(c.extraTotal)+" ₽");
+  if(c.exclTotal)calcH+=row("− Исключено",fmtMoney(c.exclTotal)+" ₽");
+  calcH+=row("Факт. выполнено",fmtMoney(c.factCost)+" ₽");
+  if(c.penalty)calcH+=row("− Неустойка ("+c.days+" дн)",fmtMoney(c.penalty)+" ₽");
+  calcH+=row("Итого начислено",fmtMoney(c.accrued)+" ₽");
+  if(c.advance)calcH+=row("− Получено авансом",fmtMoney(c.advance)+" ₽");
+  calcH+=row(ctActIsFinal()?"ОСТАТОК К ДОПЛАТЕ":"К ОПЛАТЕ (след. аванс)",fmtMoney(c.toPay)+" ₽",true);
+  return calcH;
+}
+
+// Форма акта (карточки). `card` — хелпер обёртки из tContractTemplate.
+function ctActFormCard(card){
+  const t=ctTplGet();
+  const pays=t.payments||[];
+  let h="";
+
+  // Подтянуть из подписанного договора портала
+  const signed=contractDocs.filter(function(d){return d.status==="signed"||d.status==="closed";});
+  const opts=signed.map(function(d){
+    const kind=ctObjKindOf(d.objId)==="house"?"Дом":"Баня";
+    return '<option value="'+d.id+'">№ '+esc(ctShortNum(d.name))+" · "+esc(d.client||"—")+" · "+kind+'</option>';
+  }).join("");
+  h+=card("📋 ПОДТЯНУТЬ ИЗ ДОГОВОРА",
+    '<select id="ct-act-pull" data-a="ct-act-pull" style="width:100%;padding:9px 10px;border-radius:8px;border:1px solid #2980b9;font-size:13px;outline:none;background:#f0f6ff">'+
+      '<option value="" selected>Выбрать подписанный договор из портала…</option>'+opts+'</select>'+
+    '<div style="font-size:10px;color:#7a9aaa;margin-top:6px">Подставит клиента, сумму, объект, дедлайн и доп. работы (extraWorks основного + связанные договоры «Доп. работы» на объекте). Данные можно поправить руками ниже и в карточках выше.</div>');
+
+  // Этап + даты
+  const stageOpts=pays.map(function(p,i){
+    return '<option value="'+i+'"'+(t.actStage===i?' selected':'')+'>Этап 3.2.'+(i+1)+' — '+fmtMoney(Number(p.amount)||0)+' ₽</option>';
+  }).join("")+'<option value="-1"'+(t.actStage<0?' selected':'')+'>Финальный (весь договор)</option>';
+  h+=card("📌 ЭТАП И ДАТЫ",
+    '<div style="margin-bottom:8px"><div style="font-size:9px;color:#7a9aaa;font-weight:700;margin-bottom:3px">ЗАКРЫВАЕМЫЙ ЭТАП</div>'+
+      '<select id="ct-act-stage" data-a="ct-act-stage" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;background:#fff">'+stageOpts+'</select></div>'+
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">'+
+      actInp("actDate","ДАТА АКТА",{type:"date"})+
+      actInp("actDeadline","ПЛАНОВЫЙ СРОК (ДЕДЛАЙН)",{type:"date"})+
+      actInp("actActualDate","ФАКТ. СДАЧА",{type:"date"})+
+    '</div>'+
+    actInp("actAddress","АДРЕС УСТАНОВКИ ОБЪЕКТА",{minw:"100%",ph:"Московская обл., …"}));
+
+  // Доп. работы (подтягиваются) + исключения — редактируемые списки
+  h+=card("🔨 ДОП. РАБОТЫ (учитываются в расчёте)",actRows("actExtra","Доп. работа","#8e44ad"));
+  h+=card("➖ ИСКЛЮЧЁННЫЕ РАБОТЫ",actRows("actExcluded","Исключено (напр. наружная отделка)","#e67e22"));
+
+  // Аванс + неустойка
+  const advAuto=t.actAdvanceAuto!==false;
+  h+=card("💵 АВАНС И НЕУСТОЙКА",
+    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
+      '<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#5a7a9a;cursor:pointer"><input type="checkbox" id="ct-act-adv-auto" data-a="ct-act-adv-auto"'+(advAuto?" checked":"")+'> Аванс авто (сумма предыдущих этапов)</label>'+
+    '</div>'+
+    '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+      (advAuto?'<div style="flex:1;min-width:130px"><div style="font-size:9px;color:#7a9aaa;font-weight:700;margin-bottom:3px">ВНЕСЁННЫЙ АВАНС (АВТО)</div><div style="padding:8px 10px;border-radius:8px;border:1px solid #e8eef5;background:#f8fafc;font-size:13px;font-weight:600;color:#1a2a3a">'+fmtMoney(ctActAdvanceAuto())+' ₽</div></div>'
+              :actInp("actAdvancePaid","ВНЕСЁННЫЙ АВАНС ₽",{money:true}))+
+      actInp("actPenaltyRate","НЕУСТОЙКА %/ДЕНЬ",{})+
+      actInp("actPenaltyCapPct","ПОТОЛОК % ОТ СУММЫ",{})+
+    '</div>');
+
+  // Живой предпросчёт (частично перерисовывается через _ctActRecalc)
+  h+=card("🧮 РАСЧЁТ (нарастающим итогом)",'<div id="ct-act-calc-box">'+ctActCalcBoxHtml()+'</div>');
+  return h;
+
+  function actInp(field,label,opts){
+    opts=opts||{};
+    return '<div style="flex:'+(opts.flex||"1")+';min-width:'+(opts.minw||"130px")+'">'+
+      '<div style="font-size:9px;color:#7a9aaa;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">'+label+'</div>'+
+      '<input data-actfld="'+field+'" type="'+(opts.type||"text")+'"'+
+        (opts.money?' inputmode="numeric" data-money="1"':'')+
+        ' value="'+esc(opts.money?fmtMoney(t[field]||""):(t[field]==null?"":t[field]))+'"'+
+        ' placeholder="'+esc(opts.ph||"")+'"'+
+        ' style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;background:#fff">'+
+    '</div>';
+  }
+  function actRows(listKey,ph,color){
+    const list=t[listKey]||[];
+    let r="";
+    list.forEach(function(w,i){
+      r+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">'+
+        '<input data-actlist="'+listKey+'" data-f="name" data-i="'+i+'" value="'+esc(w.name||"")+'" placeholder="'+esc(ph)+'" style="flex:1;padding:7px 9px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none">'+
+        '<input data-actlist="'+listKey+'" data-f="cost" data-i="'+i+'" type="text" inputmode="numeric" data-money="1" value="'+esc(fmtMoney(w.cost||""))+'" placeholder="₽" style="width:110px;padding:7px 9px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;text-align:right">'+
+        '<button data-a="ct-act-row-del" data-list="'+listKey+'" data-i="'+i+'" style="width:26px;height:26px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button>'+
+      '</div>';
+    });
+    r+='<button data-a="ct-act-row-add" data-list="'+listKey+'" style="width:100%;padding:7px;background:#fafbfc;border:1px dashed '+color+'66;border-radius:8px;cursor:pointer;font-size:12px;color:'+color+';font-weight:700">+ Добавить</button>';
+    return r;
+  }
 }
 
 let finSalaries={}; // {objId: {userId: {plan:0, paid:0}}}
@@ -10911,6 +11319,30 @@ function bind(){
     else if(a==="ct-tpl-pay-add"){el.onclick=()=>{ctTplGet().payments.push({amount:0,note:""});ctTplPersist();render();};}
     else if(a==="ct-tpl-pay-del"){el.onclick=()=>{ctTplGet().payments.splice(parseInt(el.dataset.i,10),1);ctTplPersist();render();};}
     else if(a==="ct-tpl-print"){el.onclick=()=>ctTplOpenPrint();}
+    // ─── Акт выполненных работ ───
+    else if(a==="ct-tpl-doctype"){el.onclick=()=>{ctTplGet().docType=el.dataset.dt;ctTplPersist();render();};}
+    else if(a==="ct-act-print"){el.onclick=()=>ctActOpenPrint();}
+    else if(a==="ct-act-stage"){el.onchange=()=>{ctTplGet().actStage=parseInt(el.value,10);ctTplPersist();render();};}
+    else if(a==="ct-act-adv-auto"){el.onchange=()=>{ctTplGet().actAdvanceAuto=el.checked;ctTplPersist();render();};}
+    else if(a==="ct-act-row-add"){el.onclick=()=>{const t=ctTplGet();const k=el.dataset.list;(t[k]||(t[k]=[])).push({name:"",cost:0});ctTplPersist();render();};}
+    else if(a==="ct-act-row-del"){el.onclick=()=>{const t=ctTplGet();const k=el.dataset.list;if(t[k])t[k].splice(parseInt(el.dataset.i,10),1);ctTplPersist();render();};}
+    else if(a==="ct-act-pull"){el.onchange=()=>{
+      const c=contractDocs.find(function(x){return x.id===el.value;});
+      if(!c)return;
+      const t=ctTplGet();
+      t.fio=c.client||t.fio;
+      if(c.amount)t.amount=c.amount;
+      const numM=ctShortNum(c.name); if(numM)t.num=numM;
+      if(c.signDate)t.date=c.signDate;
+      if(c.deadlineDate)t.actDeadline=c.deadlineDate;
+      // тип объекта из привязки договора
+      const kind=ctObjKindOf(c.objId);
+      t.objType=kind; const ot=CT_OBJ_TYPES.find(function(o){return o.k===kind;}); if(ot)t.subject=ot.subject;
+      // доп. работы (extraWorks основного + связанные «Доп. работы» на объекте)
+      t.actExtra=ctActGatherExtra(c);
+      ctTplPersist();
+      render();
+    };}
     else if(a==="ct-tpl-text-toggle"){el.onclick=()=>{ctTplTextEdit=!ctTplTextEdit;render();};}
     else if(a==="ct-tpl-text-reset"){el.onclick=()=>{
       const i=el.dataset.i==="act"?"act":parseInt(el.dataset.i,10);
