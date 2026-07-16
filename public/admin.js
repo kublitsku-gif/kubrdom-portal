@@ -3200,6 +3200,10 @@ function render(){
   if(tlWizard){
     a.insertAdjacentHTML("beforeend", tlWizardModal());
   }
+  // Шторка быстрой записи по работе
+  if(workSheet){
+    a.insertAdjacentHTML("beforeend", workSheetModal());
+  }
   bind();
   // Material picker search input
   if(ctMatPicker){
@@ -3990,11 +3994,12 @@ ${obj.stages.map(s=>{
       const isAdminOrFin=currentUser&&(currentUser.roles.includes("admin")||currentUser.roles.includes("financier"));
       // Block check: must have time log first (except admin/fin can always toggle)
       const canCheck=canComplete&&(isAdminOrFin||hasTimeLog||isDone);
+      const canSheet=canComplete||isAdminOrFin; // тап по названию открывает шторку быстрой записи
       let h=`<div style="background:${isDone?'#27ae6008':'#f8fafc'};border:1px solid ${isDone?'#27ae6055':'#dde6f0'};border-radius:8px;margin-bottom:4px;overflow:hidden">
       <div style="display:flex;align-items:center;gap:8px;padding:7px 10px">
         ${canComplete?(canCheck?`<button data-a="obj-toggle-done" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="width:24px;height:24px;flex-shrink:0;background:${isDone?'#27ae60':'#fff'};border:2px solid ${isDone?'#27ae60':'#c0d0e0'};border-radius:6px;cursor:pointer;color:#fff;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0;line-height:1">${isDone?'✓':''}</button>`:`<button data-a="obj-need-time" data-wid="${w.id}" style="width:24px;height:24px;flex-shrink:0;background:#f8fafc;border:2px dashed #d0dae8;border-radius:6px;cursor:pointer;color:#9aabbf;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0;line-height:1" title="Сначала отметьте часы">🔒</button>`):`<div style="width:24px;height:24px;flex-shrink:0;background:${isDone?'#27ae60':'#f0f4f8'};border:2px solid ${isDone?'#27ae60':'#dde6f0'};border-radius:6px;color:#fff;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1">${isDone?'✓':''}</div>`}
         <div style="flex:1;min-width:0">
-          <div style="font-size:13px;font-weight:600;color:${isDone?'#27ae60':'#1a2a3a'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isDone?'text-decoration:line-through;text-decoration-color:#27ae6066':''}">${esc(w.n)}</div>
+          <div ${canSheet?`data-a="work-sheet-open" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}"`:""} style="font-size:13px;font-weight:600;color:${isDone?'#27ae60':'#1a2a3a'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${canSheet?'cursor:pointer;':''}${isDone?'text-decoration:line-through;text-decoration-color:#27ae6066':''}">${esc(w.n)}</div>
           <div style="display:flex;gap:6px;margin-top:2px;align-items:center;flex-wrap:wrap">
             ${(()=>{const ql=workQtyLabel(w);return ql?`<span style="font-size:10px;color:#16a085;background:#16a08515;border-radius:5px;padding:2px 7px;font-weight:600">${ql}</span>`:"";})()}
             ${w.cost>0?`<span style="font-size:11px;color:#7a9aaa;font-weight:700">${fmt(w.cost)}</span>`:""}
@@ -8671,6 +8676,8 @@ let openTimeSid=null;
 let newTimeLog={hours:1,date:""}; // staged values for new time entry
 // Мастер «+ Запись» (время+фото за 3 шага): null | {step:"obj"|"work"|"who"|"hours"|"photo"|"done", oid,sid,wid,wname, uid, hours, savedLid, photoCount, uploading, _hadObjStep}
 let tlWizard=null;
+// Шторка быстрой записи по работе (тап по названию в списке): null | {oid,sid,wid, date:"today"|"yest"|"other", otherDate, uid}
+let workSheet=null;
 let finMode="pnl"; // "bdds" | "pnl" | "experiment"
 let bddsView="month"; // "month" or "contract"
 // Демо-транзакции удалены (были привязаны к сид-объектам obj_banya_kievka/obj_dom_dmitrovka
@@ -9008,6 +9015,94 @@ function tlWizardModal(){
   m+='</div>';
   m+='<div style="flex:1;overflow-y:auto;padding:14px 14px 24px;-webkit-overflow-scrolling:touch">'+body+'</div>';
   m+='</div></div>';
+  return m;
+}
+
+// Тост с кнопкой «Отменить» (для мгновенных сохранений из шторки)
+function _undoToast(msg,undoFn){
+  try{
+    const t=document.createElement("div");
+    t.style.cssText="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#16a085;color:#fff;padding:9px 10px 9px 15px;border-radius:12px;font-size:13px;font-weight:600;z-index:9999;display:flex;align-items:center;gap:10px;max-width:92%;box-shadow:0 6px 18px rgba(22,160,133,0.4)";
+    const s=document.createElement("span");
+    s.textContent=msg;
+    s.style.cssText="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0";
+    const b=document.createElement("button");
+    b.textContent="Отменить";
+    b.style.cssText="background:rgba(255,255,255,0.16);border:1px solid rgba(255,255,255,0.55);border-radius:8px;color:#fff;font-size:12px;font-weight:700;padding:6px 10px;cursor:pointer;flex-shrink:0";
+    b.onclick=function(){try{document.body.removeChild(t);}catch(e){} if(undoFn)undoFn();};
+    t.appendChild(s);t.appendChild(b);
+    document.body.appendChild(t);
+    setTimeout(function(){try{document.body.removeChild(t);}catch(e){}},5000);
+  }catch(e){}
+}
+
+// ── ШТОРКА БЫСТРОЙ ЗАПИСИ (вариант «шторка»: тап по работе → часы одним тапом) ──
+function workSheetModal(){
+  if(!workSheet)return"";
+  const o=objects.find(function(x){return x.id===workSheet.oid;});
+  const st=o&&o.stages.find(function(x){return x.id===workSheet.sid;});
+  const w=st&&st.works.find(function(x){return x.id===workSheet.wid;});
+  if(!o||!st||!w){return"";}
+  const cu=currentUser;
+  const meId=cu?cu.id:"";
+  const isAdmFin=cu&&(cu.roles.includes("admin")||cu.roles.includes("financier"));
+  const canMark=cu&&(cu.roles.includes("admin")||cu.roles.includes("brigadier")||cu.roles.includes("worker")||cu.roles.includes("prod_head"));
+  // Исполнитель: производственные роли — только на себя; админ/фин выбирают из назначенных
+  let whoChips=[];
+  if(isAdmFin){
+    whoChips=tlEligibleUsers(o);
+    if(!whoChips.length){const me=users.find(function(u){return u.id===meId;});if(me)whoChips=[me];}
+  }
+  const uid=workSheet.uid||(whoChips.length?whoChips[0].id:meId);
+  const logs=w.timeLogs||[];
+  const totalH=logs.reduce(function(a,l){return a+(l.hours||0);},0);
+  const hasLog=logs.length>0;
+  let lastH=0;try{lastH=parseFloat(localStorage.getItem("kubr_lastH")||"0");}catch(e){}
+  const HH=[0.5,1,2,3,4,5,6,8];
+  const dsel=workSheet.date||"today";
+  const dchip=function(d,label){
+    const on=dsel===d;
+    return '<button data-a="ws-date" data-d="'+d+'" style="padding:8px 13px;border-radius:16px;cursor:pointer;font-size:12.5px;font-weight:700;background:'+(on?"#22303b":"#fff")+';color:'+(on?"#fff":"#5a7a9a")+';border:1.5px solid '+(on?"#22303b":"#d0dae8")+'">'+label+'</button>';
+  };
+  let m='<div data-a="ws-close" style="position:fixed;inset:0;background:rgba(13,27,46,0.5);z-index:1080"></div>';
+  m+='<style>@keyframes kubrSheetUp{from{transform:translate(-50%,70px);opacity:0.4}to{transform:translate(-50%,0);opacity:1}}@media (prefers-reduced-motion:reduce){#ws-sheet{animation:none!important}}</style>';
+  m+='<div id="ws-sheet" style="position:fixed;left:50%;transform:translateX(-50%);bottom:0;z-index:1081;width:100%;max-width:500px;box-sizing:border-box;background:#fff;border-radius:22px 22px 0 0;box-shadow:0 -10px 40px rgba(10,25,40,0.28);padding:8px 14px calc(14px + env(safe-area-inset-bottom,0px));animation:kubrSheetUp 0.22s ease">';
+  m+='<div style="width:42px;height:5px;border-radius:3px;background:#d5dde5;margin:2px auto 10px"></div>';
+  m+='<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:2px">'+
+     '<div style="flex:1;min-width:0"><div style="font-size:15.5px;font-weight:800;color:#0d1b2e;line-height:1.3">'+esc(w.n)+'</div>'+
+     '<div style="font-size:11px;color:#9aabbf;margin-top:2px">'+esc(st.n)+(totalH?' · уже ⏱ '+_mdH(totalH)+' ч ('+logs.length+')':'')+'</div></div>'+
+     '<button data-a="ws-close" style="width:34px;height:34px;border-radius:10px;border:none;background:#f0f4f8;cursor:pointer;font-size:13px;color:#7a9aaa;font-weight:700;flex-shrink:0">✕</button></div>';
+  if(whoChips.length>1){
+    m+='<div style="font-size:9.5px;letter-spacing:0.1em;color:#9aabbf;font-weight:700;margin:8px 0 5px">КТО РАБОТАЛ</div><div style="display:flex;gap:5px;flex-wrap:wrap">';
+    whoChips.forEach(function(u){
+      const on=u.id===uid;
+      m+='<button data-a="ws-who" data-uid="'+u.id+'" style="padding:6px 11px;border-radius:14px;cursor:pointer;font-size:12px;font-weight:700;background:'+(on?u.c:"#fff")+';color:'+(on?"#fff":"#5a7a9a")+';border:1.5px solid '+(on?u.c:"#dde6f0")+'">'+u.av+' '+esc(u.name)+'</button>';
+    });
+    m+='</div>';
+  }
+  m+='<div style="font-size:9.5px;letter-spacing:0.1em;color:#9aabbf;font-weight:700;margin:10px 0 5px">КОГДА</div>';
+  m+='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+dchip("today","Сегодня")+dchip("yest","Вчера")+dchip("other","📅 Другая")+
+     (dsel==="other"?'<input data-a="ws-other-date" type="date" value="'+esc(workSheet.otherDate||"")+'" style="padding:7px 9px;border-radius:10px;border:1.5px solid #d0dae8;font-size:12.5px;outline:none">':"")+'</div>';
+  m+='<div style="font-size:9.5px;letter-spacing:0.1em;color:#9aabbf;font-weight:700;margin:12px 0 6px">СКОЛЬКО ЧАСОВ · ТАП = ЗАПИСАНО</div>';
+  m+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:7px">';
+  HH.forEach(function(h){
+    const isLast=lastH===h;
+    m+='<button data-a="ws-hours" data-h="'+h+'" data-uid="'+uid+'" data-wn="'+esc(w.n)+'" style="height:54px;border-radius:13px;border:1.5px solid '+(isLast?"#16a085":"#d0dae8")+';background:'+(isLast?"#e7f6f1":"#fff")+';font-size:19px;font-weight:800;color:'+(isLast?"#16a085":"#1a2a3a")+';cursor:pointer;font-variant-numeric:tabular-nums">'+_mdH(h)+'</button>';
+  });
+  m+='</div>';
+  m+='<div style="display:flex;gap:8px;margin-top:12px">';
+  m+='<label data-a="ws-photo-label" style="flex:1;display:flex;align-items:center;justify-content:center;gap:7px;background:#3498db;border:none;border-radius:13px;padding:13px 8px;cursor:pointer;color:#fff;font-size:14px;font-weight:800">📷 Фото<input id="ws-photo-inp" type="file" accept="image/*" multiple style="display:none"></label>';
+  if(canMark){
+    if(w.done){
+      m+='<button data-a="obj-toggle-done" data-oid="'+o.id+'" data-sid="'+st.id+'" data-wid="'+w.id+'" style="flex:1;background:#fff;border:1.5px solid #d0dae8;border-radius:13px;padding:13px 8px;cursor:pointer;color:#5a7a9a;font-size:14px;font-weight:800">↩ Снять отметку</button>';
+    } else if(hasLog||isAdmFin){
+      m+='<button data-a="obj-toggle-done" data-oid="'+o.id+'" data-sid="'+st.id+'" data-wid="'+w.id+'" style="flex:1;background:#27ae60;border:none;border-radius:13px;padding:13px 8px;cursor:pointer;color:#fff;font-size:14px;font-weight:800">✅ Готово</button>';
+    } else {
+      m+='<div style="flex:1;display:flex;align-items:center;justify-content:center;background:#f4f7fa;border:1.5px dashed #d0dae8;border-radius:13px;padding:13px 8px;color:#9aabbf;font-size:12px;font-weight:700;text-align:center">🔒 Готово — после часов</div>';
+    }
+  }
+  m+='</div>';
+  m+='</div>';
   return m;
 }
 // Global client picker function - called from inline onclick
@@ -13003,6 +13098,7 @@ function bind(){
             })});
           })});
         });
+        if(workSheet)workSheet=null; // тоггл из шторки закрывает её
         try{
           const toast=document.createElement("div");
           toast.textContent=became?"✓ Работа выполнена":"☐ Снята отметка";
@@ -13288,6 +13384,107 @@ function bind(){
       el.onclick=handler;
       el.addEventListener("click",handler,true);
       el.addEventListener("touchend",function(ev){if(ev){ev.stopPropagation();ev.preventDefault();}handler(ev);},true);
+    }
+    // ── Шторка быстрой записи (тап по названию работы) ──
+    else if(a==="work-sheet-open"){el.onclick=()=>{
+      workSheet={oid:el.dataset.oid,sid:el.dataset.sid,wid:el.dataset.wid,date:"today",otherDate:"",uid:""};
+      render();
+    };}
+    else if(a==="ws-close"){el.onclick=()=>{workSheet=null;render();};}
+    else if(a==="ws-date"){el.onclick=()=>{if(!workSheet)return;workSheet.date=el.dataset.d;render();};}
+    else if(a==="ws-who"){el.onclick=()=>{if(!workSheet)return;workSheet.uid=el.dataset.uid;render();};}
+    else if(a==="ws-other-date"){el.onchange=()=>{if(workSheet)workSheet.otherDate=el.value;};}
+    else if(a==="ws-hours"){el.onclick=()=>{
+      if(!workSheet)return;
+      const h=parseFloat(el.dataset.h);
+      if(!(h>0))return;
+      let date=todayISO();
+      if(workSheet.date==="yest")date=_mdShiftISO(date,-1);
+      else if(workSheet.date==="other"){
+        date=workSheet.otherDate||"";
+        if(!date){
+          try{
+            const t=document.createElement("div");
+            t.textContent="📅 Выберите дату";
+            t.style.cssText="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#e67e22;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:600;z-index:9999";
+            document.body.appendChild(t);
+            setTimeout(function(){try{document.body.removeChild(t);}catch(e){}},2000);
+          }catch(e){}
+          return;
+        }
+      }
+      const uid=el.dataset.uid||(currentUser?currentUser.id:"");
+      if(!uid)return;
+      const oid=workSheet.oid,sid=workSheet.sid,wid=workSheet.wid;
+      const wname=el.dataset.wn||"";
+      const lid=gid();
+      objects=objects.map(function(o){
+        if(o.id!==oid)return o;
+        return Object.assign({},o,{stages:o.stages.map(function(st){
+          if(st.id!==sid)return st;
+          return Object.assign({},st,{works:st.works.map(function(w){
+            if(w.id!==wid)return w;
+            return Object.assign({},w,{timeLogs:(w.timeLogs||[]).concat([{id:lid,userId:uid,date:date,hours:h}])});
+          })});
+        })});
+      });
+      try{localStorage.setItem("kubr_lastH",String(h));}catch(e){}
+      workSheet=null;
+      scheduleSave();render();
+      _undoToast("⏱ "+_mdH(h)+" ч · "+wname+" — записано",function(){
+        objects=objects.map(function(o){
+          if(o.id!==oid)return o;
+          return Object.assign({},o,{stages:o.stages.map(function(st){
+            if(st.id!==sid)return st;
+            return Object.assign({},st,{works:st.works.map(function(w){
+              if(w.id!==wid)return w;
+              return Object.assign({},w,{timeLogs:(w.timeLogs||[]).filter(function(l){return l.id!==lid;})});
+            })});
+          })});
+        });
+        scheduleSave();render();
+      });
+    };}
+    else if(a==="ws-photo-label"){
+      const inp=document.getElementById("ws-photo-inp");
+      if(inp&&!inp._bound){
+        inp._bound=true;
+        inp.addEventListener("change",async function(){
+          const files=Array.from(inp.files||[]);
+          if(!files.length||!workSheet)return;
+          const oid=workSheet.oid,sid=workSheet.sid,wid=workSheet.wid;
+          workSheet=null;render(); // шторку закрываем сразу, фото грузятся в фоне
+          const newPhotos=[];const tgFiles=[];
+          for(const f of files){
+            try{
+              let c=f;try{c=await compressImage(f,1024*1024);}catch(e){}
+              const url=await uploadFileR2(c,true);
+              tgFiles.push(c);
+              newPhotos.push({id:gid(),data:url,date:new Date().toISOString().slice(0,16).replace("T"," "),uploader:(users.find(u=>u.id===(currentUser?currentUser.id:""))||{}).name||"—",uploaderId:currentUser?currentUser.id:"",size:f.size,name:f.name});
+            }catch(err){alert("Ошибка загрузки фото: "+((err&&err.message)||err));}
+          }
+          mirrorPhotosToTelegram(oid,tgFiles);
+          if(!newPhotos.length){render();return;}
+          objects=objects.map(function(o){
+            if(o.id!==oid)return o;
+            return Object.assign({},o,{stages:o.stages.map(function(st){
+              if(st.id!==sid)return st;
+              return Object.assign({},st,{works:st.works.map(function(w){
+                if(w.id!==wid)return w;
+                return Object.assign({},w,{photos:(w.photos||[]).concat(newPhotos)});
+              })});
+            })});
+          });
+          try{
+            const toast=document.createElement("div");
+            toast.textContent="📷 Загружено "+newPhotos.length+" фото";
+            toast.style.cssText="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#3498db;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:600;z-index:9999";
+            document.body.appendChild(toast);
+            setTimeout(function(){try{document.body.removeChild(toast);}catch(e){}},2000);
+          }catch(e){}
+          fl();
+        });
+      }
     }
     else if(a==="obj-tl-save"){
       const handler=function(ev){
