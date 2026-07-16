@@ -215,6 +215,7 @@ function serializeState(){
     { work_id: "finSalaries",     data: finSalaries     },
     { work_id: "finContracts",    data: finContracts    },
     { work_id: "finExtraWorks",   data: finExtraWorks   },
+    { work_id: "receipts",        data: receipts        },
     { work_id: "contractDocs",    data: contractDocs    },
     { work_id: "crmClients",      data: crmClients      },
     { work_id: "settings",        data: settings        },
@@ -246,6 +247,7 @@ function applyState(items){
   expProducts     = arr("expProducts",     expProducts);
   dbPlans         = arr("dbPlans",         dbPlans);
   finTxns         = arr("finTxns",         finTxns);
+  receipts        = arr("receipts",        receipts);
   contractDocs    = arr("contractDocs",    contractDocs);
   crmClients      = arr("crmClients",      crmClients);
   rolePermissions = obj("rolePermissions", rolePermissions);
@@ -3063,6 +3065,17 @@ function render(){
     if(ps){ps.oninput=function(){planPickerSearch=this.value;render();};}
   }
   if((tab==="assign"||tab==="templates")&&!openTemplate)renderTplCards();
+  // Форма чека: синк в буфер на каждый ввод — фоновая перерисовка не стирает набранное
+  if(receiptAddFor){
+    ["rc-amount","rc-note","rc-date"].forEach(function(id){
+      const el=document.getElementById(id);
+      if(el&&!el._rcSync){
+        el._rcSync=true;
+        el.addEventListener("input",_rcSyncForm);
+        el.addEventListener("change",_rcSyncForm);
+      }
+    });
+  }
   if(tab==="contracts"&&(contractView||contractAddForm)){
     _bindContractFormSync();   // поля форм договора переживают перерисовку (синк в буферы)
     ["ct-client-search","ct-edit-client-search"].forEach(function(id){
@@ -6620,6 +6633,9 @@ function tFinanceList(){
   html+='</div>';
   } // end if(showDashboard)
 
+  // 🧾 Чеки рабочих — подотчёт (видит админ/финансист)
+  if(showDashboard)html+=adminReceiptsBlock();
+
   // Per-contract cards (each signed contract shown separately, grouped by object)
   objects.forEach(function(obj){
     let signedContracts=contractDocs.filter(function(d){return d.objId===obj.id&&(d.status==="signed"||d.status==="closed");});
@@ -6840,6 +6856,8 @@ function tFinanceList(){
               }).join(""):"")+
           '</div>';
         }
+        // 🧾 Мои чеки за материалы (купленные за свои деньги)
+        if(isBrigOnly)html+=myReceiptsBlock(c);
         html+='</div>';
         return; // skip rest of full card
       }
@@ -9721,6 +9739,167 @@ function getObjectContractAmount(oid){
   return total;
 }
 let finExtraWorks={}; // {objId: [{id,name,amount,date,note}]}
+
+// ═══ ЧЕКИ РАБОЧИХ (подотчёт) ════════════════════════════════════════════════
+// Рабочий купил материал за свои деньги → грузит фото чека. Админ видит долг и возмещает.
+// Фото чека уходит в R2 (ссылка, не base64) — иначе снимок пробьёт лимит строки D1 (2 МБ).
+// {id,userId,objId,contractId,amount,note,date,files:[{name,data,mime,size}],status,paidDate,createdAt}
+// status: "pending" (ждёт возмещения) | "paid" (возмещено) | "rejected" (отклонён)
+let receipts=[];
+let receiptAddFor=null;   // contractId, для которого открыта форма добавления чека
+let receiptNew={amount:"",note:"",date:new Date().toISOString().slice(0,10),files:[]};
+
+// Итоги по чекам: сколько должны рабочему (pending) и сколько уже возмещено
+function receiptTotals(filterFn){
+  const list=receipts.filter(filterFn||function(){return true;});
+  const pending=list.filter(function(r){return (r.status||"pending")==="pending";}).reduce(function(a,r){return a+(Number(r.amount)||0);},0);
+  const paid=list.filter(function(r){return r.status==="paid";}).reduce(function(a,r){return a+(Number(r.amount)||0);},0);
+  return {list:list,pending:pending,paid:paid};
+}
+// Статусы чека для чипа
+const RECEIPT_STATUS={
+  pending:{label:"Ждёт возмещения",color:"#e67e22"},
+  paid:{label:"Возмещено",color:"#27ae60"},
+  rejected:{label:"Отклонён",color:"#e74c3c"}
+};
+
+// Одна строка чека (общая для рабочего и админа). withActions — кнопки возмещения (админ).
+function receiptRowHtml(r,withActions){
+  const st=RECEIPT_STATUS[r.status||"pending"]||RECEIPT_STATUS.pending;
+  const files=(r.files||[]);
+  const thumb=files.length
+    ? (/^image\//.test(files[0].mime||"")
+        ? '<img src="'+esc(files[0].data)+'" onerror="this.style.display=\'none\'" style="width:38px;height:38px;object-fit:cover;border-radius:6px;border:1px solid #e6ecf3;flex-shrink:0">'
+        : '<span style="font-size:20px;flex-shrink:0">📄</span>')
+    : '<span style="font-size:20px;flex-shrink:0;opacity:0.4">🧾</span>';
+  const who=(users.find(function(u){return u.id===r.userId;})||{}).name||"—";
+  let h='<div style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:#fafbfc;border:1px solid #f0f3f7;border-radius:8px;margin-bottom:4px">';
+  h+=thumb;
+  h+='<div style="flex:1;min-width:0">'+
+       '<div style="font-size:11.5px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.note||"Материалы")+'</div>'+
+       '<div style="font-size:9px;color:#9aabbf;margin-top:1px">'+esc(r.date||"")+(withActions?" · 👷 "+esc(who):"")+
+         ' · <span style="color:'+st.color+';font-weight:700">'+st.label+'</span></div>'+
+     '</div>';
+  h+='<div style="font-weight:700;color:#8e44ad;font-size:12px;white-space:nowrap">'+(Number(r.amount)||0).toLocaleString("ru-RU")+' ₽</div>';
+  if(files.length)h+='<a href="'+esc(files[0].data)+'" target="_blank" rel="noopener" style="font-size:11px;color:#2980b9;text-decoration:none;white-space:nowrap">🔍</a>';
+  if(withActions&&(r.status||"pending")==="pending"){
+    h+='<button data-a="rc-pay" data-rid="'+r.id+'" style="padding:4px 8px;background:#27ae60;border:none;border-radius:6px;cursor:pointer;color:#fff;font-size:10px;font-weight:700;white-space:nowrap">✓ Возместил</button>';
+    h+='<button data-a="rc-reject" data-rid="'+r.id+'" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:10px">✕</button>';
+  }
+  if(!withActions&&(r.status||"pending")==="pending"){
+    h+='<button data-a="rc-del" data-rid="'+r.id+'" title="Удалить чек" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:10px">✕</button>';
+  }
+  h+='</div>';
+  return h;
+}
+
+// Снять значения полей формы чека в буфер (поля живут в innerHTML и гибнут при render)
+function _rcSyncForm(){
+  const amt=document.getElementById("rc-amount");
+  const note=document.getElementById("rc-note");
+  const date=document.getElementById("rc-date");
+  if(amt)receiptNew.amount=unfmtMoney(amt.value);
+  if(note)receiptNew.note=note.value;
+  if(date)receiptNew.date=date.value;
+}
+
+// Форма добавления чека (рабочий)
+function receiptFormHtml(c){
+  const files=receiptNew.files||[];
+  const inpS='padding:7px 9px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box';
+  let h='<div style="background:#fff;border:2px solid #8e44ad;border-radius:10px;padding:10px;margin-bottom:8px">';
+  h+='<div style="font-size:11px;font-weight:700;color:#1a2a3a;margin-bottom:8px">Новый чек за материалы</div>';
+  h+='<div style="display:flex;gap:6px;margin-bottom:6px">'+
+       '<input id="rc-amount" type="text" inputmode="numeric" data-money="1" value="'+esc(fmtMoney(receiptNew.amount||""))+'" placeholder="Сумма ₽" style="flex:1;'+inpS+';text-align:right;font-weight:700">'+
+       '<input id="rc-date" type="date" value="'+esc(receiptNew.date||"")+'" style="flex:1;'+inpS+'">'+
+     '</div>';
+  h+='<input id="rc-note" value="'+esc(receiptNew.note||"")+'" placeholder="Что купили (саморезы, утеплитель…)" style="width:100%;'+inpS+';margin-bottom:6px">';
+  h+='<label data-a="rc-file-label" style="display:block;text-align:center;padding:8px;background:#8e44ad12;border:1px dashed #8e44ad66;border-radius:8px;cursor:pointer;color:#8e44ad;font-size:12px;font-weight:700;margin-bottom:6px">📷 Прикрепить фото чека'+
+     '<input id="rc-file-inp" type="file" accept="image/*,application/pdf" multiple style="display:none"></label>';
+  if(files.length){
+    files.forEach(function(f){
+      h+='<div style="display:flex;align-items:center;gap:6px;padding:4px 6px;background:#fafbfc;border:1px solid #f0f3f7;border-radius:6px;margin-bottom:3px">'+
+           '<span style="font-size:12px">📎</span>'+
+           '<span style="flex:1;min-width:0;font-size:10.5px;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name)+'</span>'+
+           '<button data-a="rc-file-del" data-fid="'+f.id+'" style="width:20px;height:20px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:10px">✕</button>'+
+         '</div>';
+    });
+  }
+  h+='<div style="display:flex;gap:6px">'+
+       '<button data-a="rc-save" data-cid="'+c.id+'" style="flex:1;padding:8px;background:#27ae60;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Сохранить чек</button>'+
+       '<button data-a="rc-cancel" style="padding:8px 14px;background:#f0f4f8;border:none;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:12px;font-weight:700">Отмена</button>'+
+     '</div>';
+  h+='</div>';
+  return h;
+}
+
+// Блок «Мои чеки» в карточке договора у рабочего
+function myReceiptsBlock(c){
+  const uid=currentUser?currentUser.id:"";
+  const t=receiptTotals(function(r){return r.userId===uid&&r.contractId===c.id;});
+  const list=t.list.slice().sort(function(a,b){return String(b.date||"").localeCompare(String(a.date||""));});
+  let h='<div style="padding:12px 14px;border-top:1px solid #f0f3f7">';
+  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'+
+       '<div style="font-size:11px;color:#8e44ad;font-weight:700;letter-spacing:0.5px">🧾 МОИ ЧЕКИ ЗА МАТЕРИАЛЫ</div>'+
+       '<button data-a="rc-add-open" data-cid="'+c.id+'" style="padding:4px 10px;background:#8e44ad;border:none;border-radius:6px;cursor:pointer;font-size:11px;color:#fff;font-weight:700">+ Чек</button>'+
+     '</div>';
+  h+='<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;padding:10px;background:#8e44ad08;border-radius:10px;margin-bottom:8px">'+
+       '<div><div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.3px">МНЕ ДОЛЖНЫ</div><div style="font-size:14px;font-weight:700;color:'+(t.pending>0?"#e67e22":"#27ae60")+';margin-top:2px">'+(t.pending>0?t.pending.toLocaleString("ru-RU"):"✓")+'</div></div>'+
+       '<div><div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.3px">ВОЗМЕЩЕНО</div><div style="font-size:14px;font-weight:700;color:#27ae60;margin-top:2px">'+t.paid.toLocaleString("ru-RU")+'</div></div>'+
+     '</div>';
+  if(receiptAddFor===c.id)h+=receiptFormHtml(c);
+  if(list.length){ list.forEach(function(r){ h+=receiptRowHtml(r,false); }); }
+  else if(receiptAddFor!==c.id){
+    h+='<div style="font-size:11px;color:#9aabbf;text-align:center;padding:10px;border:1px dashed #d0dae8;border-radius:8px">Чеков нет. Купили материал за свои — нажмите «+ Чек».</div>';
+  }
+  h+='</div>';
+  return h;
+}
+
+// Админский блок: кому и сколько должны по чекам
+function adminReceiptsBlock(){
+  const pend=receipts.filter(function(r){return (r.status||"pending")==="pending";});
+  const totalDebt=pend.reduce(function(a,r){return a+(Number(r.amount)||0);},0);
+  // Группируем по рабочему
+  const byUser={};
+  pend.forEach(function(r){ (byUser[r.userId]=byUser[r.userId]||[]).push(r); });
+  const uids=Object.keys(byUser);
+  let h='<div style="background:#fff;border-radius:14px;border:1px solid '+(totalDebt>0?"#e67e2255":"#dde6f0")+';margin-bottom:14px;overflow:hidden">';
+  h+='<div style="padding:12px 14px;background:'+(totalDebt>0?"#e67e2208":"#f8fafc")+';border-bottom:1px solid #f0f3f7;display:flex;align-items:center;justify-content:space-between">'+
+       '<div><div style="font-size:11px;color:#8e44ad;font-weight:700;letter-spacing:0.5px">🧾 ЧЕКИ РАБОЧИХ — ПОДОТЧЁТ</div>'+
+       '<div style="font-size:10px;color:#9aabbf;margin-top:2px">Материалы, купленные за свои деньги</div></div>'+
+       '<div style="text-align:right"><div style="font-size:9px;color:#9aabbf;font-weight:700">ДОЛГ РАБОЧИМ</div>'+
+       '<div style="font-size:16px;font-weight:800;color:'+(totalDebt>0?"#e67e22":"#27ae60")+'">'+(totalDebt>0?totalDebt.toLocaleString("ru-RU")+" ₽":"✓ нет")+'</div></div>'+
+     '</div>';
+  h+='<div style="padding:12px 14px">';
+  if(!uids.length){
+    h+='<div style="font-size:11px;color:#9aabbf;text-align:center;padding:10px;border:1px dashed #dde6f0;border-radius:8px">Непогашенных чеков нет</div>';
+  } else {
+    uids.forEach(function(uid){
+      const u=users.find(function(x){return x.id===uid;})||{name:"—",av:"👷"};
+      const list=byUser[uid];
+      const sum=list.reduce(function(a,r){return a+(Number(r.amount)||0);},0);
+      h+='<div style="margin-bottom:10px">'+
+           '<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">'+
+             '<span style="font-size:15px">'+(u.av||"👷")+'</span>'+
+             '<span style="flex:1;font-size:12px;font-weight:700;color:#1a2a3a">'+esc(u.name)+'</span>'+
+             '<span style="font-size:12px;font-weight:800;color:#e67e22">'+sum.toLocaleString("ru-RU")+' ₽</span>'+
+           '</div>';
+      list.sort(function(a,b){return String(b.date||"").localeCompare(String(a.date||""));})
+          .forEach(function(r){ h+=receiptRowHtml(r,true); });
+      h+='</div>';
+    });
+  }
+  // История возмещённых (сворачиваем в компактный список)
+  const paid=receipts.filter(function(r){return r.status==="paid";});
+  if(paid.length){
+    h+='<div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.5px;margin:10px 0 4px">ВОЗМЕЩЕНО ('+paid.length+')</div>';
+    paid.slice().sort(function(a,b){return String(b.paidDate||b.date||"").localeCompare(String(a.paidDate||a.date||""));})
+        .slice(0,5).forEach(function(r){ h+=receiptRowHtml(r,true); });
+  }
+  h+='</div></div>';
+  return h;
+}
 const FIN_INCOME_CATS=["💰 Аванс клиента","💰 Окончательный расчёт","💰 Доп. оплата","💰 Прочий приход"];
 // Default salary plans (when not explicitly set)
 const DEFAULT_SALARY_PROD=200000;   // brigadier/worker
@@ -11199,6 +11378,68 @@ function bind(){
     };}
     else if(a==="ct-add"){el.onclick=()=>{contractAddForm=!contractAddForm;contractNew={objId:"",type:"main",name:"",amount:"",signDate:new Date().toISOString().slice(0,10),client:"",status:"draft",note:"",deadlineDate:"",extraWorks:[],files:[]};render();};}
     else if(a==="ct-cancel"){el.onclick=()=>{contractAddForm=false;render();};}
+    // ─── Чеки рабочих (подотчёт) ───
+    else if(a==="rc-add-open"){el.onclick=()=>{
+      const cid=el.dataset.cid;
+      receiptAddFor=(receiptAddFor===cid)?null:cid;
+      receiptNew={amount:"",note:"",date:new Date().toISOString().slice(0,10),files:[]};
+      render();
+    };}
+    else if(a==="rc-cancel"){el.onclick=()=>{receiptAddFor=null;render();};}
+    else if(a==="rc-file-label"){
+      const inp=document.getElementById("rc-file-inp");
+      if(inp&&!inp._bound){
+        inp._bound=true;
+        inp.addEventListener("change",async function(){
+          const files=Array.from(inp.files||[]);
+          inp._bound=false;
+          if(!files.length)return;
+          // сохраняем набранное до перерисовки (поля живут в innerHTML)
+          _rcSyncForm();
+          const added=await uploadContractFiles(files,"receipt");   // R2-ссылки, не base64
+          if(added.length)receiptNew.files=(receiptNew.files||[]).concat(added);
+          render();
+        });
+      }
+    }
+    else if(a==="rc-file-del"){el.onclick=()=>{
+      _rcSyncForm();
+      const fid=el.dataset.fid;
+      receiptNew.files=(receiptNew.files||[]).filter(function(f){return f.id!==fid;});
+      render();
+    };}
+    else if(a==="rc-save"){el.onclick=()=>{
+      _rcSyncForm();
+      const amount=Number(receiptNew.amount)||0;
+      if(!(amount>0)){alert("Укажите сумму чека");return;}
+      if(!(receiptNew.files||[]).length&&!confirm("Фото чека не прикреплено. Сохранить без фото?"))return;
+      const cid=el.dataset.cid;
+      const c=contractDocs.find(function(x){return x.id===cid;});
+      receipts=receipts.concat([{
+        id:gid(), userId:currentUser?currentUser.id:"", objId:c?c.objId:"", contractId:cid,
+        amount:amount, note:receiptNew.note||"Материалы", date:receiptNew.date||new Date().toISOString().slice(0,10),
+        files:receiptNew.files||[], status:"pending", createdAt:new Date().toISOString()
+      }]);
+      receiptAddFor=null;
+      receiptNew={amount:"",note:"",date:new Date().toISOString().slice(0,10),files:[]};
+      fl();
+    };}
+    else if(a==="rc-del"){el.onclick=()=>{
+      if(!confirm("Удалить чек?"))return;
+      receipts=receipts.filter(function(r){return r.id!==el.dataset.rid;});
+      fl();
+    };}
+    else if(a==="rc-pay"){el.onclick=()=>{
+      const rid=el.dataset.rid;
+      receipts=receipts.map(function(r){return r.id===rid?Object.assign({},r,{status:"paid",paidDate:new Date().toISOString().slice(0,10)}):r;});
+      fl();
+    };}
+    else if(a==="rc-reject"){el.onclick=()=>{
+      if(!confirm("Отклонить чек? Рабочий увидит статус «Отклонён»."))return;
+      const rid=el.dataset.rid;
+      receipts=receipts.map(function(r){return r.id===rid?Object.assign({},r,{status:"rejected"}):r;});
+      fl();
+    };}
     else if(a==="ct-new-file-label"){
       const kind=el.dataset.kind;
       const inp=document.getElementById("ct-new-file-inp-"+kind);
