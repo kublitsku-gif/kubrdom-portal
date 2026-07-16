@@ -3053,6 +3053,10 @@ function render(){
   if(specCopyPicker){
     a.insertAdjacentHTML("beforeend", specCopyModal());
   }
+  // Мастер записи времени/фото («+ Запись»)
+  if(tlWizard){
+    a.insertAdjacentHTML("beforeend", tlWizardModal());
+  }
   bind();
   // Material picker search input
   if(ctMatPicker){
@@ -4073,6 +4077,16 @@ ${_vo.length===0?`<div style="background:#fff;border-radius:14px;border:2px dash
 </div>`:`<div style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px">
   ${_vo.map(obj=>renderObjCard(obj,isAdmin)).join("")}
 </div>`}
+
+${(()=>{
+  // Плавающая «＋ Запись» — мастер учёта времени/фото для ролей, которые пишут часы.
+  // У админа поднята над нижним таб-баром.
+  const canLog=currentUser&&["admin","financier","brigadier","worker","prod_head"].some(r=>currentUser.roles.includes(r));
+  if(!canLog||!_vo.length)return "";
+  const expanded=_vo.filter(o=>objPrevExpanded[o.id]===true);
+  const foid=expanded.length===1?expanded[0].id:(_vo.length===1?_vo[0].id:"");
+  return `<button data-a="tl-wiz-open" data-oid="${foid}" style="position:fixed;left:50%;transform:translateX(-50%);bottom:calc(${isAdmin?"92px":"24px"} + env(safe-area-inset-bottom,0px));z-index:600;background:#16a085;border:none;border-radius:999px;padding:15px 30px;cursor:pointer;color:#fff;font-size:16px;font-weight:800;box-shadow:0 10px 24px rgba(22,160,133,0.45);display:flex;align-items:center;gap:7px">＋ Запись</button>`;
+})()}
 
 <!-- ── ШАБЛОНЫ ── -->
 ${isAdmin?`<div style="border-top:2px solid #e8eef5;padding-top:20px;margin-top:6px;overflow:hidden">${tTemplates()}</div>`:""}
@@ -8507,6 +8521,8 @@ let openTimeWid=null; // {wid} of work with open time-log form
 let openTimeOid=null;
 let openTimeSid=null;
 let newTimeLog={hours:1,date:""}; // staged values for new time entry
+// Мастер «+ Запись» (время+фото за 3 шага): null | {step:"obj"|"work"|"who"|"hours"|"photo"|"done", oid,sid,wid,wname, uid, hours, savedLid, photoCount, uploading, _hadObjStep}
+let tlWizard=null;
 let finMode="pnl"; // "bdds" | "pnl" | "experiment"
 let bddsView="month"; // "month" or "contract"
 // Демо-транзакции удалены (были привязаны к сид-объектам obj_banya_kievka/obj_dom_dmitrovka
@@ -8642,6 +8658,208 @@ function planPickerModal(){
     m+='</div>';
   }
   m+='</div></div></div>';
+  return m;
+}
+
+// ── МАСТЕР «+ ЗАПИСЬ»: время + фото за 3 шага (плавающая кнопка на вкладке «Объекты») ──
+function tlVisibleObjects(){
+  if(!currentUser)return[];
+  return currentUser.roles.includes("admin")?objects:objects.filter(function(o){return getUserObjects(currentUser).includes(o.id);});
+}
+// Исполнители по объекту: ответственные из подписанных договоров с производственной ролью
+function tlEligibleUsers(obj){
+  const respIds=new Set();
+  contractDocs.filter(function(d){return d.objId===obj.id&&(d.status==="signed"||d.status==="closed");})
+    .forEach(function(d){(d.responsible||[]).forEach(function(uid){respIds.add(uid);});});
+  const PROD=["brigadier","worker","prod_head"];
+  return users.filter(function(u){return respIds.has(u.id)&&u.roles.some(function(r){return PROD.includes(r);});});
+}
+// Админ/финансист выбирают исполнителя; производственные роли пишут только на себя
+function tlWizNeedWho(){
+  return !!(currentUser&&(currentUser.roles.includes("admin")||currentUser.roles.includes("financier")));
+}
+function tlWizardOpen(oid){
+  const vis=tlVisibleObjects();
+  if(!vis.length)return;
+  let o=oid?vis.find(function(x){return x.id===oid;}):null;
+  if(!o&&vis.length===1)o=vis[0];
+  tlWizard={step:o?"work":"obj",oid:o?o.id:"",photoCount:0,_hadObjStep:!o};
+  render();
+}
+function tlWizBack(){
+  if(!tlWizard)return;
+  const s=tlWizard.step;
+  if(s==="work"){ if(tlWizard._hadObjStep){tlWizard.step="obj";} else {tlWizard=null;} }
+  else if(s==="who"){tlWizard.step="work";}
+  else if(s==="hours"){tlWizard.step=tlWizNeedWho()?"who":"work";}
+  else {tlWizard=null;} // photo/done: запись уже создана — назад = закрыть
+  render();
+}
+// Тап по часам = запись сохранена сразу (дата — сегодня). Фото — необязательный хвост.
+function tlWizSaveLog(h){
+  if(!tlWizard||!tlWizard.wid||!(h>0))return;
+  const uid=tlWizard.uid||(currentUser?currentUser.id:"");
+  if(!uid){alert("Выберите исполнителя");return;}
+  const oid=tlWizard.oid,sid=tlWizard.sid,wid=tlWizard.wid;
+  const lid=gid();
+  objects=objects.map(function(o){
+    if(o.id!==oid)return o;
+    return Object.assign({},o,{stages:o.stages.map(function(st){
+      if(st.id!==sid)return st;
+      return Object.assign({},st,{works:st.works.map(function(w){
+        if(w.id!==wid)return w;
+        return Object.assign({},w,{timeLogs:(w.timeLogs||[]).concat([{id:lid,userId:uid,date:todayISO(),hours:h}])});
+      })});
+    })});
+  });
+  tlWizard.hours=h;tlWizard.savedLid=lid;tlWizard.step="photo";
+  scheduleSave();render();
+}
+function tlWizUndo(){
+  if(!tlWizard||!tlWizard.savedLid)return;
+  const oid=tlWizard.oid,sid=tlWizard.sid,wid=tlWizard.wid,lid=tlWizard.savedLid;
+  objects=objects.map(function(o){
+    if(o.id!==oid)return o;
+    return Object.assign({},o,{stages:o.stages.map(function(st){
+      if(st.id!==sid)return st;
+      return Object.assign({},st,{works:st.works.map(function(w){
+        if(w.id!==wid)return w;
+        return Object.assign({},w,{timeLogs:(w.timeLogs||[]).filter(function(l){return l.id!==lid;})});
+      })});
+    })});
+  });
+  tlWizard=null;
+  scheduleSave();render();
+  try{
+    const t=document.createElement("div");
+    t.textContent="↩ Запись времени удалена";
+    t.style.cssText="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#e67e22;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:600;z-index:9999";
+    document.body.appendChild(t);
+    setTimeout(function(){try{document.body.removeChild(t);}catch(e){}},2000);
+  }catch(e){}
+}
+function tlWizardModal(){
+  if(!tlWizard)return"";
+  const step=tlWizard.step;
+  const vis=tlVisibleObjects();
+  const obj=objects.find(function(o){return o.id===tlWizard.oid;});
+  const meId=currentUser?currentUser.id:"";
+  const flow=(tlWizard._hadObjStep?["obj"]:[]).concat(["work"],tlWizNeedWho()?["who"]:[],["hours","photo"]);
+  const idx=step==="done"?flow.length:flow.indexOf(step);
+  const canBack=(step==="work"&&tlWizard._hadObjStep)||step==="who"||step==="hours";
+  const dots=flow.map(function(_,i){return '<span style="width:8px;height:8px;border-radius:50%;background:'+(i<=idx?'#16a085':'#d5dde5')+'"></span>';}).join("");
+  let todayHuman;
+  try{todayHuman=new Date().toLocaleDateString("ru-RU",{day:"numeric",month:"long"});}catch(e){todayHuman=todayISO();}
+  const fmtH=function(h){return String(h).replace(".",",");};
+
+  let body="";
+  if(step==="obj"){
+    body+='<div style="font-size:20px;font-weight:800;color:#0d1b2e;margin:4px 2px 14px">Какой объект?</div>';
+    vis.forEach(function(o){
+      const nW=o.stages.flatMap(function(s){return s.works;}).length;
+      body+='<button data-a="tl-wiz-obj" data-oid="'+o.id+'" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:#fff;border:1.5px solid #dde6f0;border-radius:14px;padding:14px;margin-bottom:8px;cursor:pointer;min-height:56px">'+
+        '<span style="font-size:22px;flex-shrink:0">'+o.icon+'</span>'+
+        '<span style="flex:1;min-width:0"><span style="display:block;font-size:15px;font-weight:700;color:#1a2a3a">'+esc(o.name)+'</span>'+
+        '<span style="display:block;font-size:11px;color:#9aabbf;margin-top:2px">'+nW+' работ</span></span>'+
+        '<span style="color:#c0d0e0;font-size:18px;flex-shrink:0">›</span></button>';
+    });
+  }
+  else if(!obj){
+    body+='<div style="padding:24px;text-align:center;font-size:13px;color:#9aabbf">Объект не найден</div>';
+  }
+  else if(step==="work"){
+    body+='<div style="font-size:20px;font-weight:800;color:#0d1b2e;margin:4px 2px 12px">Что делали?</div>';
+    // Мои недавние работы (по дате моей последней записи) — сверху
+    const recents=[];
+    obj.stages.forEach(function(s){s.works.forEach(function(w){
+      let last="";
+      (w.timeLogs||[]).forEach(function(l){if(l.userId===meId&&l.date>last)last=l.date;});
+      if(last)recents.push({s:s,w:w,last:last});
+    });});
+    recents.sort(function(a,b){return b.last.localeCompare(a.last);});
+    const top=recents.slice(0,3);
+    const topIds=new Set(top.map(function(r){return r.w.id;}));
+    const workBtn=function(s,w){
+      const done=!!w.done;
+      return '<button data-a="tl-wiz-work" data-sid="'+s.id+'" data-wid="'+w.id+'" data-wn="'+esc(w.n)+'" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:#fff;border:1.5px solid #dde6f0;border-radius:14px;padding:13px 14px;margin-bottom:7px;cursor:pointer;min-height:54px;'+(done?'opacity:0.6':'')+'">'+
+        '<span style="width:9px;height:9px;border-radius:50%;background:'+s.c+';flex-shrink:0"></span>'+
+        '<span style="flex:1;min-width:0;font-size:14.5px;font-weight:600;color:#1a2a3a;line-height:1.3">'+esc(w.n)+(done?' <span style="color:#27ae60">✓</span>':'')+'</span>'+
+        '<span style="color:#c0d0e0;font-size:18px;flex-shrink:0">›</span></button>';
+    };
+    if(top.length){
+      body+='<div style="font-size:10px;font-weight:700;letter-spacing:0.8px;color:#b8860b;margin:2px 2px 7px">⭐ НЕДАВНИЕ</div>';
+      top.forEach(function(r){body+=workBtn(r.s,r.w);});
+    }
+    obj.stages.forEach(function(s){
+      const ws=s.works.filter(function(w){return !topIds.has(w.id);});
+      if(!ws.length)return;
+      body+='<div style="font-size:10px;font-weight:700;letter-spacing:0.8px;color:'+s.c+';margin:12px 2px 7px">'+esc((s.n||"").toUpperCase())+'</div>';
+      ws.slice().sort(function(a,b){return (a.done?1:0)-(b.done?1:0);}).forEach(function(w){body+=workBtn(s,w);});
+    });
+  }
+  else if(step==="who"){
+    body+='<div style="font-size:20px;font-weight:800;color:#0d1b2e;margin:4px 2px 4px">Кто работал?</div>';
+    body+='<div style="font-size:12px;color:#7a9aaa;margin:0 2px 14px">'+esc(tlWizard.wname||"")+'</div>';
+    const elig=tlEligibleUsers(obj);
+    if(!elig.length){
+      body+='<div style="padding:20px;text-align:center;font-size:12.5px;color:#e74c3c;background:#fff;border:1px dashed #e74c3c55;border-radius:12px">Нет назначенных бригадиров.<br>Назначьте ответственных в договоре объекта (вкладка «Договора»).</div>';
+    } else {
+      elig.forEach(function(u){
+        body+='<button data-a="tl-wiz-who" data-uid="'+u.id+'" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:#fff;border:1.5px solid '+u.c+'55;border-radius:14px;padding:14px;margin-bottom:8px;cursor:pointer;min-height:56px">'+
+          '<span style="font-size:22px;flex-shrink:0">'+u.av+'</span>'+
+          '<span style="flex:1;font-size:15px;font-weight:700;color:#1a2a3a">'+esc(u.name)+'</span>'+
+          '<span style="color:#c0d0e0;font-size:18px;flex-shrink:0">›</span></button>';
+      });
+    }
+  }
+  else if(step==="hours"){
+    const who=users.find(function(u){return u.id===tlWizard.uid;});
+    body+='<div style="font-size:20px;font-weight:800;color:#0d1b2e;margin:4px 2px 4px">Сколько часов?</div>';
+    body+='<div style="font-size:12.5px;font-weight:600;color:#5a7a9a;margin:0 2px 4px">'+esc(tlWizard.wname||"")+'</div>';
+    body+='<div style="font-size:12px;color:#9aabbf;margin:0 2px 14px">📅 Сегодня, '+todayHuman+(who?' · '+who.av+' '+esc(who.name):'')+'</div>';
+    body+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">';
+    [1,2,3,4,5,6,7,8].forEach(function(hh){
+      body+='<button data-a="tl-wiz-hours" data-h="'+hh+'" style="height:62px;border-radius:14px;border:1.5px solid #d0dae8;background:#fff;font-size:21px;font-weight:800;color:#1a2a3a;cursor:pointer">'+hh+'</button>';
+    });
+    body+='</div><div style="display:flex;gap:8px;margin-top:8px">';
+    [0.5,1.5,2.5].forEach(function(hh){
+      body+='<button data-a="tl-wiz-hours" data-h="'+hh+'" style="flex:1;height:46px;border-radius:12px;border:1.5px solid #d0dae8;background:#fff;font-size:15px;font-weight:700;color:#5a7a9a;cursor:pointer">'+fmtH(hh)+'</button>';
+    });
+    body+='</div><div style="font-size:11px;color:#9aabbf;text-align:center;margin-top:12px">Тап по часам — запись сохранится сразу</div>';
+  }
+  else if(step==="photo"){
+    body+='<div style="display:inline-flex;align-items:center;gap:6px;background:#16a08518;border:1px solid #16a08544;color:#16a085;font-size:12px;font-weight:700;border-radius:8px;padding:6px 10px;margin:2px 0 12px">⏱ '+fmtH(tlWizard.hours||0)+' ч записано ✓</div>';
+    body+='<div style="font-size:20px;font-weight:800;color:#0d1b2e;margin:0 2px 14px">Добавить фото?</div>';
+    if(tlWizard.uploading){
+      body+='<div style="background:#fff;border:1.5px dashed #3498db66;border-radius:16px;padding:26px;text-align:center;font-size:14px;color:#3498db;font-weight:700">⏳ Загружаю фото ('+tlWizard.uploading+')…</div>';
+    } else {
+      body+='<label data-a="tl-wiz-photo-label" style="display:flex;align-items:center;justify-content:center;gap:10px;background:#3498db;border-radius:16px;padding:24px;cursor:pointer;color:#fff;font-size:17px;font-weight:800;box-shadow:0 6px 18px rgba(52,152,219,0.35)">📷 Снять / выбрать фото<input id="tlwiz-photo-inp" type="file" accept="image/*" multiple style="display:none"></label>';
+      body+='<button data-a="tl-wiz-skip" style="display:block;width:100%;margin-top:10px;background:#fff;border:1.5px solid #d0dae8;border-radius:14px;padding:15px;cursor:pointer;font-size:15px;font-weight:700;color:#5a7a9a">Пропустить →</button>';
+    }
+  }
+  else if(step==="done"){
+    const who2=users.find(function(u){return u.id===tlWizard.uid;});
+    body+='<div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding-top:8vh">';
+    body+='<div style="width:72px;height:72px;border-radius:50%;background:#27ae60;color:#fff;font-size:34px;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 10px 24px rgba(39,174,96,0.35)">✓</div>';
+    body+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:16px;padding:14px 18px;margin-top:16px;font-size:14.5px;line-height:1.8;color:#1a2a3a;width:100%;box-sizing:border-box">'+
+      (who2?who2.av+' '+esc(who2.name)+'<br>':'')+
+      '<b>'+esc(tlWizard.wname||"")+'</b><br>'+
+      '⏱ '+fmtH(tlWizard.hours||0)+' ч'+(tlWizard.photoCount?' · 📷 '+tlWizard.photoCount+' фото':'')+' · сегодня</div>';
+    body+='<button data-a="tl-wiz-done" style="width:100%;margin-top:16px;background:#16a085;border:none;border-radius:14px;padding:16px;cursor:pointer;color:#fff;font-size:16px;font-weight:800">✓ Готово</button>';
+    body+='<button data-a="tl-wiz-more" style="width:100%;margin-top:8px;background:#fff;border:1.5px solid #16a08555;border-radius:14px;padding:14px;cursor:pointer;color:#16a085;font-size:15px;font-weight:700">＋ Ещё запись</button>';
+    body+='<button data-a="tl-wiz-undo" style="background:transparent;border:none;margin-top:12px;cursor:pointer;color:#e74c3c;font-size:12px;font-weight:600;text-decoration:underline">↩ Отменить эту запись времени</button>';
+    body+='</div>';
+  }
+
+  let m='<div id="tl-wiz-modal" style="position:fixed;inset:0;background:rgba(13,27,46,0.55);z-index:1100;display:flex;align-items:flex-end;justify-content:center">';
+  m+='<div style="background:#f6f8fa;width:100%;max-width:500px;height:90vh;max-height:90vh;border-radius:18px 18px 0 0;display:flex;flex-direction:column;overflow:hidden">';
+  m+='<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:#fff;border-bottom:1px solid #e8eef5;flex-shrink:0">';
+  m+=canBack?'<button data-a="tl-wiz-back" style="width:40px;height:40px;border-radius:12px;border:1.5px solid #d0dae8;background:#fff;cursor:pointer;font-size:18px;color:#5a7a9a">‹</button>':'<div style="width:40px;height:40px"></div>';
+  m+='<div style="flex:1;display:flex;justify-content:center;gap:6px">'+dots+'</div>';
+  m+='<button data-a="tl-wiz-close" style="width:40px;height:40px;border-radius:12px;border:none;background:#f0f4f8;cursor:pointer;font-size:15px;color:#7a9aaa;font-weight:700">✕</button>';
+  m+='</div>';
+  m+='<div style="flex:1;overflow-y:auto;padding:14px 14px 24px;-webkit-overflow-scrolling:touch">'+body+'</div>';
+  m+='</div></div>';
   return m;
 }
 // Global client picker function - called from inline onclick
@@ -12778,6 +12996,61 @@ function bind(){
     };}
     else if(a==="obj-tl-user"){el.onclick=()=>{newTimeLog.userId=el.dataset.uid;render();};}
     else if(a==="obj-tl-hours"){el.onclick=()=>{newTimeLog.hours=parseFloat(el.dataset.h);render();};}
+    // ── Мастер «+ Запись» (время + фото за 3 шага) ──
+    else if(a==="tl-wiz-open"){el.onclick=()=>{tlWizardOpen(el.dataset.oid||"");};}
+    else if(a==="tl-wiz-close"){el.onclick=()=>{tlWizard=null;render();};}
+    else if(a==="tl-wiz-back"){el.onclick=()=>{tlWizBack();};}
+    else if(a==="tl-wiz-obj"){el.onclick=()=>{if(!tlWizard)return;tlWizard.oid=el.dataset.oid;tlWizard.step="work";render();};}
+    else if(a==="tl-wiz-work"){el.onclick=()=>{
+      if(!tlWizard)return;
+      tlWizard.sid=el.dataset.sid;tlWizard.wid=el.dataset.wid;tlWizard.wname=el.dataset.wn||"";
+      if(tlWizNeedWho()){tlWizard.step="who";}
+      else{tlWizard.uid=currentUser?currentUser.id:"";tlWizard.step="hours";}
+      render();
+    };}
+    else if(a==="tl-wiz-who"){el.onclick=()=>{if(!tlWizard)return;tlWizard.uid=el.dataset.uid;tlWizard.step="hours";render();};}
+    else if(a==="tl-wiz-hours"){el.onclick=()=>{tlWizSaveLog(parseFloat(el.dataset.h));};}
+    else if(a==="tl-wiz-skip"){el.onclick=()=>{if(!tlWizard)return;tlWizard.step="done";render();};}
+    else if(a==="tl-wiz-more"){el.onclick=()=>{if(!tlWizard)return;tlWizard={step:"work",oid:tlWizard.oid,photoCount:0,_hadObjStep:tlWizard._hadObjStep};render();};}
+    else if(a==="tl-wiz-done"){el.onclick=()=>{tlWizard=null;render();};}
+    else if(a==="tl-wiz-undo"){el.onclick=()=>{tlWizUndo();};}
+    else if(a==="tl-wiz-photo-label"){
+      // Label оборачивает скрытый input — вешаем change на input (паттерн obj-photo-label)
+      const inp=document.getElementById("tlwiz-photo-inp");
+      if(inp&&!inp._bound){
+        inp._bound=true;
+        inp.addEventListener("change",async function(){
+          const files=Array.from(inp.files||[]);
+          if(!files.length||!tlWizard)return;
+          const oid=tlWizard.oid,sid=tlWizard.sid,wid=tlWizard.wid;
+          tlWizard.uploading=files.length;render();
+          const newPhotos=[];const tgFiles=[];
+          for(const f of files){
+            try{
+              let c=f;try{c=await compressImage(f,1024*1024);}catch(e){}
+              const url=await uploadFileR2(c,true);
+              tgFiles.push(c);
+              newPhotos.push({id:gid(),data:url,date:new Date().toISOString().slice(0,16).replace("T"," "),uploader:(users.find(u=>u.id===(currentUser?currentUser.id:""))||{}).name||"—",uploaderId:currentUser?currentUser.id:"",size:f.size,name:f.name});
+            }catch(err){alert("Ошибка загрузки фото: "+((err&&err.message)||err));}
+          }
+          mirrorPhotosToTelegram(oid,tgFiles);
+          if(newPhotos.length){
+            objects=objects.map(function(o){
+              if(o.id!==oid)return o;
+              return Object.assign({},o,{stages:o.stages.map(function(st){
+                if(st.id!==sid)return st;
+                return Object.assign({},st,{works:st.works.map(function(w){
+                  if(w.id!==wid)return w;
+                  return Object.assign({},w,{photos:(w.photos||[]).concat(newPhotos)});
+                })});
+              })});
+            });
+          }
+          if(tlWizard){tlWizard.uploading=0;tlWizard.photoCount=(tlWizard.photoCount||0)+newPhotos.length;tlWizard.step="done";}
+          fl();
+        });
+      }
+    }
     else if(a==="obj-tl-save"){
       const handler=function(ev){
         if(ev){ev.stopPropagation();ev.preventDefault();}
