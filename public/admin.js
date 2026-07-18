@@ -958,12 +958,10 @@ let roles=[
 ];
 
 // === РАЗРЕШЕНИЯ: какие вкладки открывает каждая роль ===
+// Табель дня / Шторка / Мастер убраны из навигации совсем (ввод часов — шторка по тапу
+// на работу и кнопка «＋ Запись» на Объектах); Анализ стройки — только у админа.
 const TAB_DEFS=[
   {k:"assign",    n:"🏗️ Объекты"},
-  {k:"myday",     n:"📅 Табель дня"},
-  {k:"sheetlist", n:"📋 Шторка"},
-  {k:"wizard",    n:"🪄 Мастер"},
-  {k:"analysis",  n:"📊 Анализ стройки"},
   {k:"supply",    n:"📦 Снабжение"},
   {k:"finance",   n:"💰 Финансы"},
   {k:"contracts", n:"📄 Договора"},
@@ -979,9 +977,9 @@ const TAB_DEFS=[
 // Админ НЕ входит сюда — он всегда видит все вкладки (зафиксировано).
 // Значения по умолчанию повторяют прежнюю жёстко зашитую логику доступа.
 let rolePermissions={
-  brigadier:   ["assign","myday","sheetlist","wizard","analysis","finance"],
-  worker:      ["assign","myday","sheetlist","wizard","analysis","finance"],
-  prod_head:   ["contracts","myday","sheetlist","wizard","analysis"],
+  brigadier:   ["assign","finance"],
+  worker:      ["assign","finance"],
+  prod_head:   ["contracts"],
   supply:      ["supply","finance"],
   contract_mgr:[],
   client_mgr:  ["assign","contracts","crm","clients"],
@@ -3455,23 +3453,16 @@ function page(){
     TABS=ALL_TABS;
   } else {
     // Доступ к вкладкам собирается из настраиваемых разрешений ролей (rolePermissions).
+    // Фильтр-запрет: облачный снимок может хранить старые права с ключами убранных вкладок
+    // (myday/sheetlist/wizard) и «analysis» — сотрудникам они не показываются в любом случае.
+    const STAFF_HIDDEN_TABS=new Set(["myday","sheetlist","wizard","analysis"]);
     const tabSet=new Set();
     const r=currentUser?currentUser.roles:[];
     r.forEach(function(rid){
       (rolePermissions[rid]||[]).forEach(function(k){tabSet.add(k);});
     });
-    TABS=ALL_TABS.filter(([k])=>tabSet.has(k));
+    TABS=ALL_TABS.filter(([k])=>tabSet.has(k)&&!STAFF_HIDDEN_TABS.has(k));
     if(!TABS.length) TABS=[["assign","🏗️ Объекты"]];
-  }
-  // «Табель дня» / «Шторка» / «Мастер» гарантированы производственным ролям,
-  // даже если в облачном снимке сохранены старые rolePermissions без этих ключей.
-  if(!isAdmin&&currentUser&&currentUser.roles.some(function(r){return r==="brigadier"||r==="worker"||r==="prod_head";})){
-    const PROD_TABS=[["myday","📅 Табель дня"],["sheetlist","📋 Шторка"],["wizard","🪄 Мастер"]];
-    let _ai=TABS.findIndex(function(t){return t[0]==="assign";});
-    PROD_TABS.forEach(function(pt){
-      if(!TABS.some(function(t){return t[0]===pt[0];})){TABS.splice(_ai+1,0,pt);}
-      _ai=TABS.findIndex(function(t){return t[0]===pt[0];});
-    });
   }
   // iOS-style нижний таб-бар — быстрый доступ к 4 главным разделам.
   // Пункты фильтруются по доступным вкладкам (TABS), чтобы не показать недоступный роли раздел.
@@ -5001,7 +4992,7 @@ function renderEstimates(){
     '<button id="est-stage-add" style="width:100%;margin-bottom:8px;padding:9px;background:#fff;border:1px dashed #16a085;border-radius:10px;cursor:pointer;color:#16a085;font-size:12px;font-weight:700">+ Этап</button>'+
     (_fl.length?_groups.map(function(g){
       var head=g.st
-        ? '<div class="est-stagehead" data-st="'+g.st.n+'" style="display:flex;align-items:center;gap:7px;margin:16px 2px 8px;padding:4px 4px;border-radius:8px"><span style="font-size:14px">'+g.st.emoji+'</span><span style="width:9px;height:9px;border-radius:50%;background:'+g.st.color+';flex-shrink:0"></span><span style="font-size:11px;font-weight:800;letter-spacing:0.5px;color:'+g.st.color+'">'+g.st.short.toUpperCase()+' · '+g.st.label.toUpperCase()+'</span><span style="font-size:10px;color:#9aabbf">· '+g.items.length+'</span></div>'
+        ? '<div class="est-stagehead" data-st="'+g.st.n+'" style="display:flex;align-items:center;gap:7px;margin:16px 2px 8px;padding:4px 4px;border-radius:8px"><span style="font-size:14px">'+g.st.emoji+'</span><span style="width:9px;height:9px;border-radius:50%;background:'+g.st.color+';flex-shrink:0"></span><span style="font-size:11px;font-weight:800;letter-spacing:0.5px;color:'+g.st.color+'">'+g.st.short.toUpperCase()+' · '+g.st.label.toUpperCase()+'</span><span style="font-size:10px;color:#9aabbf">· '+g.items.length+'</span><button class="est-stage-del" data-st="'+g.st.n+'" title="Удалить этап" style="margin-left:auto;width:24px;height:24px;flex-shrink:0;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button></div>'
         : '<div class="est-stagehead" data-st="0" style="margin:16px 2px 8px;padding:4px 4px;border-radius:8px;font-size:11px;font-weight:800;letter-spacing:0.5px;color:#9aabbf">БЕЗ ЭТАПА · '+g.items.length+'</div>';
       return head+groupBody(g);
     }).join(""):'<div style="text-align:center;color:#aaa;font-size:13px;padding:20px">'+(_q?'Ничего не найдено':'Смет пока нет')+'</div>')+
@@ -5023,7 +5014,20 @@ function renderEstimates(){
   if(es){ es.oninput=function(){estSearch=this.value;renderEstimates();}; if(_act==="est-search"){es.focus();var L2=es.value.length;try{es.setSelectionRange(L2,L2);}catch(_e){}} }
   var nw=document.getElementById("est-new"); if(nw)nw.onclick=function(){var ne={id:gid(),kind:estKind,name:"Новая смета",lines:[]};estimates.unshift(ne);estOpenId=ne.id;renderEstimates();};
   var fab=document.getElementById("est-fab"); if(fab)fab.onclick=function(){var ne={id:gid(),kind:estKind,name:"Новая смета",lines:[]};estimates.unshift(ne);estOpenId=ne.id;renderEstimates();window.scrollTo(0,0);};
-  var sga=document.getElementById("est-stage-add"); if(sga)sga.onclick=function(){ var nm=prompt("Название нового этапа:",""); if(!nm||!nm.trim())return; var mx=EST_STAGES.reduce(function(a,s){return Math.max(a,s.n);},0); EST_STAGES=EST_STAGES.concat([{n:mx+1,label:nm.trim(),short:"Этап "+(mx+1),color:"#16a085",emoji:"🧩"}]); renderEstimates(); };
+  var sga=document.getElementById("est-stage-add"); if(sga)sga.onclick=function(){ var nm=prompt("Название нового этапа:",""); if(!nm||!nm.trim())return; var mx=EST_STAGES.reduce(function(a,s){return Math.max(a,s.n);},0); EST_STAGES=EST_STAGES.concat([{n:mx+1,label:nm.trim(),short:"Этап "+(mx+1),color:"#16a085",emoji:"🧩"}]); scheduleSave(); renderEstimates(); };
+  // Удаление этапа: сметы с этим номером этапа не удаляются — рендер сам сложит их в «БЕЗ ЭТАПА».
+  el.querySelectorAll(".est-stage-del").forEach(function(b){ b.onclick=function(ev){ ev.stopPropagation();
+    var n=+b.dataset.st; var st=EST_STAGES.find(function(x){return x.n===n;}); if(!st)return;
+    var cnt=estimates.filter(function(e){return Number(e.stage)===n;}).length;
+    var msg="Удалить этап «"+st.label+"»?"
+      +(cnt?"\n\nСмет на этом этапе (во всех видах): "+cnt+". Они не удалятся — перейдут в группу «Без этапа».":"")
+      +(st.finish?"\n\nВнимание: это чистовой этап — на него завязана разбивка смет по комнатам.":"");
+    if(!confirm(msg))return;
+    EST_STAGES=EST_STAGES.filter(function(x){return x.n!==n;});
+    var _y=window.pageYOffset||document.documentElement.scrollTop||0;
+    scheduleSave(); renderEstimates();
+    requestAnimationFrame(function(){window.scrollTo(0,_y);});
+  };});
   el.querySelectorAll(".est-card").forEach(function(c){
     c.onclick=function(){ estScrollY=window.pageYOffset||document.documentElement.scrollTop||0; estOpenId=c.dataset.id; renderEstimates(); };
     c.addEventListener("dragstart",function(ev){ estDrag=c.dataset.id; ev.dataTransfer.effectAllowed="move"; c.style.opacity="0.4"; });
