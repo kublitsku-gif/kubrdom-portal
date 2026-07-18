@@ -4865,6 +4865,9 @@ function _tplRebuild(t, ids){
 function renderEstimates(){
   var el=document.getElementById("dbest-list");
   if(!el)return;
+  // Как render(): обработчики смет мутируют состояние и зовут renderEstimates() →
+  // debounced автосейв. Перерисовки без мутаций отсекает dirty-check в apiSave.
+  scheduleSave();
   ensureEstKindSeeds(); // разовый посев новых видов (напр. «Бани из минибруса» ← копия Бани)
   var _act=(document.activeElement&&document.activeElement.id)||"";
   if(estOpenId){
@@ -4931,13 +4934,14 @@ function renderEstimates(){
         '<div style="padding:0 12px 12px;display:flex;gap:8px"><button id="est-dup" style="flex:1;padding:9px;background:#fff;border:1px solid #16a08555;border-radius:9px;cursor:pointer;color:#16a085;font-size:12px;font-weight:700">⧉ Дублировать</button><button id="est-delete" style="flex:1;padding:9px;background:#fff;border:1px solid #e74c3c55;border-radius:9px;cursor:pointer;color:#e74c3c;font-size:12px;font-weight:700">Удалить смету</button></div>'+
       '</div>';
     var bk=document.getElementById("est-back"); if(bk)bk.onclick=function(){estOpenId=null;renderEstimates();var _y=estScrollY||0;requestAnimationFrame(function(){window.scrollTo(0,_y);});};
-    var nm=document.getElementById("est-name"); if(nm){nm.oninput=function(){e.name=this.value;}; if(_act==="est-name"){nm.focus();var L=nm.value.length;try{nm.setSelectionRange(L,L);}catch(_e){}}}
+    var nm=document.getElementById("est-name"); if(nm){nm.oninput=function(){e.name=this.value;scheduleSave();}; if(_act==="est-name"){nm.focus();var L=nm.value.length;try{nm.setSelectionRange(L,L);}catch(_e){}}}
     var ad=document.getElementById("est-add"); if(ad)ad.onclick=function(){estPicking=true;estPickSearch="";renderEstimates();};
     el.querySelectorAll(".est-room").forEach(function(b){b.onclick=function(){e.room=b.dataset.room; var _fn=estFinishN()||3; if((Number(e.stage)||0)!==_fn)e.stage=_fn; renderEstimates();};});
     var du=document.getElementById("est-dup"); if(du)du.onclick=function(){var c=JSON.parse(JSON.stringify(e)); c.id=gid(); c.name=(e.name||"Смета")+" (копия)"; estimates.unshift(c); estOpenId=c.id; renderEstimates();};
     el.querySelectorAll(".est-stage").forEach(function(b){b.onclick=function(){e.stage=+b.dataset.st;renderEstimates();};});
     el.querySelectorAll(".est-q").forEach(function(inp){inp.oninput=function(){
       var i=+inp.dataset.i; e.lines[i].qty=parseFloat(String(this.value).replace(",","."))||0;
+      scheduleSave(); // правка без перерисовки (фокус в поле) — сохраняем явно
       var lts=document.getElementById("est-lt-"+i); if(lts)lts.textContent=estLineTotal(e.lines[i]).toLocaleString("ru-RU")+" ₽";
       var gt=document.getElementById("est-grand"); if(gt)gt.textContent=estTotal(e).toLocaleString("ru-RU")+" ₽";
     };});
@@ -5014,7 +5018,7 @@ function renderEstimates(){
   if(es){ es.oninput=function(){estSearch=this.value;renderEstimates();}; if(_act==="est-search"){es.focus();var L2=es.value.length;try{es.setSelectionRange(L2,L2);}catch(_e){}} }
   var nw=document.getElementById("est-new"); if(nw)nw.onclick=function(){var ne={id:gid(),kind:estKind,name:"Новая смета",lines:[]};estimates.unshift(ne);estOpenId=ne.id;renderEstimates();};
   var fab=document.getElementById("est-fab"); if(fab)fab.onclick=function(){var ne={id:gid(),kind:estKind,name:"Новая смета",lines:[]};estimates.unshift(ne);estOpenId=ne.id;renderEstimates();window.scrollTo(0,0);};
-  var sga=document.getElementById("est-stage-add"); if(sga)sga.onclick=function(){ var nm=prompt("Название нового этапа:",""); if(!nm||!nm.trim())return; var mx=EST_STAGES.reduce(function(a,s){return Math.max(a,s.n);},0); EST_STAGES=EST_STAGES.concat([{n:mx+1,label:nm.trim(),short:"Этап "+(mx+1),color:"#16a085",emoji:"🧩"}]); scheduleSave(); renderEstimates(); };
+  var sga=document.getElementById("est-stage-add"); if(sga)sga.onclick=function(){ var nm=prompt("Название нового этапа:",""); if(!nm||!nm.trim())return; var mx=EST_STAGES.reduce(function(a,s){return Math.max(a,s.n);},0); EST_STAGES=EST_STAGES.concat([{n:mx+1,label:nm.trim(),short:"Этап "+(mx+1),color:"#16a085",emoji:"🧩"}]); renderEstimates(); };
   // Удаление этапа: сметы с этим номером этапа не удаляются — рендер сам сложит их в «БЕЗ ЭТАПА».
   el.querySelectorAll(".est-stage-del").forEach(function(b){ b.onclick=function(ev){ ev.stopPropagation();
     var n=+b.dataset.st; var st=EST_STAGES.find(function(x){return x.n===n;}); if(!st)return;
@@ -5025,7 +5029,7 @@ function renderEstimates(){
     if(!confirm(msg))return;
     EST_STAGES=EST_STAGES.filter(function(x){return x.n!==n;});
     var _y=window.pageYOffset||document.documentElement.scrollTop||0;
-    scheduleSave(); renderEstimates();
+    renderEstimates();
     requestAnimationFrame(function(){window.scrollTo(0,_y);});
   };});
   el.querySelectorAll(".est-card").forEach(function(c){
