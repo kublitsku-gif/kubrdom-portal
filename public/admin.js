@@ -5017,10 +5017,13 @@ function renderEstimates(){
         '</div>';
       }).join("");
     }
+    if(!g.items.length&&g.st)return '<div style="font-size:10px;color:#c0ccd8;text-align:center;padding:2px 0 10px">нет смет — перетащите карточку на заголовок этапа или выберите этап в карточке сметы</div>';
     return g.items.map(function(it){return estCardHtml(it,g.st);}).join("");
   }
   var _groups=[];
-  EST_STAGES.forEach(function(st){var items=_fl.filter(function(e){return Number(e.stage)===st.n;});if(items.length)_groups.push({st:st,items:items});});
+  // Пустые этапы тоже показываем (иначе свежесозданный этап «не добавляется» — его не видно
+  // и не удалить). Скрываем пустые только при активном поиске, чтобы не шуметь в результатах.
+  EST_STAGES.forEach(function(st){var items=_fl.filter(function(e){return Number(e.stage)===st.n;});if(items.length||!_q)_groups.push({st:st,items:items});});
   var _noStage=_fl.filter(function(e){return !EST_STAGES.find(function(x){return x.n===Number(e.stage);});});
   if(_noStage.length)_groups.push({st:null,items:_noStage});
   el.innerHTML=
