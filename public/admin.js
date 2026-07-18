@@ -1351,6 +1351,7 @@ let estSearch="";         // поиск по сметам (по названию
 let estKind="banya";      // активный вид смет: banya | house
 let estPicking=false;     // открыт ли выбор материала для добавления
 let estRoomDel=false;     // режим удаления комнат в карточке сметы
+let estCopyOpen=false;    // раскрыта ли панель «Копировать в…» в карточке сметы
 let estPickSearch="";     // поиск в выборе материала
 let estimates=[];         // заполняется ниже из работ базы (после expProducts)
 const __MMAP={
@@ -4948,8 +4949,18 @@ function renderEstimates(){
           '<span id="est-grand" style="font-size:21px;font-weight:800">'+estTotal(e).toLocaleString("ru-RU")+' ₽</span>'+
         '</div>'+
         '<div style="padding:0 12px 12px;display:flex;gap:8px"><button id="est-dup" style="flex:1;padding:9px;background:#fff;border:1px solid #16a08555;border-radius:9px;cursor:pointer;color:#16a085;font-size:12px;font-weight:700">⧉ Дублировать</button><button id="est-delete" style="flex:1;padding:9px;background:#fff;border:1px solid #e74c3c55;border-radius:9px;cursor:pointer;color:#e74c3c;font-size:12px;font-weight:700">Удалить смету</button></div>'+
+        '<div style="padding:0 12px 12px">'+
+          '<button id="est-copy-to" style="width:100%;padding:9px;background:#fff;border:1px dashed #2980b955;border-radius:9px;cursor:pointer;color:#2980b9;font-size:12px;font-weight:700">'+(estCopyOpen?"▴ Скрыть копирование":"⧉ Копировать в вид / на этап")+'</button>'+
+          (estCopyOpen?
+            '<div style="margin-top:8px;padding:10px 11px;background:#f8fafc;border:1px solid #e6ecf3;border-radius:11px">'+
+              '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:6px">КОПИЯ В ДРУГОЙ ВИД СМЕТ</div>'+
+              '<div style="display:flex;gap:5px;flex-wrap:wrap">'+EST_KINDS.filter(function(kd){return kd.k!==estKind;}).map(function(kd){return '<button class="est-copy-kind" data-k="'+kd.k+'" style="border:1.5px solid #dde6f0;background:#fff;color:#3a5a78;border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">'+kd.emoji+' '+esc(kd.n)+'</button>';}).join("")+'</div>'+
+              '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin:10px 0 6px">КОПИЯ НА ЭТАП (в этом виде)</div>'+
+              '<div style="display:flex;gap:5px;flex-wrap:wrap">'+EST_STAGES.map(function(st){var cur=Number(e.stage)===st.n;return '<button class="est-copy-stage" data-st="'+st.n+'"'+(cur?' disabled':'')+' style="border:1.5px solid '+(cur?"#eef2f7":"#dde6f0")+';background:'+(cur?"#f4f7fa":"#fff")+';color:'+(cur?"#c3cedb":"#3a5a78")+';border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:'+(cur?"default":"pointer")+'">'+st.n+' · '+esc(st.label)+(cur?" (текущий)":"")+'</button>';}).join("")+'</div>'+
+            '</div>':'')+
+        '</div>'+
       '</div>';
-    var bk=document.getElementById("est-back"); if(bk)bk.onclick=function(){estOpenId=null;estRoomDel=false;renderEstimates();var _y=estScrollY||0;requestAnimationFrame(function(){window.scrollTo(0,_y);});};
+    var bk=document.getElementById("est-back"); if(bk)bk.onclick=function(){estOpenId=null;estRoomDel=false;estCopyOpen=false;renderEstimates();var _y=estScrollY||0;requestAnimationFrame(function(){window.scrollTo(0,_y);});};
     var nm=document.getElementById("est-name"); if(nm){nm.oninput=function(){e.name=this.value;scheduleSave();}; if(_act==="est-name"){nm.focus();var L=nm.value.length;try{nm.setSelectionRange(L,L);}catch(_e){}}}
     var ad=document.getElementById("est-add"); if(ad)ad.onclick=function(){estPicking=true;estPickSearch="";renderEstimates();};
     el.querySelectorAll(".est-room").forEach(function(b){b.onclick=function(){
@@ -4987,6 +4998,21 @@ function renderEstimates(){
     el.querySelectorAll(".est-del").forEach(function(b){b.onclick=function(){var i=+b.dataset.i;var _y=window.pageYOffset||document.documentElement.scrollTop||0;e.lines.splice(i,1);renderEstimates();requestAnimationFrame(function(){window.scrollTo(0,_y);});};});
     el.querySelectorAll(".est-line-mat").forEach(function(b){b.onclick=function(){ var pid=b.dataset.pid; if(!expProducts.find(function(x){return x.id===pid;}))return; dbSection="mats"; expOpenId=pid; render(); window.scrollTo(0,0); };});
     var dl=document.getElementById("est-delete"); if(dl)dl.onclick=function(){ if(!confirm("Удалить смету «"+(e.name||"")+"»? Это действие необратимо."))return; estimates=estimates.filter(function(x){return x.id!==e.id;});estOpenId=null;renderEstimates();var _y=estScrollY||0;requestAnimationFrame(function(){window.scrollTo(0,_y);});};
+    // «Копировать в…»: независимая копия сметы в другой вид или на другой этап; копия сразу открывается
+    var cpt=document.getElementById("est-copy-to"); if(cpt)cpt.onclick=function(){estCopyOpen=!estCopyOpen;renderEstimates();};
+    el.querySelectorAll(".est-copy-kind").forEach(function(b){b.onclick=function(){
+      var k=b.dataset.k; var c=JSON.parse(JSON.stringify(e)); c.id=gid(); c.kind=k;
+      estimates.unshift(c);
+      estCopyOpen=false; estKind=k; estOpenId=c.id; estSearch="";
+      renderEstimates(); window.scrollTo(0,0);
+    };});
+    el.querySelectorAll(".est-copy-stage").forEach(function(b){b.onclick=function(){
+      var n=+b.dataset.st; if(n===Number(e.stage))return;
+      var c=JSON.parse(JSON.stringify(e)); c.id=gid(); c.stage=n;
+      estimates.unshift(c);
+      estCopyOpen=false; estOpenId=c.id;
+      renderEstimates(); window.scrollTo(0,0);
+    };});
     return;
   }
   var _q=(estSearch||"").trim().toLowerCase();
@@ -5089,7 +5115,7 @@ function renderEstimates(){
     requestAnimationFrame(function(){window.scrollTo(0,_y2);});
   };
   el.querySelectorAll(".est-card").forEach(function(c){
-    c.onclick=function(){ estScrollY=window.pageYOffset||document.documentElement.scrollTop||0; estOpenId=c.dataset.id; estRoomDel=false; renderEstimates(); };
+    c.onclick=function(){ estScrollY=window.pageYOffset||document.documentElement.scrollTop||0; estOpenId=c.dataset.id; estRoomDel=false; estCopyOpen=false; renderEstimates(); };
     c.addEventListener("dragstart",function(ev){ estDrag=c.dataset.id; ev.dataTransfer.effectAllowed="move"; c.style.opacity="0.4"; });
     c.addEventListener("dragend",function(){ estDrag=null; c.style.opacity="1"; c.style.outline=""; });
     c.addEventListener("dragover",function(ev){ if(estDrag&&estDrag!==c.dataset.id){ ev.preventDefault(); c.style.outline="2px dashed #16a085"; } });
