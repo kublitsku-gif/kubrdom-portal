@@ -241,6 +241,7 @@ function serializeState(){
     { work_id: "estimates",       data: estimates       },
     { work_id: "estStages",       data: EST_STAGES      },
     { work_id: "estKinds",        data: EST_KINDS       },
+    { work_id: "estRooms",        data: EST_ROOMS       },
     { work_id: "users",           data: users           },
     { work_id: "roles",           data: roles           },
     { work_id: "rolePermissions", data: rolePermissions },
@@ -278,6 +279,7 @@ function applyState(items){
   estimates       = arr("estimates",       estimates);
   EST_STAGES      = arr("estStages",       EST_STAGES);
   EST_KINDS       = arr("estKinds",        EST_KINDS);
+  EST_ROOMS       = obj("estRooms",        EST_ROOMS);
   users           = arr("users",           users);
   roles           = arr("roles",           roles);
   dbWorks         = arr("dbWorks",         dbWorks);
@@ -1295,7 +1297,12 @@ const ROOMS_HOUSE=[
   {k:"koridor",  n:"Коридор",       emoji:"🚪", color:"#e67e22"},
   {k:"obshchie", n:"Общие",         emoji:"🏗️", color:"#7a9aaa"}
 ];
-function roomsFor(kind){ return kind==="house"?ROOMS_HOUSE:ROOMS_BANYA; }
+// Переопределения комнат по видам смет (синхронизируется work_id "estRooms"):
+// нет ключа вида — действует дефолт (дом → ROOMS_HOUSE, остальные → ROOMS_BANYA).
+let EST_ROOMS={};
+function roomsFor(kind){ var c=EST_ROOMS[kind]; return (Array.isArray(c)&&c.length)?c:(kind==="house"?ROOMS_HOUSE:ROOMS_BANYA); }
+// Перед первым редактированием комнат вида — материализуем копию дефолта.
+function ensureKindRooms(kind){ if(!Array.isArray(EST_ROOMS[kind]))EST_ROOMS[kind]=roomsFor(kind).map(function(r){return {k:r.k,n:r.n,emoji:r.emoji,color:r.color};}); }
 const ROOMS_EST=ROOMS_BANYA; // по умолчанию — баня (обратная совместимость)
 // Площадь помещения для чистовой работы: по комнате (e.room) и типу из названия (стены/пол/потолок).
 function workFillArea(e, specs, kind){
@@ -1332,7 +1339,10 @@ function estRoom(e, kind){
     if(/отдыха|комнат[аы]? отдых|\bко\b/.test(s))hits.push("ko");
     if(/травя?н|фитобоч|фитобар|фитотерап/.test(s))hits.push("travyanaya");
   }
-  return hits.length===1?hits[0]:"obshchie";
+  var r=hits.length===1?hits[0]:"obshchie";
+  // Страж: угаданная по названию комната могла быть удалена из набора вида —
+  // тогда «Общие», иначе смета выпадет из группировки по комнатам.
+  return roomsFor(kind).some(function(rm){return rm.k===r;})?r:"obshchie";
 }
 let estOpenId=null;       // открытая смета (null = список)
 let estScrollY=0;        // прокрутка списка смет — вернуть при выходе из карточки
@@ -1340,6 +1350,7 @@ let estDrag=null;         // id перетаскиваемой карточки 
 let estSearch="";         // поиск по сметам (по названию работы)
 let estKind="banya";      // активный вид смет: banya | house
 let estPicking=false;     // открыт ли выбор материала для добавления
+let estRoomDel=false;     // режим удаления комнат в карточке сметы
 let estPickSearch="";     // поиск в выборе материала
 let estimates=[];         // заполняется ниже из работ базы (после expProducts)
 const __MMAP={
@@ -4907,7 +4918,12 @@ function renderEstimates(){
             return '<button class="est-stage" data-st="'+st.n+'" style="flex:1;border:1.5px solid '+(on?st.color:"#dde6f0")+';background:'+(on?st.color:"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:7px 2px;font-size:11px;font-weight:700;line-height:1.25;cursor:pointer"><div style="font-size:13px">'+st.n+'</div>'+st.label+'</button>';
           }).join("")+'</div>'+
         '</div>'+
-        '<div style="padding:0 16px 10px"><div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:6px">КОМНАТА (для чистового этапа)</div><div style="display:flex;gap:5px;flex-wrap:wrap">'+roomsFor(estKind).map(function(rm){var on=estRoom(e, estKind)===rm.k;return '<button class="est-room" data-room="'+rm.k+'" style="border:1.5px solid '+(on?rm.color:"#dde6f0")+';background:'+(on?rm.color:"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:6px 9px;font-size:11px;font-weight:700;cursor:pointer">'+rm.emoji+' '+rm.n+'</button>';}).join("")+'</div></div>'+
+        '<div style="padding:0 16px 10px"><div style="font-size:10px;font-weight:700;color:'+(estRoomDel?"#e74c3c":"#9aabbf")+';letter-spacing:0.5px;margin-bottom:6px">'+(estRoomDel?"КОМНАТА — ТАПНИТЕ, КАКУЮ УДАЛИТЬ":"КОМНАТА (для чистового этапа)")+'</div><div style="display:flex;gap:5px;flex-wrap:wrap">'+roomsFor(estKind).map(function(rm){var on=estRoom(e, estKind)===rm.k;var sys=rm.k==="obshchie";
+          if(estRoomDel)return '<button class="est-room" data-room="'+rm.k+'" style="border:1.5px dashed '+(sys?"#dde6f0":"#e74c3c")+';background:#fff;color:'+(sys?"#c3cedb":"#e74c3c")+';border-radius:9px;padding:6px 9px;font-size:11px;font-weight:700;cursor:'+(sys?"not-allowed":"pointer")+'">'+(sys?rm.emoji:"✕")+' '+rm.n+'</button>';
+          return '<button class="est-room" data-room="'+rm.k+'" style="border:1.5px solid '+(on?rm.color:"#dde6f0")+';background:'+(on?rm.color:"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:6px 9px;font-size:11px;font-weight:700;cursor:pointer">'+rm.emoji+' '+rm.n+'</button>';}).join("")+
+          '<button id="est-room-add" title="Добавить комнату" style="border:1.5px dashed #16a085;background:#fff;color:#16a085;border-radius:9px;padding:6px 11px;font-size:11px;font-weight:700;cursor:pointer">＋</button>'+
+          '<button id="est-room-del-mode" title="Удалить комнату" style="border:1.5px '+(estRoomDel?"solid #e74c3c":"dashed #c3cedb")+';background:'+(estRoomDel?"#e74c3c":"#fff")+';color:'+(estRoomDel?"#fff":"#8a97a6")+';border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">'+(estRoomDel?"Готово":"🗑")+'</button>'+
+        '</div></div>'+
         '<div style="padding:0 12px">'+
           (e.lines.length?e.lines.map(function(l,i){var p=estProd(l.pid);if(!p)return '';var mo=EXP_MODES.find(function(x){return x.k===(p.mode||"piece");})||EXP_MODES[0];var conv=expConv(p);
             return '<div style="display:flex;align-items:center;gap:7px;padding:9px 4px;border-bottom:1px solid #f0f4f8">'+
@@ -4933,10 +4949,33 @@ function renderEstimates(){
         '</div>'+
         '<div style="padding:0 12px 12px;display:flex;gap:8px"><button id="est-dup" style="flex:1;padding:9px;background:#fff;border:1px solid #16a08555;border-radius:9px;cursor:pointer;color:#16a085;font-size:12px;font-weight:700">⧉ Дублировать</button><button id="est-delete" style="flex:1;padding:9px;background:#fff;border:1px solid #e74c3c55;border-radius:9px;cursor:pointer;color:#e74c3c;font-size:12px;font-weight:700">Удалить смету</button></div>'+
       '</div>';
-    var bk=document.getElementById("est-back"); if(bk)bk.onclick=function(){estOpenId=null;renderEstimates();var _y=estScrollY||0;requestAnimationFrame(function(){window.scrollTo(0,_y);});};
+    var bk=document.getElementById("est-back"); if(bk)bk.onclick=function(){estOpenId=null;estRoomDel=false;renderEstimates();var _y=estScrollY||0;requestAnimationFrame(function(){window.scrollTo(0,_y);});};
     var nm=document.getElementById("est-name"); if(nm){nm.oninput=function(){e.name=this.value;scheduleSave();}; if(_act==="est-name"){nm.focus();var L=nm.value.length;try{nm.setSelectionRange(L,L);}catch(_e){}}}
     var ad=document.getElementById("est-add"); if(ad)ad.onclick=function(){estPicking=true;estPickSearch="";renderEstimates();};
-    el.querySelectorAll(".est-room").forEach(function(b){b.onclick=function(){e.room=b.dataset.room; var _fn=estFinishN()||3; if((Number(e.stage)||0)!==_fn)e.stage=_fn; renderEstimates();};});
+    el.querySelectorAll(".est-room").forEach(function(b){b.onclick=function(){
+      var rk=b.dataset.room;
+      if(estRoomDel){ // режим удаления: тап по комнате удаляет её из набора вида
+        if(rk==="obshchie"){alert("«Общие» — системная комната (в неё попадают сметы без своей комнаты), её удалить нельзя.");return;}
+        var rm=roomsFor(estKind).find(function(x){return x.k===rk;}); if(!rm)return;
+        var cnt=estimates.filter(function(x){return (x.kind||"banya")===estKind&&x.room===rk;}).length;
+        if(!confirm("Удалить комнату «"+rm.n+"» из вида «"+estKindMeta(estKind).n+"»?"+(cnt?"\n\nСмет с этой комнатой: "+cnt+" — они перейдут в «Общие».":"")))return;
+        ensureKindRooms(estKind);
+        EST_ROOMS[estKind]=EST_ROOMS[estKind].filter(function(x){return x.k!==rk;});
+        renderEstimates(); return;
+      }
+      e.room=rk; var _fn=estFinishN()||3; if((Number(e.stage)||0)!==_fn)e.stage=_fn; renderEstimates();
+    };});
+    var rma=document.getElementById("est-room-add"); if(rma)rma.onclick=function(){
+      var nm=prompt("Название новой комнаты:",""); if(!nm||!nm.trim())return;
+      ensureKindRooms(estKind);
+      var _rs=EST_ROOMS[estKind].slice(); var _oi=_rs.findIndex(function(x){return x.k==="obshchie";}); if(_oi<0)_oi=_rs.length;
+      var _nk="r"+gid();
+      _rs.splice(_oi,0,{k:_nk,n:nm.trim(),emoji:"🚪",color:COLS[_rs.length%COLS.length]}); // новая комната перед «Общие»
+      EST_ROOMS[estKind]=_rs;
+      e.room=_nk; var _fn=estFinishN()||3; if((Number(e.stage)||0)!==_fn)e.stage=_fn; // сразу выбираем её для этой сметы
+      renderEstimates();
+    };
+    var rmd=document.getElementById("est-room-del-mode"); if(rmd)rmd.onclick=function(){estRoomDel=!estRoomDel;renderEstimates();};
     var du=document.getElementById("est-dup"); if(du)du.onclick=function(){var c=JSON.parse(JSON.stringify(e)); c.id=gid(); c.name=(e.name||"Смета")+" (копия)"; estimates.unshift(c); estOpenId=c.id; renderEstimates();};
     el.querySelectorAll(".est-stage").forEach(function(b){b.onclick=function(){e.stage=+b.dataset.st;renderEstimates();};});
     el.querySelectorAll(".est-q").forEach(function(inp){inp.oninput=function(){
@@ -5047,7 +5086,7 @@ function renderEstimates(){
     requestAnimationFrame(function(){window.scrollTo(0,_y2);});
   };
   el.querySelectorAll(".est-card").forEach(function(c){
-    c.onclick=function(){ estScrollY=window.pageYOffset||document.documentElement.scrollTop||0; estOpenId=c.dataset.id; renderEstimates(); };
+    c.onclick=function(){ estScrollY=window.pageYOffset||document.documentElement.scrollTop||0; estOpenId=c.dataset.id; estRoomDel=false; renderEstimates(); };
     c.addEventListener("dragstart",function(ev){ estDrag=c.dataset.id; ev.dataTransfer.effectAllowed="move"; c.style.opacity="0.4"; });
     c.addEventListener("dragend",function(){ estDrag=null; c.style.opacity="1"; c.style.outline=""; });
     c.addEventListener("dragover",function(ev){ if(estDrag&&estDrag!==c.dataset.id){ ev.preventDefault(); c.style.outline="2px dashed #16a085"; } });
