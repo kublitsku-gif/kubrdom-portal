@@ -4997,7 +4997,7 @@ function renderEstimates(){
     (_fl.length?_groups.map(function(g){
       var head=g.st
         ? '<div class="est-stagehead" data-st="'+g.st.n+'" style="display:flex;align-items:center;gap:7px;margin:16px 2px 8px;padding:4px 4px;border-radius:8px"><span style="font-size:14px">'+g.st.emoji+'</span><span style="width:9px;height:9px;border-radius:50%;background:'+g.st.color+';flex-shrink:0"></span><span style="font-size:11px;font-weight:800;letter-spacing:0.5px;color:'+g.st.color+'">'+g.st.short.toUpperCase()+' · '+g.st.label.toUpperCase()+'</span><span style="font-size:10px;color:#9aabbf">· '+g.items.length+'</span><button class="est-stage-del" data-st="'+g.st.n+'" title="Удалить этап" style="margin-left:auto;width:24px;height:24px;flex-shrink:0;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button></div>'
-        : '<div class="est-stagehead" data-st="0" style="margin:16px 2px 8px;padding:4px 4px;border-radius:8px;font-size:11px;font-weight:800;letter-spacing:0.5px;color:#9aabbf">БЕЗ ЭТАПА · '+g.items.length+'</div>';
+        : '<div class="est-stagehead" data-st="0" style="display:flex;align-items:center;gap:7px;margin:16px 2px 8px;padding:4px 4px;border-radius:8px;font-size:11px;font-weight:800;letter-spacing:0.5px;color:#9aabbf">БЕЗ ЭТАПА · '+g.items.length+'<button class="est-nostage-del" title="Удалить все сметы без этапа" style="margin-left:auto;width:24px;height:24px;flex-shrink:0;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button></div>';
       return head+groupBody(g);
     }).join(""):'<div style="text-align:center;color:#aaa;font-size:13px;padding:20px">'+(_q?'Ничего не найдено':'Смет пока нет')+'</div>')+
     '<button id="est-fab" title="Новая смета" style="position:fixed;right:18px;bottom:84px;z-index:500;display:flex;align-items:center;gap:7px;padding:13px 20px;background:linear-gradient(135deg,#16a085,#0e6e5a);border:none;border-radius:26px;cursor:pointer;color:#fff;font-size:14px;font-weight:800;box-shadow:0 6px 20px rgba(22,160,133,0.5)"><span style="font-size:18px;line-height:1">+</span> Смета</button>';
@@ -5032,6 +5032,20 @@ function renderEstimates(){
     renderEstimates();
     requestAnimationFrame(function(){window.scrollTo(0,_y);});
   };});
+  // Массовое удаление смет «Без этапа»: только текущий вид и только показанные
+  // (учитывает фильтр поиска) — удаляется ровно то, что юзер видит в группе.
+  var nsd=el.querySelector(".est-nostage-del"); if(nsd)nsd.onclick=function(ev){ ev.stopPropagation();
+    if(!_noStage.length)return;
+    var msg="Удалить все сметы без этапа в виде «"+estKindMeta(estKind).n+"» — "+_noStage.length+" шт.?"
+      +(_q?"\n\nАктивен поиск: удалятся только сметы, показанные по текущему фильтру.":"")
+      +"\n\nЭто действие необратимо.";
+    if(!confirm(msg))return;
+    var ids={}; _noStage.forEach(function(x){ids[x.id]=1;});
+    estimates=estimates.filter(function(x){return !ids[x.id];});
+    var _y2=window.pageYOffset||document.documentElement.scrollTop||0;
+    renderEstimates();
+    requestAnimationFrame(function(){window.scrollTo(0,_y2);});
+  };
   el.querySelectorAll(".est-card").forEach(function(c){
     c.onclick=function(){ estScrollY=window.pageYOffset||document.documentElement.scrollTop||0; estOpenId=c.dataset.id; renderEstimates(); };
     c.addEventListener("dragstart",function(ev){ estDrag=c.dataset.id; ev.dataTransfer.effectAllowed="move"; c.style.opacity="0.4"; });
