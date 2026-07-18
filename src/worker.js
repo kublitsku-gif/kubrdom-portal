@@ -187,15 +187,10 @@ async function clientLogin(env, request) {
   return json({ success: true, token: token, cid: c.id, items: slice });
 }
 
-// GET /api/state/:storageKey — с фильтрацией по правам (auth):
+// Все строки снимка с фильтрацией по правам (общая часть GET /api/state и 409-ответа POST):
 //   • не-admin не получает PIN-ы (вырезаем поле pin из users);
 //   • роль без finance не получает финансовые разделы вовсе.
-async function getState(env, storageKey, auth) {
-  // Клиент видит ТОЛЬКО срез своего договора (объект/платежи/планировки), больше ничего.
-  if (auth && auth.client) {
-    const slice = await buildClientSlice(env, auth.cid);
-    return json({ success: true, storage_key: storageKey, items: slice || [] });
-  }
+async function readStateItems(env, storageKey, auth) {
   const result = await env.DB
     .prepare("SELECT work_id, data, updated_at FROM work_states WHERE storage_key = ?")
     .bind(storageKey)
@@ -211,7 +206,17 @@ async function getState(env, storageKey, auth) {
     }
     items.push({ work_id: row.work_id, data: data, updated_at: row.updated_at });
   }
-  return json({ success: true, storage_key: storageKey, items });
+  return items;
+}
+
+// GET /api/state/:storageKey — с фильтрацией по правам (auth), см. readStateItems.
+async function getState(env, storageKey, auth) {
+  // Клиент видит ТОЛЬКО срез своего договора (объект/платежи/планировки), больше ничего.
+  if (auth && auth.client) {
+    const slice = await buildClientSlice(env, auth.cid);
+    return json({ success: true, storage_key: storageKey, items: slice || [] });
+  }
+  return json({ success: true, storage_key: storageKey, items: await readStateItems(env, storageKey, auth) });
 }
 
 // POST /api/state/:storageKey
@@ -282,18 +287,48 @@ async function postState(env, storageKey, request, auth) {
     return json({ success: true, written: 0, updated_at: now, skipped });
   }
 
-  const upsert = env.DB.prepare(`
-    INSERT INTO work_states (storage_key, work_id, data, updated_at)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(storage_key, work_id)
-    DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
-  `);
-
-  const batch = allowed.map(item =>
-    upsert.bind(storageKey, item.work_id, JSON.stringify(item.data ?? null), now)
+  // ─── OPTIMISTIC LOCKING (закрывает «last write wins») ──────────────────────
+  // Новый клиент шлёт base = максимальный updated_at, который он видел. Если любая из
+  // ЗАПИСЫВАЕМЫХ строк обновилась позже base (правка с другого устройства, прямая вставка
+  // в D1), весь сейв отклоняется 409-м с актуальным снимком — клиент сливает его со своими
+  // правками и повторяет. Старые клиенты base не шлют — пишем безусловно, как раньше.
+  //
+  // Проверка встроена В КАЖДЫЙ upsert самого batch (batch в D1 — одна сериализованная
+  // транзакция), а не отдельным SELECT перед записью: иначе между проверкой и записью
+  // оставалось бы окно гонки для двух одновременных сейвов. Детали условия:
+  //   • скоуп — только записываемые work_id: строки Worker'а (voiceCalls, aiChats) и
+  //     скрытые правами разделы не дают ложных конфликтов тем, кто их не пишет;
+  //   • updated_at <> now исключает строки, записанные ЭТИМ же batch (первый upsert
+  //     ставит updated_at = now > base и без исключения «состарил» бы остальные).
+  // Условие неизменно внутри транзакции → batch проходит целиком или целиком нет.
+  const base = (typeof body.base === "number" && isFinite(body.base)) ? body.base : null;
+  const ids = allowed.map(function (item) { return item.work_id; });
+  const guard = base === null ? null : " WHERE NOT EXISTS (SELECT 1 FROM work_states"
+    + " WHERE storage_key = ? AND updated_at > ? AND updated_at <> ? AND work_id IN ("
+    + ids.map(function () { return "?"; }).join(",") + "))";
+  const upsert = env.DB.prepare(
+    "INSERT INTO work_states (storage_key, work_id, data, updated_at) "
+    + (guard === null ? "VALUES (?, ?, ?, ?)" : "SELECT ?, ?, ?, ?" + guard)
+    + " ON CONFLICT(storage_key, work_id)"
+    + " DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at"
   );
 
-  await env.DB.batch(batch);
+  const batch = allowed.map(item => guard === null
+    ? upsert.bind(storageKey, item.work_id, JSON.stringify(item.data ?? null), now)
+    : upsert.bind(storageKey, item.work_id, JSON.stringify(item.data ?? null), now, storageKey, base, now, ...ids)
+  );
+
+  const results = await env.DB.batch(batch);
+
+  // changes = 0 — guard не пропустил запись (base устарел). Неизвестная форма meta →
+  // считаем записанным (поведение как раньше), а не выдумываем ложный конфликт.
+  const rejected = base !== null && results.some(function (r) {
+    return r && r.meta && typeof r.meta.changes === "number" && r.meta.changes === 0;
+  });
+  if (rejected) {
+    const items = await readStateItems(env, storageKey, auth);
+    return json({ success: false, error: "stale base", conflict: true, storage_key: storageKey, items }, 409);
+  }
 
   return json({ success: true, written: batch.length, updated_at: now, skipped });
 }

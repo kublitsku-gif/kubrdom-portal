@@ -501,16 +501,20 @@ async function apiSave(opts){
     }
     window._allowEmptyOnce = {};   // одноразовые разрешения израсходованы
   }
-  window._forceSaveOnce = false;   // форс-сохранение одноразовое
+  const forced = !!window._forceSaveOnce;  // «Сохранить как есть» — осознанная перезапись облака
+  window._forceSaveOnce = false;           // форс-сохранение одноразовое
   _saving = true;
   writeCache(items);                       // optimistic: локально всегда свежо
   _setPendingSave();                       // …но сервером ещё не подтверждено — маркер до успеха
   try {
     const url  = API_BASE + "/api/state/" + encodeURIComponent(STORAGE_KEY);
+    // base = optimistic locking: сервер откажет (409 + свежий снимок), если облако менялось
+    // после base, — вместо тихого затирания чужих правок полным снимком этой вкладки.
+    // Форс шлём БЕЗ base (безусловная запись — ровно то, что пообещала кнопка).
     const init = {
       method:  "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
-      body:    JSON.stringify({ items: items }),
+      body:    JSON.stringify(forced ? { items: items } : { items: items, base: _lastSeen || 0 }),
     };
     // keepalive-режим (дожим при уходе со страницы): такой запрос браузер доотправляет даже
     // после закрытия вкладки. Без fetchT: abort-таймер после смерти страницы бессмыслен.
@@ -518,13 +522,21 @@ async function apiSave(opts){
       ? await fetch(url, Object.assign({ keepalive: true }, init))
       : await fetchT(url, init, 30000);   // 30с: на медленном/троттленом канале POST снимка (~1 МБ) может идти долго
     if (r.status === 401) { clearToken(); location.reload(); return { success: false, error: "unauthorized" }; }
+    // 409 — optimistic locking: наш base устарел (облако менял кто-то другой). Сервер НИЧЕГО
+    // не записал и прислал актуальный снимок — сливаем его с локальными правками и повторяем.
+    if (r.status === 409) {
+      let conf = null; try { conf = await r.json(); } catch (_) {}
+      if (conf && conf.conflict && Array.isArray(conf.items)) return _handleSaveConflict(conf.items);
+      throw new Error((conf && conf.error) || "HTTP 409");   // чужой 409: body уже прочитан — вниз не проваливаемся
+    }
     if (!r.ok) {
       let detail = "HTTP " + r.status;
       try { const e = await r.json(); if (e && e.error) detail = e.error; } catch (_) {}
       throw new Error(detail);
     }
     const j = await r.json();
-    if (j && j.updated_at) _lastSeen = j.updated_at;   // свой save — не считаем чужой правкой
+    // Math.max: версия не должна откатываться (например, часы другого дата-центра чуть позади)
+    if (j && j.updated_at) _lastSeen = Math.max(_lastSeen, j.updated_at);   // свой save — не чужая правка
     _lastSavedJson = snap;                             // запомнили, что отправили
     _clearPendingSave();                               // облако подтвердило снимок — дожим не нужен
     updateServerCounts(items);                         // сервер теперь равен локальному — обновляем эталон стража
@@ -662,6 +674,127 @@ function showUpdateBanner(items, version){
   document.getElementById("live-dismiss").onclick = function(){
     _lastSeen = version; b.remove(); _pollPaused = false;   // версию подтвердили — больше не напоминаем
   };
+}
+
+// ─── OPTIMISTIC LOCKING: слияние при 409 от POST /api/state ─────────────────
+// Сервер отклонил сейв: облако менялось после нашего base (вторая вкладка, другое
+// устройство, прямая правка D1) — и прислал актуальный снимок, НИЧЕГО не записав.
+// Сливаем три стороны: base = последний ПОДТВЕРЖДЁННЫЙ сервером снимок (_lastSavedJson),
+// local = текущее состояние вкладки, server = присланное. Независимые правки (в т.ч.
+// «оба добавили по товару в expProducts») сливаются автоматически и пересохраняются
+// с новым base; настоящий конфликт (одна и та же запись правлена с двух сторон) молча
+// не решаем — показываем штатный баннер выбора, как и раньше.
+function _jeq(a,b){ return JSON.stringify(a)===JSON.stringify(b); }
+function _isIdArray(v){ return Array.isArray(v) && v.every(function(x){ return x && typeof x==="object" && x.id!=null; }); }
+
+// Слияние массивов записей по id (три стороны). Порядок: серверный, локально
+// добавленные записи — в конец. Возвращает {ok:true,value} либо {ok:false},
+// если одна и та же запись изменена и там и там (решать пользователю).
+function _mergeIdArrays(b,l,s){
+  const bi={},li={},si={};
+  b.forEach(function(x){bi[x.id]=x;}); l.forEach(function(x){li[x.id]=x;}); s.forEach(function(x){si[x.id]=x;});
+  const out=[], seen={};
+  const ids=s.map(function(x){return x.id;}).concat(l.map(function(x){return x.id;}));
+  for (const id of ids){
+    if (seen[id]) continue; seen[id]=1;
+    const bR=bi[id], lR=li[id], sR=si[id];
+    let keep;
+    if (_jeq(lR,sR)) keep=sR;            // стороны согласны (правка идентична или обеих нет)
+    else if (_jeq(lR,bR)) keep=sR;       // менял только сервер (правка или удаление)
+    else if (_jeq(sR,bR)) keep=lR;       // менял только локальный клиент
+    else return {ok:false};              // запись правлена с двух сторон — конфликт
+    if (keep!==undefined) out.push(keep);
+  }
+  return {ok:true, value:out};
+}
+
+// Трёхстороннее слияние снимков по work_id (ключи base∪local; серверные ключи вне
+// панели — voiceCalls и т.п. — в слияние не входят, они проходят насквозь в applyState).
+// merged БЕЗ ключа = «оставить как есть» (например, финансы, скрытые правами).
+function _merge3(baseItems, localItems, serverItems){
+  const bm={},lm={},sm={};
+  (baseItems||[]).forEach(function(it){bm[it.work_id]=it.data;});
+  (localItems||[]).forEach(function(it){lm[it.work_id]=it.data;});
+  (serverItems||[]).forEach(function(it){sm[it.work_id]=it.data;});
+  const keys={};
+  Object.keys(bm).forEach(function(k){keys[k]=1;});
+  Object.keys(lm).forEach(function(k){keys[k]=1;});
+  const merged={}, conflicts=[];
+  Object.keys(keys).forEach(function(k){
+    const b=bm[k], l=lm[k], s=sm[k];
+    let v, ok=true;
+    if (_jeq(l,s)) v=l;
+    else if (_jeq(l,b)) v=s;             // раздел менял только сервер
+    else if (_jeq(s,b)) v=l;             // раздел менял только локальный клиент
+    else if (_isIdArray(b)&&_isIdArray(l)&&_isIdArray(s)){
+      const m=_mergeIdArrays(b,l,s);
+      if (m.ok) v=m.value; else ok=false;
+    } else ok=false;                     // оба меняли не-массив (settings и т.п.) — конфликт
+    if (!ok){ conflicts.push(k); return; }
+    if (v!==undefined) merged[k]=v;
+  });
+  return {merged:merged, conflicts:conflicts};
+}
+
+// true, если досылать нечего: каждый локальный раздел совпадает с серверным либо
+// отсутствует на сервере и пуст локально (финансы у роли без права finance).
+function _mergeIsNoop(localItems, serverItems){
+  const sm={};
+  serverItems.forEach(function(it){ sm[it.work_id]=it; });
+  return localItems.every(function(it){
+    const s=sm[it.work_id];
+    if (s) return _jeq(it.data, s.data);
+    const d=it.data;
+    if (d==null) return true;
+    if (Array.isArray(d)) return d.length===0;
+    if (typeof d==="object") return Object.keys(d).length===0;
+    return false;
+  });
+}
+
+function _handleSaveConflict(serverItems){
+  updateServerCounts(serverItems);                 // страж сверяется со свежим сервером
+  const serverV = maxUpdatedAt(serverItems);
+  const local   = serializeState();                // свежее снимка до POST: могли успеть печатать
+  let base = null;
+  try { base = _lastSavedJson ? JSON.parse(_lastSavedJson) : null; } catch (e) {}
+  const res = base ? _merge3(base, local, serverItems) : null;
+  if (!res || res.conflicts.length > 0) {
+    // Базы для слияния нет или запись правлена с двух сторон — решает пользователь.
+    // Кэш и маркер дожима уже записаны в apiSave, локальные правки целы.
+    if (!document.getElementById("live-banner")) showUpdateBanner(serverItems, serverV);
+    return { success: false, blocked: "conflict" };
+  }
+  const inServer = {};
+  const mergedFull = serverItems.map(function(it){
+    inServer[it.work_id] = 1;
+    return (it.work_id in res.merged) ? { work_id: it.work_id, data: res.merged[it.work_id], updated_at: it.updated_at } : it;
+  });
+  Object.keys(res.merged).forEach(function(k){ if (!inServer[k]) mergedFull.push({ work_id: k, data: res.merged[k] }); });
+  // Применяем и перерисовываем, только если слияние реально меняет локальные данные —
+  // иначе (чужой сейв с тем же содержимым) зря дёргали бы DOM и сбивали фокус ввода.
+  const lm = {}; local.forEach(function(it){ lm[it.work_id] = it.data; });
+  const changed = Object.keys(res.merged).some(function(k){ return !_jeq(res.merged[k], lm[k]); });
+  if (changed) { applyState(mergedFull); render(); }
+  _lastSeen = serverV;
+  writeCache(mergedFull);
+  _clearPendingSave(); _setPendingSave();          // маркер дожима — уже от свежей базы
+  // Слияние разрешило расхождение — висящий live-баннер (от поллинга) больше не актуален,
+  // а его кнопка «Обновить» держит УСТАРЕВШИЙ снимок и откатила бы слитое. Закрываем.
+  const lb = document.getElementById("live-banner");
+  if (lb) { try { lb.remove(); } catch (e) {} _pollPaused = false; }
+  const localAfter = changed ? serializeState() : local;
+  if (_mergeIsNoop(localAfter, serverItems)) {
+    // Всё «наше» уже в облаке — пересохранять нечего (и не дёргаем чужие вкладки).
+    _lastSavedJson = JSON.stringify(localAfter);
+    _clearPendingSave();
+    clearSaveError();
+    return { success: true, merged: true };
+  }
+  _lastSavedJson = null;                           // иначе apiSave решит «нечего сохранять»
+  clearSaveError();
+  scheduleSave();                                  // ретрай уйдёт уже с новым base
+  return { success: false, retry: true, merged: true };
 }
 const COLS=["#e67e22","#c0392b","#2980b9","#27ae60","#9b59b6","#7f8c8d","#16a085","#d35400","#8e44ad","#2c3e50"];
 // Единицы измерения работ (готовый список; можно ввести свою)
@@ -14013,6 +14146,9 @@ function _startLoops(){
         if (pend && differs && maxUpdatedAt(items) <= pend.base){
           // Наши несохранённые правки новее, и облако с тех пор никто не менял —
           // дожимаем их в облако вместо принятия его устаревшего снимка.
+          // _lastSeen поднимаем до серверной версии: облако не двигалось, значит это и есть
+          // наш base (кэш из serializeState без updated_at дал бы base=0 → ложный 409).
+          _lastSeen = Math.max(_lastSeen, maxUpdatedAt(items));
           _lastSavedJson = null;                     // иначе apiSave решит «нечего сохранять»
           apiSave().catch(function(){});
         } else if (pend && differs){
