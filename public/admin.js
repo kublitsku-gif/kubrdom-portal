@@ -8332,6 +8332,74 @@ function buildSupplyTZ(store){
   if(!w){ alert("Разрешите всплывающие окна для этого сайта, чтобы сформировать ТЗ (PDF)."); return; }
   w.document.open(); w.document.write(html); w.document.close(); w.focus();
 }
+
+// Полный список материалов объекта в PDF — «для передачи кому-то» (снабженцу/подрядчику).
+// В отличие от ТЗ: ВСЕ магазины и ВСЕ позиции (не только не купленное), со статусом «куплено»,
+// ссылками на товар и итогами куплено/осталось. Учитывает текущие фильтры (поиск/магазин/не куплено).
+function buildSupplyList(){
+  const sel=window._supplySelected||{};
+  const objs=objects.filter(function(o){return !!sel[o.id];});
+  let mats=[];
+  objs.forEach(function(o){(o.stages||[]).forEach(function(s){(s.works||[]).forEach(function(w){(w.mats||[]).forEach(function(m){
+    mats.push(Object.assign({},m,{wn:w.n,sn:s.n,objName:o.name}));
+  });});});});
+  const q=(supplySearch||"").trim().toLowerCase();
+  if(q) mats=mats.filter(function(m){return (m.n||"").toLowerCase().includes(q)||(m.store||"").toLowerCase().includes(q)||(m.note||"").toLowerCase().includes(q)||(m.wn||"").toLowerCase().includes(q);});
+  if(supplyStoreFilter) mats=mats.filter(function(m){return (m.store||"Без магазина")===supplyStoreFilter;});
+  if(supplyHideDone) mats=mats.filter(function(m){return !purchased[m.id];});
+  if(!mats.length){ alert("Список пуст — нет материалов по текущему фильтру."); return; }
+  function qtyText(m){
+    const lens=(Array.isArray(m.breakdown)?m.breakdown:[]).map(function(r){return {len:Number(r.len)||0,n:Number(r.n)||0};}).filter(function(r){return r.len>0&&r.n>0;}).sort(function(a,b){return b.len-a.len;});
+    if(lens.length){ const tn=lens.reduce(function(a,r){return a+r.n;},0); const tm=Math.round(lens.reduce(function(a,r){return a+r.len*r.n;},0)*100)/100; return lens.map(function(r){return numRu(r.len)+' м × '+r.n+' шт';}).join(' + ')+' = '+tn+' хлыст ('+numRu(tm)+' м.п.)'; }
+    const conv=matConv(m); if(conv&&conv.altTotal) return conv.altTotal(m.qty||1);
+    const mo=EXP_MODES.find(function(x){return x.k===(m.mode||'piece');})||EXP_MODES[0]; return numRu(m.qty||1)+' '+mo.unit;
+  }
+  const byStore={};
+  mats.forEach(function(m){ const st=m.store||"Без магазина"; (byStore[st]=byStore[st]||[]).push(m); });
+  const stores=Object.keys(byStore).sort();
+  const totalAll=mats.reduce(function(a,m){return a+(Number(m.cost)||0)*(m.qty||1);},0);
+  const doneAll=mats.filter(function(m){return !!purchased[m.id];}).reduce(function(a,m){return a+(Number(m.cost)||0)*(m.qty||1);},0);
+  let idx=0;
+  const sections=stores.map(function(st){
+    const list=byStore[st].slice().sort(function(a,b){return (a.n||"").localeCompare(b.n||"");});
+    const sub=list.reduce(function(a,m){return a+(Number(m.cost)||0)*(m.qty||1);},0);
+    const rows=list.map(function(m){ idx++; const mo=EXP_MODES.find(function(x){return x.k===(m.mode||'piece');})||EXP_MODES[0]; const done=!!purchased[m.id];
+      return '<tr'+(done?' class="done"':'')+'><td class="c">'+idx+'</td><td>'+esc(m.n)+
+        (m.note&&String(m.note).trim()?'<div class="note">'+esc(m.note)+'</div>':'')+
+        (m.sn?'<div class="note">'+esc(m.sn)+'</div>':'')+
+        (m.url?'<div class="lnk"><a href="'+esc(m.url)+'">ссылка на товар</a></div>':'')+
+        '</td><td>'+qtyText(m)+'</td><td class="r">'+(Number(m.cost)||0).toLocaleString('ru-RU')+' ₽/'+mo.unit+'</td><td class="r">'+Math.round((Number(m.cost)||0)*(m.qty||1)).toLocaleString('ru-RU')+' ₽</td><td class="c">'+(done?'✔':'☐')+'</td></tr>';
+    }).join('');
+    return '<h2>'+esc(st)+' <span class="cnt">'+list.length+' поз. · '+Math.round(sub).toLocaleString('ru-RU')+' ₽</span></h2>'+
+      '<table><thead><tr><th>№</th><th>Материал</th><th>Кол-во</th><th>Цена</th><th>Сумма</th><th>✔</th></tr></thead><tbody>'+rows+'</tbody></table>';
+  }).join('');
+  const objNames=objs.map(function(o){return o.name;}).join(", ");
+  const d=new Date(); const ds=String(d.getDate()).padStart(2,"0")+"."+String(d.getMonth()+1).padStart(2,"0")+"."+d.getFullYear();
+  const html='<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Список материалов — '+esc(objNames||"объект")+'</title><style>'+
+    'body{font-family:-apple-system,Segoe UI,Arial,sans-serif;padding:24px;color:#1a2a3a;max-width:900px;margin:0 auto}'+
+    'h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:20px 0 6px;color:#2980b9}.cnt{font-size:12px;font-weight:400;color:#777}'+
+    '.sub{font-size:13px;color:#555;margin-bottom:4px}'+
+    'table{width:100%;border-collapse:collapse;margin-top:6px;font-size:13px}'+
+    'th,td{border:1px solid #cdd8e6;padding:7px 9px;text-align:left;vertical-align:top}th{background:#f0f4f8;font-size:12px}'+
+    '.note{font-size:11px;color:#777;margin-top:3px}.lnk{font-size:11px;margin-top:3px}.lnk a{color:#2980b9}'+
+    '.r{text-align:right;white-space:nowrap}.c{text-align:center;color:#999}'+
+    'tr.done td{color:#9aabbf;background:#f6fbf7}tr.done td:nth-child(2){text-decoration:line-through}'+
+    '.tot{font-size:16px;font-weight:800;margin-top:16px;text-align:right}.tot small{display:block;font-size:12px;font-weight:600;color:#777}'+
+    '.btn{margin:14px 0;padding:10px 18px;background:#2980b9;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer}'+
+    '@media print{.btn{display:none}body{padding:0}a{color:#1a2a3a;text-decoration:none}}'+
+    '</style></head><body>'+
+    '<h1>📦 Список материалов для закупки</h1>'+
+    '<div class="sub">Объект: '+esc(objNames||"—")+'</div>'+
+    '<div class="sub">Дата: '+ds+' · КубрДом · позиций: '+mats.length+'</div>'+
+    '<button class="btn" onclick="window.print()">🖨 Печать / Сохранить в PDF</button>'+
+    sections+
+    '<div class="tot">Итого: '+Math.round(totalAll).toLocaleString('ru-RU')+' ₽'+
+      '<small>Куплено: '+Math.round(doneAll).toLocaleString('ru-RU')+' ₽ · Осталось: '+Math.round(totalAll-doneAll).toLocaleString('ru-RU')+' ₽</small></div>'+
+    '</body></html>';
+  const w=window.open("","_blank");
+  if(!w){ alert("Разрешите всплывающие окна для этого сайта, чтобы сформировать PDF."); return; }
+  w.document.open(); w.document.write(html); w.document.close(); w.focus();
+}
 function tSupplyDetail(sel, sortBy){
   const STORECOL={"Озон":"#005bff","Белка":"#d68910","pechki.su":"#c0392b","Егорьевск":"#8e44ad","Лемана":"#e30613","Авито":"#00aaff","Нижний Новгород":"#27ae60"};
   const sortBy2=sortBy||"stage";
@@ -8407,6 +8475,9 @@ function tSupplyDetail(sel, sortBy){
     '</div>';
   });
   html+='</div>';
+
+  // Полный список объекта в PDF (для передачи снабженцу/подрядчику) — всегда доступен.
+  html+='<div style="margin-bottom:14px"><button data-a="supply-list" style="width:100%;padding:12px;border-radius:12px;border:1.5px solid #2980b9;cursor:pointer;font-size:13px;font-weight:700;color:#2980b9;background:#fff">📄 Скачать список для передачи (PDF)</button></div>';
 
   // ТЗ поставщику (PDF) — когда отфильтровано по офлайн-магазину (Белка/Егорьевск/…).
   // Суммирует одинаковые позиции всех выбранных объектов и открывает печать в PDF.
@@ -12021,6 +12092,7 @@ function bind(){
     };}
     else if(a==="supply-sort"){el.onclick=()=>{window._supplySort=el.dataset.s;render();};}
     else if(a==="supply-tz"){el.onclick=(ev)=>{ ev&&ev.stopPropagation(); buildSupplyTZ(el.dataset.store); };}
+    else if(a==="supply-list"){el.onclick=(ev)=>{ ev&&ev.stopPropagation(); buildSupplyList(); };}
     else if(a==="supply-edit-mat"){el.onclick=(ev)=>{ev&&ev.stopPropagation();supplyEditMid=el.dataset.mid;render();};}
     else if(a==="supply-mat-close"){el.onclick=()=>{supplyEditMid=null;render();};}
     else if(a==="supply-mat-save"){el.onclick=()=>{
