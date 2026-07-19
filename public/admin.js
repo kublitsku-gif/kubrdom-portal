@@ -5639,7 +5639,9 @@ function tContractList(){
           return '<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:0.5px;margin-bottom:6px">📎 ФАЙЛЫ</div>'+
                  miniSection("contract","📄 Файл договора","#2980b9")+
                  miniSection("plan","📐 Файл планировки и проект","#8e44ad")+
-                 miniSection("spec","📋 Файл спецификации","#16a085");
+                 miniSection("spec","📋 Файл спецификации","#16a085")+
+                 miniSection("act","✅ Акты выполненных работ","#e67e22")+
+                 miniSection("wind","🪟 Договор на окна и двери","#34495e");
         })()+
         // Extra works block (visible always - main can have extras too)
         (function(){
@@ -5880,6 +5882,7 @@ function buildContractFiles(c){
              '<div style="font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name)+'</div>'+
              '<div style="font-size:9px;color:#9aabbf">'+(f.date||"")+(f.size?' · '+fmtSize(f.size):'')+'</div>'+
            '</div>'+
+           (kind==="act"?'<label onclick="event.stopPropagation()" style="display:flex;align-items:center;gap:5px;padding:5px 9px;background:'+(f.signed?'#27ae6015':'#fff')+';border:1px solid '+(f.signed?'#27ae6055':'#d0dae8')+';border-radius:6px;cursor:pointer;font-size:10px;font-weight:700;color:'+(f.signed?'#27ae60':'#9aabbf')+';white-space:nowrap;flex-shrink:0"><input type="checkbox" data-a="ct-act-signed" data-cid="'+c.id+'" data-fid="'+f.id+'"'+(f.signed?' checked':'')+' style="accent-color:#27ae60;margin:0">'+(f.signed?'подписан':'не подписан')+'</label>':'')+
            '<a href="'+f.data+'" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;cursor:pointer;color:'+color+';font-size:11px;font-weight:700;text-decoration:none;white-space:nowrap">Открыть</a>'+
            '<button data-a="ct-file-del" data-cid="'+c.id+'" data-fid="'+f.id+'" style="width:28px;height:28px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:12px;flex-shrink:0">✕</button>'+
            '</div>';
@@ -5892,6 +5895,8 @@ function buildContractFiles(c){
   html+=section("contract","📄 ФАЙЛ ДОГОВОРА","#2980b9");
   html+=section("plan","📐 ФАЙЛ ПЛАНИРОВКИ И ПРОЕКТ","#8e44ad");
   html+=section("spec","📋 ФАЙЛ СПЕЦИФИКАЦИИ","#16a085");
+  html+=section("act","✅ АКТЫ ВЫПОЛНЕННЫХ РАБОТ","#e67e22");
+  html+=section("wind","🪟 ДОГОВОР НА ОКНА И ДВЕРИ","#34495e");
   return html;
 }
 
@@ -12723,6 +12728,17 @@ function bind(){
       el.addEventListener("click",handler,true);
       el.addEventListener("touchend",function(ev){if(ev){ev.stopPropagation();ev.preventDefault();}handler(ev);},true);
     }
+    else if(a==="ct-act-signed"){el.onchange=function(ev){
+      if(ev)ev.stopPropagation();
+      const cid=el.dataset.cid, fid=el.dataset.fid;
+      contractDocs=contractDocs.map(function(c){
+        if(c.id!==cid)return c;
+        return Object.assign({},c,{files:(c.files||[]).map(function(f){
+          return f.id===fid?Object.assign({},f,{signed:!f.signed}):f;
+        })});
+      });
+      fl();
+    };}
     else if(a==="sal-save"){el.onclick=()=>{
       const oid=el.dataset.oid, uid=el.dataset.uid;
       const plan=unfmtMoney((document.getElementById("sal-plan-"+oid+"-"+uid)||{}).value);
