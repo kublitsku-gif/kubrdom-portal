@@ -9771,7 +9771,8 @@ const CT_DOC_SECTIONS=[
 {t:"11. Список приложений",b:`Приложение 1 — Планировка
 Приложение 2 — График платежей
 Приложение 3 — Спецификация
-Приложение 4 — Акт приемки`}
+Приложение 4 — Акт приемки
+Приложение 5 — Спецификация: окна и двери`}
 ];
 const CT_DOC_ACT=`Настоящий Акт составлен сегодня, «____» ____________________ 20___ г.
 {ИСПОЛНИТЕЛЬ}, именуемый «Исполнитель», и {ЗАКАЗЧИК}, именуемый (-ая) «Заказчик».
@@ -9798,6 +9799,16 @@ const CT_DOC_SPEC=`Спецификация (перечень выполняем
 4. Сдача Объекта:
 - предоставление Заказчику фото- и видеоотчёта о выполненных работах.
 Точный перечень, объём работ и применяемые материалы уточняются Сторонами и могут корректироваться в переписке в мессенджерах Telegram или Max на телефонных номерах, указанных в Договоре (п. 1.1, п. 2.2.1 Договора).`;
+// Приложение № 5 — Спецификация: окна и двери. Светопрозрачные конструкции идут отдельным
+// заводским заказом (напр. ПК «Окна Столицы»), гарантия — производителя (п. 5.3). Единый
+// дефолт для бани и дома; конкретные позиции/размеры вносятся в редакторе текста по договору.
+const CT_DOC_WINDOWS=`Спецификация: окна и двери к Договору подряда № {НОМЕР}.
+Светопрозрачные конструкции (окна и двери) для {ПРЕДМЕТ} поставляются отдельным заказом завода-изготовителя (спецификация поставщика прикладывается к настоящему Договору и является его неотъемлемой частью).
+Состав изделий:
+- окно ПВХ (профиль Rehau Termo или аналог), поворотно-откидное — размер и количество по проекту;
+- дверь балконная / входная ПВХ (при наличии) — размер и количество по проекту.
+Профиль, цвет ламинации, тип открывания, заполнение стеклопакета и фурнитура указываются в спецификации завода-изготовителя и согласуются Сторонами (п. 1.1 Договора).
+На окна и двери распространяются гарантийные обязательства завода-изготовителя (п. 5.3 Договора).`;
 
 let ctTplTextEdit=false; // редактор текста договора раскрыт
 let ctTplLastDeletedPay=null; // {pay,index} — последний удалённый платёж (для «Восстановить»)
@@ -9807,6 +9818,7 @@ function ctTplTexts(){
   return {
     sections:(ov&&Array.isArray(ov.sections))?ov.sections:CT_DOC_SECTIONS,
     spec:(ov&&typeof ov.spec==="string")?ov.spec:CT_DOC_SPEC,
+    windows:(ov&&typeof ov.windows==="string")?ov.windows:CT_DOC_WINDOWS,
     act:(ov&&typeof ov.act==="string")?ov.act:CT_DOC_ACT,
     isCustom:!!ov
   };
@@ -9816,7 +9828,7 @@ function ctTplTextsEnsure(){
   const k=ctTplObjType().k;
   const cur=(settings.ctTplTexts||{})[k];
   if(cur)return cur;
-  const fresh={sections:CT_DOC_SECTIONS.map(function(s){return {t:s.t,b:s.b};}),spec:CT_DOC_SPEC,act:CT_DOC_ACT};
+  const fresh={sections:CT_DOC_SECTIONS.map(function(s){return {t:s.t,b:s.b};}),spec:CT_DOC_SPEC,windows:CT_DOC_WINDOWS,act:CT_DOC_ACT};
   const all=Object.assign({},settings.ctTplTexts||{});
   all[k]=fresh;
   settings=Object.assign({},settings,{ctTplTexts:all});
@@ -9829,6 +9841,7 @@ function ctTplTextsReset(i){
   if(!all[k])return;
   if(i===null||i===undefined){ delete all[k]; }
   else if(i==="spec"){ all[k].spec=CT_DOC_SPEC; }
+  else if(i==="windows"){ all[k].windows=CT_DOC_WINDOWS; }
   else if(i==="act"){ all[k].act=CT_DOC_ACT; }
   else if(CT_DOC_SECTIONS[i]){ all[k].sections[i]={t:CT_DOC_SECTIONS[i].t,b:CT_DOC_SECTIONS[i].b}; }
   settings=Object.assign({},settings,{ctTplTexts:all});
@@ -10113,6 +10126,13 @@ function tContractTemplate(){
     '</div>';
     txtHtml+='<div style="background:#fafbfc;border:1px solid #e6ecf3;border-radius:9px;padding:9px 11px;margin-top:8px">'+
       '<div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">'+
+        '<span style="flex:1;font-size:12px;font-weight:700;color:#1a2a3a;padding:6px 0">Приложение № 5 — Спецификация: окна и двери</span>'+
+        '<button data-a="ct-tpl-text-reset" data-i="windows" title="Вернуть стандартный текст спецификации окон и дверей" style="width:28px;height:28px;background:transparent;border:1px solid #d0dae8;border-radius:6px;cursor:pointer;color:#7a9aaa;font-size:13px">↺</button>'+
+      '</div>'+
+      '<textarea data-tpltext-windows="1" style="width:100%;padding:8px 10px;border-radius:7px;border:1px solid #e0e6ee;font-size:11.5px;line-height:1.5;height:160px;resize:vertical;outline:none;box-sizing:border-box;color:#3a4a5a">'+esc(texts.windows)+'</textarea>'+
+    '</div>';
+    txtHtml+='<div style="background:#fafbfc;border:1px solid #e6ecf3;border-radius:9px;padding:9px 11px;margin-top:8px">'+
+      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">'+
         '<span style="flex:1;font-size:12px;font-weight:700;color:#1a2a3a;padding:6px 0">Приложение № 4 — Акт приема-передачи</span>'+
         '<button data-a="ct-tpl-text-reset" data-i="act" title="Вернуть стандартный текст акта" style="width:28px;height:28px;background:transparent;border:1px solid #d0dae8;border-radius:6px;cursor:pointer;color:#7a9aaa;font-size:13px">↺</button>'+
       '</div>'+
@@ -10193,6 +10213,9 @@ function _bindCtTplSync(){
   });
   bindTplText("[data-tpltext-spec]",function(el){
     ctTplTextsEnsure().spec=el.value;
+  });
+  bindTplText("[data-tpltext-windows]",function(el){
+    ctTplTextsEnsure().windows=el.value;
   });
   bindTplText("[data-tpltext-act]",function(el){
     ctTplTextsEnsure().act=el.value;
@@ -10348,6 +10371,12 @@ function ctTplDocHtml(){
     '<div class="app">'+appHead(4)+
     '<div class="sec">Акт приема-передачи выполненных работ<br>по Договору № '+num+'</div>'+
     ctTplRenderBody(texts.act,vars)+
+    sig+'</div>'+
+
+    // Приложение № 5 — Спецификация: окна и двери
+    '<div class="app">'+appHead(5)+
+    '<div class="sec">Спецификация: окна и двери</div>'+
+    ctTplRenderBody(texts.windows,vars)+
     sig+'</div>'+
 
     '</body></html>';
@@ -12592,7 +12621,7 @@ function bind(){
     };}
     else if(a==="ct-tpl-text-toggle"){el.onclick=()=>{ctTplTextEdit=!ctTplTextEdit;render();};}
     else if(a==="ct-tpl-text-reset"){el.onclick=()=>{
-      const i=el.dataset.i==="act"?"act":el.dataset.i==="spec"?"spec":parseInt(el.dataset.i,10);
+      const i=el.dataset.i==="act"?"act":el.dataset.i==="spec"?"spec":el.dataset.i==="windows"?"windows":parseInt(el.dataset.i,10);
       ctTplTextsReset(i);
       render();
     };}
