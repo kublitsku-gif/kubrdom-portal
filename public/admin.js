@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-07-16.99";
+const APP_BUILD = "2026-07-25.1";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1282,6 +1282,7 @@ let loginMode=null;   // null = выбор Сотрудник/Клиент; "emp
 let loginPinFor=null; // id сотрудника, у которого запрашиваем PIN при входе
 let loginPinError=""; // текст ошибки ввода PIN
 let empPhoneError=""; // ошибка входа сотрудника по телефону
+let installHintOpen=false; // раскрыта ли инструкция «Установить приложение» на экране входа
 let showPinChange=false; // открыт диалог смены своего PIN
 // === КЛИЕНТСКИЙ ВХОД ===
 let clientLoginStep="find";   // "find" (ввод номера/фамилии) | "pin"
@@ -2527,6 +2528,65 @@ function findClientContract(query){
   })||null;
 }
 
+// === Установка на «рабочий стол» (PWA) ===
+// Уже открыто как установленное приложение? Тогда подсказку не показываем.
+function _isStandalone(){
+  try{ return (window.matchMedia&&window.matchMedia("(display-mode: standalone)").matches)||window.navigator.standalone===true; }
+  catch(e){ return false; }
+}
+// Грубое определение мобильной ОС для правильной инструкции.
+function _mobileOS(){
+  var ua=navigator.userAgent||"";
+  if(/iPad|iPhone|iPod/.test(ua)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1)) return "ios";
+  if(/Android/i.test(ua)) return "android";
+  return "other";
+}
+// Chrome/Android даёт нативное окно установки через это событие — перехватываем, показываем свою кнопку.
+var _deferredInstallPrompt=null;
+window.addEventListener("beforeinstallprompt",function(e){ e.preventDefault(); _deferredInstallPrompt=e; });
+
+// Блок «Установить приложение» на экране входа: свёрнут по умолчанию, платформо-зависимые шаги.
+function installBlockHtml(){
+  if(_isStandalone()) return ""; // уже на рабочем столе — не мешаем
+  var os=_mobileOS();
+  var chev='<span style="font-size:16px;color:#9fb3c8;display:inline-block;transition:transform .15s;transform:rotate('+(installHintOpen?"90":"0")+'deg)">›</span>';
+  var head='<button data-a="install-toggle" style="display:flex;align-items:center;gap:10px;width:100%;padding:12px 14px;border-radius:14px;border:1px solid #dbe4ee;background:rgba(255,255,255,0.72);cursor:pointer;text-align:left;box-sizing:border-box">'+
+      '<span style="font-size:20px;flex-shrink:0">📲</span>'+
+      '<span style="flex:1;min-width:0">'+
+        '<span style="display:block;font-size:13px;font-weight:700;color:#1a2a3a">Установить приложение</span>'+
+        '<span style="display:block;font-size:11px;color:#7a9aaa;margin-top:1px">Добавить КубрДом на экран телефона</span>'+
+      '</span>'+chev+
+    '</button>';
+  if(!installHintOpen) return '<div style="margin-top:14px">'+head+'</div>';
+
+  function step(n,txt){
+    return '<div style="display:flex;gap:9px;align-items:flex-start;margin-top:9px">'+
+        '<span style="flex-shrink:0;width:20px;height:20px;border-radius:50%;background:#46606e;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center">'+n+'</span>'+
+        '<span style="font-size:12.5px;color:#3a4a5a;line-height:1.45">'+txt+'</span>'+
+      '</div>';
+  }
+  var body;
+  if(os==="ios"){
+    body=step(1,'Откройте портал в <b>Safari</b> и нажмите «Поделиться» <b>&#x2191;</b> внизу экрана')+
+         step(2,'Пролистайте вниз и выберите <b>«На экран „Домой“»</b>')+
+         step(3,'Нажмите <b>«Добавить»</b> — значок появится на рабочем столе');
+  } else if(os==="android"){
+    var nativeBtn=_deferredInstallPrompt
+      ? '<button data-a="pwa-install" style="width:100%;margin-top:13px;padding:12px;background:#46606e;border:none;border-radius:11px;color:#fff;font-size:14px;font-weight:700;cursor:pointer">Установить приложение</button>'
+      : '';
+    body=step(1,'Откройте меню браузера <b>⋮</b> (вверху справа)')+
+         step(2,'Выберите <b>«Установить приложение»</b> или <b>«Добавить на главный экран»</b>')+
+         step(3,'Подтвердите — значок появится на рабочем столе')+nativeBtn;
+  } else {
+    body='<div style="font-size:12.5px;color:#3a4a5a;line-height:1.55;margin-top:6px">Откройте портал на телефоне, чтобы добавить его на рабочий стол:<br>'+
+         '• <b>iPhone</b> (Safari): «Поделиться» &#x2191; → «На экран „Домой“»<br>'+
+         '• <b>Android</b> (Chrome): меню ⋮ → «Установить приложение»</div>';
+  }
+  return '<div style="margin-top:14px">'+head+
+      '<div style="margin-top:8px;border:1px solid #dbe4ee;border-radius:14px;background:rgba(255,255,255,0.85);padding:10px 14px 16px">'+body+'</div>'+
+    '</div>';
+}
+
 function loginPage(){
   // Общая обёртка с шапкой
   function wrap(inner){
@@ -2538,6 +2598,7 @@ function loginPage(){
           '<div style="font-size:12px;color:#7a9aaa;margin-top:4px;letter-spacing:1.5px;font-weight:600">ПОРТАЛ УПРАВЛЕНИЯ</div>'+
         '</div>'+
         inner+
+        installBlockHtml()+
         '<div style="text-align:center;margin-top:14px;font-size:11px;color:#a0b4c8">КубрДом · Портал управления · v'+APP_BUILD+'</div>'+
       '</div>'+
     '</div>';
@@ -2640,6 +2701,18 @@ function _setInitialTab(){
 }
 
 function bindLogin(){
+  // Инструкция «Установить приложение» — раскрыть/свернуть
+  document.querySelectorAll("[data-a='install-toggle']").forEach(function(el){
+    el.onclick=function(){ installHintOpen=!installHintOpen; render(); };
+  });
+  // Android/Chrome — нативное окно установки (если браузер его предложил)
+  var _pil=document.querySelector("[data-a='pwa-install']");
+  if(_pil){ _pil.onclick=async function(){
+    if(!_deferredInstallPrompt) return;
+    _deferredInstallPrompt.prompt();
+    try{ await _deferredInstallPrompt.userChoice; }catch(e){}
+    _deferredInstallPrompt=null; render();
+  }; }
   document.querySelectorAll("[data-a='login-mode']").forEach(function(el){
     el.onclick=function(){ loginMode=el.dataset.m; if(el.dataset.m==="employee"){ loginPinFor=null; empPhoneError=""; } render(); };
   });
