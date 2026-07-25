@@ -249,6 +249,7 @@ function serializeState(){
     { work_id: "expProducts",     data: expProducts     },
     { work_id: "dbPlans",         data: dbPlans         },
     { work_id: "purchased",       data: purchased       },
+    { work_id: "arrived",         data: arrived         },
     { work_id: "finTxns",         data: finTxns         },
     { work_id: "finSalaries",     data: finSalaries     },
     { work_id: "finContracts",    data: finContracts    },
@@ -291,6 +292,7 @@ function applyState(items){
   crmClients      = arr("crmClients",      crmClients);
   rolePermissions = obj("rolePermissions", rolePermissions);
   purchased       = obj("purchased",       purchased);
+  arrived         = obj("arrived",         arrived);
   finSalaries     = obj("finSalaries",     finSalaries);
   finContracts    = obj("finContracts",    finContracts);
   finExtraWorks   = obj("finExtraWorks",   finExtraWorks);
@@ -1685,6 +1687,7 @@ let expProducts=[
   var ho=objects.find(function(x){return x.id==="obj_dom_dmitrovka";}); if(ho&&t2) ho.stages=JSON.parse(JSON.stringify(t2.stages));
 }catch(e){console.warn("tpl/obj rebuild",e);}})();
 let purchased={}; // {matId: true} — отмечено снабженцем как куплено
+let arrived={};   // {matId: true} — пришло/принято на склад (отмечает бригадир/мастер); снабженец видит наличие
 let supplySearch=''; // поиск по материалам
 let supplyStoreFilter=''; // фильтр по магазину
 let supplyHideDone=false; // показывать только не купленное
@@ -3680,6 +3683,14 @@ function page(){
       (rolePermissions[rid]||[]).forEach(function(k){tabSet.add(k);});
     });
     TABS=ALL_TABS.filter(([k])=>tabSet.has(k)&&!STAFF_HIDDEN_TABS.has(k));
+    // Бригадир/мастер/нач.производства ВСЕГДА видят «Снабжение» (приёмка на склад) —
+    // независимо от сохранённых в облаке rolePermissions. Ставим сразу после «Объекты».
+    const _PROD_RECV=["brigadier","worker","prod_head"];
+    if(r.some(function(x){return _PROD_RECV.includes(x);}) && !TABS.some(function(t){return t[0]==="supply";})){
+      const _sup=ALL_TABS.find(function(t){return t[0]==="supply";})||["supply","📦 Снабжение"];
+      const _ai=TABS.findIndex(function(t){return t[0]==="assign";});
+      if(_ai>=0) TABS.splice(_ai+1,0,_sup); else TABS.unshift(_sup);
+    }
     if(!TABS.length) TABS=[["assign","🏗️ Объекты"]];
   }
   // iOS-style нижний таб-бар — быстрый доступ к 4 главным разделам.
@@ -8277,12 +8288,170 @@ function tFinancePnL(oid){
 }
 
 
+// Прод-роль (бригадир/мастер/нач.производства) без прав снабженца → видит чистый
+// чек-лист приёмки на склад, а не полную вкладку закупки.
+function isReceiverView(){
+  if(!currentUser) return false;
+  const r=currentUser.roles;
+  if(r.includes("admin")||r.includes("supply")) return false;
+  return r.some(function(x){return x==="brigadier"||x==="worker"||x==="prod_head";});
+}
+
 function tSupply(){
   const sel=window._supplySelected||{};      // {objId: true/false}
   const viewing=window._supplyViewing||false; // showing detail
+  if(isReceiverView()){                        // бригадир/мастер — приёмка на склад
+    return viewing ? tReceiveDetail(sel) : tReceiveSelect(sel);
+  }
   const sortBy=window._supplySort||"stage";
   if(!viewing) return tSupplySelect(sel);
   return tSupplyDetail(sel, sortBy);
+}
+
+// === ПРИЁМКА НА СКЛАД (для бригадира/мастера) — чистый чек-лист без цен и закупки ===
+// Экран выбора объектов: сколько материалов уже принято на склад.
+function tReceiveSelect(sel){
+  const anySelected=Object.values(sel).some(Boolean);
+  let html='<div>'+
+    '<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:4px">📥 ПРИЁМКА НА СКЛАД</div>'+
+    '<div style="font-size:12px;color:#5a7a9a;margin-bottom:14px">Отметьте материалы, которые пришли на склад</div>';
+  if(!objects.length){
+    return html+'<div style="text-align:center;color:#aaa;padding:30px">Нет объектов.</div></div>';
+  }
+  objects.forEach(function(obj){
+    const allMats=obj.stages.flatMap(function(s){return s.works.flatMap(function(w){return (w.mats||[]);});});
+    const total=allMats.length;
+    const onStock=allMats.filter(function(m){return !!arrived[m.id];}).length;
+    const left=total-onStock;
+    const assigned=users.filter(function(u){return u.objs.includes(obj.id);});
+    const isOn=!!sel[obj.id];
+    html+=
+      '<div data-a="supply-toggle" data-oid="'+obj.id+'" style="border-radius:14px;border:2px solid '+(isOn?'#e67e22':'#dde6f0')+';padding:14px 16px;margin-bottom:10px;cursor:pointer;transition:all 0.15s;background:'+(isOn?'#fff7f0':'#fff')+'">'+
+        '<div style="display:flex;align-items:center;gap:12px">'+
+          '<div style="width:26px;height:26px;border-radius:8px;border:2px solid '+(isOn?'#e67e22':'#c8d8e8')+';background:'+(isOn?'#e67e22':'transparent')+';display:flex;align-items:center;justify-content:center;flex-shrink:0">'+
+            (isOn?'<span style="color:#fff;font-size:14px;font-weight:700">✓</span>':'')+
+          '</div>'+
+          '<span style="font-size:28px;flex-shrink:0">'+obj.icon+'</span>'+
+          '<div style="flex:1;min-width:0">'+
+            '<div style="font-size:15px;font-weight:700;color:#0d1b2e">'+esc(obj.name)+'</div>'+
+            (total
+              ? (left>0
+                  ? '<div style="margin-top:5px;font-size:11px;font-weight:700;color:#e67e22">📥 Осталось принять: '+left+' из '+total+'</div>'
+                  : '<div style="margin-top:5px;font-size:11px;font-weight:700;color:#27ae60">✓ Всё на складе ('+total+')</div>')
+              : '<div style="margin-top:5px;font-size:11px;color:#9aabbf">Нет материалов</div>')+
+            (assigned.length?'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">'+assigned.map(function(u){return'<span style="font-size:10px;background:'+u.c+'18;color:'+u.c+';border-radius:8px;padding:1px 7px;border:1px solid '+u.c+'33">'+u.av+' '+esc(u.name)+'</span>';}).join("")+'</div>':'')+
+          '</div>'+
+        '</div>'+
+      '</div>';
+  });
+  html+='<div style="position:sticky;bottom:0;background:rgba(246,248,250,0.97);padding:12px 0 4px;margin-top:4px">';
+  if(anySelected){
+    const selCount=objects.filter(function(o){return !!sel[o.id];}).length;
+    html+=
+      '<div style="background:#e67e22;border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:12px">'+
+        '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:#fff">'+selCount+' объект'+(selCount===1?'':'а/ов')+' выбрано</div>'+
+          '<div style="font-size:11px;color:rgba(255,255,255,0.8);margin-top:1px">Открыть чек-лист приёмки</div></div>'+
+        '<button data-a="supply-view" style="padding:9px 18px;background:#fff;border:none;border-radius:9px;cursor:pointer;font-size:13px;font-weight:700;color:#e67e22;white-space:nowrap">Открыть →</button>'+
+      '</div>';
+  } else {
+    html+='<div style="background:#f0f4f8;border-radius:12px;padding:12px 16px;text-align:center"><div style="font-size:12px;color:#a0b4c8">Выберите объект, чтобы отметить приёмку</div></div>';
+  }
+  html+='</div>';
+  return html+'</div>';
+}
+
+// Чек-лист приёмки по этапам: галочка «на складе» на каждый материал (без цен/ссылок/ТЗ).
+function tReceiveDetail(sel){
+  const targetObjs=objects.filter(function(o){return !!sel[o.id];});
+  const multiMode=targetObjs.length>1;
+  let allMats=[];
+  targetObjs.forEach(function(obj){
+    obj.stages.forEach(function(s){
+      s.works.forEach(function(w){
+        (w.mats||[]).forEach(function(m){
+          allMats.push(Object.assign({},m,{wn:w.n,sn:s.n,sc:s.c,objName:obj.name,objIcon:obj.icon,objId:obj.id}));
+        });
+      });
+    });
+  });
+  const total=allMats.length;
+  const onStock=allMats.filter(function(m){return !!arrived[m.id];}).length;
+  const pct=total>0?Math.round(onStock/total*100):0;
+  const allDone=total>0&&onStock===total;
+  const title=targetObjs.length===1?(targetObjs[0].icon+' '+targetObjs[0].name):('🗂️ '+targetObjs.length+' объектa/ов');
+
+  let html='<div>'+
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">'+
+      '<button data-a="supply-back" style="padding:6px 14px;background:transparent;border:1px solid #d0dae8;border-radius:20px;cursor:pointer;font-size:12px;color:#7a9aaa">← Назад</button>'+
+      '<div style="flex:1;min-width:0">'+
+        '<div style="font-size:15px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+title+'</div>'+
+        '<div style="font-size:12px;color:#7a9aaa">Приёмка на склад · '+total+' материалов</div>'+
+      '</div>'+
+    '</div>';
+
+  // Прогресс приёмки
+  html+=
+    '<div style="background:#fff;border-radius:12px;border:1px solid '+(allDone?'#27ae6044':'#dde6f0')+';padding:12px 14px;margin-bottom:14px">'+
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'+
+        '<span style="font-size:12px;font-weight:700;color:#1a2a3a">📥 На складе</span>'+
+        '<span style="font-size:12px;font-weight:700;color:'+(allDone?'#27ae60':'#e67e22')+'">'+onStock+' / '+total+'</span>'+
+      '</div>'+
+      '<div style="background:#e8eef5;border-radius:8px;height:10px;overflow:hidden">'+
+        '<div style="height:100%;border-radius:8px;background:'+(allDone?'#27ae60':'#e67e22')+';width:'+pct+'%;transition:width 0.4s"></div>'+
+      '</div>'+
+    '</div>';
+
+  // Поиск
+  html+=
+    '<div style="position:relative;margin-bottom:12px">'+
+      '<span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:14px;pointer-events:none">🔍</span>'+
+      '<input id="supply-search-input" value="'+supplySearch.replace(/"/g,"&quot;")+'" placeholder="Поиск по материалам..." style="width:100%;padding:10px 12px 10px 38px;border-radius:10px;border:1.5px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;background:#fff">'+
+    '</div>';
+
+  const q=(supplySearch||'').trim().toLowerCase();
+  let shown=allMats;
+  if(q) shown=shown.filter(function(m){return m.n.toLowerCase().includes(q)||(m.wn||'').toLowerCase().includes(q)||(m.note||'').toLowerCase().includes(q);});
+  if(!shown.length){ return html+'<div style="text-align:center;color:#aaa;padding:24px">Ничего не найдено.</div></div>'; }
+
+  function recRow(m){
+    const done=!!arrived[m.id];
+    const bought=!!purchased[m.id];
+    const mode=EXP_MODES.find(function(x){return x.k===(m.mode||"piece");})||EXP_MODES[0];
+    const qty=m.qty||1;
+    return '<div data-a="supply-arrived" data-mid="'+m.id+'" style="display:flex;align-items:flex-start;gap:10px;padding:11px 12px;border-radius:10px;margin-bottom:6px;background:'+(done?'#f0fdf4':'#f8fafc')+';border:1.5px solid '+(done?'#27ae60':'#dde6f0')+';cursor:pointer;transition:all 0.15s">'+
+      '<div style="flex-shrink:0;margin-top:1px"><div style="width:24px;height:24px;border-radius:7px;border:2px solid '+(done?'#27ae60':'#c8d8e8')+';background:'+(done?'#27ae60':'#fff')+';display:flex;align-items:center;justify-content:center">'+(done?'<span style="color:#fff;font-size:14px;font-weight:700;line-height:1">✓</span>':'')+'</div></div>'+
+      '<div style="flex:1;min-width:0">'+
+        '<div style="font-size:13px;font-weight:600;color:'+(done?'#7a9aaa':'#1a2a3a')+';text-decoration:'+(done?'line-through':'none')+'">'+esc(m.n)+'</div>'+
+        '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:3px;align-items:center">'+
+          (multiMode?'<span style="font-size:10px;background:#e8f0fa;color:#2a5298;border-radius:4px;padding:1px 6px">'+m.objIcon+' '+esc(m.objName)+'</span>':'')+
+          '<span style="font-size:10px;color:#9aabbf">↳ '+esc(m.wn)+'</span>'+
+          '<span style="font-size:10px;font-weight:700;color:#5a7a9a;background:#eef2f7;border-radius:4px;padding:1px 6px">'+mode.icon+' '+numRu(qty)+' '+mode.unit+'</span>'+
+          (bought?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#eafaf0;border-radius:5px;padding:1px 7px">🛒 куплено</span>':'')+
+          (done?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ На складе</span>':'')+
+          (m.note?'<span style="font-size:10px;color:#9aabbf;font-style:italic">'+esc(m.note)+'</span>':'')+
+        '</div>'+
+      '</div>'+
+    '</div>';
+  }
+
+  const stageNames=[...new Set(shown.map(function(m){return m.sn;}))];
+  stageNames.forEach(function(sn){
+    const sm=shown.filter(function(m){return m.sn===sn;});
+    const sc=sm[0]?sm[0].sc:"#7f8c8d";
+    const stDone=sm.filter(function(m){return !!arrived[m.id];}).length;
+    const stAll=sm.length>0&&stDone===sm.length;
+    const ids=sm.map(function(m){return m.id;}).join(',');
+    html+='<div style="background:#fff;border-radius:14px;border:1px solid '+(stAll?'#27ae60':sc+'44')+';margin-bottom:12px;overflow:hidden">'+
+      '<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:'+(stAll?'linear-gradient(135deg,#27ae6018,transparent)':'linear-gradient(135deg,'+sc+'15,transparent)')+';border-bottom:1px solid '+(stAll?'#27ae6022':sc+'22')+'">'+
+        '<div style="width:8px;height:8px;border-radius:50%;background:'+(stAll?'#27ae60':sc)+'"></div>'+
+        '<span style="font-size:13px;font-weight:700;color:#1a2a3a;flex:1">'+esc(sn)+'</span>'+
+        '<span style="font-size:11px;color:'+(stAll?'#27ae60':sc)+';font-weight:600;margin-right:6px">'+stDone+'/'+sm.length+'</span>'+
+        '<button data-a="supply-arrived" data-ids="'+ids+'" style="padding:4px 10px;border-radius:7px;cursor:pointer;font-size:11px;font-weight:700;border:1.5px solid '+(stAll?'#27ae60':'#c8d8e8')+';background:'+(stAll?'#27ae60':'#fff')+';color:'+(stAll?'#fff':'#7a9aaa')+';white-space:nowrap">'+(stAll?'✓ Всё на складе':'☑ Принять всё')+'</button>'+
+      '</div>'+
+      '<div style="padding:8px 12px">'+sm.map(recRow).join("")+'</div>'+
+    '</div>';
+  });
+  return html+'</div>';
 }
 
 function tSupplySelect(sel){
@@ -8473,6 +8642,13 @@ function buildSupplyList(){
   if(!w){ alert("Разрешите всплывающие окна для этого сайта, чтобы сформировать PDF."); return; }
   w.document.open(); w.document.write(html); w.document.close(); w.focus();
 }
+// Пилюля «на складе» для полного вида снабженца/админа: видно наличие + можно отметить.
+// attr — 'data-mid="…"' (одна позиция) или 'data-ids="…"' (объединённая строка/этап).
+function _arrivedPill(attr, isArr){
+  return '<span data-a="supply-arrived" '+attr+' style="font-size:10px;font-weight:700;cursor:pointer;border-radius:6px;padding:1px 8px;'+
+    (isArr?'color:#fff;background:#27ae60':'color:#e67e22;background:#fff;border:1px solid #e67e2255')+'">'+
+    (isArr?'✅ На складе':'📥 на склад')+'</span>';
+}
 function tSupplyDetail(sel, sortBy){
   const STORECOL={"Озон":"#005bff","Белка":"#d68910","pechki.su":"#c0392b","Егорьевск":"#8e44ad","Лемана":"#e30613","Авито":"#00aaff","Нижний Новгород":"#27ae60"};
   const sortBy2=sortBy||"stage";
@@ -8587,6 +8763,14 @@ function tSupplyDetail(sel, sortBy){
       '</div>'+
     '</div>';
 
+  // Наличие на складе (принято бригадиром/мастером) — обзор для снабженца.
+  const _arrCount=allMats.filter(function(m){return !!arrived[m.id];}).length;
+  html+='<div style="background:#fff;border-radius:10px;border:1px solid #dde6f0;padding:9px 12px;margin-bottom:14px;display:flex;align-items:center;gap:8px">'+
+    '<span style="font-size:14px">📥</span>'+
+    '<span style="font-size:12px;color:#5a7a9a;flex:1">На складе (принято бригадиром)</span>'+
+    '<span style="font-size:12px;font-weight:700;color:'+((_arrCount===allMats.length&&allMats.length>0)?'#27ae60':'#e67e22')+'">'+_arrCount+' / '+allMats.length+'</span>'+
+  '</div>';
+
   function matRow(m){
     const sc=STORECOL[m.store||""]||"#555";
     const done=!!purchased[m.id];
@@ -8615,6 +8799,7 @@ function tSupplyDetail(sel, sortBy){
           (m.note&&!(Array.isArray(m.breakdown)&&m.breakdown.length)?'<span style="font-size:10px;color:#9aabbf;font-style:italic">'+esc(m.note)+'</span>':'')+
           (!done&&m.url?'<a href="'+m.url+'" target="_blank" style="font-size:10px;color:#fff;background:#2980b9;border-radius:4px;padding:1px 7px;text-decoration:none;font-weight:600" onclick="event.stopPropagation()">🔗 купить</a>':'')+
           (done?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>':'')+
+          _arrivedPill('data-mid="'+m.id+'"', !!arrived[m.id])+
           '<button data-a="supply-edit-mat" data-mid="'+m.id+'" style="font-size:10px;color:#7a9aaa;background:#fff;border:1px solid #d0dae8;border-radius:5px;padding:1px 7px;cursor:pointer" onclick="event.stopPropagation()">✏️ изм.</button>'+
         '</div>'+
         ((Array.isArray(m.breakdown)&&m.breakdown.length)
@@ -8662,6 +8847,7 @@ function tSupplyDetail(sel, sortBy){
           (g.cost>0?'<span style="font-size:11px;color:#7a9aaa">'+(Number(g.cost)||0).toLocaleString("ru-RU")+' ₽/'+mode.unit+' × '+numRu(qty)+' = <b style="color:#0d1b2e">'+lineTotal+' ₽</b></span>':'')+
           (!allDone&&g.url?'<a href="'+g.url+'" target="_blank" style="font-size:10px;color:#fff;background:#2980b9;border-radius:4px;padding:1px 7px;text-decoration:none;font-weight:600" onclick="event.stopPropagation()">🔗 купить</a>':'')+
           (allDone?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>':'')+
+          _arrivedPill('data-ids="'+ids.join(',')+'"', ids.length>0&&ids.every(function(id){return !!arrived[id];}))+
           (ids.length===1?'<button data-a="supply-edit-mat" data-mid="'+ids[0]+'" style="font-size:10px;color:#7a9aaa;background:#fff;border:1px solid #d0dae8;border-radius:5px;padding:1px 7px;cursor:pointer" onclick="event.stopPropagation()">✏️ изм.</button>':'')+
         '</div>'+
         (function(){var rows=bdRowsOf(g.bd); if(rows.length)return hlystBlock(rows); return conv?'<div style="margin-top:5px"><span style="font-size:10px;font-weight:700;color:#e67e22;background:#fff3e0;border-radius:6px;padding:2px 8px">🛒 Купить: '+conv.altTotal(qty)+'</span></div>':'';})()+
@@ -12162,6 +12348,17 @@ function bind(){
       const allDone=el.dataset.done==="1";
       ids.forEach(function(id){if(id)purchased[id]=!allDone;});
       rerenderTab();
+    };}
+    else if(a==="supply-arrived"){el.onclick=(ev)=>{
+      ev&&ev.stopPropagation();  // не переключать заодно «куплено» на строке снабженца
+      if(el.dataset.ids){
+        const ids=el.dataset.ids.split(',').filter(Boolean);
+        const allOn=ids.length>0&&ids.every(function(id){return !!arrived[id];});
+        ids.forEach(function(id){ arrived[id]=!allOn; });  // все на складе → снять; иначе принять все
+      } else {
+        const mid=el.dataset.mid; if(mid) arrived[mid]=!arrived[mid];
+      }
+      rerenderTab();   // частичная перерисовка + автосейв
     };}
     else if(a==="supply-sort"){el.onclick=()=>{window._supplySort=el.dataset.s;render();};}
     else if(a==="supply-tz"){el.onclick=(ev)=>{ ev&&ev.stopPropagation(); buildSupplyTZ(el.dataset.store); };}
