@@ -4230,6 +4230,41 @@ function tObjects(){
   })()}
 </div>
 
+<!-- Документы из договора: спецификация + договор на окна и двери (показ, источник правды — договор) -->
+${(()=>{
+  const objContracts=contractDocs.filter(d=>d.objId===obj.id);
+  const collect=(kind)=>{
+    const seen={},out=[];
+    objContracts.forEach(c=>(c.files||[]).forEach(f=>{
+      if(f.kind!==kind||!f.data||seen[f.data])return;
+      seen[f.data]=1;out.push(f);
+    }));
+    return out;
+  };
+  const specs=collect("spec"), winds=collect("wind");
+  if(!specs.length&&!winds.length)return "";
+  const row=(f,color,icon,typeLabel,fallbackName)=>{
+    const isImg=(f.mime||"").indexOf("image")===0;
+    return '<a href="'+f.data+'" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:9px;border:1px solid '+color+'33;background:'+color+'0d;text-decoration:none;margin-bottom:6px">'+
+      (isImg
+        ? '<img src="'+f.data+'" onerror="this.style.display=\'none\'" style="width:30px;height:30px;border-radius:6px;object-fit:cover;flex-shrink:0">'
+        : '<span style="font-size:20px;flex-shrink:0">'+icon+'</span>')+
+      '<span style="display:flex;flex-direction:column;min-width:0;flex:1">'+
+        '<span style="font-size:8px;font-weight:800;color:'+color+';letter-spacing:0.3px">'+typeLabel+'</span>'+
+        '<span style="font-size:12px;color:#1a2a3a;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name||fallbackName)+'</span>'+
+      '</span>'+
+      '<span style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;color:'+color+';font-size:11px;font-weight:700;flex-shrink:0">Открыть</span>'+
+    '</a>';
+  };
+  let inner='';
+  specs.forEach(f=>{inner+=row(f,"#16a085","📋","СПЕЦИФИКАЦИЯ","Спецификация");});
+  winds.forEach(f=>{inner+=row(f,"#34495e","🪟","ДОГОВОР НА ОКНА И ДВЕРИ","Окна и двери");});
+  return '<div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;padding:14px 16px;margin-bottom:14px">'+
+    '<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:10px">📎 ДОКУМЕНТЫ ИЗ ДОГОВОРА</div>'+
+    inner+
+  '</div>';
+})()}
+
 <!-- Отчёт дня (только для производства — бригадир/мастер/нач.пр./админ) -->
 ${(()=>{
   if(!currentUser)return "";
