@@ -385,12 +385,12 @@ async function compressVideo(file, opts){
     if(typeof MediaRecorder==="undefined") return file;
     const canvas=document.createElement("canvas");
     if(typeof canvas.captureStream!=="function") return file;
-    // Android Chrome пишет только webm — ставим его первым; mp4 берём для iOS Safari.
-    let mime="";
-    ["video/webm;codecs=vp8","video/webm;codecs=vp9","video/webm","video/mp4"].forEach(function(m){
-      if(!mime && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) mime=m;
-    });
-    if(!mime) return file;
+    // ВАЖНО: Telegram принимает mp4/H.264, а НЕ webm. Android MediaRecorder умеет писать
+    // только webm — если перекодировать, Telegram отвергнет файл и «видео не загрузится».
+    // Поэтому жмём ТОЛЬКО когда браузер умеет писать mp4 (iOS Safari). На Android сжатие
+    // пропускаем и грузим оригинальный mp4 с телефона (его Telegram ужимает у себя).
+    if(!(MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported("video/mp4"))) return file;
+    const mime="video/mp4";
     url=URL.createObjectURL(file);
     vid=document.createElement("video");
     vid.muted=true; vid.defaultMuted=true; vid.playsInline=true; vid.setAttribute("muted",""); vid.setAttribute("playsinline",""); vid.preload="auto"; vid.src=url;
@@ -9911,13 +9911,18 @@ function tlWizardModal(){
   }
   else if(step==="photo"){
     body+='<div style="display:inline-flex;align-items:center;gap:6px;background:#16a08518;border:1px solid #16a08544;color:#16a085;font-size:12px;font-weight:700;border-radius:8px;padding:6px 10px;margin:2px 0 12px">⏱ '+fmtH(tlWizard.hours||0)+' ч записано ✓</div>';
-    body+='<div style="font-size:20px;font-weight:800;color:#0d1b2e;margin:0 2px 14px">Добавить фото?</div>';
+    body+='<div style="font-size:20px;font-weight:800;color:#0d1b2e;margin:0 2px 14px">Добавить фото или видео?</div>';
     if(tlWizard.uploading){
       body+='<div style="background:#fff;border:1.5px dashed #3498db66;border-radius:16px;padding:26px;text-align:center;font-size:14px;color:#3498db;font-weight:700">⏳ Загружаю фото ('+tlWizard.uploading+')…</div>';
     } else {
       body+='<div style="display:flex;flex-direction:column;gap:10px">'+
         '<label data-a="tl-wiz-photo-label" data-inp="tlwiz-photo-cam-inp" style="display:flex;align-items:center;justify-content:center;gap:10px;background:#3498db;border-radius:16px;padding:22px;cursor:pointer;color:#fff;font-size:17px;font-weight:800;box-shadow:0 6px 18px rgba(52,152,219,0.35)">📷 Снять фото<input id="tlwiz-photo-cam-inp" type="file" accept="image/*" capture="environment" style="display:none"></label>'+
         '<label data-a="tl-wiz-photo-label" data-inp="tlwiz-photo-inp" style="display:flex;align-items:center;justify-content:center;gap:10px;background:#eaf2fb;border:1.5px solid #3498db55;border-radius:16px;padding:18px;cursor:pointer;color:#2b7bc0;font-size:15px;font-weight:800">🖼 Выбрать из памяти<input id="tlwiz-photo-inp" type="file" accept="image/*" multiple style="display:none"></label>'+
+      '</div>';
+      // Видео: камера напрямую ИЛИ из памяти. Грузится в Telegram-тему объекта (до 50 МБ).
+      body+='<div style="display:flex;gap:8px;margin-top:10px">'+
+        '<label data-a="video-cap-label" data-oid="'+esc(tlWizard.oid||"")+'" data-wn="'+esc(tlWizard.wname||"")+'" data-inp="tlwiz-video-cam-inp" style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;background:#0088cc;border-radius:16px;padding:18px 8px;cursor:pointer;color:#fff;font-size:15px;font-weight:800;box-shadow:0 6px 18px rgba(0,136,204,0.3)">🎥 Снять видео<input id="tlwiz-video-cam-inp" type="file" accept="video/*" capture="environment" style="display:none"></label>'+
+        '<label data-a="video-cap-label" data-oid="'+esc(tlWizard.oid||"")+'" data-wn="'+esc(tlWizard.wname||"")+'" data-inp="tlwiz-video-file-inp" style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;background:#eaf5fb;border:1.5px solid #0088cc55;border-radius:16px;padding:18px 8px;cursor:pointer;color:#0077b3;font-size:15px;font-weight:800">📁 Из памяти<input id="tlwiz-video-file-inp" type="file" accept="video/*" style="display:none"></label>'+
       '</div>';
       body+='<button data-a="tl-wiz-skip" style="display:block;width:100%;margin-top:10px;background:#fff;border:1.5px solid #d0dae8;border-radius:14px;padding:15px;cursor:pointer;font-size:15px;font-weight:700;color:#5a7a9a">Пропустить →</button>';
     }
