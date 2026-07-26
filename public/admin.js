@@ -361,6 +361,119 @@ async function compressImage(file, maxBytes){
   return new File([blob], base+".jpg", { type:"image/jpeg" });
 }
 
+// Сжатие видео на клиенте (best-effort): перекодируем в низкое разрешение и битрейт через
+// canvas + MediaRecorder. Звук НЕ пишем — так «максимально ужато» и надёжнее в Safari.
+// Перекодирование идёт в реальном времени (сколько длится ролик — столько и жмётся).
+// Если нужные API не поддержаны или что-то сломалось — возвращаем ОРИГИНАЛ (загрузится как есть,
+// поведение не хуже прежнего). onProgress(0..1) — необязательный колбэк прогресса.
+async function compressVideo(file, opts){
+  opts = opts || {};
+  const maxDim  = opts.maxDim  || 640;
+  const bitrate = opts.bitrate || 700000;
+  const fps     = opts.fps     || 24;
+  const onProgress = opts.onProgress;
+  try{
+    if(!file || !/^video\//.test(file.type||"")) return file;
+    if(typeof MediaRecorder==="undefined") return file;
+    const canvas=document.createElement("canvas");
+    if(!canvas.captureStream) return file;
+    let mime="";
+    ["video/mp4","video/webm;codecs=vp9","video/webm;codecs=vp8","video/webm"].forEach(function(m){
+      if(!mime && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) mime=m;
+    });
+    if(!mime) return file;
+    const url=URL.createObjectURL(file);
+    const vid=document.createElement("video");
+    vid.muted=true; vid.playsInline=true; vid.setAttribute("playsinline",""); vid.preload="auto"; vid.src=url;
+    await new Promise(function(res,rej){ vid.onloadedmetadata=function(){res();}; vid.onerror=function(){rej(new Error("meta"));}; });
+    const dur=vid.duration||0;
+    let w=vid.videoWidth||0, h=vid.videoHeight||0;
+    if(!w||!h){ URL.revokeObjectURL(url); return file; }
+    const k=Math.min(1, maxDim/Math.max(w,h));
+    const cw=Math.max(2,Math.round(w*k/2)*2), ch=Math.max(2,Math.round(h*k/2)*2);
+    canvas.width=cw; canvas.height=ch;
+    const ctx=canvas.getContext("2d");
+    const stream=canvas.captureStream(fps);
+    const rec=new MediaRecorder(stream, {mimeType:mime, videoBitsPerSecond:bitrate});
+    const chunks=[];
+    rec.ondataavailable=function(e){ if(e.data&&e.data.size) chunks.push(e.data); };
+    const stopped=new Promise(function(res){ rec.onstop=function(){res();}; });
+    let raf=0;
+    function draw(){
+      try{ ctx.drawImage(vid,0,0,cw,ch); }catch(e){}
+      if(onProgress&&dur){ try{ onProgress(Math.min(1,(vid.currentTime||0)/dur)); }catch(e){} }
+      raf=requestAnimationFrame(draw);
+    }
+    // Сначала убеждаемся, что ролик реально играет — иначе кадры не пойдут и жать нечего.
+    let playOk=true;
+    try{ await vid.play(); }catch(e){ playOk=false; }
+    if(!playOk){ URL.revokeObjectURL(url); return file; }
+    rec.start(1000);
+    draw();
+    // Ждём конца ролика, но не дольше его длительности + запас — чтобы не зависнуть на «битом» видео.
+    const maxWait=Math.min(10*60*1000,(dur>0?dur:60)*1000+4000);
+    await new Promise(function(res){ let done=false; const fin=function(){ if(done)return; done=true; res(); }; vid.onended=fin; setTimeout(fin,maxWait); });
+    if(raf)cancelAnimationFrame(raf);
+    try{ rec.stop(); }catch(e){}
+    await stopped;
+    try{ vid.pause(); }catch(e){}
+    URL.revokeObjectURL(url);
+    if(!chunks.length) return file;
+    const outMime=mime.split(";")[0];
+    const blob=new Blob(chunks,{type:outMime});
+    if(!blob.size || blob.size>=file.size) return file;   // не помогло — оставляем оригинал
+    const base=(file.name||"video").replace(/\.[^.]+$/,"")||"video";
+    const ext=outMime.indexOf("mp4")>=0?"mp4":"webm";
+    return new File([blob], base+"."+ext, {type:outMime});
+  }catch(e){ return file; }
+}
+
+// Плавающий тост прогресса для видео (сжатие/загрузка) — живёт на body, переживает перерисовки.
+function _videoToast(msg){
+  let t=document.getElementById("kubr-vid-toast");
+  if(msg===null){ if(t){ try{document.body.removeChild(t);}catch(e){} } return; }
+  if(!t){
+    t=document.createElement("div"); t.id="kubr-vid-toast";
+    t.style.cssText="position:fixed;bottom:84px;left:50%;transform:translateX(-50%);background:#0088cc;color:#fff;padding:11px 18px;border-radius:12px;font-size:13px;font-weight:700;z-index:9999;box-shadow:0 6px 20px rgba(0,136,204,0.4);text-align:center;max-width:90%";
+    document.body.appendChild(t);
+  }
+  t.textContent=msg;
+}
+
+// Единый путь загрузки видео: сжать (best-effort) → отправить в Telegram-тему объекта → ссылка в obj.videos.
+// tagName (имя работы) добавляется к названию видео, чтобы было видно, к чему оно.
+async function handleObjVideoFile(file, oid, tagName){
+  if(!file) return;
+  const o=objects.find(function(x){return x.id===oid;});
+  if(!o) return;
+  objVideoUploading=oid; render();
+  try{
+    _videoToast("🎬 Сжимаю видео… 0%");
+    let up=file;
+    try{ up=await compressVideo(file,{onProgress:function(p){ _videoToast("🎬 Сжимаю видео… "+Math.round(p*100)+"%"); }}); }catch(e){}
+    if(up.size>50*1024*1024){
+      _videoToast(null);
+      alert("Даже после сжатия видео больше 50 МБ ("+(up.size/1048576).toFixed(1)+" МБ). Сними ролик короче.");
+      objVideoUploading=null; render(); return;
+    }
+    _videoToast("☁️ Загружаю видео…");
+    const nm=(tagName? (tagName+" — "):"")+(file.name||"video");
+    const r=await fetch(API_BASE+"/api/video?objName="+encodeURIComponent(o.name)+"&topicId="+(o.tgTopicId||0)+"&name="+encodeURIComponent(nm),{
+      method:"POST", headers:authHeaders({ "Content-Type": up.type||"video/mp4" }), body:up
+    });
+    const j=await r.json();
+    if(j&&j.success){
+      objects=objects.map(function(x){return x.id!==oid?x:Object.assign({},x,{
+        tgTopicId:j.topicId,
+        videos:(x.videos||[]).concat([{id:gid(),topicId:j.topicId,messageId:j.messageId,fileId:j.fileId,name:nm,size:up.size,date:new Date().toISOString().slice(0,16).replace("T"," "),uploader:(currentUser&&currentUser.name)||""}])
+      });});
+      _videoToast("✅ Видео загружено ("+(up.size/1048576).toFixed(1)+" МБ)");
+      setTimeout(function(){_videoToast(null);},2200);
+    } else { _videoToast(null); alert("Ошибка загрузки видео: "+((j&&j.error)||("HTTP "+r.status))); }
+  }catch(e){ _videoToast(null); alert("Ошибка загрузки видео: "+((e&&e.message)||e)); }
+  objVideoUploading=null; fl();
+}
+
 // Загрузка файла в R2 через Worker → публичная ссылка (для фото работ/уборки/планировок).
 // Перед отправкой сжимаем картинки до <= 1 МБ. Если файл уже сжат (alreadyCompressed) — пропускаем.
 async function uploadFileR2(file, alreadyCompressed){
@@ -4328,7 +4441,12 @@ ${showNObjStageTid===obj.id?`<div style="background:#fff;border-radius:12px;bord
 <div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:10px">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
     <div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:0.8px">🎬 ВИДЕО ОБЪЕКТА · ${(obj.videos||[]).length}</div>
-    <label data-a="obj-video-label" data-oid="${obj.id}" style="padding:5px 12px;background:#0088cc;border-radius:7px;cursor:${objVideoUploading===obj.id?"default":"pointer"};color:#fff;font-size:11px;font-weight:700;opacity:${objVideoUploading===obj.id?"0.7":"1"}">${objVideoUploading===obj.id?"⏳ Загрузка…":"+ Видео"}<input id="obj-video-inp-${obj.id}" type="file" accept="video/*" style="display:none"></label>
+    ${objVideoUploading===obj.id
+      ? `<span style="font-size:11px;font-weight:700;color:#0088cc">⏳ Обработка…</span>`
+      : `<div style="display:flex;gap:6px">
+        <label data-a="video-cap-label" data-oid="${obj.id}" data-inp="obj-video-cam-${obj.id}" style="padding:5px 11px;background:#0088cc;border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700;white-space:nowrap">🎥 Снять<input id="obj-video-cam-${obj.id}" type="file" accept="video/*" capture="environment" style="display:none"></label>
+        <label data-a="video-cap-label" data-oid="${obj.id}" data-inp="obj-video-file-${obj.id}" style="padding:5px 11px;background:#eaf5fb;border:1px solid #0088cc55;border-radius:7px;cursor:pointer;color:#0077b3;font-size:11px;font-weight:700;white-space:nowrap">📁 Файл<input id="obj-video-file-${obj.id}" type="file" accept="video/*" style="display:none"></label>
+      </div>`}
   </div>
   ${(obj.videos||[]).length?(obj.videos||[]).slice().reverse().map(v=>{
     const link="https://t.me/c/"+TG_CHAT_LINK+"/"+(v.topicId||obj.tgTopicId||"")+"/"+v.messageId;
@@ -9839,6 +9957,8 @@ function workSheetModal(){
   m+='<label data-a="ws-photo-label" data-inp="ws-photo-cam-inp" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:#3498db;border:none;border-radius:13px;padding:13px 8px;cursor:pointer;color:#fff;font-size:14px;font-weight:800">📷 Снять фото<input id="ws-photo-cam-inp" type="file" accept="image/*" capture="environment" style="display:none"></label>';
   m+='<label data-a="ws-photo-label" data-inp="ws-photo-inp" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:#eaf2fb;border:1.5px solid #3498db55;border-radius:13px;padding:13px 8px;cursor:pointer;color:#2b7bc0;font-size:14px;font-weight:800">🖼 Из памяти<input id="ws-photo-inp" type="file" accept="image/*" multiple style="display:none"></label>';
   m+='</div>';
+  // Видео выполнения: снимается на камеру и жмётся на клиенте (звук не пишется — «максимально ужато»).
+  m+='<label data-a="video-cap-label" data-oid="'+o.id+'" data-wn="'+esc(w.n)+'" data-inp="ws-video-inp" style="display:flex;align-items:center;justify-content:center;gap:7px;margin-top:8px;background:#0088cc;border:none;border-radius:13px;padding:12px 8px;cursor:pointer;color:#fff;font-size:13.5px;font-weight:800">🎥 Снять видео <span style="font-size:10px;font-weight:700;opacity:0.85">· сжатое</span><input id="ws-video-inp" type="file" accept="video/*" capture="environment" style="display:none"></label>';
   if(canMark){
     m+='<div style="display:flex;gap:8px;margin-top:8px">';
     if(w.done){
@@ -14455,29 +14575,17 @@ function bind(){
     };}
     else if(a==="obj-open-mats"){el.onclick=()=>{objMatModal={oid:el.dataset.oid,wid:el.dataset.wid,wn:el.dataset.wn};render();};}
     else if(a==="close-obj-mm"){el.onclick=()=>{objMatModal=null;render();};}
-    else if(a==="obj-video-label"){
-      const oid=el.dataset.oid;
-      const inp=document.getElementById("obj-video-inp-"+oid);
+    else if(a==="video-cap-label"){
+      // Общий обработчик для всех кнопок видео (объект + карточка работы). Инпут — по data-inp.
+      const inp=document.getElementById(el.dataset.inp);
       if(inp&&!inp._bound){
         inp._bound=true;
+        const oid=el.dataset.oid, wn=el.dataset.wn||"";
         inp.addEventListener("change",async function(){
-          const f=(inp.files||[])[0]; if(!f){return;}
-          if(f.size>50*1024*1024){ alert("Видео больше 50 МБ. Telegram принимает до 50 МБ — сними короче или в 720p."); inp._bound=false; return; }
-          const o=objects.find(x=>x.id===oid); if(!o){inp._bound=false;return;}
-          objVideoUploading=oid; render();
-          try{
-            const r=await fetch(API_BASE+"/api/video?objName="+encodeURIComponent(o.name)+"&topicId="+(o.tgTopicId||0)+"&name="+encodeURIComponent(f.name),{
-              method:"POST", headers:authHeaders({ "Content-Type": f.type||"video/mp4" }), body:f
-            });
-            const j=await r.json();
-            if(j&&j.success){
-              objects=objects.map(x=>x.id!==oid?x:Object.assign({},x,{
-                tgTopicId:j.topicId,
-                videos:(x.videos||[]).concat([{id:gid(),topicId:j.topicId,messageId:j.messageId,fileId:j.fileId,name:f.name,size:f.size,date:new Date().toISOString().slice(0,16).replace("T"," "),uploader:(currentUser&&currentUser.name)||""}])
-              }));
-            } else { alert("Ошибка загрузки видео: "+((j&&j.error)||("HTTP "+r.status))); }
-          }catch(e){ alert("Ошибка загрузки видео: "+((e&&e.message)||e)); }
-          objVideoUploading=null; inp._bound=false; render();
+          const f=(inp.files||[])[0]; inp._bound=false;
+          if(!f) return;
+          if(workSheet){ workSheet=null; render(); }   // закрыть шторку работы, если открыта — видео жмётся/грузится в фоне
+          await handleObjVideoFile(f, oid, wn);
         });
       }
     }
