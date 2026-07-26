@@ -3705,8 +3705,8 @@ function page(){
   const _accessible=new Set(TABS.map(function(t){return t[0];}));
   const _bottomItems=BOTTOM_NAV.filter(function(x){return _accessible.has(x[0]);});
   // Нижний таб-бар — только для админа.
-  const bottomBar=(isAdmin&&_bottomItems.length>1)?`<div style="position:fixed;left:0;right:0;bottom:0;z-index:60;pointer-events:none">
-  <div style="max-width:480px;margin:0 auto;background:rgba(255,255,255,0.92);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);border-top:1px solid #e2e8f0;display:flex;padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px));pointer-events:auto;box-shadow:0 -1px 10px rgba(13,27,46,0.06)">
+  const bottomBar=(isAdmin&&_bottomItems.length>1)?`<div style="position:fixed;left:0;right:0;bottom:0;z-index:60;pointer-events:none;-webkit-transform:translateZ(0);transform:translateZ(0)">
+  <div style="max-width:480px;margin:0 auto;background:#ffffff;border-top:1px solid #e2e8f0;display:flex;padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px));pointer-events:auto;box-shadow:0 -1px 10px rgba(13,27,46,0.06)">
   ${_bottomItems.map(function(it){
     const k=it[0],label=it[1],icon=it[2],on=tab===k;
     return '<button data-a="tab" data-k="'+k+'" style="flex:1;border:none;background:transparent;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 2px;-webkit-tap-highlight-color:transparent">'
