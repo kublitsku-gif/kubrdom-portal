@@ -372,60 +372,85 @@ async function compressVideo(file, opts){
   const bitrate = opts.bitrate || 700000;
   const fps     = opts.fps     || 24;
   const onProgress = opts.onProgress;
+  let url=null, vid=null, rec=null, raf=0, wd=0;
+  function cleanup(){
+    if(raf){ try{cancelAnimationFrame(raf);}catch(e){} raf=0; }
+    if(wd){ try{clearTimeout(wd);}catch(e){} wd=0; }
+    try{ if(rec&&rec.state&&rec.state!=="inactive") rec.stop(); }catch(e){}
+    try{ if(vid){ vid.pause(); vid.removeAttribute("src"); vid.load(); } }catch(e){}
+    try{ if(url) URL.revokeObjectURL(url); }catch(e){}
+  }
   try{
     if(!file || !/^video\//.test(file.type||"")) return file;
     if(typeof MediaRecorder==="undefined") return file;
     const canvas=document.createElement("canvas");
-    if(!canvas.captureStream) return file;
+    if(typeof canvas.captureStream!=="function") return file;
+    // Android Chrome пишет только webm — ставим его первым; mp4 берём для iOS Safari.
     let mime="";
-    ["video/mp4","video/webm;codecs=vp9","video/webm;codecs=vp8","video/webm"].forEach(function(m){
+    ["video/webm;codecs=vp8","video/webm;codecs=vp9","video/webm","video/mp4"].forEach(function(m){
       if(!mime && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) mime=m;
     });
     if(!mime) return file;
-    const url=URL.createObjectURL(file);
-    const vid=document.createElement("video");
-    vid.muted=true; vid.playsInline=true; vid.setAttribute("playsinline",""); vid.preload="auto"; vid.src=url;
-    await new Promise(function(res,rej){ vid.onloadedmetadata=function(){res();}; vid.onerror=function(){rej(new Error("meta"));}; });
-    const dur=vid.duration||0;
+    url=URL.createObjectURL(file);
+    vid=document.createElement("video");
+    vid.muted=true; vid.defaultMuted=true; vid.playsInline=true; vid.setAttribute("muted",""); vid.setAttribute("playsinline",""); vid.preload="auto"; vid.src=url;
+    // Метаданные с таймаутом — чтобы не зависнуть, если файл «битый».
+    await new Promise(function(res,rej){
+      let done=false; const ok=function(){if(done)return;done=true;res();}; const bad=function(){if(done)return;done=true;rej(new Error("meta"));};
+      vid.onloadedmetadata=ok; vid.onerror=bad; setTimeout(bad,8000);
+    });
+    // На Android у только что снятого видео duration часто = Infinity. Форсим реальную длину «прокруткой» в конец.
+    let dur=vid.duration;
+    if(!isFinite(dur)||dur<=0){
+      dur=await new Promise(function(res){
+        let done=false; const fin=function(v){ if(done)return; done=true; res((isFinite(v)&&v>0)?v:0); };
+        vid.onseeked=function(){ const d=vid.duration; fin(d); };
+        try{ vid.currentTime=1e101; }catch(e){ fin(0); }
+        setTimeout(function(){ fin(vid.duration); },4000);
+      });
+      try{ await new Promise(function(r){ let d=false; const f=function(){if(d)return;d=true;r();}; vid.onseeked=f; vid.currentTime=0; setTimeout(f,1500); }); }catch(e){}
+    }
     let w=vid.videoWidth||0, h=vid.videoHeight||0;
-    if(!w||!h){ URL.revokeObjectURL(url); return file; }
+    if(!w||!h){ cleanup(); return file; }
     const k=Math.min(1, maxDim/Math.max(w,h));
     const cw=Math.max(2,Math.round(w*k/2)*2), ch=Math.max(2,Math.round(h*k/2)*2);
     canvas.width=cw; canvas.height=ch;
     const ctx=canvas.getContext("2d");
+    if(!ctx){ cleanup(); return file; }
     const stream=canvas.captureStream(fps);
-    const rec=new MediaRecorder(stream, {mimeType:mime, videoBitsPerSecond:bitrate});
+    rec=new MediaRecorder(stream, {mimeType:mime, videoBitsPerSecond:bitrate});
     const chunks=[];
     rec.ondataavailable=function(e){ if(e.data&&e.data.size) chunks.push(e.data); };
     const stopped=new Promise(function(res){ rec.onstop=function(){res();}; });
-    let raf=0;
-    function draw(){
-      try{ ctx.drawImage(vid,0,0,cw,ch); }catch(e){}
-      if(onProgress&&dur){ try{ onProgress(Math.min(1,(vid.currentTime||0)/dur)); }catch(e){} }
-      raf=requestAnimationFrame(draw);
-    }
-    // Сначала убеждаемся, что ролик реально играет — иначе кадры не пойдут и жать нечего.
+    // Сначала убеждаемся, что ролик реально играет — иначе кадры не пойдут.
     let playOk=true;
     try{ await vid.play(); }catch(e){ playOk=false; }
-    if(!playOk){ URL.revokeObjectURL(url); return file; }
+    if(!playOk){ cleanup(); return file; }
+    function draw(){
+      try{ ctx.drawImage(vid,0,0,cw,ch); }catch(e){}
+      if(onProgress&&dur>0){ try{ onProgress(Math.max(0,Math.min(1,(vid.currentTime||0)/dur))); }catch(e){} }
+      raf=requestAnimationFrame(draw);
+    }
     rec.start(1000);
     draw();
-    // Ждём конца ролика, но не дольше его длительности + запас — чтобы не зависнуть на «битом» видео.
-    const maxWait=Math.min(10*60*1000,(dur>0?dur:60)*1000+4000);
-    await new Promise(function(res){ let done=false; const fin=function(){ if(done)return; done=true; res(); }; vid.onended=fin; setTimeout(fin,maxWait); });
-    if(raf)cancelAnimationFrame(raf);
+    // Ждём конца ролика ИЛИ сторож по времени (реальное время + запас) — чтобы никогда не зависнуть.
+    const budget=Math.min(8*60*1000, (dur>0?dur:60)*1000*1.6+5000);
+    await new Promise(function(res){
+      let done=false; const fin=function(){ if(done)return; done=true; res(); };
+      vid.onended=fin; vid.onpause=function(){ if(vid.ended)fin(); };
+      wd=setTimeout(fin, budget);
+    });
+    if(raf){ cancelAnimationFrame(raf); raf=0; }
     try{ rec.stop(); }catch(e){}
     await stopped;
-    try{ vid.pause(); }catch(e){}
-    URL.revokeObjectURL(url);
-    if(!chunks.length) return file;
     const outMime=mime.split(";")[0];
-    const blob=new Blob(chunks,{type:outMime});
-    if(!blob.size || blob.size>=file.size) return file;   // не помогло — оставляем оригинал
+    const blob=chunks.length?new Blob(chunks,{type:outMime}):null;
+    cleanup();
+    if(!blob || !blob.size || blob.size>=file.size) return file;   // не помогло — оставляем оригинал
     const base=(file.name||"video").replace(/\.[^.]+$/,"")||"video";
     const ext=outMime.indexOf("mp4")>=0?"mp4":"webm";
     return new File([blob], base+"."+ext, {type:outMime});
-  }catch(e){ return file; }
+  }catch(e){ cleanup(); return file; }
 }
 
 // Плавающий тост прогресса для видео (сжатие/загрузка) — живёт на body, переживает перерисовки.
@@ -448,9 +473,17 @@ async function handleObjVideoFile(file, oid, tagName){
   if(!o) return;
   objVideoUploading=oid; render();
   try{
-    _videoToast("🎬 Сжимаю видео… 0%");
+    _videoToast("🎬 Обрабатываю видео…");
     let up=file;
-    try{ up=await compressVideo(file,{onProgress:function(p){ _videoToast("🎬 Сжимаю видео… "+Math.round(p*100)+"%"); }}); }catch(e){}
+    // Сжатие — best-effort и НЕ должно мешать загрузке. Гонка с общим лимитом времени:
+    // если по любой причине не успело/зависло — грузим оригинал (видео точно уйдёт).
+    try{
+      up=await Promise.race([
+        compressVideo(file,{onProgress:function(p){ _videoToast("🎬 Сжимаю видео… "+Math.round(p*100)+"%"); }}).catch(function(){return file;}),
+        new Promise(function(res){ setTimeout(function(){ res(file); }, 180000); })
+      ]);
+    }catch(e){ up=file; }
+    if(!up) up=file;
     if(up.size>50*1024*1024){
       _videoToast(null);
       alert("Даже после сжатия видео больше 50 МБ ("+(up.size/1048576).toFixed(1)+" МБ). Сними ролик короче.");
@@ -9957,8 +9990,12 @@ function workSheetModal(){
   m+='<label data-a="ws-photo-label" data-inp="ws-photo-cam-inp" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:#3498db;border:none;border-radius:13px;padding:13px 8px;cursor:pointer;color:#fff;font-size:14px;font-weight:800">📷 Снять фото<input id="ws-photo-cam-inp" type="file" accept="image/*" capture="environment" style="display:none"></label>';
   m+='<label data-a="ws-photo-label" data-inp="ws-photo-inp" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:#eaf2fb;border:1.5px solid #3498db55;border-radius:13px;padding:13px 8px;cursor:pointer;color:#2b7bc0;font-size:14px;font-weight:800">🖼 Из памяти<input id="ws-photo-inp" type="file" accept="image/*" multiple style="display:none"></label>';
   m+='</div>';
-  // Видео выполнения: снимается на камеру и жмётся на клиенте (звук не пишется — «максимально ужато»).
-  m+='<label data-a="video-cap-label" data-oid="'+o.id+'" data-wn="'+esc(w.n)+'" data-inp="ws-video-inp" style="display:flex;align-items:center;justify-content:center;gap:7px;margin-top:8px;background:#0088cc;border:none;border-radius:13px;padding:12px 8px;cursor:pointer;color:#fff;font-size:13.5px;font-weight:800">🎥 Снять видео <span style="font-size:10px;font-weight:700;opacity:0.85">· сжатое</span><input id="ws-video-inp" type="file" accept="video/*" capture="environment" style="display:none"></label>';
+  // Видео выполнения: камера напрямую ИЛИ из памяти (запасной путь, если камера в браузере капризит).
+  // Ролик жмётся на клиенте (звук не пишется — «максимально ужато»).
+  m+='<div style="display:flex;gap:8px;margin-top:8px">';
+  m+='<label data-a="video-cap-label" data-oid="'+o.id+'" data-wn="'+esc(w.n)+'" data-inp="ws-video-cam-inp" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:#0088cc;border:none;border-radius:13px;padding:12px 8px;cursor:pointer;color:#fff;font-size:13px;font-weight:800">🎥 Снять видео<input id="ws-video-cam-inp" type="file" accept="video/*" capture="environment" style="display:none"></label>';
+  m+='<label data-a="video-cap-label" data-oid="'+o.id+'" data-wn="'+esc(w.n)+'" data-inp="ws-video-file-inp" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:#eaf5fb;border:1.5px solid #0088cc55;border-radius:13px;padding:12px 8px;cursor:pointer;color:#0077b3;font-size:13px;font-weight:800">📁 Из памяти<input id="ws-video-file-inp" type="file" accept="video/*" style="display:none"></label>';
+  m+='</div>';
   if(canMark){
     m+='<div style="display:flex;gap:8px;margin-top:8px">';
     if(w.done){
