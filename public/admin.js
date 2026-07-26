@@ -5641,34 +5641,37 @@ function buildClientSelector(selId, selectedName, searchId){
 
 function tContracts(){
   if(contractView) return tContractDetail(contractView);
-  // Подвкладки: список документов / генератор договора из шаблона
+  // Подвкладки: активные договоры / архив (закрытые) / генератор договора из шаблона
+  const archivedCount=contractDocs.filter(function(c){return c.archived;}).length;
   function st(k,label){
     const on=ctSubTab===k;
     return '<button data-a="ct-subtab" data-st="'+k+'" style="flex:1;padding:8px 6px;border-radius:9px;cursor:pointer;font-size:12px;font-weight:700;border:1.5px solid '+(on?"#2980b9":"#dde6f0")+';background:'+(on?"#2980b9":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+'">'+label+'</button>';
   }
-  return '<div style="display:flex;gap:6px;margin-bottom:12px">'+st("list","📄 Список")+st("template","📝 Шаблон договора")+'</div>'+
-    (ctSubTab==="template"?tContractTemplate():tContractList());
+  return '<div style="display:flex;gap:6px;margin-bottom:12px">'+st("list","📄 Список")+st("archive","📦 Архив"+(archivedCount?" ("+archivedCount+")":""))+st("template","📝 Шаблон")+'</div>'+
+    (ctSubTab==="template"?tContractTemplate():ctSubTab==="archive"?tContractList(true):tContractList(false));
 }
 
-function tContractList(){
+function tContractList(archived){
   const STATUS={
     draft:  {label:"Черновик",     color:"#7f8c8d"},
     signed: {label:"Подписан",     color:"#2980b9"},
     closed: {label:"Закрыт",       color:"#27ae60"},
   };
+  // Активный список показывает не-архивные договоры, вкладка «Архив» — архивные.
+  const docs=contractDocs.filter(function(c){return archived?c.archived:!c.archived;});
 
   let html='<div>';
   html+=
     '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'+
       '<div>'+
-        '<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">ДОГОВОРА</div>'+
-        '<div style="font-size:12px;color:#5a7a9a;margin-top:2px">'+contractDocs.length+' документов</div>'+
+        '<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">'+(archived?"АРХИВ · ЗАКРЫТЫЕ ДОГОВОРА":"ДОГОВОРА")+'</div>'+
+        '<div style="font-size:12px;color:#5a7a9a;margin-top:2px">'+docs.length+' документов</div>'+
       '</div>'+
-      '<button data-a="ct-add" style="padding:6px 14px;background:#2980b9;border:none;border-radius:8px;cursor:pointer;font-size:12px;color:#fff;font-weight:700">+ Договор</button>'+
+      (archived?'':'<button data-a="ct-add" style="padding:6px 14px;background:#2980b9;border:none;border-radius:8px;cursor:pointer;font-size:12px;color:#fff;font-weight:700">+ Договор</button>')+
     '</div>';
 
-  // Add form
-  if(contractAddForm){
+  // Add form (только в активном списке, не в архиве)
+  if(!archived&&contractAddForm){
     html+=
       '<div style="background:#fff;border-radius:12px;border:2px solid #2980b9;padding:14px;margin-bottom:14px">'+
         '<div style="font-size:13px;font-weight:700;color:#1a2a3a;margin-bottom:10px">Новый договор</div>'+
@@ -5792,11 +5795,11 @@ function tContractList(){
       '</div>';
   }
 
-  if(!contractDocs.length){
+  if(!docs.length){
     html+='<div style="background:#fff;border-radius:14px;border:2px dashed #dde6f0;padding:32px 20px;text-align:center">'+
-      '<div style="font-size:40px;margin-bottom:10px">📄</div>'+
-      '<div style="font-size:14px;font-weight:600;color:#5a7a9a;margin-bottom:4px">Нет договоров</div>'+
-      '<div style="font-size:12px;color:#a0b4c8">Нажмите + Договор чтобы добавить</div>'+
+      '<div style="font-size:40px;margin-bottom:10px">'+(archived?'📦':'📄')+'</div>'+
+      '<div style="font-size:14px;font-weight:600;color:#5a7a9a;margin-bottom:4px">'+(archived?"Архив пуст":"Нет договоров")+'</div>'+
+      '<div style="font-size:12px;color:#a0b4c8">'+(archived?'Договоры, отправленные в архив, появятся здесь':'Нажмите + Договор чтобы добавить')+'</div>'+
     '</div>';
     return html+'</div>';
   }
@@ -5804,7 +5807,7 @@ function tContractList(){
   // Group by object
   const byObj={};
   const noObjDocs=[];
-  contractDocs.forEach(function(c){
+  docs.forEach(function(c){
     // объект удалён/не найден → договор показываем в общем списке, а не теряем
     if(!c.objId||!objects.some(function(o){return o.id===c.objId;})){ noObjDocs.push(c); return; }
     if(!byObj[c.objId])byObj[c.objId]=[];
@@ -5879,6 +5882,9 @@ function tContractList(){
             '<div style="font-size:14px;font-weight:700;color:#1a2a3a">'+(c.amount?c.amount.toLocaleString("ru-RU")+' ₽':'—')+'</div>'+
             '<span style="font-size:12px;color:#c8d8e8">›</span>'+
           '</div>'+
+        '</div>'+
+        '<div style="display:flex;justify-content:flex-end;margin-top:8px;padding-top:8px;border-top:1px solid #f0f3f7">'+
+          '<button data-a="ct-archive-toggle" data-cid="'+c.id+'" style="padding:5px 12px;background:'+(c.archived?'#eaf6ee':'#f5f7fa')+';border:1px solid '+(c.archived?'#27ae6055':'#dde6f0')+';border-radius:7px;cursor:pointer;font-size:11px;font-weight:700;color:'+(c.archived?'#27ae60':'#8a97a6')+';white-space:nowrap">'+(c.archived?'↩️ Вернуть из архива':'📦 В архив')+'</button>'+
         '</div>'+
       '</div>';
   }
@@ -6074,6 +6080,12 @@ function tContractDetail(cid){
     html+='<button data-a="ct-status" data-cid="'+c.id+'" data-s="'+k+'" style="flex:1;padding:7px 4px;border-radius:8px;border:none;cursor:pointer;font-size:11px;font-weight:700;background:'+(c.status===k?s.color:'#f0f4f8')+';color:'+(c.status===k?'#fff':'#7a9aaa')+'">'+s.label+'</button>';
   });
   html+='</div></div>';
+
+  // Архив: убрать завершённый/закрытый договор из активного списка (уходит в подвкладку «Архив»)
+  html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:10px">'+
+    '<button data-a="ct-archive-toggle" data-cid="'+c.id+'" style="width:100%;padding:9px;border-radius:9px;cursor:pointer;font-size:12px;font-weight:700;border:1px solid '+(c.archived?'#27ae6055':'#dde6f0')+';background:'+(c.archived?'#eaf6ee':'#f7f9fb')+';color:'+(c.archived?'#27ae60':'#8a97a6')+'">'+(c.archived?'↩️ Вернуть из архива':'📦 Отправить в архив')+'</button>'+
+    '<div style="font-size:10px;color:#9aabbf;text-align:center;margin-top:6px">'+(c.archived?'Договор в архиве — скрыт из активного списка':'Уберёт из активного списка, договор останется во вкладке «Архив»')+'</div>'+
+  '</div>';
 
   // Details — editable or view
   const isEditing=contractEditId===cid;
@@ -12868,6 +12880,13 @@ function bind(){
         return;
       }
       contractDocs=contractDocs.map(function(c){return c.id===cid?Object.assign({},c,{status:s}):c;});
+      fl();
+    };}
+    else if(a==="ct-archive-toggle"){el.onclick=function(ev){
+      // Кнопка живёт и в карточке (data-a="ct-open"), и в детали — гасим всплытие, чтобы не открыть карточку
+      if(ev&&ev.stopPropagation)ev.stopPropagation();
+      const cid=el.dataset.cid;
+      contractDocs=contractDocs.map(function(c){return c.id===cid?Object.assign({},c,{archived:!c.archived}):c;});
       fl();
     };}
     else if(a==="ct-pick-client"){/* handled by window._ctPick */}
