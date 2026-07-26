@@ -8297,6 +8297,15 @@ function isReceiverView(){
   return r.some(function(x){return x==="brigadier"||x==="worker"||x==="prod_head";});
 }
 
+// Объекты, доступные в приёмке на склад: нач.производства видит все,
+// бригадир/мастер — только те, за которые он отвечает (getUserObjects).
+function receiverObjects(){
+  if(!currentUser) return [];
+  if(currentUser.roles.includes("admin")||currentUser.roles.includes("prod_head")) return objects;
+  const mine=getUserObjects(currentUser);
+  return objects.filter(function(o){return mine.includes(o.id);});
+}
+
 function tSupply(){
   const sel=window._supplySelected||{};      // {objId: true/false}
   const viewing=window._supplyViewing||false; // showing detail
@@ -8311,14 +8320,15 @@ function tSupply(){
 // === ПРИЁМКА НА СКЛАД (для бригадира/мастера) — чистый чек-лист без цен и закупки ===
 // Экран выбора объектов: сколько материалов уже принято на склад.
 function tReceiveSelect(sel){
-  const anySelected=Object.values(sel).some(Boolean);
+  const visObjs=receiverObjects();
+  const anySelected=visObjs.some(function(o){return !!sel[o.id];});
   let html='<div>'+
     '<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:4px">📥 ПРИЁМКА НА СКЛАД</div>'+
     '<div style="font-size:12px;color:#5a7a9a;margin-bottom:14px">Отметьте материалы, которые пришли на склад</div>';
-  if(!objects.length){
-    return html+'<div style="text-align:center;color:#aaa;padding:30px">Нет объектов.</div></div>';
+  if(!visObjs.length){
+    return html+'<div style="text-align:center;padding:30px 16px;color:#9aabbf;font-size:13px;border:1px dashed #d0dae8;border-radius:12px;margin-top:8px">К вам пока не привязан ни один объект. Приёмка появится, когда вас назначат ответственным на объект (через «Договора»).</div></div>';
   }
-  objects.forEach(function(obj){
+  visObjs.forEach(function(obj){
     const allMats=obj.stages.flatMap(function(s){return s.works.flatMap(function(w){return (w.mats||[]);});});
     const total=allMats.length;
     const onStock=allMats.filter(function(m){return !!arrived[m.id];}).length;
@@ -8346,7 +8356,7 @@ function tReceiveSelect(sel){
   });
   html+='<div style="position:sticky;bottom:0;background:rgba(246,248,250,0.97);padding:12px 0 4px;margin-top:4px">';
   if(anySelected){
-    const selCount=objects.filter(function(o){return !!sel[o.id];}).length;
+    const selCount=visObjs.filter(function(o){return !!sel[o.id];}).length;
     html+=
       '<div style="background:#e67e22;border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:12px">'+
         '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:#fff">'+selCount+' объект'+(selCount===1?'':'а/ов')+' выбрано</div>'+
@@ -8362,7 +8372,7 @@ function tReceiveSelect(sel){
 
 // Чек-лист приёмки по этапам: галочка «на складе» на каждый материал (без цен/ссылок/ТЗ).
 function tReceiveDetail(sel){
-  const targetObjs=objects.filter(function(o){return !!sel[o.id];});
+  const targetObjs=receiverObjects().filter(function(o){return !!sel[o.id];});
   const multiMode=targetObjs.length>1;
   let allMats=[];
   targetObjs.forEach(function(obj){
