@@ -4453,7 +4453,10 @@ ${obj.stages.map(s=>{
         h+=`<div style="padding:10px 12px;background:#3498db08;border-top:1px solid #3498db22">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
             <div style="font-size:10px;color:#3498db;font-weight:700;letter-spacing:0.5px">📷 ФОТО ВЫПОЛНЕНИЯ${photos.length?' · '+photos.length+' шт':''}</div>
-            ${canComplete?`<label data-a="obj-photo-label" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="padding:4px 10px;background:#3498db;border-radius:6px;cursor:pointer;color:#fff;font-size:10px;font-weight:700">+ Добавить фото<input id="photo-inp-${w.id}" type="file" accept="image/*" multiple style="display:none"></label>`:""}
+            ${canComplete?`<div style="display:flex;gap:5px;flex-shrink:0">
+              <label data-a="obj-photo-label" data-inp="photo-cam-${w.id}" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="padding:4px 9px;background:#3498db;border-radius:6px;cursor:pointer;color:#fff;font-size:10px;font-weight:700;white-space:nowrap">📷 Снять<input id="photo-cam-${w.id}" type="file" accept="image/*" capture="environment" style="display:none"></label>
+              <label data-a="obj-photo-label" data-inp="photo-inp-${w.id}" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="padding:4px 9px;background:#eaf2fb;border:1px solid #3498db55;border-radius:6px;cursor:pointer;color:#2b7bc0;font-size:10px;font-weight:700;white-space:nowrap">🖼 Из памяти<input id="photo-inp-${w.id}" type="file" accept="image/*" multiple style="display:none"></label>
+            </div>`:""}
           </div>
           ${photos.length?`<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px">
             ${photos.map(p=>`<div style="position:relative;aspect-ratio:1;border-radius:8px;overflow:hidden;background:#dde6f0;border:1px solid #c0d0e0">
@@ -9725,7 +9728,10 @@ function tlWizardModal(){
     if(tlWizard.uploading){
       body+='<div style="background:#fff;border:1.5px dashed #3498db66;border-radius:16px;padding:26px;text-align:center;font-size:14px;color:#3498db;font-weight:700">⏳ Загружаю фото ('+tlWizard.uploading+')…</div>';
     } else {
-      body+='<label data-a="tl-wiz-photo-label" style="display:flex;align-items:center;justify-content:center;gap:10px;background:#3498db;border-radius:16px;padding:24px;cursor:pointer;color:#fff;font-size:17px;font-weight:800;box-shadow:0 6px 18px rgba(52,152,219,0.35)">📷 Снять / выбрать фото<input id="tlwiz-photo-inp" type="file" accept="image/*" multiple style="display:none"></label>';
+      body+='<div style="display:flex;flex-direction:column;gap:10px">'+
+        '<label data-a="tl-wiz-photo-label" data-inp="tlwiz-photo-cam-inp" style="display:flex;align-items:center;justify-content:center;gap:10px;background:#3498db;border-radius:16px;padding:22px;cursor:pointer;color:#fff;font-size:17px;font-weight:800;box-shadow:0 6px 18px rgba(52,152,219,0.35)">📷 Снять фото<input id="tlwiz-photo-cam-inp" type="file" accept="image/*" capture="environment" style="display:none"></label>'+
+        '<label data-a="tl-wiz-photo-label" data-inp="tlwiz-photo-inp" style="display:flex;align-items:center;justify-content:center;gap:10px;background:#eaf2fb;border:1.5px solid #3498db55;border-radius:16px;padding:18px;cursor:pointer;color:#2b7bc0;font-size:15px;font-weight:800">🖼 Выбрать из памяти<input id="tlwiz-photo-inp" type="file" accept="image/*" multiple style="display:none"></label>'+
+      '</div>';
       body+='<button data-a="tl-wiz-skip" style="display:block;width:100%;margin-top:10px;background:#fff;border:1.5px solid #d0dae8;border-radius:14px;padding:15px;cursor:pointer;font-size:15px;font-weight:700;color:#5a7a9a">Пропустить →</button>';
     }
   }
@@ -9827,9 +9833,14 @@ function workSheetModal(){
     m+='<button data-a="ws-hours" data-h="'+h+'" data-uid="'+uid+'" data-wn="'+esc(w.n)+'" style="height:54px;border-radius:13px;border:1.5px solid '+(isLast?"#16a085":"#d0dae8")+';background:'+(isLast?"#e7f6f1":"#fff")+';font-size:19px;font-weight:800;color:'+(isLast?"#16a085":"#1a2a3a")+';cursor:pointer;font-variant-numeric:tabular-nums">'+_mdH(h)+'</button>';
   });
   m+='</div>';
+  // Фото выполнения: отдельные кнопки «Снять фото» (камера напрямую) и «Из памяти» (галерея) —
+  // на части телефонов один инпут открывает только галерею, поэтому камеру выносим явной кнопкой.
   m+='<div style="display:flex;gap:8px;margin-top:12px">';
-  m+='<label data-a="ws-photo-label" style="flex:1;display:flex;align-items:center;justify-content:center;gap:7px;background:#3498db;border:none;border-radius:13px;padding:13px 8px;cursor:pointer;color:#fff;font-size:14px;font-weight:800">📷 Фото<input id="ws-photo-inp" type="file" accept="image/*" multiple style="display:none"></label>';
+  m+='<label data-a="ws-photo-label" data-inp="ws-photo-cam-inp" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:#3498db;border:none;border-radius:13px;padding:13px 8px;cursor:pointer;color:#fff;font-size:14px;font-weight:800">📷 Снять фото<input id="ws-photo-cam-inp" type="file" accept="image/*" capture="environment" style="display:none"></label>';
+  m+='<label data-a="ws-photo-label" data-inp="ws-photo-inp" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:#eaf2fb;border:1.5px solid #3498db55;border-radius:13px;padding:13px 8px;cursor:pointer;color:#2b7bc0;font-size:14px;font-weight:800">🖼 Из памяти<input id="ws-photo-inp" type="file" accept="image/*" multiple style="display:none"></label>';
+  m+='</div>';
   if(canMark){
+    m+='<div style="display:flex;gap:8px;margin-top:8px">';
     if(w.done){
       m+='<button data-a="obj-toggle-done" data-oid="'+o.id+'" data-sid="'+st.id+'" data-wid="'+w.id+'" style="flex:1;background:#fff;border:1.5px solid #d0dae8;border-radius:13px;padding:13px 8px;cursor:pointer;color:#5a7a9a;font-size:14px;font-weight:800">↩ Снять отметку</button>';
     } else if(hasLog||isAdmFin){
@@ -9837,8 +9848,8 @@ function workSheetModal(){
     } else {
       m+='<div style="flex:1;display:flex;align-items:center;justify-content:center;background:#f4f7fa;border:1.5px dashed #d0dae8;border-radius:13px;padding:13px 8px;color:#9aabbf;font-size:12px;font-weight:700;text-align:center">🔒 Готово — после часов</div>';
     }
+    m+='</div>';
   }
-  m+='</div>';
   m+='</div>';
   return m;
 }
@@ -13949,7 +13960,8 @@ function bind(){
       // Hook the file input's change event when block is rendered.
       const wid=el.dataset.wid;
       const oid=el.dataset.oid,sid=el.dataset.sid;
-      const inp=document.getElementById("photo-inp-"+wid);
+      // Два инпута: камера (capture) и галерея (data-inp указывает нужный)
+      const inp=document.getElementById(el.dataset.inp||("photo-inp-"+wid));
       if(inp&&!inp._bound){
         inp._bound=true;
         inp.addEventListener("change",async function(ev){
@@ -14060,7 +14072,7 @@ function bind(){
     else if(a==="tl-wiz-undo"){el.onclick=()=>{tlWizUndo();};}
     else if(a==="tl-wiz-photo-label"){
       // Label оборачивает скрытый input — вешаем change на input (паттерн obj-photo-label)
-      const inp=document.getElementById("tlwiz-photo-inp");
+      const inp=document.getElementById(el.dataset.inp||"tlwiz-photo-inp");
       if(inp&&!inp._bound){
         inp._bound=true;
         inp.addEventListener("change",async function(){
@@ -14320,7 +14332,7 @@ function bind(){
       });
     };}
     else if(a==="ws-photo-label"){
-      const inp=document.getElementById("ws-photo-inp");
+      const inp=document.getElementById(el.dataset.inp||"ws-photo-inp");
       if(inp&&!inp._bound){
         inp._bound=true;
         inp.addEventListener("change",async function(){
