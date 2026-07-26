@@ -4021,11 +4021,12 @@ function renderObjCard(obj, isAdmin){
         '<span style="font-size:11px;color:'+color+';font-weight:700;flex-shrink:0">↗</span>'+
       '</a>';
     }
-    const plans=collect("plan"), specs=collect("spec");
-    if(!plans.length&&!specs.length)return;
+    const plans=collect("plan"), specs=collect("spec"), winds=collect("wind");
+    if(!plans.length&&!specs.length&&!winds.length)return;
     let chips='';
     plans.forEach(function(f){chips+=chip(f,"#8e44ad","📐","ПЛАНИРОВКА","Планировка");});
     specs.forEach(function(f){chips+=chip(f,"#16a085","📋","СПЕЦИФИКАЦИЯ","Спецификация");});
+    winds.forEach(function(f){chips+=chip(f,"#34495e","🪟","ОКНА И ДВЕРИ","Окна и двери");});
     html+='<div style="padding:8px 14px;border-top:1px solid #f4f6f9">'+
       '<div style="font-size:9px;font-weight:700;color:#9aabbf;letter-spacing:0.3px;margin-bottom:6px">📎 ДОКУМЕНТЫ ИЗ ДОГОВОРА</div>'+
       '<div style="display:flex;gap:6px;flex-wrap:wrap">'+chips+'</div>'+
