@@ -3699,6 +3699,7 @@ function page(){
     ["assign","Объекты","🏗️"],
     ["works","База данных","🗄️"],
     ["finance","Финансы","💰"],
+    ["contracts","Договора","📄"],
     ["supply","Снабжение","📦"],
   ];
   const _accessible=new Set(TABS.map(function(t){return t[0];}));
