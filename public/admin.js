@@ -8297,11 +8297,11 @@ function isReceiverView(){
   return r.some(function(x){return x==="brigadier"||x==="worker"||x==="prod_head";});
 }
 
-// Объекты, доступные в приёмке на склад: нач.производства видит все,
-// бригадир/мастер — только те, за которые он отвечает (getUserObjects).
+// Объекты, доступные в приёмке на склад: бригадир/мастер/нач.производства
+// видят только те, за которые они отвечают (getUserObjects); админ — все.
 function receiverObjects(){
   if(!currentUser) return [];
-  if(currentUser.roles.includes("admin")||currentUser.roles.includes("prod_head")) return objects;
+  if(currentUser.roles.includes("admin")) return objects;
   const mine=getUserObjects(currentUser);
   return objects.filter(function(o){return mine.includes(o.id);});
 }
