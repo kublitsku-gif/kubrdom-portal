@@ -2156,7 +2156,7 @@ function specsEditorHtml(o){
         s+='<div style="display:flex;align-items:center;gap:8px;margin-top:7px">'+
              '<span style="font-size:17px">'+icon+'</span>'+
              '<div style="flex:1;min-width:0;font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(name||"Файл")+'</div>'+
-             '<a href="'+url+'" target="_blank" rel="noopener" style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;color:'+color+';font-size:11px;font-weight:700;text-decoration:none">Открыть</a>'+
+             '<a href="'+url+'" data-a="ct-file-open" data-url="'+esc(url)+'" data-name="'+esc(name||"Файл")+'" target="_blank" rel="noopener" style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;color:'+color+';font-size:11px;font-weight:700;text-decoration:none">Открыть</a>'+
            '</div>';
       }
       s+='</div>';
@@ -2175,7 +2175,7 @@ function specsEditorHtml(o){
         s+='<div style="display:flex;align-items:center;gap:8px;margin-top:7px">'+
              '<span style="font-size:17px">'+icon+'</span>'+
              '<div style="flex:1;min-width:0;font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(name||"Файл")+'</div>'+
-             '<a href="'+url+'" target="_blank" rel="noopener" style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;color:'+color+';font-size:11px;font-weight:700;text-decoration:none">Открыть</a>'+
+             '<a href="'+url+'" data-a="ct-file-open" data-url="'+esc(url)+'" data-name="'+esc(name||"Файл")+'" target="_blank" rel="noopener" style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;color:'+color+';font-size:11px;font-weight:700;text-decoration:none">Открыть</a>'+
            '</div>';
       }
       s+='</div>';
@@ -3248,7 +3248,7 @@ function clientProjectContent(c, activeTab){
         '<div style="display:flex;align-items:center;gap:9px;padding:10px 12px">'+
           '<span style="font-size:20px">'+(isImg?"🖼":((f.mime||"").indexOf("pdf")>=0?"📕":"📄"))+'</span>'+
           '<div style="flex:1;min-width:0;font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name||"Файл")+'</div>'+
-          '<a href="'+f.data+'" target="_blank" rel="noopener" style="padding:6px 12px;background:'+color+'18;border:1px solid '+color+'44;border-radius:7px;color:'+color+';font-size:11px;font-weight:700;text-decoration:none">Открыть</a>'+
+          '<a href="'+f.data+'" data-a="ct-file-open" data-url="'+esc(f.data)+'" data-name="'+esc(f.name||"Файл")+'" target="_blank" rel="noopener" style="padding:6px 12px;background:'+color+'18;border:1px solid '+color+'44;border-radius:7px;color:'+color+';font-size:11px;font-weight:700;text-decoration:none">Открыть</a>'+
         '</div>'+
       '</div>';
     });
@@ -4246,7 +4246,7 @@ ${(()=>{
   if(!specs.length&&!winds.length)return "";
   const row=(f,color,icon,typeLabel,fallbackName)=>{
     const isImg=(f.mime||"").indexOf("image")===0;
-    return '<a href="'+f.data+'" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:9px;border:1px solid '+color+'33;background:'+color+'0d;text-decoration:none;margin-bottom:6px">'+
+    return '<a href="'+f.data+'" data-a="ct-file-open" data-url="'+esc(f.data)+'" data-name="'+esc(f.name||fallbackName)+'" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:9px;border:1px solid '+color+'33;background:'+color+'0d;text-decoration:none;margin-bottom:6px">'+
       (isImg
         ? '<img src="'+f.data+'" onerror="this.style.display=\'none\'" style="width:30px;height:30px;border-radius:6px;object-fit:cover;flex-shrink:0">'
         : '<span style="font-size:20px;flex-shrink:0">'+icon+'</span>')+
@@ -6109,6 +6109,31 @@ function contractDeadlineInfo(deadlineStr){
   return {days:diff,overdue:false,color:"#27ae60",label:"Осталось "+diff+" дн"};
 }
 
+// Открыть вложенный файл (PDF/фото) в отдельном окне с кнопкой «Печать».
+// В standalone-режиме (сайт добавлен на экран «Домой», apple-mobile-web-app-capable)
+// iOS открывает PDF по target="_blank" прямо внутри WKWebView без хрома Safari —
+// у пользователя физически нет кнопки печати/шаринга. Прокладка на iframe.print()
+// печатает через нативный PDF-плагин самого webview, независимо от того, в Safari
+// это открыто или в standalone-приложении.
+function openFilePrintable(url,name){
+  const w=window.open("","_blank");
+  if(!w){ window.open(url,"_blank"); return; }
+  const title=esc(name||"Документ");
+  w.document.write(
+    '<!doctype html><html><head><meta charset="utf-8"><title>'+title+'</title>'+
+    '<style>html,body{margin:0;height:100%;background:#525659}'+
+    '.bar{position:fixed;top:0;left:0;right:0;height:48px;background:#1a2a3a;display:flex;align-items:center;gap:10px;padding:0 12px;z-index:2;box-sizing:border-box}'+
+    '.bar button{padding:8px 16px;border:none;border-radius:8px;background:#2980b9;color:#fff;font-weight:700;font-size:14px;flex-shrink:0}'+
+    '.bar span{color:#fff;font-size:12px;opacity:.8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}'+
+    'iframe{position:absolute;top:48px;left:0;right:0;bottom:0;width:100%;height:calc(100% - 48px);border:none;background:#525659}'+
+    '</style></head><body>'+
+    '<div class="bar"><button onclick="document.getElementById(\'f\').contentWindow.print()">🖨 Печать</button><span>'+title+'</span></div>'+
+    '<iframe id="f" src="'+esc(url)+'"></iframe>'+
+    '</body></html>'
+  );
+  w.document.close();
+}
+
 // Рендер блока прикреплённых файлов договора (договор + планировка)
 // Селектор способа оплаты (наличка/перевод) — показывается для приходных операций
 function payMethodSelector(){
@@ -6164,7 +6189,7 @@ function buildContractFiles(c){
              '<div style="font-size:9px;color:#9aabbf">'+(f.date||"")+(f.size?' · '+fmtSize(f.size):'')+'</div>'+
            '</div>'+
            (kind==="act"?'<label onclick="event.stopPropagation()" style="display:flex;align-items:center;gap:5px;padding:5px 9px;background:'+(f.signed?'#27ae6015':'#fff')+';border:1px solid '+(f.signed?'#27ae6055':'#d0dae8')+';border-radius:6px;cursor:pointer;font-size:10px;font-weight:700;color:'+(f.signed?'#27ae60':'#9aabbf')+';white-space:nowrap;flex-shrink:0"><input type="checkbox" data-a="ct-act-signed" data-cid="'+c.id+'" data-fid="'+f.id+'"'+(f.signed?' checked':'')+' style="accent-color:#27ae60;margin:0">'+(f.signed?'подписан':'не подписан')+'</label>':'')+
-           '<a href="'+f.data+'" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;cursor:pointer;color:'+color+';font-size:11px;font-weight:700;text-decoration:none;white-space:nowrap">Открыть</a>'+
+           '<a href="'+f.data+'" data-a="ct-file-open" data-url="'+esc(f.data)+'" data-name="'+esc(f.name||"Файл")+'" target="_blank" rel="noopener" style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;cursor:pointer;color:'+color+';font-size:11px;font-weight:700;text-decoration:none;white-space:nowrap">Открыть</a>'+
            '<button data-a="ct-file-del" data-cid="'+c.id+'" data-fid="'+f.id+'" style="width:28px;height:28px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:12px;flex-shrink:0">✕</button>'+
            '</div>';
       });
@@ -13326,6 +13351,14 @@ function bind(){
           fl();
         });
       }
+    }
+    else if(a==="ct-file-open"){
+      const handler=function(ev){
+        if(ev){ev.stopPropagation();ev.preventDefault();}
+        openFilePrintable(el.dataset.url,el.dataset.name);
+        return false;
+      };
+      el.onclick=handler;
     }
     else if(a==="ct-file-del"){
       const handler=function(ev){
