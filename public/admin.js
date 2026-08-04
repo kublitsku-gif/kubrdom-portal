@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-07-25.1";
+const APP_BUILD = "2026-08-04.1";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -2156,7 +2156,8 @@ function specsEditorHtml(o){
         s+='<div style="display:flex;align-items:center;gap:8px;margin-top:7px">'+
              '<span style="font-size:17px">'+icon+'</span>'+
              '<div style="flex:1;min-width:0;font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(name||"Файл")+'</div>'+
-             '<a href="'+url+'" data-a="ct-file-open" data-url="'+esc(url)+'" data-name="'+esc(name||"Файл")+'" target="_blank" rel="noopener" style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;color:'+color+';font-size:11px;font-weight:700;text-decoration:none">Открыть</a>'+
+             '<a href="'+url+'" target="_blank" rel="noopener" style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;color:'+color+';font-size:11px;font-weight:700;text-decoration:none">Открыть</a>'+
+             '<button data-a="file-print" data-url="'+esc(url)+'" data-name="'+esc(name||"Файл")+'" data-mime="" title="Печать" style="width:28px;height:28px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;cursor:pointer;color:'+color+';font-size:13px;flex-shrink:0">🖨</button>'+
            '</div>';
       }
       s+='</div>';
@@ -2175,7 +2176,8 @@ function specsEditorHtml(o){
         s+='<div style="display:flex;align-items:center;gap:8px;margin-top:7px">'+
              '<span style="font-size:17px">'+icon+'</span>'+
              '<div style="flex:1;min-width:0;font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(name||"Файл")+'</div>'+
-             '<a href="'+url+'" data-a="ct-file-open" data-url="'+esc(url)+'" data-name="'+esc(name||"Файл")+'" target="_blank" rel="noopener" style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;color:'+color+';font-size:11px;font-weight:700;text-decoration:none">Открыть</a>'+
+             '<a href="'+url+'" target="_blank" rel="noopener" style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;color:'+color+';font-size:11px;font-weight:700;text-decoration:none">Открыть</a>'+
+             '<button data-a="file-print" data-url="'+esc(url)+'" data-name="'+esc(name||"Файл")+'" data-mime="" title="Печать" style="width:28px;height:28px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;cursor:pointer;color:'+color+';font-size:13px;flex-shrink:0">🖨</button>'+
            '</div>';
       }
       s+='</div>';
@@ -3248,7 +3250,8 @@ function clientProjectContent(c, activeTab){
         '<div style="display:flex;align-items:center;gap:9px;padding:10px 12px">'+
           '<span style="font-size:20px">'+(isImg?"🖼":((f.mime||"").indexOf("pdf")>=0?"📕":"📄"))+'</span>'+
           '<div style="flex:1;min-width:0;font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name||"Файл")+'</div>'+
-          '<a href="'+f.data+'" data-a="ct-file-open" data-url="'+esc(f.data)+'" data-name="'+esc(f.name||"Файл")+'" target="_blank" rel="noopener" style="padding:6px 12px;background:'+color+'18;border:1px solid '+color+'44;border-radius:7px;color:'+color+';font-size:11px;font-weight:700;text-decoration:none">Открыть</a>'+
+          '<a href="'+f.data+'" target="_blank" rel="noopener" style="padding:6px 12px;background:'+color+'18;border:1px solid '+color+'44;border-radius:7px;color:'+color+';font-size:11px;font-weight:700;text-decoration:none">Открыть</a>'+
+          '<button data-a="file-print" data-url="'+esc(f.data)+'" data-name="'+esc(f.name||"Файл")+'" data-mime="'+esc(f.mime||"")+'" title="Печать" style="width:30px;height:30px;background:'+color+'18;border:1px solid '+color+'44;border-radius:7px;cursor:pointer;color:'+color+';font-size:14px;flex-shrink:0">🖨</button>'+
         '</div>'+
       '</div>';
     });
@@ -4246,16 +4249,20 @@ ${(()=>{
   if(!specs.length&&!winds.length)return "";
   const row=(f,color,icon,typeLabel,fallbackName)=>{
     const isImg=(f.mime||"").indexOf("image")===0;
-    return '<a href="'+f.data+'" data-a="ct-file-open" data-url="'+esc(f.data)+'" data-name="'+esc(f.name||fallbackName)+'" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:9px;border:1px solid '+color+'33;background:'+color+'0d;text-decoration:none;margin-bottom:6px">'+
-      (isImg
-        ? '<img src="'+f.data+'" onerror="this.style.display=\'none\'" style="width:30px;height:30px;border-radius:6px;object-fit:cover;flex-shrink:0">'
-        : '<span style="font-size:20px;flex-shrink:0">'+icon+'</span>')+
-      '<span style="display:flex;flex-direction:column;min-width:0;flex:1">'+
-        '<span style="font-size:8px;font-weight:800;color:'+color+';letter-spacing:0.3px">'+typeLabel+'</span>'+
-        '<span style="font-size:12px;color:#1a2a3a;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name||fallbackName)+'</span>'+
-      '</span>'+
-      '<span style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;color:'+color+';font-size:11px;font-weight:700;flex-shrink:0">Открыть</span>'+
-    '</a>';
+    // Кнопка печати — СНАРУЖИ ссылки: <button> внутри <a> недопустим и ломает клик.
+    return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">'+
+      '<a href="'+f.data+'" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:9px;border:1px solid '+color+'33;background:'+color+'0d;text-decoration:none;flex:1;min-width:0">'+
+        (isImg
+          ? '<img src="'+f.data+'" onerror="this.style.display=\'none\'" style="width:30px;height:30px;border-radius:6px;object-fit:cover;flex-shrink:0">'
+          : '<span style="font-size:20px;flex-shrink:0">'+icon+'</span>')+
+        '<span style="display:flex;flex-direction:column;min-width:0;flex:1">'+
+          '<span style="font-size:8px;font-weight:800;color:'+color+';letter-spacing:0.3px">'+typeLabel+'</span>'+
+          '<span style="font-size:12px;color:#1a2a3a;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name||fallbackName)+'</span>'+
+        '</span>'+
+        '<span style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;color:'+color+';font-size:11px;font-weight:700;flex-shrink:0">Открыть</span>'+
+      '</a>'+
+      '<button data-a="file-print" data-url="'+esc(f.data)+'" data-name="'+esc(f.name||fallbackName)+'" data-mime="'+esc(f.mime||"")+'" title="Печать" style="width:34px;height:34px;background:'+color+'18;border:1px solid '+color+'44;border-radius:8px;cursor:pointer;color:'+color+';font-size:15px;flex-shrink:0">🖨</button>'+
+    '</div>';
   };
   let inner='';
   specs.forEach(f=>{inner+=row(f,"#16a085","📋","СПЕЦИФИКАЦИЯ","Спецификация");});
@@ -6109,12 +6116,25 @@ function contractDeadlineInfo(deadlineStr){
   return {days:diff,overdue:false,color:"#27ae60",label:"Осталось "+diff+" дн"};
 }
 
-// Открыть вложенный файл (PDF/фото) в отдельном окне с кнопкой «Печать».
-// В standalone-режиме (сайт добавлен на экран «Домой», apple-mobile-web-app-capable)
-// iOS открывает PDF по target="_blank" прямо внутри WKWebView без хрома Safari —
-// у пользователя физически нет кнопки печати/шаринга. Прокладка на iframe.print()
-// печатает через нативный PDF-плагин самого webview, независимо от того, в Safari
-// это открыто или в standalone-приложении.
+// ── ПЕЧАТЬ ВЛОЖЕННЫХ ФАЙЛОВ ─────────────────────────────────────────────────
+// Портал добавлен на экран «Домой» (apple-mobile-web-app-capable) — значит на iOS
+// он живёт в standalone-WKWebView. Ссылка target="_blank" на PDF открывает файл
+// ВНУТРИ этого webview, без интерфейса Safari: кнопок «Поделиться»/«Печать» там нет
+// вообще, и достать AirPrint неоткуда. window.print()/iframe.print() тоже не помогают:
+// iOS не рендерит PDF в iframe и печатать его содержимое отказывается.
+// Единственный рабочий путь к AirPrint из standalone — нативный share sheet
+// (Web Share API с файлом): в нём есть пункт «Напечатать».
+function fileToast(msg,color){
+  try{
+    const t=document.createElement("div");
+    t.textContent=msg;
+    t.style.cssText="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:"+(color||"#1a2a3a")+";color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:600;z-index:9999";
+    document.body.appendChild(t);
+    setTimeout(function(){try{document.body.removeChild(t);}catch(e){}},2200);
+  }catch(e){}
+}
+
+// Резервный путь для десктопа: окно с файлом и обычной печатью браузера.
 function openFilePrintable(url,name){
   const w=window.open("","_blank");
   if(!w){ window.open(url,"_blank"); return; }
@@ -6132,6 +6152,58 @@ function openFilePrintable(url,name){
     '</body></html>'
   );
   w.document.close();
+}
+
+// Оверлей «дожима»: iOS роняет navigator.share с NotAllowedError, если между
+// касанием и вызовом был await (а скачать файл без await нельзя). Тогда показываем
+// кнопку, которая шарит УЖЕ скачанный файл синхронно — жест свежий, share проходит.
+function filePrintRetryOverlay(file,name){
+  const ov=document.createElement("div");
+  ov.style.cssText="position:fixed;inset:0;background:rgba(10,20,35,.75);z-index:10000;display:flex;align-items:center;justify-content:center;padding:24px";
+  const box=document.createElement("div");
+  box.style.cssText="background:#fff;border-radius:16px;padding:20px;max-width:320px;width:100%;text-align:center";
+  box.innerHTML='<div style="font-size:34px;margin-bottom:8px">🖨</div>'+
+    '<div style="font-size:14px;font-weight:700;color:#0d1b2e;margin-bottom:4px">Файл готов</div>'+
+    '<div style="font-size:12px;color:#7a9aaa;margin-bottom:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(name||"Документ")+'</div>'+
+    '<div style="font-size:11px;color:#9aabbf;margin-bottom:14px;line-height:1.5">Нажмите «Печать» — откроется меню iOS, в нём выберите «Напечатать»</div>';
+  const go=document.createElement("button");
+  go.textContent="🖨 Печать";
+  go.style.cssText="width:100%;padding:13px;border:none;border-radius:11px;background:#2980b9;color:#fff;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:8px";
+  go.onclick=function(){
+    // Синхронно, без await — иначе iOS снова отклонит жест.
+    navigator.share({files:[file],title:name||"Документ"}).catch(function(){});
+    try{document.body.removeChild(ov);}catch(e){}
+  };
+  const cancel=document.createElement("button");
+  cancel.textContent="Отмена";
+  cancel.style.cssText="width:100%;padding:11px;border:1px solid #d0dae8;border-radius:11px;background:#fff;color:#7a9aaa;font-size:13px;font-weight:600;cursor:pointer";
+  cancel.onclick=function(){try{document.body.removeChild(ov);}catch(e){}};
+  box.appendChild(go); box.appendChild(cancel); ov.appendChild(box);
+  document.body.appendChild(ov);
+}
+
+async function printFileAttachment(url,name,mime){
+  const canShareFiles=!!(navigator.share&&navigator.canShare);
+  if(!canShareFiles){ openFilePrintable(url,name); return; }   // десктоп
+  fileToast("⏳ Готовлю файл…","#2980b9");
+  let file;
+  try{
+    const r=await fetch(url);
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    const blob=await r.blob();
+    file=new File([blob],name||"file.pdf",{type:blob.type||mime||"application/octet-stream"});
+  }catch(e){
+    fileToast("⚠️ Не удалось скачать файл","#e67e22");
+    return;
+  }
+  if(!navigator.canShare({files:[file]})){ openFilePrintable(url,name); return; }
+  try{
+    await navigator.share({files:[file],title:name||"Документ"});
+  }catch(e){
+    // AbortError — пользователь сам закрыл меню, это не ошибка.
+    if(e&&e.name==="AbortError") return;
+    filePrintRetryOverlay(file,name);
+  }
 }
 
 // Рендер блока прикреплённых файлов договора (договор + планировка)
@@ -6189,7 +6261,8 @@ function buildContractFiles(c){
              '<div style="font-size:9px;color:#9aabbf">'+(f.date||"")+(f.size?' · '+fmtSize(f.size):'')+'</div>'+
            '</div>'+
            (kind==="act"?'<label onclick="event.stopPropagation()" style="display:flex;align-items:center;gap:5px;padding:5px 9px;background:'+(f.signed?'#27ae6015':'#fff')+';border:1px solid '+(f.signed?'#27ae6055':'#d0dae8')+';border-radius:6px;cursor:pointer;font-size:10px;font-weight:700;color:'+(f.signed?'#27ae60':'#9aabbf')+';white-space:nowrap;flex-shrink:0"><input type="checkbox" data-a="ct-act-signed" data-cid="'+c.id+'" data-fid="'+f.id+'"'+(f.signed?' checked':'')+' style="accent-color:#27ae60;margin:0">'+(f.signed?'подписан':'не подписан')+'</label>':'')+
-           '<a href="'+f.data+'" data-a="ct-file-open" data-url="'+esc(f.data)+'" data-name="'+esc(f.name||"Файл")+'" target="_blank" rel="noopener" style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;cursor:pointer;color:'+color+';font-size:11px;font-weight:700;text-decoration:none;white-space:nowrap">Открыть</a>'+
+           '<a href="'+f.data+'" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;cursor:pointer;color:'+color+';font-size:11px;font-weight:700;text-decoration:none;white-space:nowrap">Открыть</a>'+
+           '<button data-a="file-print" data-url="'+esc(f.data)+'" data-name="'+esc(f.name||"Файл")+'" data-mime="'+esc(f.mime||"")+'" title="Печать" style="width:28px;height:28px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;cursor:pointer;color:'+color+';font-size:13px;flex-shrink:0">🖨</button>'+
            '<button data-a="ct-file-del" data-cid="'+c.id+'" data-fid="'+f.id+'" style="width:28px;height:28px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:12px;flex-shrink:0">✕</button>'+
            '</div>';
       });
@@ -13352,13 +13425,12 @@ function bind(){
         });
       }
     }
-    else if(a==="ct-file-open"){
-      const handler=function(ev){
+    else if(a==="file-print"){
+      el.onclick=function(ev){
         if(ev){ev.stopPropagation();ev.preventDefault();}
-        openFilePrintable(el.dataset.url,el.dataset.name);
+        printFileAttachment(el.dataset.url,el.dataset.name,el.dataset.mime);
         return false;
       };
-      el.onclick=handler;
     }
     else if(a==="ct-file-del"){
       const handler=function(ev){
