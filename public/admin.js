@@ -4816,6 +4816,15 @@ ${objMatModal?`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);di
     <button data-a="save-obj-info" data-oid="${obj.id}" style="padding:9px 24px;background:#27ae60;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">💾 Сохранить изменения</button>
   </div>
 </div>
+
+<!-- Плавающая «＋ Запись» — та же, что в списке объектов. Внутри карточки объект уже
+     известен, поэтому мастер сразу открывается на выборе работы, минуя шаг «объект». -->
+${(()=>{
+  const canLog=currentUser&&["admin","financier","brigadier","worker","prod_head"].some(r=>currentUser.roles.includes(r));
+  if(!canLog)return "";
+  return `<button data-a="tl-wiz-open" data-oid="${obj.id}" style="position:fixed;left:50%;transform:translateX(-50%);bottom:calc(${isAdmin?"92px":"24px"} + env(safe-area-inset-bottom,0px));z-index:600;background:#16a085;border:none;border-radius:999px;padding:15px 30px;cursor:pointer;color:#fff;font-size:16px;font-weight:800;box-shadow:0 10px 24px rgba(22,160,133,0.45);display:flex;align-items:center;gap:7px">＋ Запись</button>`;
+})()}
+<div style="height:78px"></div>
 </div>`;
   }
 
