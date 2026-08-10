@@ -1835,6 +1835,7 @@ let expProducts=[
 let purchased={}; // {matId: true} — отмечено снабженцем как куплено
 let arrived={};   // {matId: true} — пришло/принято на склад (отмечает бригадир/мастер); снабженец видит наличие
 let supplySearch=''; // поиск по материалам
+let receiveOnlyLeft=true; // приёмка: показывать только непринятое (главный рабочий режим)
 let supplyStoreFilter=''; // фильтр по магазину
 let supplyHideDone=false; // показывать только не купленное
 let dbEditWork=null,dbEditMat=null,dbDragWork=null,dbDragMat=null; // "works" | "mats"
@@ -8737,159 +8738,155 @@ function receiverObjects(){
 function tSupply(){
   const sel=window._supplySelected||{};      // {objId: true/false}
   const viewing=window._supplyViewing||false; // showing detail
-  if(isReceiverView()){                        // бригадир/мастер — приёмка на склад
-    return viewing ? tReceiveDetail(sel) : tReceiveSelect(sel);
-  }
+  if(isReceiverView())return tReceive(sel);   // бригадир/мастер — приёмка одним экраном
   const sortBy=window._supplySort||"stage";
   if(!viewing) return tSupplySelect(sel);
   return tSupplyDetail(sel, sortBy);
 }
 
-// === ПРИЁМКА НА СКЛАД (для бригадира/мастера) — чистый чек-лист без цен и закупки ===
-// Экран выбора объектов: сколько материалов уже принято на склад.
-function tReceiveSelect(sel){
+// === ПРИЁМКА НА СКЛАД (бригадир/мастер) — один экран, без цен и закупки ===
+// Было два экрана: выбор объектов → «Открыть →» → чек-лист, в котором разом
+// висели все ~100 материалов. Стало: дашборд + чипы объектов + фильтр
+// «осталось / все» на одном экране; по умолчанию видно только непринятое,
+// поэтому список тает по мере работы, а не растёт.
+function tReceive(sel){
   const visObjs=receiverObjects();
-  const anySelected=visObjs.some(function(o){return !!sel[o.id];});
-  let html='<div>'+
-    '<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:4px">📥 ПРИЁМКА НА СКЛАД</div>'+
-    '<div style="font-size:12px;color:#5a7a9a;margin-bottom:14px">Отметьте материалы, которые пришли на склад</div>';
+  let html='<div>';
   if(!visObjs.length){
-    return html+'<div style="text-align:center;padding:30px 16px;color:#9aabbf;font-size:13px;border:1px dashed #d0dae8;border-radius:12px;margin-top:8px">К вам пока не привязан ни один объект. Приёмка появится, когда вас назначат ответственным на объект (через «Договора»).</div></div>';
+    return html+'<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:10px">📥 ПРИЁМКА НА СКЛАД</div>'+
+      '<div style="text-align:center;padding:30px 16px;color:#9aabbf;font-size:13px;border:1px dashed #d0dae8;border-radius:12px">К вам пока не привязан ни один объект. Приёмка появится, когда вас назначат ответственным на объект (через «Договора»).</div></div>';
   }
-  visObjs.forEach(function(obj){
-    const allMats=obj.stages.flatMap(function(s){return s.works.flatMap(function(w){return (w.mats||[]);});});
-    const total=allMats.length;
-    const onStock=allMats.filter(function(m){return !!arrived[m.id];}).length;
-    const left=total-onStock;
-    const assigned=users.filter(function(u){return u.objs.includes(obj.id);});
-    const isOn=!!sel[obj.id];
-    html+=
-      '<div data-a="supply-toggle" data-oid="'+obj.id+'" style="border-radius:14px;border:2px solid '+(isOn?'#e67e22':'#dde6f0')+';padding:14px 16px;margin-bottom:10px;cursor:pointer;transition:all 0.15s;background:'+(isOn?'#fff7f0':'#fff')+'">'+
-        '<div style="display:flex;align-items:center;gap:12px">'+
-          '<div style="width:26px;height:26px;border-radius:8px;border:2px solid '+(isOn?'#e67e22':'#c8d8e8')+';background:'+(isOn?'#e67e22':'transparent')+';display:flex;align-items:center;justify-content:center;flex-shrink:0">'+
-            (isOn?'<span style="color:#fff;font-size:14px;font-weight:700">✓</span>':'')+
-          '</div>'+
-          '<span style="font-size:28px;flex-shrink:0">'+obj.icon+'</span>'+
-          '<div style="flex:1;min-width:0">'+
-            '<div style="font-size:15px;font-weight:700;color:#0d1b2e">'+esc(obj.name)+'</div>'+
-            (total
-              ? (left>0
-                  ? '<div style="margin-top:5px;font-size:11px;font-weight:700;color:#e67e22">📥 Осталось принять: '+left+' из '+total+'</div>'
-                  : '<div style="margin-top:5px;font-size:11px;font-weight:700;color:#27ae60">✓ Всё на складе ('+total+')</div>')
-              : '<div style="margin-top:5px;font-size:11px;color:#9aabbf">Нет материалов</div>')+
-            (assigned.length?'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">'+assigned.map(function(u){return'<span style="font-size:10px;background:'+u.c+'18;color:'+u.c+';border-radius:8px;padding:1px 7px;border:1px solid '+u.c+'33">'+u.av+' '+esc(u.name)+'</span>';}).join("")+'</div>':'')+
-          '</div>'+
-        '</div>'+
-      '</div>';
-  });
-  html+='<div style="position:sticky;bottom:0;background:rgba(246,248,250,0.97);padding:12px 0 4px;margin-top:4px">';
-  if(anySelected){
-    const selCount=visObjs.filter(function(o){return !!sel[o.id];}).length;
-    html+=
-      '<div style="background:#e67e22;border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:12px">'+
-        '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:#fff">'+selCount+' объект'+(selCount===1?'':'а/ов')+' выбрано</div>'+
-          '<div style="font-size:11px;color:rgba(255,255,255,0.8);margin-top:1px">Открыть чек-лист приёмки</div></div>'+
-        '<button data-a="supply-view" style="padding:9px 18px;background:#fff;border:none;border-radius:9px;cursor:pointer;font-size:13px;font-weight:700;color:#e67e22;white-space:nowrap">Открыть →</button>'+
-      '</div>';
-  } else {
-    html+='<div style="background:#f0f4f8;border-radius:12px;padding:12px 16px;text-align:center"><div style="font-size:12px;color:#a0b4c8">Выберите объект, чтобы отметить приёмку</div></div>';
-  }
-  html+='</div>';
-  return html+'</div>';
-}
 
-// Чек-лист приёмки по этапам: галочка «на складе» на каждый материал (без цен/ссылок/ТЗ).
-function tReceiveDetail(sel){
-  const targetObjs=receiverObjects().filter(function(o){return !!sel[o.id];});
-  const multiMode=targetObjs.length>1;
-  let allMats=[];
-  targetObjs.forEach(function(obj){
-    obj.stages.forEach(function(s){
-      s.works.forEach(function(w){
-        (w.mats||[]).forEach(function(m){
-          allMats.push(Object.assign({},m,{wn:w.n,sn:s.n,sc:s.c,objName:obj.name,objIcon:obj.icon,objId:obj.id}));
+  // Чипы работают как фильтр: пока ничего не выбрано — показываем все объекты
+  const picked=visObjs.filter(function(o){return !!sel[o.id];});
+  const chosen=picked.length?picked:visObjs;
+
+  const matsOf=function(obj){
+    return obj.stages.flatMap(function(s){
+      return s.works.flatMap(function(w){
+        return (w.mats||[]).map(function(m){
+          return Object.assign({},m,{wn:w.n,sn:s.n,sc:s.c,objName:obj.name,objIcon:obj.icon,objId:obj.id});
         });
       });
     });
-  });
+  };
+  const allMats=chosen.flatMap(matsOf);
   const total=allMats.length;
   const onStock=allMats.filter(function(m){return !!arrived[m.id];}).length;
+  const left=total-onStock;
   const pct=total>0?Math.round(onStock/total*100):0;
-  const allDone=total>0&&onStock===total;
-  const title=targetObjs.length===1?(targetObjs[0].icon+' '+targetObjs[0].name):('🗂️ '+targetObjs.length+' объектa/ов');
+  const allDone=total>0&&left===0;
 
-  let html='<div>'+
-    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">'+
-      '<button data-a="supply-back" style="padding:6px 14px;background:transparent;border:1px solid #d0dae8;border-radius:20px;cursor:pointer;font-size:12px;color:#7a9aaa">← Назад</button>'+
-      '<div style="flex:1;min-width:0">'+
-        '<div style="font-size:15px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+title+'</div>'+
-        '<div style="font-size:12px;color:#7a9aaa">Приёмка на склад · '+total+' материалов</div>'+
-      '</div>'+
-    '</div>';
+  // ── Дашборд: главное число — сколько ещё принять ──
+  html+='<div style="background:linear-gradient(135deg,#1a2a3a,#2a4a6a);border-radius:16px;padding:16px;margin-bottom:12px;box-shadow:0 6px 18px rgba(26,42,58,0.18)">'+
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'+
+      '<div style="font-size:10px;color:rgba(255,255,255,0.5);font-weight:700;letter-spacing:1px">📥 ПРИЁМКА НА СКЛАД</div>'+
+      '<div style="font-size:10px;color:rgba(255,255,255,0.3)">'+chosen.length+' об. · '+total+' поз.</div>'+
+    '</div>'+
+    '<div style="text-align:center;margin-bottom:12px">'+
+      '<div style="font-size:10px;color:rgba(255,255,255,0.45);font-weight:700;letter-spacing:1px">ОСТАЛОСЬ ПРИНЯТЬ</div>'+
+      '<div style="font-size:32px;font-weight:800;line-height:1.15;margin-top:3px;color:'+(left>0?"#f59e0b":"#2ecc71")+'">'+(left>0?left+' поз.':'✓ всё на складе')+'</div>'+
+    '</div>'+
+    '<div style="background:rgba(255,255,255,0.12);border-radius:6px;height:8px;overflow:hidden;margin-bottom:7px">'+
+      '<div style="height:100%;border-radius:6px;background:linear-gradient(90deg,#2ecc71,#27ae60);width:'+pct+'%;transition:width 0.4s"></div>'+
+    '</div>'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:rgba(255,255,255,0.55)">'+
+      '<span>принято <b style="color:#2ecc71">'+onStock+'</b></span>'+
+      '<span style="font-weight:700;color:rgba(255,255,255,0.8)">'+pct+'%</span>'+
+      '<span>всего <b style="color:rgba(255,255,255,0.9)">'+total+'</b></span>'+
+    '</div>'+
+  '</div>';
 
-  // Прогресс приёмки
-  html+=
-    '<div style="background:#fff;border-radius:12px;border:1px solid '+(allDone?'#27ae6044':'#dde6f0')+';padding:12px 14px;margin-bottom:14px">'+
-      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'+
-        '<span style="font-size:12px;font-weight:700;color:#1a2a3a">📥 На складе</span>'+
-        '<span style="font-size:12px;font-weight:700;color:'+(allDone?'#27ae60':'#e67e22')+'">'+onStock+' / '+total+'</span>'+
-      '</div>'+
-      '<div style="background:#e8eef5;border-radius:8px;height:10px;overflow:hidden">'+
-        '<div style="height:100%;border-radius:8px;background:'+(allDone?'#27ae60':'#e67e22')+';width:'+pct+'%;transition:width 0.4s"></div>'+
-      '</div>'+
-    '</div>';
+  // ── Чипы объектов (только если объектов больше одного) ──
+  if(visObjs.length>1){
+    html+='<div style="display:flex;gap:6px;overflow-x:auto;padding:2px 2px 8px;-webkit-overflow-scrolling:touch">';
+    visObjs.forEach(function(obj){
+      const on=!!sel[obj.id];
+      const oMats=matsOf(obj);
+      const oLeft=oMats.filter(function(m){return !arrived[m.id];}).length;
+      html+='<div data-a="supply-toggle" data-oid="'+obj.id+'" style="display:flex;align-items:center;gap:6px;padding:7px 11px;border-radius:20px;cursor:pointer;white-space:nowrap;flex-shrink:0;border:1.5px solid '+(on?"#e67e22":"#dde6f0")+';background:'+(on?"#fff7f0":"#fff")+'">'+
+        '<span style="font-size:14px">'+obj.icon+'</span>'+
+        '<span style="font-size:12px;font-weight:700;color:'+(on?"#e67e22":"#5a7a9a")+'">'+esc(obj.name)+'</span>'+
+        '<span style="font-size:10px;font-weight:800;border-radius:9px;padding:1px 7px;color:#fff;background:'+(oLeft>0?"#e67e22":"#27ae60")+'">'+(oLeft>0?oLeft:"✓")+'</span>'+
+      '</div>';
+    });
+    html+='</div>';
+    if(picked.length)html+='<div style="font-size:10px;color:#9aabbf;margin:0 4px 8px">Фильтр по объектам включён · нажмите ещё раз, чтобы снять</div>';
+  }
 
-  // Поиск
-  html+=
-    '<div style="position:relative;margin-bottom:12px">'+
-      '<span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:14px;pointer-events:none">🔍</span>'+
-      '<input id="supply-search-input" value="'+supplySearch.replace(/"/g,"&quot;")+'" placeholder="Поиск по материалам..." style="width:100%;padding:10px 12px 10px 38px;border-radius:10px;border:1.5px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;background:#fff">'+
-    '</div>';
+  if(!total){
+    return html+'<div style="text-align:center;padding:26px 16px;color:#9aabbf;font-size:13px;border:1px dashed #d0dae8;border-radius:12px">На выбранных объектах материалов пока нет.</div></div>';
+  }
 
+  // ── Фильтр «осталось / все» + поиск ──
+  const segBtn=function(v,label,active){
+    return '<div data-a="receive-filter" data-v="'+v+'" style="flex:1;text-align:center;padding:8px 6px;border-radius:9px;cursor:pointer;font-size:12px;font-weight:700;color:'+(active?"#fff":"#7a9aaa")+';background:'+(active?"#e67e22":"transparent")+'">'+label+'</div>';
+  };
+  html+='<div style="display:flex;gap:4px;background:#eef2f7;border-radius:11px;padding:3px;margin-bottom:8px">'+
+    segBtn("left","Осталось · "+left,receiveOnlyLeft)+
+    segBtn("all","Все · "+total,!receiveOnlyLeft)+
+  '</div>';
+  html+='<div style="position:relative;margin-bottom:10px">'+
+    '<span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:13px;pointer-events:none">🔍</span>'+
+    '<input id="supply-search-input" value="'+supplySearch.replace(/"/g,"&quot;")+'" placeholder="Поиск по материалам…" style="width:100%;padding:9px 12px 9px 36px;border-radius:10px;border:1.5px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;background:#fff">'+
+  '</div>';
+
+  // ── Список ──
   const q=(supplySearch||'').trim().toLowerCase();
   let shown=allMats;
-  if(q) shown=shown.filter(function(m){return m.n.toLowerCase().includes(q)||(m.wn||'').toLowerCase().includes(q)||(m.note||'').toLowerCase().includes(q);});
-  if(!shown.length){ return html+'<div style="text-align:center;color:#aaa;padding:24px">Ничего не найдено.</div></div>'; }
+  if(receiveOnlyLeft)shown=shown.filter(function(m){return !arrived[m.id];});
+  if(q)shown=shown.filter(function(m){return m.n.toLowerCase().includes(q)||(m.wn||'').toLowerCase().includes(q)||(m.note||'').toLowerCase().includes(q);});
 
+  if(allDone&&!q){
+    return html+'<div style="background:#eafaf0;border:1.5px solid #27ae6044;border-radius:14px;padding:26px 16px;text-align:center">'+
+      '<div style="font-size:38px;margin-bottom:6px">✅</div>'+
+      '<div style="font-size:14px;font-weight:700;color:#27ae60">Всё принято на склад</div>'+
+      '<div style="font-size:12px;color:#7a9aaa;margin-top:4px">Все '+total+' позиций отмечены. Переключитесь на «Все», чтобы проверить список.</div>'+
+    '</div></div>';
+  }
+  if(!shown.length){
+    return html+'<div style="text-align:center;color:#9aabbf;font-size:13px;padding:24px;border:1px dashed #d0dae8;border-radius:12px">'+(q?'Ничего не найдено.':'В этом режиме позиций нет.')+'</div></div>';
+  }
+
+  const multiMode=chosen.length>1;
   function recRow(m){
     const done=!!arrived[m.id];
     const bought=!!purchased[m.id];
     const mode=EXP_MODES.find(function(x){return x.k===(m.mode||"piece");})||EXP_MODES[0];
-    const qty=m.qty||1;
-    return '<div data-a="supply-arrived" data-mid="'+m.id+'" style="display:flex;align-items:flex-start;gap:10px;padding:11px 12px;border-radius:10px;margin-bottom:6px;background:'+(done?'#f0fdf4':'#f8fafc')+';border:1.5px solid '+(done?'#27ae60':'#dde6f0')+';cursor:pointer;transition:all 0.15s">'+
-      '<div style="flex-shrink:0;margin-top:1px"><div style="width:24px;height:24px;border-radius:7px;border:2px solid '+(done?'#27ae60':'#c8d8e8')+';background:'+(done?'#27ae60':'#fff')+';display:flex;align-items:center;justify-content:center">'+(done?'<span style="color:#fff;font-size:14px;font-weight:700;line-height:1">✓</span>':'')+'</div></div>'+
+    return '<div data-a="supply-arrived" data-mid="'+m.id+'" style="display:flex;align-items:flex-start;gap:9px;padding:9px 10px;border-radius:9px;margin-bottom:5px;cursor:pointer;transition:all 0.15s;background:'+(done?'#f0fdf4':'#f8fafc')+';border:1.5px solid '+(done?'#27ae60':'#dde6f0')+'">'+
+      '<div style="width:22px;height:22px;border-radius:7px;flex-shrink:0;margin-top:1px;display:flex;align-items:center;justify-content:center;border:2px solid '+(done?'#27ae60':'#c8d8e8')+';background:'+(done?'#27ae60':'#fff')+'">'+(done?'<span style="color:#fff;font-size:13px;font-weight:700;line-height:1">✓</span>':'')+'</div>'+
       '<div style="flex:1;min-width:0">'+
-        '<div style="font-size:13px;font-weight:600;color:'+(done?'#7a9aaa':'#1a2a3a')+';text-decoration:'+(done?'line-through':'none')+'">'+esc(m.n)+'</div>'+
+        '<div style="font-size:12.5px;font-weight:600;color:'+(done?'#7a9aaa':'#1a2a3a')+';'+(done?'text-decoration:line-through':'')+'">'+esc(m.n)+'</div>'+
         '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:3px;align-items:center">'+
+          '<span style="font-size:10px;font-weight:700;color:#5a7a9a;background:#eef2f7;border-radius:4px;padding:1px 6px">'+mode.icon+' '+numRu(m.qty||1)+' '+mode.unit+'</span>'+
           (multiMode?'<span style="font-size:10px;background:#e8f0fa;color:#2a5298;border-radius:4px;padding:1px 6px">'+m.objIcon+' '+esc(m.objName)+'</span>':'')+
-          '<span style="font-size:10px;color:#9aabbf">↳ '+esc(m.wn)+'</span>'+
-          '<span style="font-size:10px;font-weight:700;color:#5a7a9a;background:#eef2f7;border-radius:4px;padding:1px 6px">'+mode.icon+' '+numRu(qty)+' '+mode.unit+'</span>'+
+          '<span style="font-size:10px;color:#9aabbf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px">↳ '+esc(m.wn)+'</span>'+
           (bought?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#eafaf0;border-radius:5px;padding:1px 7px">🛒 куплено</span>':'')+
-          (done?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ На складе</span>':'')+
-          (m.note?'<span style="font-size:10px;color:#9aabbf;font-style:italic">'+esc(m.note)+'</span>':'')+
         '</div>'+
       '</div>'+
     '</div>';
   }
 
-  const stageNames=[...new Set(shown.map(function(m){return m.sn;}))];
+  // Этапы: считаем прогресс по ВСЕМ позициям этапа, а показываем отфильтрованные
+  const stageNames=shown.map(function(m){return m.sn;}).filter(function(n,i,a){return a.indexOf(n)===i;});
   stageNames.forEach(function(sn){
+    const stAllMats=allMats.filter(function(m){return m.sn===sn;});
     const sm=shown.filter(function(m){return m.sn===sn;});
     const sc=sm[0]?sm[0].sc:"#7f8c8d";
-    const stDone=sm.filter(function(m){return !!arrived[m.id];}).length;
-    const stAll=sm.length>0&&stDone===sm.length;
+    const stDone=stAllMats.filter(function(m){return !!arrived[m.id];}).length;
+    const stComplete=stAllMats.length>0&&stDone===stAllMats.length;
     const ids=sm.map(function(m){return m.id;}).join(',');
-    html+='<div style="background:#fff;border-radius:14px;border:1px solid '+(stAll?'#27ae60':sc+'44')+';margin-bottom:12px;overflow:hidden">'+
-      '<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:'+(stAll?'linear-gradient(135deg,#27ae6018,transparent)':'linear-gradient(135deg,'+sc+'15,transparent)')+';border-bottom:1px solid '+(stAll?'#27ae6022':sc+'22')+'">'+
-        '<div style="width:8px;height:8px;border-radius:50%;background:'+(stAll?'#27ae60':sc)+'"></div>'+
-        '<span style="font-size:13px;font-weight:700;color:#1a2a3a;flex:1">'+esc(sn)+'</span>'+
-        '<span style="font-size:11px;color:'+(stAll?'#27ae60':sc)+';font-weight:600;margin-right:6px">'+stDone+'/'+sm.length+'</span>'+
-        '<button data-a="supply-arrived" data-ids="'+ids+'" style="padding:4px 10px;border-radius:7px;cursor:pointer;font-size:11px;font-weight:700;border:1.5px solid '+(stAll?'#27ae60':'#c8d8e8')+';background:'+(stAll?'#27ae60':'#fff')+';color:'+(stAll?'#fff':'#7a9aaa')+';white-space:nowrap">'+(stAll?'✓ Всё на складе':'☑ Принять всё')+'</button>'+
+    html+='<div style="background:#fff;border-radius:14px;border:1px solid '+(stComplete?'#27ae6044':sc+'44')+';margin-bottom:10px;overflow:hidden">'+
+      '<div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid '+(stComplete?'#27ae6022':sc+'22')+';background:'+(stComplete?'linear-gradient(135deg,#27ae6015,transparent)':'linear-gradient(135deg,'+sc+'15,transparent)')+'">'+
+        '<div style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:'+(stComplete?'#27ae60':sc)+'"></div>'+
+        '<span style="font-size:12.5px;font-weight:700;color:#1a2a3a;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(sn)+'</span>'+
+        '<span style="font-size:11px;font-weight:700;margin-right:4px;color:'+(stComplete?'#27ae60':sc)+'">'+stDone+'/'+stAllMats.length+'</span>'+
+        '<button data-a="supply-arrived" data-ids="'+ids+'" style="padding:4px 10px;border-radius:7px;cursor:pointer;font-size:11px;font-weight:700;white-space:nowrap;border:1.5px solid '+(stComplete?'#27ae60':'#c8d8e8')+';background:'+(stComplete?'#27ae60':'#fff')+';color:'+(stComplete?'#fff':'#7a9aaa')+'">'+(stComplete?'✓ Всё':'☑ Принять всё')+'</button>'+
       '</div>'+
-      '<div style="padding:8px 12px">'+sm.map(recRow).join("")+'</div>'+
+      '<div style="padding:8px 10px">'+sm.map(recRow).join("")+'</div>'+
     '</div>';
   });
-  return html+'</div>';
+  return html+'<div style="height:20px"></div></div>';
 }
 
 function tSupplySelect(sel){
@@ -12791,6 +12788,7 @@ function bind(){
       window._supplySelected[el.dataset.oid]=!window._supplySelected[el.dataset.oid];
       render();
     };}
+    else if(a==="receive-filter"){el.onclick=()=>{receiveOnlyLeft=el.dataset.v==="left";render();};}
     else if(a==="supply-view"){el.onclick=()=>{window._supplyViewing=true;render();};}
     else if(a==="supply-back"){el.onclick=()=>{window._supplyViewing=false;supplySearch='';supplyStoreFilter='';supplyHideDone=false;render();};}
     else if(a==="supply-store-filter"){el.onclick=()=>{supplyStoreFilter=supplyStoreFilter===el.dataset.store?'':el.dataset.store;render();};}
