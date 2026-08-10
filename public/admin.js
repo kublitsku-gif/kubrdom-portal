@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-10.4";
+const APP_BUILD = "2026-08-10.5";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -3799,6 +3799,14 @@ function render(){
   // Поиск материала в сборщике шаблона: держим фокус, чтобы не закрывалась клавиатура
   const _tps=document.getElementById("tpl-pick-search");
   if(_tps){ _tps.oninput=function(){tplPickSearch=this.value;render();}; _tps.focus(); const _L=_tps.value.length; try{_tps.setSelectionRange(_L,_L);}catch(e){} }
+  // Поиск по базе материалов в снабжении — то же самое: без возврата фокуса
+  // клавиатура на телефоне закрывается после каждой буквы.
+  const _sas=document.getElementById("sao-search");
+  if(_sas){ _sas.oninput=function(){supplyAddSearch=this.value;render();}; _sas.focus(); const _L2=_sas.value.length; try{_sas.setSelectionRange(_L2,_L2);}catch(e){} }
+  // Выбранный этап держим в состоянии: форма перерисовывается после каждой
+  // добавленной позиции, и без этого select сбрасывался бы на первый пункт.
+  const _sat=document.getElementById("sao-target");
+  if(_sat){ if(supplyAddTarget)_sat.value=supplyAddTarget; _sat.onchange=function(){supplyAddTarget=this.value;}; }
   if(window._bindPhoneInputs)window._bindPhoneInputs();
 }
 
@@ -9102,6 +9110,51 @@ function tSupplySelect(sel){
 
 let supplyEditMid=null;   // id материала, открытого на редактирование в снабжении
 let supplyAddOpen=false;  // открыта ли форма добавления материала в снабжении
+let supplyAddTarget="";   // "objId|stageId" — этап, в который падает материал
+let supplyAddSearch="";   // поиск по базе материалов в форме добавления
+let supplyAddDone=[];     // что добавлено за текущее открытие формы (подтверждение снабженцу)
+
+// Снабжение — источник правды по материалам: снабженец берёт позицию из базы
+// («База данных → Материалы») и она сразу видна в объекте и у мастера в приёмке,
+// потому что все три экрана читают один и тот же objects[].stages[].works[].mats.
+//
+// Снабженец не обязан знать структуру работ объекта, поэтому выбирает только
+// объект и этап, а материал падает в служебную работу этапа — она заводится
+// при первом добавлении и дальше пополняется.
+const SUPPLY_WORK_NAME="📦 Докупка (снабжение)";
+
+// Материал из каталога → в «Докупку» этапа. Повторное добавление той же позиции
+// увеличивает количество, а не плодит строки-дубли. Возвращает false, если цель
+// или позиция не найдены (форма тогда ничего не делает).
+function supplyAddFromCatalog(oid,sid,pid){
+  const p=expProducts.find(function(x){return x.id===pid;});
+  if(!p||!oid||!sid)return false;
+  let ok=false;
+  objects=objects.map(function(o){
+    if(o.id!==oid)return o;
+    return Object.assign({},o,{stages:(o.stages||[]).map(function(s){
+      if(s.id!==sid)return s;
+      const works=s.works||[];
+      const i=works.findIndex(function(w){return w.n===SUPPLY_WORK_NAME;});
+      const work=i>=0?works[i]:{id:gid(),estId:"",n:SUPPLY_WORK_NAME,cost:0,labor:0,note:"",mats:[],timeLogs:[]};
+      const mats=work.mats||[];
+      const ex=mats.find(function(m){return m.n===p.name;});
+      const nextMats=ex
+        ? mats.map(function(m){return m===ex?Object.assign({},m,{qty:(Number(m.qty)||0)+1}):m;})
+        : mats.concat([{
+            id:gid(), n:p.name, store:p.store||"", url:p.url||"", note:"",
+            cost:Number(p.unitCost)||0, qty:1, mode:p.mode||"piece",
+            unitCost:Number(p.unitCost)||0, packBase:p.packBase, packPer:p.packPer,
+            lenPer:p.lenPer, sheetM2:p.sheetM2,
+          }]);
+      const nextWork=Object.assign({},work,{mats:nextMats});
+      nextWork.cost=wMatTotal(nextWork);
+      ok=true;
+      return Object.assign({},s,{works:i>=0?works.map(function(w,k){return k===i?nextWork:w;}):works.concat([nextWork])});
+    })});
+  });
+  return ok;
+}
 
 // ТЗ на закупку для конкретного магазина — печатная HTML-страница (Сохранить как PDF / отправить).
 function buildSupplyTZ(store){
@@ -9588,37 +9641,53 @@ function tSupplyDetail(sel, sortBy){
     }
   }
 
-  // Модалка добавления материала: один список «Объект — Работа» → пишем в выбранную работу
+  // Модалка добавления материала: выбор «объект · этап» + позиция из базы материалов.
+  // Ручной ввод убран намеренно — иначе в объектах заводятся материалы, которых нет
+  // в каталоге: без фасовки, без ссылки и мимо обновления цен.
   if(supplyAddOpen){
     const inp="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box";
+    // Архивные объекты в цели не предлагаем: закупка по закрытому договору закрыта.
+    const addObjs=(targetObjs.length?targetObjs:objects).filter(function(o){return !objDoneLabel(o.id);});
     let tgtOpts="";
-    (targetObjs.length?targetObjs:objects).forEach(function(o){
+    addObjs.forEach(function(o){
       (o.stages||[]).forEach(function(s){
-        (s.works||[]).forEach(function(w){
-          tgtOpts+='<option value="'+o.id+'|'+w.id+'">'+(o.icon||"")+' '+esc(o.name)+' — '+esc(w.n)+'</option>';
-        });
+        const v=o.id+"|"+s.id;
+        tgtOpts+='<option value="'+v+'"'+(supplyAddTarget===v?' selected':'')+'>'+(o.icon||"")+' '+esc(o.name)+' — '+esc(s.n)+'</option>';
       });
     });
-    const opts=EXP_MODES.map(function(o){return '<option value="'+o.k+'">'+o.icon+' '+o.label+'</option>';}).join("");
-    html+='<div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:flex-start;justify-content:center;padding:50px 16px;z-index:300">'+
-      '<div style="background:#fff;border-radius:16px;width:100%;max-width:420px;padding:20px">'+
-        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">'+
-          '<div style="font-size:15px;font-weight:700;color:#0d1b2e">➕ Новый материал</div>'+
+    const q=(supplyAddSearch||"").trim().toLowerCase();
+    const list=q?expProducts.filter(function(p){
+      return (p.name||"").toLowerCase().indexOf(q)>=0||(p.store||"").toLowerCase().indexOf(q)>=0;
+    }):expProducts;
+    html+='<div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:flex-start;justify-content:center;padding:40px 14px;z-index:300">'+
+      '<div style="background:#fff;border-radius:16px;width:100%;max-width:460px;max-height:82vh;display:flex;flex-direction:column;padding:18px">'+
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'+
+          '<div style="font-size:15px;font-weight:700;color:#0d1b2e">➕ Материал из базы</div>'+
           '<button data-a="supply-add-close" style="width:30px;height:30px;border-radius:50%;background:#f0f4f8;border:none;cursor:pointer;font-size:16px">✕</button>'+
         '</div>'+
-        '<div style="font-size:11px;color:#7a9aaa;font-weight:700;margin-bottom:4px">КУДА (объект · работа)</div>'+
-        '<select id="sao-target" style="'+inp+';margin-bottom:10px">'+tgtOpts+'</select>'+
-        '<input id="sao-n" placeholder="Название материала" style="'+inp+';margin-bottom:8px">'+
-        '<div style="display:flex;gap:8px;margin-bottom:8px">'+
-          '<select id="sao-mode" style="'+inp+';flex:1">'+opts+'</select>'+
-          '<input id="sao-qty" type="number" step="any" value="1" placeholder="Кол-во" style="'+inp+';flex:1">'+
-        '</div>'+
-        '<div style="display:flex;gap:8px;margin-bottom:8px">'+
-          '<input id="sao-cost" type="number" placeholder="Цена ₽/ед" style="'+inp+';flex:1">'+
-          '<input id="sao-store" placeholder="Магазин" style="'+inp+';flex:1">'+
-        '</div>'+
-        '<input id="sao-note" placeholder="Заметка" style="'+inp+';margin-bottom:12px">'+
-        '<button data-a="supply-add-save" style="width:100%;padding:10px;background:#27ae60;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">Добавить в объект</button>'+
+        (tgtOpts
+          ? '<div style="font-size:11px;color:#7a9aaa;font-weight:700;margin-bottom:4px">КУДА (объект · этап)</div>'+
+            '<select id="sao-target" style="'+inp+';margin-bottom:6px">'+tgtOpts+'</select>'+
+            '<div style="font-size:10px;color:#a0b4c8;margin-bottom:10px">Материал попадёт в работу «'+esc(SUPPLY_WORK_NAME)+'» этого этапа и сразу появится в объекте и в приёмке у мастера.</div>'+
+            '<input id="sao-search" value="'+(supplyAddSearch||"").replace(/"/g,"&quot;")+'" placeholder="🔍 Поиск по базе материалов…" style="'+inp+';margin-bottom:10px">'+
+            '<div style="flex:1;min-height:0;overflow:auto;margin:0 -4px;padding:0 4px">'+
+              (list.length?list.map(function(p){
+                const mo=EXP_MODES.find(function(x){return x.k===(p.mode||"piece");})||EXP_MODES[0];
+                const conv=expConv(p);
+                return '<div data-a="supply-pick-mat" data-pid="'+p.id+'" style="display:flex;align-items:center;gap:9px;padding:9px 10px;border:1px solid #e6ecf3;border-radius:11px;margin-bottom:7px;cursor:pointer">'+
+                  '<div style="flex:1;min-width:0">'+
+                    '<div style="font-size:12.5px;font-weight:700;color:#0d1b2e">'+esc(p.name)+'</div>'+
+                    '<div style="font-size:10px;color:#7a9aaa;margin-top:2px">'+(p.store?esc(p.store)+' · ':'')+mo.icon+' '+mo.label+'</div>'+
+                    (conv?'<div style="font-size:10px;color:#7a9aaa;margin-top:2px">'+conv.footer+'</div>':'')+
+                  '</div>'+
+                  '<div style="font-size:13px;font-weight:800;color:#16a085;white-space:nowrap">'+(Number(p.unitCost)||0).toLocaleString("ru-RU")+' ₽<span style="font-size:10px;color:#9aabbf;font-weight:600">/'+mo.unit+'</span></div>'+
+                '</div>';
+              }).join(""):'<div style="text-align:center;color:#aaa;font-size:13px;padding:20px">Ничего не найдено.<br><span style="font-size:11px">Заведите позицию в «База данных → Материалы».</span></div>')+
+            '</div>'+
+            (supplyAddDone.length
+              ? '<div style="margin-top:10px;padding:8px 10px;background:#eafaf1;border:1px solid #27ae6033;border-radius:9px;font-size:11px;color:#27ae60;font-weight:700">✓ Добавлено: '+supplyAddDone.length+' — '+esc(supplyAddDone.slice(-3).join(", "))+(supplyAddDone.length>3?' …':'')+'</div>'
+              : '<div style="margin-top:10px;font-size:10px;color:#a0b4c8;text-align:center">Тап по позиции добавляет 1 шт · повторный тап увеличивает количество</div>')
+          : '<div style="text-align:center;color:#9aabbf;font-size:13px;padding:24px 10px">Нет активных объектов, куда добавить материал.</div>')+
       '</div>'+
     '</div>';
   }
@@ -13016,23 +13085,18 @@ function bind(){
       objects=objects.map(o=>({...o,stages:(o.stages||[]).map(s=>({...s,works:(s.works||[]).map(w=>({...w,mats:(w.mats||[]).map(m=>m.id===mid?{...m,...patch}:m)}))}))}));
       supplyEditMid=null; render();
     };}
-    else if(a==="supply-add-open"){el.onclick=()=>{supplyAddOpen=true;render();};}
-    else if(a==="supply-add-close"){el.onclick=()=>{supplyAddOpen=false;render();};}
-    else if(a==="supply-add-save"){el.onclick=()=>{
+    else if(a==="supply-add-open"){el.onclick=()=>{supplyAddOpen=true;supplyAddSearch="";supplyAddDone=[];render();};}
+    else if(a==="supply-add-close"){el.onclick=()=>{supplyAddOpen=false;supplyAddSearch="";supplyAddDone=[];render();};}
+    // Форма не закрывается после добавления: снабженец обычно заносит несколько
+    // позиций подряд. Выбранный этап запоминаем, чтобы не выставлять его заново.
+    else if(a==="supply-pick-mat"){el.onclick=()=>{
       const tgt=(document.getElementById("sao-target")?.value||"").split("|");
-      const oid=tgt[0], wid=tgt[1];
-      const n=(document.getElementById("sao-n")?.value||"").trim();
-      if(!oid||!wid||!n)return;
-      const newMat={
-        id:gid(), n:n,
-        mode:document.getElementById("sao-mode")?.value||"piece",
-        qty:parseFloat(document.getElementById("sao-qty")?.value)||1,
-        cost:parseInt(document.getElementById("sao-cost")?.value)||0,
-        store:(document.getElementById("sao-store")?.value||"").trim(),
-        note:(document.getElementById("sao-note")?.value||"").trim(),
-      };
-      objects=objects.map(o=>o.id!==oid?o:{...o,stages:o.stages.map(s=>({...s,works:s.works.map(w=>w.id!==wid?w:{...w,mats:[...(w.mats||[]),newMat]})}))});
-      supplyAddOpen=false; render();
+      const oid=tgt[0], sid=tgt[1];
+      if(!supplyAddFromCatalog(oid,sid,el.dataset.pid))return;
+      supplyAddTarget=oid+"|"+sid;
+      const p=expProducts.find(x=>x.id===el.dataset.pid);
+      supplyAddDone=supplyAddDone.concat([p?p.name:""]);
+      fl();
     };}
     else if(a==="show-nu"){el.onclick=()=>{showNU=true;nu={name:"",av:"👷",c:"#e67e22",roles:[],objs:[]};render();};}
     else if(a==="cancel-nu"){el.onclick=()=>{showNU=false;render();};}
