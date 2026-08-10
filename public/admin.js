@@ -4273,6 +4273,66 @@ ${(()=>{
   '</div>';
 })()}
 
+<!-- Доп работы (пожелания клиента) — чек-лист, отмечает бригадир прямо на объекте.
+     Источник правды — c.extraWorksPlan в договорах объекта (планируются во вкладке «Договора»). -->
+${(()=>{
+  if(!currentUser)return "";
+  const canManageAll=currentUser.roles.some(r=>["admin","financier","prod_head"].includes(r));
+  const isProdUser=currentUser.roles.some(r=>["brigadier","worker"].includes(r));
+  if(!canManageAll&&!isProdUser)return "";
+  const objCts=contractDocs.filter(d=>d.objId===obj.id);
+  const isResponsible=objCts.some(c=>(c.responsible||[]).includes(currentUser.id));
+  if(!canManageAll&&!isResponsible)return "";
+
+  // Пункты со ВСЕХ договоров объекта — бригадиру важен объект, а не в каком договоре пожелание записано
+  const rows=[];
+  objCts.forEach(c=>(c.extraWorksPlan||[]).forEach(w=>rows.push({c:c,w:w})));
+  const total=rows.length;
+  const doneCount=rows.filter(r=>r.w.done).length;
+  const sumAll=rows.reduce((a,r)=>a+(r.w.amount||0),0);
+  const sumDone=rows.filter(r=>r.w.done).reduce((a,r)=>a+(r.w.amount||0),0);
+  const allDone=total>0&&doneCount===total;
+  const accent=allDone?"#27ae60":"#16a085";
+
+  let out='<div style="background:#fff;border-radius:14px;border:1.5px solid #16a08533;padding:14px 16px;margin-bottom:14px">';
+  out+='<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px">'+
+    '<div style="font-size:11px;color:#16a085;font-weight:700;letter-spacing:1px">🛠 ДОП РАБОТЫ (ПОЖЕЛАНИЯ КЛИЕНТА)</div>'+
+    (total?'<div style="font-size:12px;font-weight:800;color:'+accent+'">'+doneCount+' / '+total+'</div>':'')+
+  '</div>';
+  if(!total){
+    out+='<div style="text-align:center;padding:14px;color:#9aabbf;font-size:11px;border:1px dashed #d0dae8;border-radius:10px">Пожеланий клиента пока нет. Добавляются в договоре — вкладка «📄 Договора» → «План доп работ».</div>';
+    out+='</div>';
+    return out;
+  }
+  const pct=Math.round(doneCount/total*100);
+  out+='<div style="background:#e8eef5;border-radius:6px;height:6px;overflow:hidden;margin-bottom:10px">'+
+    '<div style="height:100%;border-radius:6px;background:'+accent+';width:'+pct+'%;transition:width 0.3s"></div>'+
+  '</div>';
+  rows.forEach(r=>{
+    const w=r.w, done=!!w.done;
+    const by=w.doneBy?users.find(u=>u.id===w.doneBy):null;
+    const doneDate=w.doneAt?String(w.doneAt).slice(0,10).split("-").reverse().join("."):"";
+    const meta=[esc(r.c.name||"")].concat(done&&by?["✓ "+esc(by.name)]:[]).concat(done&&doneDate?[doneDate]:[]).join(" · ");
+    out+='<div data-a="ew-plan-done" data-cid="'+r.c.id+'" data-wid="'+esc(w.id||"")+'" '+
+      'style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;margin-bottom:6px;cursor:pointer;user-select:none;'+
+      'border:1px solid '+(done?"#27ae6044":"#16a08522")+';background:'+(done?"#27ae6008":"#16a08508")+'">'+
+      '<div style="width:24px;height:24px;border-radius:7px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;color:#fff;'+
+        'background:'+(done?"#27ae60":"#fff")+';border:2px solid '+(done?"#27ae60":"#c8d8e8")+'">'+(done?"✓":"")+'</div>'+
+      '<div style="flex:1;min-width:0">'+
+        '<div style="font-size:12.5px;font-weight:700;color:'+(done?"#7a9aaa":"#1a2a3a")+';'+(done?"text-decoration:line-through":"")+'">'+esc(w.title||"Доп работа")+'</div>'+
+        '<div style="font-size:9px;color:#9aabbf;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+meta+'</div>'+
+      '</div>'+
+      (w.amount?'<div style="font-size:12px;font-weight:700;color:#16a085;white-space:nowrap;flex-shrink:0">'+w.amount.toLocaleString("ru-RU")+' ₽</div>':'')+
+    '</div>';
+  });
+  out+='<div style="display:flex;justify-content:space-between;font-size:10px;color:#9aabbf;margin-top:8px;padding-top:8px;border-top:1px solid #f0f3f7">'+
+    '<span>Отмечено на <b style="color:#27ae60">'+sumDone.toLocaleString("ru-RU")+' ₽</b></span>'+
+    '<span>Всего <b style="color:#1a2a3a">'+sumAll.toLocaleString("ru-RU")+' ₽</b></span>'+
+  '</div>';
+  out+='</div>';
+  return out;
+})()}
+
 <!-- Отчёт дня (только для производства — бригадир/мастер/нач.пр./админ) -->
 ${(()=>{
   if(!currentUser)return "";
@@ -6643,9 +6703,15 @@ function tContractDetail(cid){
     // List of planned items
     if(planItems.length){
       planItems.forEach(function(it){
-        html+='<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#16a08508;border-radius:8px;margin-bottom:4px;border:1px solid #16a08522">'+
-          '<span style="font-size:14px">🛠</span>'+
-          '<div style="flex:1;min-width:0"><div style="font-size:11px;font-weight:700;color:#1a2a3a">'+esc(it.title||"Доп работа")+'</div></div>'+
+        // Отметка «сделано» ставится бригадиром во вкладке «Объекты» — здесь только показываем статус
+        const doneBy=it.done&&it.doneBy?users.find(function(u){return u.id===it.doneBy;}):null;
+        const doneDate=it.done&&it.doneAt?String(it.doneAt).slice(0,10).split("-").reverse().join("."):"";
+        html+='<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:'+(it.done?"#27ae6008":"#16a08508")+';border-radius:8px;margin-bottom:4px;border:1px solid '+(it.done?"#27ae6044":"#16a08522")+'">'+
+          '<span style="font-size:14px">'+(it.done?"✅":"🛠")+'</span>'+
+          '<div style="flex:1;min-width:0">'+
+            '<div style="font-size:11px;font-weight:700;color:'+(it.done?"#7a9aaa":"#1a2a3a")+';'+(it.done?"text-decoration:line-through":"")+'">'+esc(it.title||"Доп работа")+'</div>'+
+            (it.done?'<div style="font-size:9px;color:#27ae60;margin-top:1px">Выполнено'+(doneBy?" · "+esc(doneBy.name):"")+(doneDate?" · "+doneDate:"")+'</div>':'')+
+          '</div>'+
           '<div style="font-size:12px;font-weight:700;color:#16a085;white-space:nowrap">'+(it.amount||0).toLocaleString("ru-RU")+' ₽</div>'+
           '<button data-a="ew-plan-del" data-cid="'+cid+'" data-wid="'+it.id+'" style="width:28px;height:28px;background:#e74c3c12;border:1.5px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:13px;font-weight:700;line-height:1;flex-shrink:0">✕</button>'+
         '</div>';
@@ -7758,6 +7824,7 @@ function tFinanceList(){
         // Extra works block — separate (always show for brigadier if there are plans or txns)
         const cExtraPlan=c.extraWorksPlan||[];
         const cExtraPlanTotal=cExtraPlan.reduce(function(a,w){return a+(w.amount||0);},0);
+        const cExtraDone=cExtraPlan.filter(function(w){return w.done;}).length;
         // Always show ДОП РАБОТЫ for brigadier on contracts where they're responsible
         if(isBrigOnly){
           const extraRemain=Math.max(0,cExtraPlanTotal-myExtraTotal);
@@ -7769,16 +7836,13 @@ function tFinanceList(){
               '<div><div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.3px">ФАКТ</div><div style="font-size:14px;font-weight:700;color:#16a085;margin-top:2px">'+myExtraTotal.toLocaleString("ru-RU")+'</div></div>'+
               '<div><div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.3px">ОСТАЛОСЬ</div><div style="font-size:14px;font-weight:700;color:'+(extraRemain>0?"#e67e22":"#27ae60")+';margin-top:2px">'+(extraRemain>0?extraRemain.toLocaleString("ru-RU"):"✓")+'</div></div>'+
             '</div>'+
-            // Planned items
+            // Сам перечень пожеланий с галочками живёт во вкладке «Объекты» — здесь только счётчик
             (cExtraPlan.length?
-              '<div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.5px;margin:8px 0 4px">ЗАПЛАНИРОВАНО</div>'+
-              cExtraPlan.map(function(it){
-                return '<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#16a08508;border-radius:8px;margin-bottom:4px;border:1px solid #16a08522;font-size:11px">'+
-                  '<span style="font-size:13px">🛠</span>'+
-                  '<div style="flex:1"><div style="font-weight:700;color:#1a2a3a">'+(it.title||"Доп работа")+'</div></div>'+
-                  '<div style="font-weight:700;color:#16a085">'+(it.amount||0).toLocaleString("ru-RU")+' ₽</div>'+
-                '</div>';
-              }).join(""):
+              '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#16a08508;border:1px solid #16a08522;border-radius:8px;margin-bottom:6px;font-size:11px">'+
+                '<span style="font-size:13px">🛠</span>'+
+                '<div style="flex:1;color:#5a7a9a">Пожеланий клиента: <b style="color:#1a2a3a">'+cExtraPlan.length+'</b> · отмечено <b style="color:#27ae60">'+cExtraDone+'</b></div>'+
+                '<span style="font-size:9px;color:#9aabbf;white-space:nowrap">список — во «Объектах»</span>'+
+              '</div>':
               '<div style="font-size:11px;color:#9aabbf;text-align:center;padding:10px;border:1px dashed #d0dae8;border-radius:8px;margin-bottom:6px">Доп работ пока не запланировано</div>'
             )+
             // Paid transactions
@@ -12827,6 +12891,24 @@ function bind(){
         if(c.id!==cid)return c;
         const newItem={id:gid(),title,amount};
         return Object.assign({},c,{extraWorksPlan:(c.extraWorksPlan||[]).concat([newItem])});
+      });
+      fl();
+    };}
+    // Галочка «сделано» по пожеланию клиента — ставит бригадир на карточке объекта
+    else if(a==="ew-plan-done"){el.onclick=function(){
+      const cid=el.dataset.cid, wid=el.dataset.wid;
+      if(!wid)return;
+      contractDocs=contractDocs.map(function(c){
+        if(c.id!==cid)return c;
+        return Object.assign({},c,{extraWorksPlan:(c.extraWorksPlan||[]).map(function(w){
+          if(w.id!==wid)return w;
+          const nowDone=!w.done;
+          return Object.assign({},w,{
+            done:nowDone,
+            doneBy:nowDone?(currentUser?currentUser.id:null):null,
+            doneAt:nowDone?new Date().toISOString():null
+          });
+        })});
       });
       fl();
     };}
