@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-10.6";
+const APP_BUILD = "2026-08-10.7";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -3506,8 +3506,11 @@ function tMyDay(){
   const rowFn=function(s,w){
     const h=myDayHours[w.id]||0;
     const done=!!w.done;
-    return '<div style="display:flex;align-items:center;gap:7px;background:'+(h>0?"#f0faf6":"#fff")+';border:1px solid '+(h>0?"#16a08555":"#dde6f0")+';border-radius:12px;padding:7px 9px;margin-bottom:6px'+(done&&!h?';opacity:0.6':'')+'">'+
-      '<div data-a="work-sheet-open" data-oid="'+obj.id+'" data-sid="'+s.id+'" data-wid="'+w.id+'" style="flex:1;min-width:0;font-size:12.5px;font-weight:600;color:#1a2a3a;line-height:1.25;cursor:pointer">'+esc(w.n)+(done?' <span style="color:#27ae60">✓</span>':'')+'</div>'+
+    // Докупка снабженца — оранжевым: в неё не списывают часы, это только материалы.
+    // Набранные часы (зелёный) перебивают подсветку: текущее действие важнее.
+    const sup=w.n===SUPPLY_WORK_NAME;
+    return '<div style="display:flex;align-items:center;gap:7px;background:'+(h>0?"#f0faf6":sup?"#fff8f1":"#fff")+';border:1px solid '+(h>0?"#16a08555":sup?"#e67e2255":"#dde6f0")+';border-radius:12px;padding:7px 9px;margin-bottom:6px'+(done&&!h?';opacity:0.6':'')+'">'+
+      '<div data-a="work-sheet-open" data-oid="'+obj.id+'" data-sid="'+s.id+'" data-wid="'+w.id+'" style="flex:1;min-width:0;font-size:12.5px;font-weight:'+(sup?700:600)+';color:'+(sup?"#e67e22":"#1a2a3a")+';line-height:1.25;cursor:pointer">'+esc(w.n)+(done?' <span style="color:#27ae60">✓</span>':'')+'</div>'+
       '<label data-a="myday-photo-label" data-inp="mdt-photo-inp-'+w.id+'" data-oid="'+obj.id+'" data-sid="'+s.id+'" data-wid="'+w.id+'" style="width:40px;height:42px;display:flex;align-items:center;justify-content:center;border:1.5px dashed #b9cbdb;border-radius:11px;background:#f7fafc;cursor:pointer;font-size:15px;flex-shrink:0">📷<input id="mdt-photo-inp-'+w.id+'" type="file" accept="image/*" multiple style="display:none"></label>'+
       '<button data-a="myday-dec" data-wid="'+w.id+'" style="width:42px;height:42px;border-radius:11px;border:none;background:#eef3f8;cursor:pointer;font-size:19px;font-weight:700;color:'+(h>0?"#16a085":"#b8c6d4")+';flex-shrink:0">−</button>'+
       '<b style="min-width:34px;text-align:center;font-size:15px;color:'+(h>0?"#16a085":"#c0d0e0")+';flex-shrink:0">'+_mdH(h)+'</b>'+
@@ -3570,9 +3573,12 @@ function tSheetList(){
       const logs=w.timeLogs||[];
       const th=logs.reduce(function(a,l){return a+(l.hours||0);},0);
       const ph=(w.photos||[]).length;
-      html+='<button data-a="work-sheet-open" data-oid="'+obj.id+'" data-sid="'+s.id+'" data-wid="'+w.id+'" style="display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:'+(w.done?"#f4fbf7":"#fff")+';border:1px solid '+(w.done?"#27ae6044":"#dde6f0")+';border-radius:14px;padding:10px 11px;margin-bottom:6px;cursor:pointer">'+
-        '<span style="width:34px;height:34px;border-radius:10px;background:'+(w.done?"#27ae60":"#eef3f8")+';display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;color:#fff">'+(w.done?"✓":"🔨")+'</span>'+
-        '<span style="flex:1;min-width:0"><span style="display:block;font-size:13.5px;font-weight:600;color:#1a2a3a;line-height:1.3">'+esc(w.n)+'</span>'+
+      // Та же подсветка, что в «Моём дне» и в карточке объекта: докупка снабженца —
+      // не работа, а материалы, добавленные по ходу стройки.
+      const sup=w.n===SUPPLY_WORK_NAME;
+      html+='<button data-a="work-sheet-open" data-oid="'+obj.id+'" data-sid="'+s.id+'" data-wid="'+w.id+'" style="display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:'+(w.done?"#f4fbf7":sup?"#fff8f1":"#fff")+';border:1px solid '+(w.done?"#27ae6044":sup?"#e67e2255":"#dde6f0")+';border-radius:14px;padding:10px 11px;margin-bottom:6px;cursor:pointer">'+
+        '<span style="width:34px;height:34px;border-radius:10px;background:'+(w.done?"#27ae60":sup?"#e67e22":"#eef3f8")+';display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;color:#fff">'+(w.done?"✓":sup?"📦":"🔨")+'</span>'+
+        '<span style="flex:1;min-width:0"><span style="display:block;font-size:13.5px;font-weight:'+(sup?700:600)+';color:'+(sup?"#e67e22":"#1a2a3a")+';line-height:1.3">'+esc(w.n)+'</span>'+
         '<span style="display:block;font-size:11px;color:#9aabbf;margin-top:1px">'+(th?'⏱ '+_mdH(th)+' ч ('+logs.length+')':'⏱ —')+' · 📷 '+(ph||'—')+'</span></span>'+
         '<span style="color:#c0d0e0;font-size:17px;flex-shrink:0">›</span></button>';
     });
@@ -9128,6 +9134,36 @@ let supplyAddDone=[];     // что добавлено за текущее от�
 // при первом добавлении и дальше пополняется.
 const SUPPLY_WORK_NAME="📦 Докупка (снабжение)";
 
+// Материал живёт в objects[].stages[].works[].mats — ищем по всему дереву.
+function supplyFindMat(mid){
+  let found=null;
+  objects.forEach(function(o){(o.stages||[]).forEach(function(s){(s.works||[]).forEach(function(w){
+    (w.mats||[]).forEach(function(m){ if(m.id===mid)found=m; });
+  });});});
+  return found;
+}
+
+// Удалить материал из закупки. Кроме самой строки чистим отметки «куплено» и
+// «принято на склад»: иначе в purchased/arrived копятся ключи несуществующих
+// материалов. Стоимость работы пересчитываем — во всех работах портала
+// w.cost равен сумме материалов (так их собирает и _tplEstWork).
+function supplyRemoveMat(mid){
+  if(!mid||!supplyFindMat(mid))return false;
+  objects=objects.map(function(o){
+    return Object.assign({},o,{stages:(o.stages||[]).map(function(s){
+      return Object.assign({},s,{works:(s.works||[]).map(function(w){
+        if(!(w.mats||[]).some(function(m){return m.id===mid;}))return w;
+        const nw=Object.assign({},w,{mats:(w.mats||[]).filter(function(m){return m.id!==mid;})});
+        nw.cost=wMatTotal(nw);
+        return nw;
+      })});
+    })});
+  });
+  if(purchased[mid]){const p=Object.assign({},purchased);delete p[mid];purchased=p;}
+  if(arrived[mid]){const a=Object.assign({},arrived);delete a[mid];arrived=a;}
+  return true;
+}
+
 // Материал из каталога → в «Докупку» этапа. Повторное добавление той же позиции
 // увеличивает количество, а не плодит строки-дубли. Возвращает false, если цель
 // или позиция не найдены (форма тогда ничего не делает).
@@ -9641,6 +9677,10 @@ function tSupplyDetail(sel, sortBy){
           '</div>'+
           '<input id="sem-note" value="'+(em.note||"").replace(/"/g,"&quot;")+'" placeholder="Заметка" style="'+inp+';margin-bottom:12px">'+
           '<button data-a="supply-mat-save" style="width:100%;padding:10px;background:#2980b9;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">Сохранить</button>'+
+          // Удаление — отдельной строкой и приглушённое: рядом с «Сохранить» его
+          // задевают пальцем, а материал уносит и отметки «куплено»/«на складе».
+          '<button data-a="supply-mat-del" data-mid="'+em.id+'" style="width:100%;margin-top:8px;padding:9px;background:#fff;border:1px solid #e74c3c55;border-radius:9px;cursor:pointer;color:#e74c3c;font-size:12.5px;font-weight:700">🗑 Удалить из закупки</button>'+
+          '<div style="font-size:10px;color:#a0b4c8;text-align:center;margin-top:6px">Материал исчезнет из объекта и из приёмки у мастера</div>'+
         '</div>'+
       '</div>';
     }
@@ -13089,6 +13129,16 @@ function bind(){
       };
       objects=objects.map(o=>({...o,stages:(o.stages||[]).map(s=>({...s,works:(s.works||[]).map(w=>({...w,mats:(w.mats||[]).map(m=>m.id===mid?{...m,...patch}:m)}))}))}));
       supplyEditMid=null; render();
+    };}
+    // Удаление материала из закупки. Помимо самой строки чистим отметки
+    // «куплено» и «принято на склад» — иначе в purchased/arrived копятся ключи
+    // несуществующих материалов, и они попадают в счётчики при совпадении id.
+    else if(a==="supply-mat-del"){el.onclick=()=>{
+      const mid=el.dataset.mid; if(!mid)return;
+      const mat=supplyFindMat(mid); if(!mat)return;
+      if(!confirm("Удалить «"+(mat.n||"материал")+"» из закупки?\n\nОн исчезнет из объекта и из приёмки у мастера. Это действие необратимо."))return;
+      if(!supplyRemoveMat(mid))return;
+      supplyEditMid=null; fl();
     };}
     else if(a==="supply-add-open"){el.onclick=()=>{supplyAddOpen=true;supplyAddSearch="";supplyAddDone=[];render();};}
     else if(a==="supply-add-close"){el.onclick=()=>{supplyAddOpen=false;supplyAddSearch="";supplyAddDone=[];render();};}
