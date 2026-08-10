@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-10.5";
+const APP_BUILD = "2026-08-10.6";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4672,12 +4672,17 @@ ${obj.stages.map(s=>{
       // Block check: must have time log first (except admin/fin can always toggle)
       const canCheck=canComplete&&(isAdminOrFin||hasTimeLog||isDone);
       const canSheet=canComplete||isAdminOrFin; // тап по названию открывает шторку быстрой записи
-      let h=`<div style="background:${isDone?'#27ae6008':'#f8fafc'};border:1px solid ${isDone?'#27ae6055':'#dde6f0'};border-radius:8px;margin-bottom:4px;overflow:hidden">
+      // Докупка снабженца — не плановая работа из шаблона, а материалы, добавленные
+      // по ходу стройки. Красим в оранжевый снабжения, чтобы мастер не искал в ней
+      // работу и не списывал часы. Завершённая работа остаётся зелёной.
+      const isSupplyWork=w.n===SUPPLY_WORK_NAME;
+      let h=`<div style="background:${isDone?'#27ae6008':isSupplyWork?'#e67e220f':'#f8fafc'};border:1px solid ${isDone?'#27ae6055':isSupplyWork?'#e67e2255':'#dde6f0'};border-radius:8px;margin-bottom:4px;overflow:hidden">
       <div style="display:flex;align-items:center;gap:8px;padding:7px 10px">
         ${canComplete?(canCheck?`<button data-a="obj-toggle-done" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="width:24px;height:24px;flex-shrink:0;background:${isDone?'#27ae60':'#fff'};border:2px solid ${isDone?'#27ae60':'#c0d0e0'};border-radius:6px;cursor:pointer;color:#fff;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0;line-height:1">${isDone?'✓':''}</button>`:`<button data-a="obj-need-time" data-wid="${w.id}" style="width:24px;height:24px;flex-shrink:0;background:#f8fafc;border:2px dashed #d0dae8;border-radius:6px;cursor:pointer;color:#9aabbf;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0;line-height:1" title="Сначала отметьте часы">🔒</button>`):`<div style="width:24px;height:24px;flex-shrink:0;background:${isDone?'#27ae60':'#f0f4f8'};border:2px solid ${isDone?'#27ae60':'#dde6f0'};border-radius:6px;color:#fff;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1">${isDone?'✓':''}</div>`}
         <div style="flex:1;min-width:0">
-          <div ${canSheet?`data-a="work-sheet-open" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}"`:""} style="font-size:13px;font-weight:600;color:${isDone?'#27ae60':'#1a2a3a'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${canSheet?'cursor:pointer;':''}${isDone?'text-decoration:line-through;text-decoration-color:#27ae6066':''}">${esc(w.n)}</div>
+          <div ${canSheet?`data-a="work-sheet-open" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}"`:""} style="font-size:13px;font-weight:${isSupplyWork?700:600};color:${isDone?'#27ae60':isSupplyWork?'#e67e22':'#1a2a3a'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${canSheet?'cursor:pointer;':''}${isDone?'text-decoration:line-through;text-decoration-color:#27ae6066':''}">${esc(w.n)}</div>
           <div style="display:flex;gap:6px;margin-top:2px;align-items:center;flex-wrap:wrap">
+            ${isSupplyWork?`<span style="font-size:9px;font-weight:700;color:#e67e22;background:#e67e2214;border:1px solid #e67e2240;border-radius:5px;padding:2px 7px;letter-spacing:0.3px">ДОБАВИЛ СНАБЖЕНЕЦ</span>`:""}
             ${(()=>{const ql=workQtyLabel(w);return ql?`<span style="font-size:10px;color:#16a085;background:#16a08515;border-radius:5px;padding:2px 7px;font-weight:600">${ql}</span>`:"";})()}
             ${w.cost>0?`<span style="font-size:11px;color:#7a9aaa;font-weight:700">${fmt(w.cost)}</span>`:""}
             ${(()=>{const st=getMatStatus(w.mats||[]);const cnt=(w.mats||[]).length;const c=st?st.color:'#2980b9';const bg=st?st.bg:'rgba(41,128,185,0.1)';const lbl=st&&st.done===st.total&&st.total>0?'✓':(st&&st.done>0?st.done+'/'+st.total+' ':'');return`<button data-a="obj-open-mats" data-oid="${obj.id}" data-wid="${w.id}" data-wn="${esc(w.n)}" style="padding:2px 7px;background:${bg};border:1px solid ${c}44;border-radius:5px;cursor:pointer;font-size:10px;color:${c};font-weight:600">${lbl}📦 ${cnt}</button>`;})()}
