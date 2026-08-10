@@ -3912,6 +3912,23 @@ ${bottomBar}
 </div>`;
 }
 
+// Сворачиваемая секция карточки объекта. В свёрнутом виде — одна строка
+// «название · короткий итог», чтобы перечень работ был у верха экрана, а не
+// через шесть всегда развёрнутых блоков. Итог в шапке даёт понять, надо ли открывать.
+let objSecOpen={}; // {objId|key: bool} — переопределяет defaultOpen секции
+function objSection(oid,key,title,color,summary,body,defaultOpen){
+  const k=oid+"|"+key;
+  const open=objSecOpen[k]!=null?objSecOpen[k]:!!defaultOpen;
+  return '<div style="background:#fff;border-radius:14px;border:1px solid '+(open?color+"44":"#e5ebf2")+';margin-bottom:10px;overflow:hidden">'+
+    '<div data-a="obj-sec-toggle" data-k="'+esc(k)+'" data-open="'+(open?"1":"0")+'" style="display:flex;align-items:center;gap:9px;padding:11px 14px;cursor:pointer;user-select:none">'+
+      '<div style="font-size:11px;font-weight:700;letter-spacing:0.6px;color:'+color+';flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+title+'</div>'+
+      (summary?'<div style="font-size:11px;font-weight:700;color:#5a7a9a;white-space:nowrap">'+summary+'</div>':'')+
+      '<span style="font-size:10px;color:#c4cdd8;flex-shrink:0;display:inline-block;transition:transform 0.15s;transform:rotate('+(open?"90":"0")+'deg)">▶</span>'+
+    '</div>'+
+    (open?'<div style="border-top:1px solid #f0f3f7;padding:12px 14px">'+body+'</div>':'')+
+  '</div>';
+}
+
 function renderObjCard(obj, isAdmin){
   const allWorks=obj.stages.flatMap(function(s){return s.works;});
   const allMats=allWorks.flatMap(function(w){return w.mats||[];});
@@ -4098,10 +4115,8 @@ function buildWorkSummary(obj){
 
   // Если нет ни одной выполненной работы — компактная заглушка
   if(totalDone===0){
-    return '<div style="background:#fff;border-radius:14px;border:1px dashed #d0dae8;padding:16px;margin-bottom:14px;text-align:center">'+
-      '<div style="font-size:11px;color:#16a085;font-weight:700;letter-spacing:1px;margin-bottom:4px">✅ СДЕЛАННЫЕ РАБОТЫ</div>'+
-      '<div style="font-size:12px;color:#9aabbf">Пока нет выполненных работ. Отметьте работы галочкой ✓ в перечне ниже.</div>'+
-    '</div>';
+    return objSection(obj.id,"summary","✅ СДЕЛАННЫЕ РАБОТЫ","#16a085",'<span style="color:#9aabbf">пока нет</span>',
+      '<div style="font-size:12px;color:#9aabbf;text-align:center;padding:8px">Пока нет выполненных работ. Отметьте работы галочкой ✓ в перечне ниже.</div>',false);
   }
 
   // Список исполнителей с часами (по убыванию)
@@ -4110,11 +4125,7 @@ function buildWorkSummary(obj){
     return {u:u,hours:userHours[uid]};
   }).filter(function(r){return r.u;}).sort(function(a,b){return b.hours-a.hours;});
 
-  let h='<div style="background:linear-gradient(135deg,#fff,#fafbfc);border-radius:14px;border:1.5px solid #16a08533;padding:14px 16px;margin-bottom:14px;box-shadow:0 2px 6px rgba(22,160,133,0.06)">';
-  // Header + сводные KPI
-  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'+
-       '<div style="font-size:11px;color:#16a085;font-weight:700;letter-spacing:1px">✅ СДЕЛАННЫЕ РАБОТЫ И ВРЕМЯ</div>'+
-     '</div>';
+  let h='';
   h+='<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-bottom:12px">'+
        '<div style="background:#27ae6010;border:1px solid #27ae6033;border-radius:9px;padding:8px 6px;text-align:center"><div style="font-size:9px;color:#9aabbf;font-weight:700">ВЫПОЛНЕНО</div><div style="font-size:16px;font-weight:700;color:#27ae60">'+totalDone+'</div><div style="font-size:9px;color:#9aabbf">работ</div></div>'+
        '<div style="background:#16a08510;border:1px solid #16a08533;border-radius:9px;padding:8px 6px;text-align:center"><div style="font-size:9px;color:#9aabbf;font-weight:700">ЧАСОВ</div><div style="font-size:16px;font-weight:700;color:#16a085">'+totalHours+'</div><div style="font-size:9px;color:#9aabbf">отмечено</div></div>'+
@@ -4153,8 +4164,8 @@ function buildWorkSummary(obj){
     });
   }
 
-  h+='</div>';
-  return h;
+  return objSection(obj.id,"summary","✅ СДЕЛАННЫЕ РАБОТЫ И ВРЕМЯ","#16a085",
+    '<span style="color:#27ae60">'+totalDone+' работ</span> · '+totalHours+' ч',h,false);
 }
 
 function getMatStatus(mats){
@@ -4183,55 +4194,38 @@ function tObjects(){
 </div>
 
 <!-- Заголовок объекта -->
-<div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;padding:16px;margin-bottom:14px">
+<div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:10px">
   ${isAdmin?`
-  <div style="display:flex;align-items:center;gap:6px;margin-bottom:12px">
+  <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
     <select id="obj-icon-${obj.id}" style="padding:4px 2px;border-radius:8px;border:1px solid #d0dae8;font-size:22px;outline:none;cursor:pointer;flex-shrink:0;width:54px;text-align:center">
       ${["🛁","🏠","🌾","🏗️","🏡","🏘️","🏢","🔨","⚡","🌊"].map(i=>`<option value="${i}" ${obj.icon===i?"selected":""}>${i}</option>`).join("")}
     </select>
     <input id="obj-name-${obj.id}" value="${esc(obj.name)}" style="flex:1;min-width:0;padding:9px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:15px;font-weight:700;outline:none;color:#0d1b2e">
     <button data-a="save-obj-info" data-oid="${obj.id}" style="width:42px;height:42px;background:#27ae60;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:18px;font-weight:700;flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:0">💾</button>
   </div>`:`
-  <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
-    <span style="font-size:32px">${obj.icon}</span>
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+    <span style="font-size:24px;flex-shrink:0">${obj.icon}</span>
     <div style="flex:1;min-width:0">
-      <div style="font-size:18px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(obj.name)}</div>
+      <div style="font-size:16px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(obj.name)}</div>
     </div>
   </div>`}
-  <div style="font-size:12px;color:#7a9aaa;margin-bottom:12px">
-    ${allWorks.length} работ · ${fmt(totalCost)}
-  </div>
-
-  <!-- Сотрудники: только те, кто назначен в договорах этого объекта -->
+  <!-- Сводка + команда одной строкой: у бригадира верх экрана должен занимать
+       минимум места, перечень работ важнее реквизитов объекта -->
   ${(()=>{
-    // Get all users who are responsible in any active contract on this object
+    const doneCnt=allWorks.filter(w=>w.done).length;
     const objContracts=contractDocs.filter(d=>d.objId===obj.id&&(d.status==="signed"||d.status==="closed"));
     const assignedIds=new Set();
     objContracts.forEach(d=>(d.responsible||[]).forEach(uid=>assignedIds.add(uid)));
-    const assignedUsers=users.filter(u=>assignedIds.has(u.id));
-
-    if(!assignedUsers.length){
-      return `<div style="background:#f8fafc;border:1px dashed #c8d8e8;border-radius:12px;padding:14px;text-align:center;font-size:11px;color:#9aabbf">
-        Никто не назначен. Назначение делается во вкладке <b style="color:#5a7080">📄 Договора</b> — ответственные за договор автоматически появятся здесь.
-      </div>`;
-    }
-
-    return `<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:0.8px;margin-bottom:8px">КОМАНДА НА ОБЪЕКТЕ · ${assignedUsers.length} ${assignedUsers.length===1?"человек":"чел"}</div>
-    <div style="display:flex;flex-wrap:wrap;gap:6px">
-      ${assignedUsers.map(u=>{
-        // Show role on this object (first matching contract role)
-        const userRoles=u.roles.map(rid=>{const r=roles.find(x=>x.id===rid);return r?r.n:"";}).filter(Boolean);
-        const primaryRole=userRoles[0]||"";
-        return `<div style="display:flex;align-items:center;gap:6px;padding:7px 12px;border-radius:18px;background:${u.c}15;border:1.5px solid ${u.c}55">
-          <span style="font-size:14px">${u.av}</span>
-          <div style="display:flex;flex-direction:column;line-height:1.1">
-            <span style="font-size:11px;font-weight:700;color:#1a2a3a">${esc(u.name)}</span>
-            <span style="font-size:9px;color:${u.c}">${esc(primaryRole)}</span>
-          </div>
-        </div>`;
-      }).join("")}
-    </div>
-    <div style="font-size:9px;color:#9aabbf;margin-top:8px;font-style:italic">💡 Управляется через вкладку «Договора»</div>`;
+    const team=users.filter(u=>assignedIds.has(u.id));
+    return `<div style="display:flex;align-items:center;gap:10px">
+      <div style="flex:1;min-width:0;font-size:11.5px;color:#7a9aaa">
+        ${allWorks.length} работ · <b style="color:#27ae60">${doneCnt} сделано</b>${isAdmin?` · ${fmt(totalCost)}`:""}
+      </div>
+      ${team.length?`<div style="display:flex;align-items:center;flex-shrink:0" title="${team.map(u=>esc(u.name)).join(", ")}">
+        ${team.slice(0,4).map((u,i)=>`<span style="width:26px;height:26px;border-radius:50%;background:${u.c}22;border:2px solid #fff;box-shadow:0 0 0 1px ${u.c}55;display:inline-flex;align-items:center;justify-content:center;font-size:13px;margin-left:${i?"-8px":"0"}">${u.av}</span>`).join("")}
+        ${team.length>4?`<span style="font-size:10px;color:#7a9aaa;margin-left:4px">+${team.length-4}</span>`:""}
+      </div>`:`<span style="font-size:10px;color:#c4cdd8;flex-shrink:0">команда не назначена</span>`}
+    </div>`;
   })()}
 </div>
 
@@ -4268,10 +4262,8 @@ ${(()=>{
   let inner='';
   specs.forEach(f=>{inner+=row(f,"#16a085","📋","СПЕЦИФИКАЦИЯ","Спецификация");});
   winds.forEach(f=>{inner+=row(f,"#34495e","🪟","ДОГОВОР НА ОКНА И ДВЕРИ","Окна и двери");});
-  return '<div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;padding:14px 16px;margin-bottom:14px">'+
-    '<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:10px">📎 ДОКУМЕНТЫ ИЗ ДОГОВОРА</div>'+
-    inner+
-  '</div>';
+  const n=specs.length+winds.length;
+  return objSection(obj.id,"docs","📎 ДОКУМЕНТЫ ИЗ ДОГОВОРА","#7a9aaa",n+(n===1?" файл":" файла"),inner,false);
 })()}
 
 <!-- Доп работы (пожелания клиента) — чек-лист, отмечает бригадир прямо на объекте.
@@ -4295,16 +4287,13 @@ ${(()=>{
   const allDone=total>0&&doneCount===total;
   const accent=allDone?"#27ae60":"#16a085";
 
-  let out='<div style="background:#fff;border-radius:14px;border:1.5px solid #16a08533;padding:14px 16px;margin-bottom:14px">';
-  out+='<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px">'+
-    '<div style="font-size:11px;color:#16a085;font-weight:700;letter-spacing:1px">🛠 ДОП РАБОТЫ (ПОЖЕЛАНИЯ КЛИЕНТА)</div>'+
-    (total?'<div style="font-size:12px;font-weight:800;color:'+accent+'">'+doneCount+' / '+total+'</div>':'')+
-  '</div>';
+  const sec=function(summary,body,open){
+    return objSection(obj.id,"extra","🛠 ДОП РАБОТЫ (ПОЖЕЛАНИЯ КЛИЕНТА)","#16a085",summary,body,open);
+  };
   if(!total){
-    out+='<div style="text-align:center;padding:14px;color:#9aabbf;font-size:11px;border:1px dashed #d0dae8;border-radius:10px">Пожеланий клиента пока нет. Добавляются в договоре — вкладка «📄 Договора» → «План доп работ».</div>';
-    out+='</div>';
-    return out;
+    return sec("—",'<div style="text-align:center;padding:12px;color:#9aabbf;font-size:11px;border:1px dashed #d0dae8;border-radius:10px">Пожеланий клиента пока нет. Добавляются в договоре — вкладка «📄 Договора» → «План доп работ».</div>',false);
   }
+  let out='';
   const pct=Math.round(doneCount/total*100);
   out+='<div style="background:#e8eef5;border-radius:6px;height:6px;overflow:hidden;margin-bottom:10px">'+
     '<div style="height:100%;border-radius:6px;background:'+accent+';width:'+pct+'%;transition:width 0.3s"></div>'+
@@ -4330,8 +4319,8 @@ ${(()=>{
     '<span>Отмечено на <b style="color:#27ae60">'+sumDone.toLocaleString("ru-RU")+' ₽</b></span>'+
     '<span>Всего <b style="color:#1a2a3a">'+sumAll.toLocaleString("ru-RU")+' ₽</b></span>'+
   '</div>';
-  out+='</div>';
-  return out;
+  // Раскрыт, пока есть неотмеченные: это её рабочий чек-лист, а не справка
+  return sec('<span style="color:'+accent+'">'+doneCount+' / '+total+'</span>',out,!allDone);
 })()}
 
 <!-- Отчёт дня (только для производства — бригадир/мастер/нач.пр./админ) -->
@@ -4357,12 +4346,11 @@ ${(()=>{
     viewUsers=[currentUser];
   }
   
-  let out='<div style="background:linear-gradient(135deg,#fff,#fafbfc);border-radius:14px;border:1.5px solid #2980b933;padding:14px 16px;margin-bottom:14px;box-shadow:0 2px 6px rgba(41,128,185,0.06)">';
-  out+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">';
-  out+='<div><div style="font-size:11px;color:#2980b9;font-weight:700;letter-spacing:1px">📋 ОТЧЁТ ДНЯ</div><div style="font-size:10px;color:#9aabbf;margin-top:2px">'+todayLabel+'</div></div>';
-  out+='<div style="font-size:13px;font-weight:800;color:#27ae60">+'+CLEANUP_BONUS+' ₽</div>';
-  out+='</div>';
-  
+  let out='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'+
+    '<div style="font-size:10px;color:#9aabbf">'+todayLabel+'</div>'+
+    '<div style="font-size:12px;font-weight:800;color:#27ae60">+'+CLEANUP_BONUS+' ₽ за фото уборки</div>'+
+  '</div>';
+
   viewUsers.forEach(function(u){
     const report=getTodayReport(obj,u.id,todayISOd);
     const isOff=report&&report.dayOff;
@@ -4463,9 +4451,21 @@ ${(()=>{
       out+='</div>';
     }
   }
-  
-  out+='</div>';
-  return out;
+
+  // Итог в шапке: чтобы не открывать секцию ради «сдан / не сдан»
+  let summary;
+  if(viewUsers.length===1){
+    const rep=getTodayReport(obj,viewUsers[0].id,todayISOd);
+    const ph=(rep&&rep.cleanupPhotos)||[];
+    summary=rep&&rep.dayOff?'<span style="color:#9b59b6">🏖 выходной</span>':
+      (ph.length?'<span style="color:#27ae60">✓ сдан · '+ph.length+' фото</span>':'<span style="color:#e67e22">не сдан</span>');
+  } else {
+    const okN=viewUsers.filter(u=>{const r=getTodayReport(obj,u.id,todayISOd);return r&&((r.cleanupPhotos||[]).length>0||r.dayOff);}).length;
+    summary='<span style="color:'+(okN===viewUsers.length?"#27ae60":"#e67e22")+'">'+okN+' / '+viewUsers.length+' сдали</span>';
+  }
+  // Раскрыт, пока отчёт не сдан — это ежедневное действие, прятать его нельзя
+  const needsAction=viewUsers.some(u=>{const r=getTodayReport(obj,u.id,todayISOd);return !(r&&((r.cleanupPhotos||[]).length>0||r.dayOff));});
+  return objSection(obj.id,"dayreport","📋 ОТЧЁТ ДНЯ","#2980b9",summary,out,needsAction);
 })()}
 
 <!-- Дедлайны для производства (видят бригадир/мастер/админ/нач.пр./финансист) -->
@@ -4489,8 +4489,7 @@ ${(()=>{
     showUsers=[currentUser];
   }
   if(!showUsers.length)return "";
-  let out='<div style="background:#fff;border-radius:14px;border:1px solid #d3580033;padding:14px 16px;margin-bottom:14px">';
-  out+='<div style="font-size:11px;color:#d35800;font-weight:700;letter-spacing:1px;margin-bottom:10px">📅 ДЕДЛАЙН '+(showUsers.length===1&&showUsers[0].id===currentUser.id?'· МОЙ':'БРИГАДИРОВ')+'</div>';
+  let out='';
   showUsers.forEach(function(u){
     // Find first contract with deadline for this user
     let info=null,activeC=null;
@@ -4548,12 +4547,53 @@ ${(()=>{
     }
     out+='</div>';
   });
-  out+='</div>';
-  return out;
+  // Итог в шапке — самое срочное состояние среди показываемых бригадиров
+  let worst=null;
+  showUsers.forEach(function(u){
+    for(const c of objContractsAll){
+      const i=getBrigadierDeadlineInfo(c,u.id);
+      if(!i.hasDeadline)continue;
+      if(!worst||i.overdueDays>worst.overdueDays||(i.overdueDays===worst.overdueDays&&i.daysLeft<worst.daysLeft))worst=i;
+      break;
+    }
+  });
+  const summary=!worst?'<span style="color:#9aabbf">не задан</span>':
+    worst.overdueDays>0?'<span style="color:#e74c3c">🔴 просрочка '+worst.overdueDays+' дн</span>':
+    worst.daysLeft<=5?'<span style="color:#f39c12">🟡 '+worst.daysLeft+' р.дн</span>':
+    '<span style="color:#27ae60">🟢 '+worst.daysLeft+' р.дн</span>';
+  const title='📅 ДЕДЛАЙН'+(showUsers.length===1&&showUsers[0].id===currentUser.id?' · МОЙ':' БРИГАДИРОВ');
+  // Раскрыт только когда горит: просрочка или дедлайн на носу
+  return objSection(obj.id,"deadline",title,"#d35800",summary,out,!!worst&&(worst.overdueDays>0||worst.daysLeft<=3));
 })()}
 
 <!-- Сводка: сделанные работы + затраченное время (видна всем) -->
 ${buildWorkSummary(obj)}
+
+<!-- Видео объекта (Telegram) -->
+${objSection(obj.id,"video","🎬 ВИДЕО ОБЪЕКТА","#0088cc",
+  (objVideoUploading===obj.id?'<span style="color:#0088cc">⏳ обработка…</span>':((obj.videos||[]).length?String(obj.videos.length):'<span style="color:#9aabbf">нет</span>')),
+`
+  <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:10px">
+    ${objVideoUploading===obj.id
+      ? `<span style="font-size:11px;font-weight:700;color:#0088cc">⏳ Обработка…</span>`
+      : `<div style="display:flex;gap:6px">
+        <label data-a="video-cap-label" data-oid="${obj.id}" data-inp="obj-video-cam-${obj.id}" style="padding:5px 11px;background:#0088cc;border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700;white-space:nowrap">🎥 Снять<input id="obj-video-cam-${obj.id}" type="file" accept="video/*" capture="environment" style="display:none"></label>
+        <label data-a="video-cap-label" data-oid="${obj.id}" data-inp="obj-video-file-${obj.id}" style="padding:5px 11px;background:#eaf5fb;border:1px solid #0088cc55;border-radius:7px;cursor:pointer;color:#0077b3;font-size:11px;font-weight:700;white-space:nowrap">📁 Файл<input id="obj-video-file-${obj.id}" type="file" accept="video/*" style="display:none"></label>
+      </div>`}
+  </div>
+  ${(obj.videos||[]).length?(obj.videos||[]).slice().reverse().map(v=>{
+    const link="https://t.me/c/"+TG_CHAT_LINK+"/"+(v.topicId||obj.tgTopicId||"")+"/"+v.messageId;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;margin-bottom:5px;background:#f8fafc;border:1px solid #dde6f0">
+      <span style="font-size:18px">🎬</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(v.name||"Видео")}</div>
+        <div style="font-size:10px;color:#9aabbf">${v.date||""}${v.uploader?" · "+esc(v.uploader):""}${v.size?" · "+(v.size/1048576).toFixed(1)+" МБ":""}</div>
+      </div>
+      <a href="${link}" target="_blank" rel="noopener" style="font-size:10px;font-weight:700;color:#fff;background:#0088cc;border-radius:6px;padding:4px 9px;text-decoration:none;flex-shrink:0">▶ Telegram</a>
+      <button data-a="obj-del-video" data-oid="${obj.id}" data-vid="${v.id}" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>
+    </div>`;
+  }).join(""):`<div style="text-align:center;color:#9aabbf;font-size:11px;padding:10px">Видео по объекту попадают в отдельную тему в Telegram (до 50 МБ)</div>`}
+`,false)}
 
 <!-- Этапы и работы объекта — редактируемые -->
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
@@ -4574,30 +4614,6 @@ ${showNObjStageTid===obj.id?`<div style="background:#fff;border-radius:12px;bord
   </div>
 </div>`:""}
 
-<!-- Видео объекта (Telegram) -->
-<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:10px">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-    <div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:0.8px">🎬 ВИДЕО ОБЪЕКТА · ${(obj.videos||[]).length}</div>
-    ${objVideoUploading===obj.id
-      ? `<span style="font-size:11px;font-weight:700;color:#0088cc">⏳ Обработка…</span>`
-      : `<div style="display:flex;gap:6px">
-        <label data-a="video-cap-label" data-oid="${obj.id}" data-inp="obj-video-cam-${obj.id}" style="padding:5px 11px;background:#0088cc;border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700;white-space:nowrap">🎥 Снять<input id="obj-video-cam-${obj.id}" type="file" accept="video/*" capture="environment" style="display:none"></label>
-        <label data-a="video-cap-label" data-oid="${obj.id}" data-inp="obj-video-file-${obj.id}" style="padding:5px 11px;background:#eaf5fb;border:1px solid #0088cc55;border-radius:7px;cursor:pointer;color:#0077b3;font-size:11px;font-weight:700;white-space:nowrap">📁 Файл<input id="obj-video-file-${obj.id}" type="file" accept="video/*" style="display:none"></label>
-      </div>`}
-  </div>
-  ${(obj.videos||[]).length?(obj.videos||[]).slice().reverse().map(v=>{
-    const link="https://t.me/c/"+TG_CHAT_LINK+"/"+(v.topicId||obj.tgTopicId||"")+"/"+v.messageId;
-    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;margin-bottom:5px;background:#f8fafc;border:1px solid #dde6f0">
-      <span style="font-size:18px">🎬</span>
-      <div style="flex:1;min-width:0">
-        <div style="font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(v.name||"Видео")}</div>
-        <div style="font-size:10px;color:#9aabbf">${v.date||""}${v.uploader?" · "+esc(v.uploader):""}${v.size?" · "+(v.size/1048576).toFixed(1)+" МБ":""}</div>
-      </div>
-      <a href="${link}" target="_blank" rel="noopener" style="font-size:10px;font-weight:700;color:#fff;background:#0088cc;border-radius:6px;padding:4px 9px;text-decoration:none;flex-shrink:0">▶ Telegram</a>
-      <button data-a="obj-del-video" data-oid="${obj.id}" data-vid="${v.id}" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>
-    </div>`;
-  }).join(""):`<div style="text-align:center;color:#9aabbf;font-size:11px;padding:10px">Видео по объекту попадают в отдельную тему в Telegram (до 50 МБ)</div>`}
-</div>
 
 ${obj.stages.map(s=>{
   const _q=(objWorkSearch||"").trim().toLowerCase();
@@ -4823,7 +4839,7 @@ ${objMatModal?`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);di
 ${(()=>{
   const canLog=currentUser&&["admin","financier","brigadier","worker","prod_head"].some(r=>currentUser.roles.includes(r));
   if(!canLog)return "";
-  return `<button data-a="tl-wiz-open" data-oid="${obj.id}" style="position:fixed;left:50%;transform:translateX(-50%);bottom:calc(${isAdmin?"92px":"24px"} + env(safe-area-inset-bottom,0px));z-index:600;background:#16a085;border:none;border-radius:999px;padding:15px 30px;cursor:pointer;color:#fff;font-size:16px;font-weight:800;box-shadow:0 10px 24px rgba(22,160,133,0.45);display:flex;align-items:center;gap:7px">＋ Запись</button>`;
+  return `<button data-a="tl-wiz-open" data-oid="${obj.id}" style="position:fixed;right:14px;bottom:calc(${isAdmin?"92px":"24px"} + env(safe-area-inset-bottom,0px));z-index:600;background:#16a085;border:none;border-radius:999px;padding:15px 30px;cursor:pointer;color:#fff;font-size:16px;font-weight:800;box-shadow:0 10px 24px rgba(22,160,133,0.45);display:flex;align-items:center;gap:7px">＋ Запись</button>`;
 })()}
 <div style="height:78px"></div>
 </div>`;
@@ -4883,7 +4899,7 @@ ${(()=>{
   if(!canLog||!_vo.length)return "";
   const expanded=_vo.filter(o=>objPrevExpanded[o.id]===true);
   const foid=expanded.length===1?expanded[0].id:(_vo.length===1?_vo[0].id:"");
-  return `<button data-a="tl-wiz-open" data-oid="${foid}" style="position:fixed;left:50%;transform:translateX(-50%);bottom:calc(${isAdmin?"92px":"24px"} + env(safe-area-inset-bottom,0px));z-index:600;background:#16a085;border:none;border-radius:999px;padding:15px 30px;cursor:pointer;color:#fff;font-size:16px;font-weight:800;box-shadow:0 10px 24px rgba(22,160,133,0.45);display:flex;align-items:center;gap:7px">＋ Запись</button>`;
+  return `<button data-a="tl-wiz-open" data-oid="${foid}" style="position:fixed;right:14px;bottom:calc(${isAdmin?"92px":"24px"} + env(safe-area-inset-bottom,0px));z-index:600;background:#16a085;border:none;border-radius:999px;padding:15px 30px;cursor:pointer;color:#fff;font-size:16px;font-weight:800;box-shadow:0 10px 24px rgba(22,160,133,0.45);display:flex;align-items:center;gap:7px">＋ Запись</button>`;
 })()}
 
 <!-- ── ШАБЛОНЫ ── -->
@@ -12788,6 +12804,8 @@ function bind(){
       window._supplySelected[el.dataset.oid]=!window._supplySelected[el.dataset.oid];
       render();
     };}
+    // data-open несёт текущее состояние — иначе секция с defaultOpen:true не закроется с первого тапа
+    else if(a==="obj-sec-toggle"){el.onclick=()=>{objSecOpen[el.dataset.k]=el.dataset.open!=="1";render();};}
     else if(a==="receive-filter"){el.onclick=()=>{receiveOnlyLeft=el.dataset.v==="left";render();};}
     else if(a==="supply-view"){el.onclick=()=>{window._supplyViewing=true;render();};}
     else if(a==="supply-back"){el.onclick=()=>{window._supplyViewing=false;supplySearch='';supplyStoreFilter='';supplyHideDone=false;render();};}
