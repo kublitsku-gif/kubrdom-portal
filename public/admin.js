@@ -7526,15 +7526,229 @@ function _bddsByContract(){
   return html;
 }
 
+// ── ЛИЧНЫЕ ДЕНЬГИ бригадира / рабочего / РОПа ──────────────────────────────
+// Было: на каждый договор — «полная» карточка из пяти всегда развёрнутых блоков,
+// итога по всем объектам нет вообще → чтобы понять «сколько мне всего должны»,
+// приходилось скроллить и складывать в уме.
+// Стало: сначала считаем все договоры в rows, сверху — один дашборд (всего /
+// получено / осталось), ниже — свёрнутые строки договоров, детали по тапу.
+// Договоры, по которым текущий пользователь — ответственный (то есть его деньги)
+function myFinContracts(){
+  if(!currentUser)return [];
+  return contractDocs.filter(function(d){
+    return (d.status==="signed"||d.status==="closed")&&(d.responsible||[]).includes(currentUser.id);
+  });
+}
+function tFinanceMine(isBrig){
+  const me=currentUser;
+  const money=function(n){return (n||0).toLocaleString("ru-RU");};
+  const accent=isBrig?"#e67e22":"#9b59b6";
+  const cts=myFinContracts();
+
+  let html='<div>';
+  if(!cts.length){
+    return html+'<div style="background:#fff;border-radius:16px;border:2px dashed #dde6f0;padding:40px 20px;text-align:center">'+
+      '<div style="font-size:40px;margin-bottom:10px">💰</div>'+
+      '<div style="font-size:14px;font-weight:600;color:#5a7a9a">Договоров пока нет</div>'+
+      '<div style="font-size:12px;color:#9aabbf;margin-top:6px;line-height:1.4">Как только вас назначат ответственным по договору,<br>зарплата появится здесь.</div>'+
+    '</div></div>';
+  }
+
+  // Считаем каждый договор ОДИН раз — эти же цифры идут и в дашборд, и в строки
+  const grp=isBrig?"salary_prod":"salary_escort";
+  const rows=cts.map(function(c){
+    const obj=objects.find(function(o){return o.id===c.objId;})||{id:"",icon:"📄",name:"Без объекта"};
+    const ud=(c.salaries||{})[me.id]||{};
+    const planSal=(ud.plan!=null&&ud.plan!==0)?ud.plan:getDefaultSalary(me);
+    const paidSal=getSalaryPaid(c,me);
+    // «Общие» выплаты без userId делятся на всех подходящих ответственных — значит
+    // показываем их и мне тоже (та же логика, что в getSalaryPaid)
+    const eligible=users.filter(function(u){
+      if(!(c.responsible||[]).includes(u.id))return false;
+      return isBrig?u.roles.some(function(r){return r==="brigadier"||r==="worker";}):u.roles.includes("sales_head");
+    });
+    const isMine=function(t){
+      if(t.userId===me.id)return true;
+      if(t.userId)return false;
+      return !!eligible.find(function(u){return u.id===me.id;});
+    };
+    const pick=function(group){
+      return finTxns.filter(function(t){
+        return t.type==="expense"&&t.contractId===c.id&&txnCategoryGroup(t.category)===group&&isMine(t);
+      });
+    };
+    const salTxns=pick(grp);
+    // Доп работы оплачиваются на бригаду целиком — без разбивки по людям
+    const extraTxns=isBrig?finTxns.filter(function(t){
+      return t.type==="expense"&&t.contractId===c.id&&txnCategoryGroup(t.category)==="salary_prod_extra";
+    }):[];
+    const bonusTxns=isBrig?pick("salary_prod_bonus"):[];
+    return {
+      c:c, obj:obj,
+      planSal:planSal, paidSal:paidSal, salTxns:salTxns,
+      planExtra:isBrig?getExtraWorksPlan(c):0,
+      paidExtra:extraTxns.reduce(function(a,t){return a+(t.amount||0);},0),
+      extraTxns:extraTxns,
+      bonus:bonusTxns.reduce(function(a,t){return a+(t.amount||0);},0),
+      bonusCount:bonusTxns.length,
+      debt:isBrig?receiptTotals(function(r){return r.userId===me.id&&r.contractId===c.id;}).pending:0
+    };
+  });
+
+  const tPlan=rows.reduce(function(a,r){return a+r.planSal+r.planExtra;},0);
+  const tPaid=rows.reduce(function(a,r){return a+r.paidSal+r.paidExtra;},0);
+  const tLeft=Math.max(0,tPlan-tPaid);
+  const tBonus=rows.reduce(function(a,r){return a+r.bonus;},0);
+  const tDebt=rows.reduce(function(a,r){return a+r.debt;},0);
+  const pct=tPlan>0?Math.min(100,Math.round(tPaid/tPlan*100)):0;
+  const objCount=rows.reduce(function(a,r){return a.indexOf(r.c.objId)<0?a.concat([r.c.objId]):a;},[]).length;
+
+  // ── Дашборд: одно главное число + прогресс + разбивка ──
+  html+='<div style="background:linear-gradient(135deg,#1a2a3a,#2a4a6a);border-radius:16px;padding:16px;margin-bottom:14px;box-shadow:0 6px 18px rgba(26,42,58,0.18)">';
+  html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'+
+    '<div style="font-size:10px;color:rgba(255,255,255,0.5);font-weight:700;letter-spacing:1px">'+(isBrig?"💰 МОЯ ЗАРПЛАТА":"💰 МОЁ ВОЗНАГРАЖДЕНИЕ")+'</div>'+
+    '<div style="font-size:10px;color:rgba(255,255,255,0.3)">'+objCount+' об. · '+rows.length+' дог.</div>'+
+  '</div>';
+  html+='<div style="text-align:center;margin-bottom:12px">'+
+    '<div style="font-size:10px;color:rgba(255,255,255,0.45);font-weight:700;letter-spacing:1px">ОСТАЛОСЬ ПОЛУЧИТЬ</div>'+
+    '<div style="font-size:32px;font-weight:800;line-height:1.15;margin-top:3px;color:'+(tLeft>0?"#f59e0b":"#2ecc71")+'">'+(tLeft>0?money(tLeft)+' ₽':'✓ всё выплачено')+'</div>'+
+  '</div>';
+  html+='<div style="background:rgba(255,255,255,0.12);border-radius:6px;height:8px;overflow:hidden;margin-bottom:7px">'+
+    '<div style="height:100%;border-radius:6px;background:linear-gradient(90deg,#2ecc71,#27ae60);width:'+pct+'%;transition:width 0.4s"></div>'+
+  '</div>';
+  html+='<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:rgba(255,255,255,0.55);margin-bottom:12px">'+
+    '<span>получено <b style="color:#2ecc71">'+money(tPaid)+' ₽</b></span>'+
+    '<span style="font-weight:700;color:rgba(255,255,255,0.8)">'+pct+'%</span>'+
+    '<span>всего <b style="color:rgba(255,255,255,0.9)">'+money(tPlan)+' ₽</b></span>'+
+  '</div>';
+  const dTile=function(label,val,color,sub){
+    return '<div style="background:rgba(255,255,255,0.06);border-radius:10px;padding:9px 10px;min-width:0">'+
+      '<div style="font-size:9px;color:rgba(255,255,255,0.4);font-weight:700;letter-spacing:0.3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+label+'</div>'+
+      '<div style="font-size:14px;font-weight:800;color:'+color+';margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+val+'</div>'+
+      (sub?'<div style="font-size:9px;color:rgba(255,255,255,0.3);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+sub+'</div>':'')+
+    '</div>';
+  };
+  const salPlanAll=rows.reduce(function(a,r){return a+r.planSal;},0);
+  const salPaidAll=rows.reduce(function(a,r){return a+r.paidSal;},0);
+  const exPlanAll=rows.reduce(function(a,r){return a+r.planExtra;},0);
+  const exPaidAll=rows.reduce(function(a,r){return a+r.paidExtra;},0);
+  html+='<div style="display:grid;grid-template-columns:repeat('+(isBrig?3:1)+',minmax(0,1fr));gap:7px;padding-top:11px;border-top:1px solid rgba(255,255,255,0.08)">';
+  html+=dTile("👷 ЗАРПЛАТА", money(salPaidAll), "#fff", "из "+money(salPlanAll)+" ₽");
+  if(isBrig){
+    html+=dTile("🛠 ДОП РАБОТЫ", money(exPaidAll), exPaidAll?"#2ecc71":"rgba(255,255,255,0.55)", exPlanAll?"из "+money(exPlanAll)+" ₽":"не запланированы");
+    html+=dTile("🧹 ПРЕМИЯ", "+"+money(tBonus), tBonus?"#2ecc71":"rgba(255,255,255,0.55)", "сверх плана");
+  }
+  html+='</div>';
+  if(isBrig){
+    html+='<div style="display:flex;align-items:center;gap:9px;margin-top:8px;padding:10px 11px;background:'+(tDebt>0?"rgba(245,158,11,0.14)":"rgba(255,255,255,0.06)")+';border-radius:10px">'+
+      '<span style="font-size:15px">🧾</span>'+
+      '<div style="flex:1;font-size:11px;color:rgba(255,255,255,0.65)">Мне должны за материалы</div>'+
+      '<div style="font-size:14px;font-weight:800;color:'+(tDebt>0?"#f59e0b":"rgba(255,255,255,0.45)")+'">'+(tDebt>0?money(tDebt)+' ₽':'—')+'</div>'+
+    '</div>';
+  }
+  html+='</div>';
+
+  // ── Свёрнутые строки договоров ──
+  const triple=function(color,plan,fact,left){
+    return '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;padding:9px 10px;background:'+color+'08;border:1px solid '+color+'1f;border-radius:10px;margin-bottom:7px">'+
+      '<div><div style="font-size:9px;color:#9aabbf;font-weight:700">ПЛАН</div><div style="font-size:13px;font-weight:700;color:#1a2a3a;margin-top:1px">'+money(plan)+'</div></div>'+
+      '<div><div style="font-size:9px;color:#9aabbf;font-weight:700">ПОЛУЧЕНО</div><div style="font-size:13px;font-weight:700;color:#27ae60;margin-top:1px">'+money(fact)+'</div></div>'+
+      '<div><div style="font-size:9px;color:#9aabbf;font-weight:700">ОСТАЛОСЬ</div><div style="font-size:13px;font-weight:700;margin-top:1px;color:'+(left>0?"#e67e22":"#27ae60")+'">'+(left>0?money(left):"✓")+'</div></div>'+
+    '</div>';
+  };
+  // Выплаты показываем глазами получателя: это её приход, поэтому «+» и зелёный
+  const txnList=function(list,color,emptyText){
+    if(!list.length)return emptyText?'<div style="text-align:center;padding:10px;color:#9aabbf;font-size:11px;border:1px dashed #dde6f0;border-radius:8px">'+emptyText+'</div>':"";
+    return list.slice().sort(function(a,b){return String(b.date||"").localeCompare(String(a.date||""));}).map(function(t){
+      return '<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#fafbfc;border-radius:8px;margin-bottom:4px;font-size:11px">'+
+        '<div style="flex:1;min-width:0">'+
+          '<div style="font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(t.category||"Выплата")+'</div>'+
+          '<div style="font-size:9px;color:#9aabbf;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(t.date||"")+(t.note?" · "+esc(t.note):"")+'</div>'+
+        '</div>'+
+        '<div style="font-weight:700;color:'+color+';white-space:nowrap">+'+money(t.amount)+' ₽</div>'+
+      '</div>';
+    }).join("");
+  };
+
+  html+='<div style="font-size:10px;color:#9aabbf;font-weight:700;letter-spacing:1px;margin:0 4px 8px">ПО ДОГОВОРАМ · '+rows.length+'</div>';
+  const autoOpen=rows.length===1;
+  rows.forEach(function(r){
+    const c=r.c;
+    const open=finMineOpen[c.id]!=null?finMineOpen[c.id]:autoOpen;
+    const rowPlan=r.planSal+r.planExtra, rowPaid=r.paidSal+r.paidExtra;
+    const rowLeft=Math.max(0,rowPlan-rowPaid);
+    const rowPct=rowPlan>0?Math.min(100,Math.round(rowPaid/rowPlan*100)):0;
+
+    html+='<div style="background:#fff;border-radius:14px;border:1px solid '+(open?accent+"55":"#e0e8f0")+';margin-bottom:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.05)">';
+    html+='<div data-a="fin-mine-toggle" data-cid="'+c.id+'" style="padding:12px 14px;cursor:pointer;user-select:none">'+
+      '<div style="display:flex;align-items:center;gap:9px;margin-bottom:9px">'+
+        '<span style="font-size:20px;flex-shrink:0">'+(r.obj.icon||"📄")+'</span>'+
+        '<div style="flex:1;min-width:0">'+
+          '<div style="font-size:13px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.obj.name)+'</div>'+
+          '<div style="font-size:10px;color:#9aabbf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.name)+'</div>'+
+        '</div>'+
+        '<div style="text-align:right;flex-shrink:0">'+
+          '<div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.3px">ОСТАЛОСЬ</div>'+
+          '<div style="font-size:15px;font-weight:800;color:'+(rowLeft>0?"#e67e22":"#27ae60")+'">'+(rowLeft>0?money(rowLeft):"✓")+'</div>'+
+        '</div>'+
+        '<span style="font-size:11px;color:#c4cdd8;flex-shrink:0;display:inline-block;transition:transform 0.15s;transform:rotate('+(open?"90":"0")+'deg)">▶</span>'+
+      '</div>'+
+      '<div style="background:#eef2f7;border-radius:5px;height:6px;overflow:hidden;margin-bottom:5px">'+
+        '<div style="height:100%;border-radius:5px;background:'+(rowPct>=100?"#27ae60":"#2ecc71")+';width:'+rowPct+'%;transition:width 0.3s"></div>'+
+      '</div>'+
+      '<div style="display:flex;justify-content:space-between;font-size:10px;color:#7a9aaa">'+
+        '<span>получено <b style="color:#27ae60">'+money(rowPaid)+' ₽</b> из '+money(rowPlan)+' ₽</span>'+
+        '<span>'+(open?"свернуть":"подробнее")+'</span>'+
+      '</div>'+
+    '</div>';
+
+    if(open){
+      html+='<div style="border-top:1px solid #f0f3f7;padding:12px 14px">';
+      html+='<div style="font-size:10px;color:'+accent+';font-weight:700;letter-spacing:0.5px;margin-bottom:7px">'+(isBrig?"👷 ЗАРПЛАТА ПРОИЗВОДСТВА":"🚚 ЗАРПЛАТА РОПа")+'</div>';
+      html+=triple(accent,r.planSal,r.paidSal,Math.max(0,r.planSal-r.paidSal));
+      html+=txnList(r.salTxns,"#27ae60","Выплат пока не было");
+      if(isBrig){
+        const planItems=c.extraWorksPlan||[];
+        const doneN=planItems.filter(function(w){return w.done;}).length;
+        html+='<div style="font-size:10px;color:#16a085;font-weight:700;letter-spacing:0.5px;margin:14px 0 7px">🛠 ДОП РАБОТЫ (ПОЖЕЛАНИЯ КЛИЕНТА)</div>';
+        html+=triple("#16a085",r.planExtra,r.paidExtra,Math.max(0,r.planExtra-r.paidExtra));
+        html+=planItems.length?
+          '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#16a08508;border:1px solid #16a08522;border-radius:8px;margin-bottom:6px;font-size:11px">'+
+            '<span style="font-size:13px">🛠</span>'+
+            '<div style="flex:1;color:#5a7a9a">Пожеланий: <b style="color:#1a2a3a">'+planItems.length+'</b> · отмечено <b style="color:#27ae60">'+doneN+'</b></div>'+
+            '<span style="font-size:9px;color:#9aabbf;white-space:nowrap">список — во «Объектах»</span>'+
+          '</div>':
+          '<div style="text-align:center;padding:10px;color:#9aabbf;font-size:11px;border:1px dashed #dde6f0;border-radius:8px">Доп работ пока не запланировано</div>';
+        html+=txnList(r.extraTxns,"#16a085","");
+        html+='<div style="display:flex;align-items:center;gap:9px;margin-top:14px;padding:10px 12px;background:#27ae6008;border:1px solid #27ae6022;border-radius:10px">'+
+          '<span style="font-size:16px">🧹</span>'+
+          '<div style="flex:1;min-width:0">'+
+            '<div style="font-size:11px;font-weight:700;color:#27ae60;letter-spacing:0.3px">ПРЕМИЯ ЗА УБОРКУ</div>'+
+            '<div style="font-size:9px;color:#9aabbf;margin-top:1px">+'+CLEANUP_BONUS+' ₽ за отчёт с фото · начислено '+r.bonusCount+'</div>'+
+          '</div>'+
+          '<div style="font-size:15px;font-weight:800;color:'+(r.bonus?"#27ae60":"#c4cdd8")+'">+'+money(r.bonus)+' ₽</div>'+
+        '</div>';
+      }
+      html+='</div>';
+      if(isBrig)html+=myReceiptsBlock(c);
+    }
+    html+='</div>';
+  });
+
+  return html+'<div style="height:24px"></div></div>';
+}
+
 function tFinanceList(){
+  // Бригадир / рабочий / РОП видят не P&L компании, а свои деньги — отдельный экран
+  const _noFin=currentUser&&!currentUser.roles.includes("admin")&&!currentUser.roles.includes("financier");
+  const _isBrigOnly=_noFin&&(currentUser.roles.includes("brigadier")||currentUser.roles.includes("worker"));
+  const _isEscortOnly=_noFin&&currentUser.roles.includes("sales_head")&&!currentUser.roles.includes("brigadier")&&!currentUser.roles.includes("worker");
+  if(_isBrigOnly||_isEscortOnly)return tFinanceMine(_isBrigOnly);
+
   let html='<div>';
   // Defined early — used both in header and dashboard render below
   const showDashboard=!currentUser||currentUser.roles.includes("admin")||currentUser.roles.includes("financier");
-  const headerLabel=(currentUser&&(currentUser.roles.includes("brigadier")||currentUser.roles.includes("worker"))&&!currentUser.roles.includes("admin")&&!currentUser.roles.includes("financier"))?
-    "💰 МОЯ ЗАРПЛАТА — ПРОИЗВОДСТВО":
-    (currentUser&&currentUser.roles.includes("sales_head")&&!currentUser.roles.includes("admin")&&!currentUser.roles.includes("financier")&&!currentUser.roles.includes("brigadier")&&!currentUser.roles.includes("worker"))?
-    "💰 МОЯ ЗАРПЛАТА — СОПРОВОЖДЕНИЕ":
-    "ФИНАНСЫ — P&L"+(finSelectedContractIds.length?" · ВЫБРАНО: "+finSelectedContractIds.length:"");
+  const headerLabel="ФИНАНСЫ — P&L"+(finSelectedContractIds.length?" · ВЫБРАНО: "+finSelectedContractIds.length:"");
   html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'+
     '<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">'+headerLabel+'</div>'+
     (finSelectedContractIds.length&&showDashboard?'<button data-a="fin-clear-selection" style="padding:5px 11px;background:#e74c3c12;border:1px solid #e74c3c33;border-radius:7px;cursor:pointer;color:#e74c3c;font-size:11px;font-weight:700">✕ Сбросить</button>':"")+
@@ -7710,166 +7924,6 @@ function tFinanceList(){
       const statusLabel=c.status==="closed"?"Закрыт":"Подписан";
 
       const isSelected=finSelectedContractIds.includes(c.id);
-
-      // ── COMPACT VIEW for brigadier/worker (only their salary) ──
-      const isBrigOnly=currentUser&&(currentUser.roles.includes("brigadier")||currentUser.roles.includes("worker"))&&!currentUser.roles.includes("admin")&&!currentUser.roles.includes("financier");
-      const isEscortOnly=currentUser&&currentUser.roles.includes("sales_head")&&!currentUser.roles.includes("admin")&&!currentUser.roles.includes("financier")&&!currentUser.roles.includes("brigadier")&&!currentUser.roles.includes("worker");
-
-      if(isBrigOnly||isEscortOnly){
-        const salaries2=c.salaries||{};
-        const me=currentUser;
-        const rawUd2=salaries2[me.id]||{};
-        const effPlan=rawUd2.plan!=null&&rawUd2.plan!==0?rawUd2.plan:getDefaultSalary(me);
-        // Calculate paid from transactions (same source as everywhere else)
-        const myPaid=getSalaryPaid(c,me);
-        const myLeft=Math.max(0,effPlan-myPaid);
-        const sColor=isBrigOnly?"#e67e22":"#9b59b6";
-        const sTitle=isBrigOnly?"👷 ЗАРПЛАТА ПРОИЗВОДСТВА":"🚚 ЗАРПЛАТА РОПа";
-
-        // Get user's payment transactions for this contract
-        // Show: (1) tagged with this user.id, (2) untagged group txns if user is the only eligible (share)
-        const respIds=c.responsible||[];
-        const eligibleSameGroup=users.filter(function(u){
-          if(!respIds.includes(u.id))return false;
-          if(isEscortOnly)return u.roles.includes("sales_head");
-          return u.roles.some(function(r){return r==="brigadier"||r==="worker";});
-        });
-        const myTxns=finTxns.filter(function(t){
-          if(t.type!=="expense")return false;
-          if(t.contractId!==c.id)return false;
-          const grp=txnCategoryGroup(t.category);
-          const isMyGroup=(isBrigOnly&&grp==="salary_prod")||(isEscortOnly&&grp==="salary_escort");
-          if(!isMyGroup)return false;
-          if(t.userId===me.id)return true;
-          if(t.userId)return false;
-          return eligibleSameGroup.find(function(u){return u.id===me.id;});
-        });
-        // Extra works — show separately for brigadier
-        const myExtraTxns=isBrigOnly?finTxns.filter(function(t){
-          return t.type==="expense"&&t.contractId===c.id&&txnCategoryGroup(t.category)==="salary_prod_extra";
-        }):[];
-        const myExtraTotal=myExtraTxns.reduce(function(a,t){return a+(t.amount||0);},0);
-
-        // Премия за уборку (фото-отчёты) — накопительно, только для производства
-        const myCleanupTxns=isBrigOnly?finTxns.filter(function(t){
-          if(t.type!=="expense"||t.contractId!==c.id)return false;
-          if((t.category||"").indexOf("Премия за уборку")<0)return false;
-          if(t.userId===me.id)return true;
-          if(t.userId)return false;
-          return eligibleSameGroup.find(function(u){return u.id===me.id;});
-        }):[];
-        // По датам по возрастанию + нарастающий итог
-        myCleanupTxns.sort(function(a,b){return (a.date||"").localeCompare(b.date||"");});
-        const myCleanupTotal=myCleanupTxns.reduce(function(a,t){return a+(t.amount||0);},0);
-
-        html+='<div style="background:#fff;border-radius:14px;border:2px solid '+sColor+'33;margin-bottom:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.06)">';
-        // Contract title (small)
-        html+='<div style="padding:10px 14px;background:linear-gradient(135deg,#f8fafc,#ffffff);border-bottom:1px solid #f0f3f7">'+
-          '<div style="font-size:12px;font-weight:700;color:#1a2a3a">'+esc(c.name)+'</div>'+
-        '</div>';
-        // Salary block
-        html+='<div style="padding:12px 14px">'+
-          '<div style="font-size:11px;color:'+sColor+';font-weight:700;letter-spacing:0.5px;margin-bottom:10px">'+sTitle+'</div>'+
-          // Totals row
-          '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;padding:10px;background:'+sColor+'08;border-radius:10px;margin-bottom:8px">'+
-            '<div><div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.3px">ПЛАН</div><div style="font-size:14px;font-weight:700;color:#1a2a3a;margin-top:2px">'+effPlan.toLocaleString("ru-RU")+'</div></div>'+
-            '<div><div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.3px">ФАКТ</div><div style="font-size:14px;font-weight:700;color:#27ae60;margin-top:2px">'+myPaid.toLocaleString("ru-RU")+'</div></div>'+
-            '<div><div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.3px">ОСТАЛОСЬ</div><div style="font-size:14px;font-weight:700;color:'+(myLeft>0?"#e67e22":"#27ae60")+';margin-top:2px">'+(myLeft>0?myLeft.toLocaleString("ru-RU"):"✓")+'</div></div>'+
-          '</div>'+
-          // History
-          (myTxns.length?
-            '<div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.5px;margin:10px 0 4px">ИСТОРИЯ ВЫПЛАТ ('+myTxns.length+')</div>'+
-            myTxns.map(function(t){
-              return '<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#fafbfc;border-radius:8px;margin-bottom:4px;font-size:11px">'+
-                '<div style="flex:1"><div style="font-weight:600;color:#1a2a3a">'+t.category+'</div><div style="font-size:9px;color:#9aabbf;margin-top:1px">'+t.date+(t.note?" · "+esc(t.note):"")+'</div></div>'+
-                '<div style="font-weight:700;color:#e74c3c">−'+t.amount.toLocaleString("ru-RU")+' ₽</div>'+
-              '</div>';
-            }).join(""):
-            '<div style="text-align:center;padding:12px;color:#9aabbf;font-size:11px;border:1px dashed #dde6f0;border-radius:8px">Нет выплат пока</div>'
-          )+
-        '</div>';
-        // 🧹 Премия за уборку — накопительная (фото-отчёты)
-        if(isBrigOnly){
-          const cleanOpen=!!cleanupExpanded[c.id];
-          html+='<div style="padding:12px 14px;border-top:1px solid #f0f3f7">'+
-            '<div data-a="cleanup-toggle" data-cid="'+c.id+'" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;'+(cleanOpen?'margin-bottom:8px':'')+'">'+
-              '<div style="display:flex;align-items:center;gap:6px">'+
-                '<span style="font-size:11px;color:#9aabbf;transition:transform 0.15s;display:inline-block;transform:rotate('+(cleanOpen?'90':'0')+'deg)">▶</span>'+
-                '<div style="font-size:11px;color:#27ae60;font-weight:700;letter-spacing:0.5px">🧹 ПРЕМИЯ ЗА УБОРКУ</div>'+
-                (myCleanupTxns.length?'<span style="font-size:9px;color:#9aabbf;background:#f0f4f8;border-radius:8px;padding:1px 6px;font-weight:700">'+myCleanupTxns.length+'</span>':'')+
-              '</div>'+
-              '<div style="font-size:13px;font-weight:800;color:#27ae60">+'+myCleanupTotal.toLocaleString("ru-RU")+' ₽</div>'+
-            '</div>';
-          if(cleanOpen){
-            html+='<div style="font-size:10px;color:#9aabbf;margin-bottom:8px">Начисляется за каждый сданный отчёт с фото уборки (+'+CLEANUP_BONUS+' ₽). Сумма растёт с каждым отчётом.</div>';
-            if(myCleanupTxns.length){
-              let run=0;
-              html+='<div style="display:flex;flex-direction:column;gap:4px">';
-              myCleanupTxns.forEach(function(t){
-                run+=(t.amount||0);
-                html+='<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#27ae6008;border:1px solid #27ae6022;border-radius:8px;font-size:11px">'+
-                  '<span style="font-size:13px">🧹</span>'+
-                  '<div style="flex:1;min-width:0"><div style="font-weight:600;color:#1a2a3a">'+(t.date||"")+'</div>'+(t.note?'<div style="font-size:9px;color:#9aabbf;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(t.note)+'</div>':'')+'</div>'+
-                  '<div style="text-align:right;flex-shrink:0"><div style="font-weight:700;color:#27ae60">+'+(t.amount||0).toLocaleString("ru-RU")+'</div><div style="font-size:9px;color:#9aabbf">итого '+run.toLocaleString("ru-RU")+' ₽</div></div>'+
-                '</div>';
-              });
-              html+='</div>';
-              const maxRun=myCleanupTotal||1;
-              html+='<div style="margin-top:8px;display:flex;align-items:flex-end;gap:3px;height:34px">';
-              let run2=0;
-              myCleanupTxns.forEach(function(t){
-                run2+=(t.amount||0);
-                const hpc=Math.round(run2/maxRun*100);
-                html+='<div style="flex:1;background:#27ae60;border-radius:3px 3px 0 0;height:'+Math.max(8,hpc)+'%;min-width:6px" title="'+t.date+': '+run2+' ₽"></div>';
-              });
-              html+='</div>';
-              html+='<div style="font-size:9px;color:#9aabbf;text-align:center;margin-top:3px">Рост премии по отчётам</div>';
-            } else {
-              html+='<div style="text-align:center;padding:12px;color:#9aabbf;font-size:11px;border:1px dashed #dde6f0;border-radius:8px">Пока нет премий. Сдайте отчёт с фото уборки — премия начнёт накапливаться.</div>';
-            }
-          }
-          html+='</div>';
-        }
-        // Extra works block — separate (always show for brigadier if there are plans or txns)
-        const cExtraPlan=c.extraWorksPlan||[];
-        const cExtraPlanTotal=cExtraPlan.reduce(function(a,w){return a+(w.amount||0);},0);
-        const cExtraDone=cExtraPlan.filter(function(w){return w.done;}).length;
-        // Always show ДОП РАБОТЫ for brigadier on contracts where they're responsible
-        if(isBrigOnly){
-          const extraRemain=Math.max(0,cExtraPlanTotal-myExtraTotal);
-          html+='<div style="padding:12px 14px;border-top:1px solid #f0f3f7">'+
-            '<div style="font-size:11px;color:#16a085;font-weight:700;letter-spacing:0.5px;margin-bottom:8px">🛠 ДОП РАБОТЫ</div>'+
-            // Plan / Fact / Remaining
-            '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;padding:10px;background:#16a08508;border-radius:10px;margin-bottom:8px">'+
-              '<div><div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.3px">ПЛАН</div><div style="font-size:14px;font-weight:700;color:#1a2a3a;margin-top:2px">'+cExtraPlanTotal.toLocaleString("ru-RU")+'</div></div>'+
-              '<div><div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.3px">ФАКТ</div><div style="font-size:14px;font-weight:700;color:#16a085;margin-top:2px">'+myExtraTotal.toLocaleString("ru-RU")+'</div></div>'+
-              '<div><div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.3px">ОСТАЛОСЬ</div><div style="font-size:14px;font-weight:700;color:'+(extraRemain>0?"#e67e22":"#27ae60")+';margin-top:2px">'+(extraRemain>0?extraRemain.toLocaleString("ru-RU"):"✓")+'</div></div>'+
-            '</div>'+
-            // Сам перечень пожеланий с галочками живёт во вкладке «Объекты» — здесь только счётчик
-            (cExtraPlan.length?
-              '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#16a08508;border:1px solid #16a08522;border-radius:8px;margin-bottom:6px;font-size:11px">'+
-                '<span style="font-size:13px">🛠</span>'+
-                '<div style="flex:1;color:#5a7a9a">Пожеланий клиента: <b style="color:#1a2a3a">'+cExtraPlan.length+'</b> · отмечено <b style="color:#27ae60">'+cExtraDone+'</b></div>'+
-                '<span style="font-size:9px;color:#9aabbf;white-space:nowrap">список — во «Объектах»</span>'+
-              '</div>':
-              '<div style="font-size:11px;color:#9aabbf;text-align:center;padding:10px;border:1px dashed #d0dae8;border-radius:8px;margin-bottom:6px">Доп работ пока не запланировано</div>'
-            )+
-            // Paid transactions
-            (myExtraTxns.length?
-              '<div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.5px;margin:8px 0 4px">ВЫПЛАТЫ</div>'+
-              myExtraTxns.map(function(t){
-                return '<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#fafbfc;border-radius:8px;margin-bottom:4px;font-size:11px">'+
-                  '<div style="flex:1"><div style="font-weight:600;color:#1a2a3a">'+t.category+'</div><div style="font-size:9px;color:#9aabbf;margin-top:1px">'+t.date+(t.note?" · "+esc(t.note):"")+'</div></div>'+
-                  '<div style="font-weight:700;color:#16a085">+'+t.amount.toLocaleString("ru-RU")+' ₽</div>'+
-                '</div>';
-              }).join(""):"")+
-          '</div>';
-        }
-        // 🧾 Мои чеки за материалы (купленные за свои деньги)
-        if(isBrigOnly)html+=myReceiptsBlock(c);
-        html+='</div>';
-        return; // skip rest of full card
-      }
 
       html+='<div style="background:#fff;border-radius:16px;border:2px solid '+(isSelected?statusColor:"#e0e8f0")+';margin-bottom:14px;overflow:hidden;box-shadow:'+(isSelected?"0 4px 16px "+statusColor+"33":"0 2px 8px rgba(0,0,0,0.06)")+'">';
       // Checkbox row above the card body
@@ -9784,7 +9838,7 @@ let bddsView="month"; // "month" or "contract"
 let finTxns=[];
 let finOpenObjId=null;
 let finOpenContractId=null; // contract P&L view
-let cleanupExpanded={}; // {contractId: true} — раскрыт ли список премий за уборку
+let finMineOpen={};     // {contractId: bool} — раскрыт ли договор в «моих деньгах» (по умолчанию свёрнут)
 let finSelectedContractIds=[]; // contracts selected for dashboard aggregation
 let finAddForm=false;
 let finCtSection="income"; // активный раздел в P&L договора (income|supply|salary_prod|extra|salary_escort)
@@ -12995,7 +13049,12 @@ function bind(){
       finNewTxn.category=cats[0];
       render();
     };}
-    else if(a==="cleanup-toggle"){el.onclick=()=>{const cid=el.dataset.cid;cleanupExpanded[cid]=!cleanupExpanded[cid];render();};}
+    else if(a==="fin-mine-toggle"){el.onclick=()=>{
+      const cid=el.dataset.cid;
+      const dflt=myFinContracts().length===1; // единственный договор раскрыт по умолчанию
+      finMineOpen[cid]=!(finMineOpen[cid]!=null?finMineOpen[cid]:dflt);
+      render();
+    };}
     else if(a==="fin-method"){el.onclick=()=>{
       finNewTxn.method=el.dataset.m;
       document.querySelectorAll("[data-a='fin-method']").forEach(function(b){
