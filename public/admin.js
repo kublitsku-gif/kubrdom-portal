@@ -507,7 +507,7 @@ async function handleObjVideoFile(file, oid, tagName){
   objVideoUploading=null; fl();
 }
 
-// Загрузка файла в R2 через Worker → публичная ссылка (для фото работ/уборки/планировок).
+// Загрузка файла в R2 через Worker → публичная ссылка (для фото работ и планировок).
 // Перед отправкой сжимаем картинки до <= 1 МБ. Если файл уже сжат (alreadyCompressed) — пропускаем.
 async function uploadFileR2(file, alreadyCompressed){
   if(!alreadyCompressed){ try{ file=await compressImage(file, 1024*1024); }catch(e){ /* не удалось сжать — грузим оригинал */ } }
@@ -4386,16 +4386,11 @@ ${(()=>{
     viewUsers=[currentUser];
   }
   
-  let out='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'+
-    '<div style="font-size:10px;color:#9aabbf">'+todayLabel+'</div>'+
-    '<div style="font-size:12px;font-weight:800;color:#27ae60">+'+CLEANUP_BONUS+' ₽ за фото уборки</div>'+
-  '</div>';
+  let out='<div style="font-size:10px;color:#9aabbf;margin-bottom:10px">'+todayLabel+'</div>';
 
   viewUsers.forEach(function(u){
     const report=getTodayReport(obj,u.id,todayISOd);
     const isOff=report&&report.dayOff;
-    const cleanupPhotos=(report&&report.cleanupPhotos)||[];
-    const bonusPaid=getCleanupBonusPaid(obj.id,u.id,todayISOd);
     const canEdit=isAdmin||u.id===currentUser.id;
     const completedWorks=(obj.stages||[]).reduce(function(a,st){return a+(st.works||[]).filter(function(w){
       return w.done&&w.doneBy===u.id&&(w.doneAt||"").indexOf(todayISOd)===0;
@@ -4410,10 +4405,10 @@ ${(()=>{
     out+='<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:#1a2a3a">'+esc(u.name)+(u.id===currentUser.id?' (вы)':'')+'</div>';
     if(isOff){
       out+='<div style="font-size:10px;color:#9b59b6;font-weight:600;margin-top:1px">🏖 Выходной</div>';
-    } else if(cleanupPhotos.length>0){
-      out+='<div style="font-size:10px;color:#27ae60;font-weight:600;margin-top:1px">✓ Отчёт сдан · '+cleanupPhotos.length+' фото</div>';
+    } else if(hoursToday>0||completedWorks>0){
+      out+='<div style="font-size:10px;color:#27ae60;font-weight:600;margin-top:1px">✓ Есть записи за сегодня</div>';
     } else {
-      out+='<div style="font-size:10px;color:#9aabbf;font-style:italic;margin-top:1px">Отчёт не сдан</div>';
+      out+='<div style="font-size:10px;color:#9aabbf;font-style:italic;margin-top:1px">Записей за сегодня нет</div>';
     }
     out+='</div>';
     out+='</div>';
@@ -4427,46 +4422,18 @@ ${(()=>{
     }
     
     if(canEdit&&!isOff){
-      // Cleanup photos block
-      out+='<div style="background:#fff;border:1px dashed #27ae6055;border-radius:8px;padding:8px;margin-bottom:6px">';
-      out+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">';
-      out+='<div style="font-size:10px;color:#27ae60;font-weight:700">🧹 ФОТО УБОРКИ МЕСТА</div>';
-      if(bonusPaid>0){
-        out+='<div style="font-size:10px;color:#27ae60;font-weight:700;background:#27ae6018;padding:3px 8px;border-radius:5px">✓ Премия +'+bonusPaid+' ₽</div>';
-      } else if(cleanupPhotos.length>0){
-        out+='<div style="font-size:10px;color:#f39c12;font-weight:700;background:#f39c1218;padding:3px 8px;border-radius:5px">⏳ Премия начисляется...</div>';
-      }
-      out+='</div>';
-      if(cleanupPhotos.length){
-        out+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:6px">';
-        cleanupPhotos.forEach(function(p){
-          out+='<div style="position:relative;aspect-ratio:1;border-radius:6px;overflow:hidden;border:1px solid #27ae6055">';
-          out+='<img src="'+p.data+'" style="width:100%;height:100%;object-fit:cover" alt="">';
-          if(canEdit){
-            out+='<button data-a="dr-del-cleanup" data-oid="'+obj.id+'" data-uid="'+u.id+'" data-date="'+todayISOd+'" data-pid="'+p.id+'" style="position:absolute;top:2px;right:2px;width:20px;height:20px;background:rgba(231,76,60,0.9);border:none;border-radius:4px;cursor:pointer;color:#fff;font-size:10px">✕</button>';
-          }
-          out+='</div>';
-        });
-        out+='</div>';
-      }
-      out+='<label data-a="dr-cleanup-label" data-oid="'+obj.id+'" data-uid="'+u.id+'" data-date="'+todayISOd+'" style="display:block;width:100%;padding:8px;background:#27ae60;border-radius:6px;cursor:pointer;color:#fff;font-size:11px;font-weight:700;text-align:center;box-sizing:border-box">📷 '+(cleanupPhotos.length?'Добавить ещё фото уборки':'Сдать отчёт · фото уборки · +'+CLEANUP_BONUS+' ₽')+'<input id="dr-cleanup-inp-'+obj.id+'-'+u.id+'" type="file" accept="image/*" multiple style="display:none"></label>';
-      out+='</div>';
-      
-      // Day off button (only if no cleanup photos for today)
-      if(cleanupPhotos.length===0){
-        out+='<button data-a="dr-day-off" data-oid="'+obj.id+'" data-uid="'+u.id+'" data-date="'+todayISOd+'" style="width:100%;padding:8px;background:#fff;border:1.5px solid #9b59b655;border-radius:7px;cursor:pointer;color:#9b59b6;font-size:11px;font-weight:700">🏖 Отметить выходной</button>';
-      }
+      out+='<button data-a="dr-day-off" data-oid="'+obj.id+'" data-uid="'+u.id+'" data-date="'+todayISOd+'" style="width:100%;padding:8px;background:#fff;border:1.5px solid #9b59b655;border-radius:7px;cursor:pointer;color:#9b59b6;font-size:11px;font-weight:700">🏖 Отметить выходной</button>';
     } else if(canEdit&&isOff){
       out+='<button data-a="dr-undo-off" data-oid="'+obj.id+'" data-uid="'+u.id+'" data-date="'+todayISOd+'" style="width:100%;padding:7px;background:#fff;border:1px solid #9b59b633;border-radius:6px;cursor:pointer;color:#9b59b6;font-size:10px;font-weight:600">↺ Я всё-таки работал · отменить выходной</button>';
     }
     out+='</div>';
   });
   
-  // History toggle
-  const allReports=(obj.dayReports||[]).filter(function(r){return r.date<todayISOd;});
+  // История — только выходные: отчёт с фото уборки убран, других записей тут не появляется
+  const allReports=(obj.dayReports||[]).filter(function(r){return r.date<todayISOd&&r.dayOff;});
   if(allReports.length){
     out+='<button data-a="dr-hist-toggle" style="width:100%;margin-top:6px;padding:6px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:6px;cursor:pointer;color:#7a9aaa;font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:space-between">';
-    out+='<span>📜 История ('+allReports.length+' за прошлые дни)</span><span>'+(dayReportHistOpen?'▲':'▼')+'</span>';
+    out+='<span>📜 Выходные за прошлые дни ('+allReports.length+')</span><span>'+(dayReportHistOpen?'▲':'▼')+'</span>';
     out+='</button>';
     if(dayReportHistOpen){
       // Group by date desc
@@ -4479,11 +4446,9 @@ ${(()=>{
         out+='<div style="font-size:10px;color:#7a9aaa;font-weight:700;margin-bottom:4px">'+new Date(d+"T00:00:00").toLocaleDateString("ru-RU",{day:"2-digit",month:"long",weekday:"short"})+'</div>';
         byDate[d].forEach(function(r){
           const u=users.find(x=>x.id===r.userId);
-          const bonusD=getCleanupBonusPaid(obj.id,r.userId,d);
           out+='<div style="display:flex;align-items:center;gap:6px;font-size:10px;padding:3px 0;color:#5a7a9a">';
           out+='<span>'+(u?u.av:"👤")+'</span><span style="font-weight:600">'+esc(u?u.name:"—")+'</span>';
-          if(r.dayOff){out+='<span style="color:#9b59b6">· 🏖 Выходной</span>';}
-          else if((r.cleanupPhotos||[]).length>0){out+='<span style="color:#27ae60">· ✓ '+r.cleanupPhotos.length+' фото · +'+bonusD+' ₽</span>';}
+          out+='<span style="color:#9b59b6">· 🏖 Выходной</span>';
           out+='</div>';
         });
         out+='</div>';
@@ -4492,19 +4457,29 @@ ${(()=>{
     }
   }
 
-  // Итог в шапке: чтобы не открывать секцию ради «сдан / не сдан»
+  // Итог в шапке: день закрыт, если есть часы/сделанные работы или отмечен выходной
+  const dayFilled=function(u){
+    const r=getTodayReport(obj,u.id,todayISOd);
+    if(r&&r.dayOff)return true;
+    const h=(obj.stages||[]).reduce(function(a,st){return a+(st.works||[]).reduce(function(b,w){
+      return b+(w.timeLogs||[]).filter(function(l){return l.userId===u.id&&l.date===todayISOd;}).reduce(function(c,l){return c+(l.hours||0);},0);
+    },0);},0);
+    if(h>0)return true;
+    return (obj.stages||[]).some(function(st){return (st.works||[]).some(function(w){
+      return w.done&&w.doneBy===u.id&&(w.doneAt||"").indexOf(todayISOd)===0;
+    });});
+  };
   let summary;
   if(viewUsers.length===1){
     const rep=getTodayReport(obj,viewUsers[0].id,todayISOd);
-    const ph=(rep&&rep.cleanupPhotos)||[];
     summary=rep&&rep.dayOff?'<span style="color:#9b59b6">🏖 выходной</span>':
-      (ph.length?'<span style="color:#27ae60">✓ сдан · '+ph.length+' фото</span>':'<span style="color:#e67e22">не сдан</span>');
+      (dayFilled(viewUsers[0])?'<span style="color:#27ae60">✓ есть записи</span>':'<span style="color:#e67e22">записей нет</span>');
   } else {
-    const okN=viewUsers.filter(u=>{const r=getTodayReport(obj,u.id,todayISOd);return r&&((r.cleanupPhotos||[]).length>0||r.dayOff);}).length;
-    summary='<span style="color:'+(okN===viewUsers.length?"#27ae60":"#e67e22")+'">'+okN+' / '+viewUsers.length+' сдали</span>';
+    const okN=viewUsers.filter(dayFilled).length;
+    summary='<span style="color:'+(okN===viewUsers.length?"#27ae60":"#e67e22")+'">'+okN+' / '+viewUsers.length+' отметились</span>';
   }
-  // Раскрыт, пока отчёт не сдан — это ежедневное действие, прятать его нельзя
-  const needsAction=viewUsers.some(u=>{const r=getTodayReport(obj,u.id,todayISOd);return !(r&&((r.cleanupPhotos||[]).length>0||r.dayOff));});
+  // Раскрыт, пока за день ничего не отмечено — это ежедневное действие
+  const needsAction=viewUsers.some(function(u){return !dayFilled(u);});
   return objSection(obj.id,"dayreport","📋 ОТЧЁТ ДНЯ","#2980b9",summary,out,needsAction);
 })()}
 
@@ -7639,15 +7614,12 @@ function tFinanceMine(isBrig){
     const extraTxns=isBrig?finTxns.filter(function(t){
       return t.type==="expense"&&t.contractId===c.id&&txnCategoryGroup(t.category)==="salary_prod_extra";
     }):[];
-    const bonusTxns=isBrig?pick("salary_prod_bonus"):[];
     return {
       c:c, obj:obj,
       planSal:planSal, paidSal:paidSal, salTxns:salTxns,
       planExtra:isBrig?getExtraWorksPlan(c):0,
       paidExtra:extraTxns.reduce(function(a,t){return a+(t.amount||0);},0),
       extraTxns:extraTxns,
-      bonus:bonusTxns.reduce(function(a,t){return a+(t.amount||0);},0),
-      bonusCount:bonusTxns.length,
       debt:isBrig?receiptTotals(function(r){return r.userId===me.id&&r.contractId===c.id;}).pending:0
     };
   });
@@ -7655,7 +7627,6 @@ function tFinanceMine(isBrig){
   const tPlan=rows.reduce(function(a,r){return a+r.planSal+r.planExtra;},0);
   const tPaid=rows.reduce(function(a,r){return a+r.paidSal+r.paidExtra;},0);
   const tLeft=Math.max(0,tPlan-tPaid);
-  const tBonus=rows.reduce(function(a,r){return a+r.bonus;},0);
   const tDebt=rows.reduce(function(a,r){return a+r.debt;},0);
   const pct=tPlan>0?Math.min(100,Math.round(tPaid/tPlan*100)):0;
   const objCount=rows.reduce(function(a,r){return a.indexOf(r.c.objId)<0?a.concat([r.c.objId]):a;},[]).length;
@@ -7689,11 +7660,10 @@ function tFinanceMine(isBrig){
   const salPaidAll=rows.reduce(function(a,r){return a+r.paidSal;},0);
   const exPlanAll=rows.reduce(function(a,r){return a+r.planExtra;},0);
   const exPaidAll=rows.reduce(function(a,r){return a+r.paidExtra;},0);
-  html+='<div style="display:grid;grid-template-columns:repeat('+(isBrig?3:1)+',minmax(0,1fr));gap:7px;padding-top:11px;border-top:1px solid rgba(255,255,255,0.08)">';
+  html+='<div style="display:grid;grid-template-columns:repeat('+(isBrig?2:1)+',minmax(0,1fr));gap:7px;padding-top:11px;border-top:1px solid rgba(255,255,255,0.08)">';
   html+=dTile("👷 ЗАРПЛАТА", money(salPaidAll), "#fff", "из "+money(salPlanAll)+" ₽");
   if(isBrig){
     html+=dTile("🛠 ДОП РАБОТЫ", money(exPaidAll), exPaidAll?"#2ecc71":"rgba(255,255,255,0.55)", exPlanAll?"из "+money(exPlanAll)+" ₽":"не запланированы");
-    html+=dTile("🧹 ПРЕМИЯ", "+"+money(tBonus), tBonus?"#2ecc71":"rgba(255,255,255,0.55)", "сверх плана");
   }
   html+='</div>';
   if(isBrig){
@@ -7780,14 +7750,6 @@ function tFinanceMine(isBrig){
           '</div>':
           '<div style="text-align:center;padding:10px;color:#9aabbf;font-size:11px;border:1px dashed #dde6f0;border-radius:8px">Доп работ пока не запланировано</div>';
         html+=txnList(r.extraTxns,"#16a085","");
-        html+='<div style="display:flex;align-items:center;gap:9px;margin-top:14px;padding:10px 12px;background:#27ae6008;border:1px solid #27ae6022;border-radius:10px">'+
-          '<span style="font-size:16px">🧹</span>'+
-          '<div style="flex:1;min-width:0">'+
-            '<div style="font-size:11px;font-weight:700;color:#27ae60;letter-spacing:0.3px">ПРЕМИЯ ЗА УБОРКУ</div>'+
-            '<div style="font-size:9px;color:#9aabbf;margin-top:1px">+'+CLEANUP_BONUS+' ₽ за отчёт с фото · начислено '+r.bonusCount+'</div>'+
-          '</div>'+
-          '<div style="font-size:15px;font-weight:800;color:'+(r.bonus?"#27ae60":"#c4cdd8")+'">+'+money(r.bonus)+' ₽</div>'+
-        '</div>';
       }
       html+='</div>';
       if(isBrig)html+=myReceiptsBlock(c);
@@ -9868,15 +9830,12 @@ function tMarketingInstruction(){
 let financeData={}; // legacy compat
 let openPhotoWid=null; // {wid} of work with open photo block
 let dayReportHistOpen=false; // history toggle
-const CLEANUP_BONUS=500; // ₽ premia at cleanup
+// Премия за уборку места убрана из портала: производство её больше не сдаёт и не видит.
+// Категория «🧹 Премия за уборку» осталась в справочнике расходов, чтобы уже
+// проведённые начисления корректно классифицировались в P&L у админа.
 function getTodayReport(obj,uid,dateISO){
   const reports=obj.dayReports||[];
   return reports.find(function(r){return r.userId===uid&&r.date===dateISO;});
-}
-function getCleanupBonusPaid(oid,uid,dateISO){
-  return finTxns.filter(function(t){
-    return t.type==="expense"&&txnCategoryGroup(t.category)==="salary_prod_bonus"&&t.objId===oid&&t.userId===uid&&t.date===dateISO;
-  }).reduce(function(a,t){return a+(t.amount||0);},0);
 }
 let timeHistoryExpanded={}; // {wid: true} which work histories are expanded
 let openTimeWid=null; // {wid} of work with open time-log form
@@ -14259,89 +14218,6 @@ function bind(){
       render();
     };}
     else if(a==="dr-hist-toggle"){el.onclick=()=>{dayReportHistOpen=!dayReportHistOpen;render();};}
-    else if(a==="dr-cleanup-label"){
-      const oid=el.dataset.oid,uid=el.dataset.uid,date=el.dataset.date;
-      const inp=document.getElementById("dr-cleanup-inp-"+oid+"-"+uid);
-      if(inp&&!inp._bound){
-        inp._bound=true;
-        inp.addEventListener("change",async function(){
-          const files=Array.from(inp.files||[]);
-          if(!files.length)return;
-          const newPhotos=[];
-          const tgFiles=[];
-          for(const f of files){
-            try{
-              let c=f; try{ c=await compressImage(f,1024*1024); }catch(e){}
-              const url=await uploadFileR2(c,true);
-              tgFiles.push(c);
-              newPhotos.push({
-                id:gid(),
-                data:url,
-                date:new Date().toISOString().slice(0,16).replace("T"," "),
-                uploader:(users.find(u=>u.id===uid)||{}).name||"—",
-                size:f.size,
-                name:f.name
-              });
-            }catch(err){ alert("Ошибка загрузки фото: "+((err&&err.message)||err)); }
-          }
-          inp._bound=false;
-          mirrorPhotosToTelegram(oid, tgFiles);
-          if(!newPhotos.length){ render(); return; }
-          // Update or create day report
-          objects=objects.map(function(o){
-            if(o.id!==oid)return o;
-            const reports=(o.dayReports||[]).slice();
-            let idx=reports.findIndex(function(r){return r.userId===uid&&r.date===date;});
-            if(idx<0){
-              reports.push({id:gid(),userId:uid,date:date,cleanupPhotos:newPhotos,dayOff:false});
-            } else {
-              const existing=reports[idx];
-              reports[idx]=Object.assign({},existing,{cleanupPhotos:(existing.cleanupPhotos||[]).concat(newPhotos),dayOff:false});
-            }
-            return Object.assign({},o,{dayReports:reports});
-          });
-          // Auto-create bonus transaction (only first time bonus is earned for this day on this object)
-          const obj=objects.find(o=>o.id===oid);
-          const u=users.find(x=>x.id===uid);
-          const existingBonus=getCleanupBonusPaid(oid,uid,date);
-          if(existingBonus===0&&u){
-            const objC=contractDocs.filter(d=>d.objId===oid&&(d.status==="signed"||d.status==="closed"))[0];
-            finTxns.push({
-              id:gid(), type:"expense", category:"🧹 Премия за уборку", amount:CLEANUP_BONUS,
-              date:date, objId:oid, contractId:objC?objC.id:null, userId:uid,
-              note:"Уборка рабочего места · "+(obj?obj.name:"")+" · "+u.name
-            });
-          }
-          try{
-            const toast=document.createElement("div");
-            toast.textContent=existingBonus===0?"🎉 Премия +"+CLEANUP_BONUS+" ₽ начислена!":"📷 Фото добавлены";
-            toast.style.cssText="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#27ae60;color:#fff;padding:12px 18px;border-radius:10px;font-size:13px;font-weight:700;z-index:9999;box-shadow:0 4px 16px rgba(39,174,96,0.4)";
-            document.body.appendChild(toast);
-            setTimeout(function(){try{document.body.removeChild(toast);}catch(e){}},2500);
-          }catch(e){}
-          fl();
-        });
-      }
-    }
-    else if(a==="dr-del-cleanup"){
-      const handler=function(ev){
-        if(ev){ev.stopPropagation();ev.preventDefault();}
-        const oid=el.dataset.oid,uid=el.dataset.uid,date=el.dataset.date,pid=el.dataset.pid;
-        objects=objects.map(function(o){
-          if(o.id!==oid)return o;
-          const reports=(o.dayReports||[]).map(function(r){
-            if(r.userId!==uid||r.date!==date)return r;
-            return Object.assign({},r,{cleanupPhotos:(r.cleanupPhotos||[]).filter(function(p){return p.id!==pid;})});
-          });
-          return Object.assign({},o,{dayReports:reports});
-        });
-        fl();
-        return false;
-      };
-      el.onclick=handler;
-      el.addEventListener("click",handler,true);
-      el.addEventListener("touchend",function(ev){if(ev){ev.stopPropagation();ev.preventDefault();}handler(ev);},true);
-    }
     else if(a==="dr-day-off"){
       const handler=function(ev){
         if(ev){ev.stopPropagation();ev.preventDefault();}
@@ -14350,7 +14226,7 @@ function bind(){
           if(o.id!==oid)return o;
           const reports=(o.dayReports||[]).slice();
           const idx=reports.findIndex(function(r){return r.userId===uid&&r.date===date;});
-          if(idx<0)reports.push({id:gid(),userId:uid,date:date,dayOff:true,cleanupPhotos:[]});
+          if(idx<0)reports.push({id:gid(),userId:uid,date:date,dayOff:true});
           else reports[idx]=Object.assign({},reports[idx],{dayOff:true});
           return Object.assign({},o,{dayReports:reports});
         });
