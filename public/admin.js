@@ -3763,7 +3763,9 @@ function render(){
   }
   // Поля формы «Шаблон договора» переживают перерисовку (синк в ctTpl + localStorage)
   if(tab==="contracts"&&!contractView&&ctSubTab==="template")_bindCtTplSync();
-  if(tab==="supply"&&window._supplyViewing){
+  // Приёмка теперь один экран без _supplyViewing — привязываемся по факту наличия поля,
+  // иначе поиск по материалам у бригадира просто не работал.
+  if(tab==="supply"){
     const si=document.getElementById("supply-search-input");
     if(si){
       si.oninput=function(){supplySearch=this.value;render();};
@@ -5956,17 +5958,56 @@ function tContractList(archived){
     closed: {label:"Закрыт",       color:"#27ae60"},
   };
   // Активный список показывает не-архивные договоры, вкладка «Архив» — архивные.
-  const docs=contractDocs.filter(function(c){return archived?c.archived:!c.archived;});
+  const allDocs=contractDocs.filter(function(c){return archived?c.archived:!c.archived;});
+
+  // Поиск: номер/название, клиент, телефон, объект, примечание, сумма.
+  // Телефон и сумму сверяем ещё и «только цифрами» — иначе «9851713288» не найдёт
+  // «+7 (985) 171-32-88», а «1900000» — «1 900 000 ₽».
+  const q=(contractSearch||"").trim().toLowerCase();
+  const qDigits=q.replace(/\D/g,"");
+  const matchDoc=function(c){
+    if(!q)return true;
+    const o=objects.find(function(x){return x.id===c.objId;});
+    const cl=c.crmClientId?crmClients.find(function(cc){return cc.id===c.crmClientId;}):null;
+    const hay=[c.name,ctClientName(c),c.note,o?o.name:"",cl?cl.phone:""].join(" ").toLowerCase();
+    if(hay.indexOf(q)>=0)return true;
+    if(qDigits.length>=3){
+      const digits=((cl?cl.phone:"")+" "+(c.amount||"")+" "+(c.name||"")).replace(/\D/g,"");
+      if(digits.indexOf(qDigits)>=0)return true;
+    }
+    return false;
+  };
+  const docs=allDocs.filter(matchDoc);
 
   let html='<div>';
   html+=
-    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'+
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'+
       '<div>'+
         '<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">'+(archived?"АРХИВ · ЗАКРЫТЫЕ ДОГОВОРА":"ДОГОВОРА")+'</div>'+
-        '<div style="font-size:12px;color:#5a7a9a;margin-top:2px">'+docs.length+' документов</div>'+
+        '<div style="font-size:12px;color:#5a7a9a;margin-top:2px">'+(q?docs.length+' из '+allDocs.length:allDocs.length+' документов')+'</div>'+
       '</div>'+
       (archived?'':'<button data-a="ct-add" style="padding:6px 14px;background:#2980b9;border:none;border-radius:8px;cursor:pointer;font-size:12px;color:#fff;font-weight:700">+ Договор</button>')+
     '</div>';
+
+  // Поле поиска — показываем, когда искать есть в чём
+  if(allDocs.length>1||q){
+    html+='<div style="position:relative;margin-bottom:12px">'+
+      '<span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:13px;pointer-events:none">🔍</span>'+
+      '<input id="ct-search" data-a="ct-search" value="'+esc(contractSearch)+'" placeholder="Номер, клиент, телефон, объект…" '+
+        'style="width:100%;padding:9px 34px 9px 36px;border-radius:10px;border:1.5px solid #dde6f0;font-size:13px;outline:none;box-sizing:border-box;background:#fff">'+
+      (q?'<button data-a="ct-search-clear" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:22px;height:22px;border:none;background:#eef2f7;border-radius:50%;cursor:pointer;color:#7a9aaa;font-size:12px">✕</button>':'')+
+    '</div>';
+  }
+
+  // Ничего не нашлось — отдельное состояние, чтобы не путать с пустым списком
+  if(q&&!docs.length){
+    html+='<div style="background:#fff;border-radius:14px;border:2px dashed #dde6f0;padding:28px 20px;text-align:center">'+
+      '<div style="font-size:34px;margin-bottom:8px">🔍</div>'+
+      '<div style="font-size:13px;font-weight:600;color:#5a7a9a">Ничего не найдено</div>'+
+      '<div style="font-size:12px;color:#a0b4c8;margin-top:4px">По запросу «'+esc(contractSearch)+'» среди '+allDocs.length+' договоров совпадений нет</div>'+
+    '</div>';
+    return html+'</div>';
+  }
 
   // Add form (только в активном списке, не в архиве)
   if(!archived&&contractAddForm){
@@ -10336,6 +10377,7 @@ let contractNew={objId:"",type:"main",name:"",amount:"",signDate:new Date().toIS
 // Черновик формы живёт ТОЛЬКО в localStorage (kubr_ctTpl): паспортные данные клиента до
 // подписания незачем класть в общий снимок D1, к тому же черновик — персональная вещь.
 let ctSubTab="list"; // подвкладка раздела «Договора»: "list" | "template"
+let contractSearch=""; // поиск по договорам: номер, клиент, телефон, объект, примечание
 const CT_TPL_LS_KEY="kubr_ctTpl";
 
 // Исполнители на выбор — реквизиты взяты из действующих договоров подряда
@@ -12777,6 +12819,8 @@ function bind(){
     };}
     else if(a==="tpl-work-search"){el.oninput=()=>{ tplWorkSearch=el.value; render(); };}
     else if(a==="tpl-work-search-clear"){el.onclick=()=>{ tplWorkSearch=""; render(); };}
+    else if(a==="ct-search"){el.oninput=()=>{ contractSearch=el.value; render(); };}
+    else if(a==="ct-search-clear"){el.onclick=()=>{ contractSearch=""; render(); };}
     else if(a==="obj-work-search"){el.oninput=()=>{ objWorkSearch=el.value; render(); };}
     else if(a==="obj-work-search-clear"){el.onclick=()=>{ objWorkSearch=""; render(); };}
     else if(a==="tpl-est-unhide"){el.onclick=()=>{ const t=templates.find(x=>x.id===openTemplate); if(t)t.hiddenEst=[]; fl(); };}
