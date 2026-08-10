@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-10.3";
+const APP_BUILD = "2026-08-10.4";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1947,6 +1947,7 @@ let specSel={};          // {roomId:true} — выделенные помеще�
 let specActiveRoom={};   // {oid: roomId} — активная вкладка-помещение
 let specsCollapsed={};   // {oid:true} — свёрнут ли блок характеристик
 let objPrevExpanded={};  // {oid:true} — развёрнута ли карточка объекта в списке (по умолч. свёрнута)
+let objArchOpen=false;   // вкладка «Объекты»: раскрыта ли свёртка «Архив» (завершённые объекты)
 let tplWorkSearch="";    // поиск по работам и материалам в сборщике смет
 let objWorkSearch="";    // поиск по работам и материалам в карточке объекта
 let kpTemplateId="";     // КП: выбранный шаблон
@@ -4865,10 +4866,16 @@ ${(()=>{
   }
 
   const _vo=currentUser&&currentUser.roles.includes("admin")?objects:objects.filter(function(o){return currentUser&&getUserObjects(currentUser).includes(o.id);});
+  // Завершённые объекты — под свёртку: список должен показывать текущую стройку.
+  // Свёртка раскрывается сама, если внутри развёрнута карточка — иначе тап по
+  // объекту в архиве «терял» бы его с экрана.
+  const _voArch=_vo.filter(o=>!!objDoneLabel(o.id));
+  const _voActive=_vo.filter(o=>!objDoneLabel(o.id));
+  const _archOpen=objArchOpen||_voArch.some(o=>objPrevExpanded[o.id]===true);
   return`<div>
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
   <div>
-    <div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">ОБЪЕКТЫ (${(isAdmin?objects:objects.filter(function(o){return currentUser&&getUserObjects(currentUser).includes(o.id);})).length})</div>
+    <div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">ОБЪЕКТЫ (${_voActive.length})</div>
     <div style="font-size:12px;color:#5a7a9a;margin-top:2px">Создаются из шаблонов</div>
   </div>
   ${isAdmin?`<button data-a="show-nobj" style="padding:7px 16px;background:#c0392b;border:none;border-radius:9px;cursor:pointer;font-size:13px;color:#fff;font-weight:700">+ Новый объект</button>`:""}
@@ -4908,7 +4915,17 @@ ${_vo.length===0?`<div style="background:#fff;border-radius:14px;border:2px dash
   <div style="font-size:14px;font-weight:600;color:#5a7a9a;margin-bottom:6px">Нет объектов</div>
   <div style="font-size:12px;color:#a0b4c8">Нажмите «+ Новый объект» чтобы создать первый</div>
 </div>`:`<div style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px">
-  ${_vo.map(obj=>renderObjCard(obj,isAdmin)).join("")}
+  ${_voActive.map(obj=>renderObjCard(obj,isAdmin)).join("")}
+  ${_voActive.length===0?`<div style="text-align:center;color:#9aabbf;font-size:12px;padding:14px 0">Все объекты завершены — активной стройки нет</div>`:""}
+  ${_voArch.length?`<div data-a="obj-arch-toggle" data-open="${_archOpen?"1":"0"}" style="display:flex;align-items:center;gap:9px;margin-top:6px;padding:11px 14px;background:#fff;border:1px solid #e5ebf2;border-radius:12px;cursor:pointer;user-select:none">
+    <span style="font-size:16px;flex-shrink:0">📦</span>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:12px;font-weight:700;color:#7a9aaa;letter-spacing:0.5px">АРХИВ · ${_voArch.length}</div>
+      <div style="font-size:10px;color:#a0b4c8;margin-top:1px">Завершённые объекты — работы приняты, договор закрыт</div>
+    </div>
+    <span style="font-size:10px;color:#c4cdd8;flex-shrink:0;display:inline-block;transition:transform 0.15s;transform:rotate(${_archOpen?"90":"0"}deg)">▶</span>
+  </div>
+  ${_archOpen?_voArch.map(obj=>renderObjCard(obj,isAdmin)).join(""):""}`:""}
 </div>`}
 
 ${(()=>{
@@ -12938,6 +12955,7 @@ function bind(){
     else if(a==="obj-sec-toggle"){el.onclick=()=>{objSecOpen[el.dataset.k]=el.dataset.open!=="1";render();};}
     // data-open несёт фактическое состояние: свёртка могла раскрыться сама (выбран архивный объект)
     else if(a==="supply-arch-toggle"){el.onclick=()=>{supplyArchOpen=el.dataset.open!=="1";render();};}
+    else if(a==="obj-arch-toggle"){el.onclick=()=>{objArchOpen=el.dataset.open!=="1";render();};}
     else if(a==="receive-filter"){el.onclick=()=>{receiveOnlyLeft=el.dataset.v==="left";render();};}
     else if(a==="supply-view"){el.onclick=()=>{window._supplyViewing=true;render();};}
     else if(a==="supply-back"){el.onclick=()=>{window._supplyViewing=false;supplySearch='';supplyStoreFilter='';supplyHideDone=false;render();};}
