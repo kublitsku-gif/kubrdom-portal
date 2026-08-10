@@ -1840,6 +1840,7 @@ let supplyGroupOpen={}; // снабжение: {"stage|Имя"|"store|Имя": b
 let supplyStoreFilter=''; // фильтр по магазину
 let supplyHideDone=false; // показывать только не купленное
 let supplyArchOpen=false; // список выбора: раскрыта ли свёртка «Архив» (завершённые объекты)
+let templatesOpen=false;  // раскрыта ли секция «Шаблоны объектов» под списком объектов
 let dbEditWork=null,dbEditMat=null,dbDragWork=null,dbDragMat=null; // "works" | "mats"
 let showNDBWork=false,showNDBMat=null; // showNDBMat = work id
 // === ПЛАНИРОВКИ (база) ===
@@ -5085,15 +5086,19 @@ ${tplPickFor?`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);dis
 </div>`;
   }
 
+  // Шаблоны — заготовки, а не ежедневная работа: держим свёрнутыми, чтобы они не
+  // занимали пол-экрана под списком объектов. Форма нового шаблона раскрывает секцию.
+  const _tplOpen=templatesOpen||showNT;
   return`<div style="background:linear-gradient(180deg,#f6eefb,#fcf9fe);border:1.5px solid #9b59b644;border-radius:16px;padding:14px;margin-top:12px">
-<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-  <div>
-    <div style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#fff;font-weight:800;letter-spacing:0.5px;background:#9b59b6;border-radius:7px;padding:4px 10px">📋 ШАБЛОНЫ ОБЪЕКТОВ</div>
-    <div style="font-size:11px;color:#8a6aa0;margin-top:5px">Это не объекты — заготовки, из которых создаются новые объекты</div>
+<div data-a="tpl-section-toggle" data-open="${_tplOpen?"1":"0"}" style="display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none;${_tplOpen?"margin-bottom:14px":""}">
+  <span style="font-size:11px;color:#b39ac4;flex-shrink:0;display:inline-block;transition:transform 0.15s;transform:rotate(${_tplOpen?"90":"0"}deg)">▶</span>
+  <div style="flex:1;min-width:0">
+    <div style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#fff;font-weight:800;letter-spacing:0.5px;background:#9b59b6;border-radius:7px;padding:4px 10px">📋 ШАБЛОНЫ ОБЪЕКТОВ · ${templates.length}</div>
+    ${_tplOpen?`<div style="font-size:11px;color:#8a6aa0;margin-top:5px">Это не объекты — заготовки, из которых создаются новые объекты</div>`:""}
   </div>
-  <button data-a="show-nt" style="padding:7px 16px;background:#9b59b6;border:none;border-radius:9px;cursor:pointer;font-size:13px;color:#fff;font-weight:700">+ Шаблон</button>
+  <button data-a="show-nt" style="padding:7px 16px;background:#9b59b6;border:none;border-radius:9px;cursor:pointer;font-size:13px;color:#fff;font-weight:700;flex-shrink:0">+ Шаблон</button>
 </div>
-
+${!_tplOpen?"":`
 ${showNT?`<div style="background:#fff;border-radius:14px;border:2px solid #9b59b6;padding:16px;margin-bottom:14px">
   <div style="font-size:14px;font-weight:700;color:#0d1b2e;margin-bottom:12px">Новый шаблон</div>
   <div style="display:flex;gap:8px;margin-bottom:10px">
@@ -5113,6 +5118,7 @@ ${showNT?`<div style="background:#fff;border-radius:14px;border:2px solid #9b59b
 </div>`:""}
 
 <div id="tpl-grid" style="display:flex;flex-direction:column;gap:10px"></div>
+`}
 </div>`;
 }
 
@@ -12746,7 +12752,9 @@ function bind(){
     else if(a==="tog-obj"){el.onclick=()=>{const uid=el.dataset.uid,oid=el.dataset.oid;users=users.map(u=>{if(u.id!==uid)return u;const o=u.objs.includes(oid)?u.objs.filter(x=>x!==oid):[...u.objs,oid];return{...u,objs:o};});fl();};}
     else if(a==="tog-user-obj"){el.onclick=()=>{const uid=el.dataset.uid,oid=el.dataset.oid;users=users.map(u=>{if(u.id!==uid)return u;const o=u.objs.includes(oid)?u.objs.filter(x=>x!==oid):[...u.objs,oid];return{...u,objs:o};});fl();};}
     // Шаблоны
-    else if(a==="show-nt"){el.onclick=()=>{showNT=true;nt={name:"",icon:"🛁",kind:"banya"};render();};}
+    else if(a==="tpl-section-toggle"){el.onclick=()=>{templatesOpen=el.dataset.open!=="1";if(!templatesOpen)showNT=false;render();};}
+    // «+ Шаблон» лежит в кликабельной шапке: не сворачиваем секцию и сразу раскрываем её
+    else if(a==="show-nt"){el.onclick=(ev)=>{ev&&ev.stopPropagation();showNT=true;templatesOpen=true;nt={name:"",icon:"🛁",kind:"banya"};render();};}
     else if(a==="nt-kind"){el.onclick=()=>{nt.kind=el.dataset.k;nt.name=document.getElementById("nt-name")?.value||nt.name;nt.icon=document.getElementById("nt-icon")?.value||nt.icon;render();};}
     else if(a==="cancel-nt"){el.onclick=()=>{showNT=false;render();};}
     else if(a==="spec-room-sel"){el.onclick=(ev)=>{ if(ev)ev.stopPropagation(); const id=el.dataset.id; const n=Object.assign({},specSel); if(n[id])delete n[id]; else n[id]=true; specSel=n; render(); };}
