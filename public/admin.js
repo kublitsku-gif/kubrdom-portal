@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-10.2";
+const APP_BUILD = "2026-08-10.3";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -8820,9 +8820,19 @@ function tReceive(sel){
       '<div style="text-align:center;padding:30px 16px;color:#9aabbf;font-size:13px;border:1px dashed #d0dae8;border-radius:12px">К вам пока не привязан ни один объект. Приёмка появится, когда вас назначат ответственным на объект (через «Договора»).</div></div>';
   }
 
-  // Чипы работают как фильтр: пока ничего не выбрано — показываем все объекты
+  // Завершённые объекты убираем из работы по умолчанию: их позиции незачем
+  // «дожимать» на складе, и они не должны раздувать счётчик «осталось принять».
+  // Крайний случай — все объекты бригадира в архиве: тогда прячем нечего,
+  // иначе экран остался бы пустым и непонятным.
+  const archObjs=visObjs.filter(function(o){return !!objDoneLabel(o.id);});
+  const activeObjs=visObjs.filter(function(o){return !objDoneLabel(o.id);});
+  const hideArch=archObjs.length>0&&activeObjs.length>0;
+  const baseObjs=hideArch?activeObjs:visObjs;
+
+  // Чипы работают как фильтр: пока ничего не выбрано — показываем базовые объекты.
+  // Выбор архивного объекта (из свёртки «Архив») перекрывает базовый набор.
   const picked=visObjs.filter(function(o){return !!sel[o.id];});
-  const chosen=picked.length?picked:visObjs;
+  const chosen=picked.length?picked:baseObjs;
 
   const matsOf=function(obj){
     return obj.stages.flatMap(function(s){
@@ -8860,20 +8870,33 @@ function tReceive(sel){
     '</div>'+
   '</div>';
 
-  // ── Чипы объектов (только если объектов больше одного) ──
-  if(visObjs.length>1){
-    html+='<div style="display:flex;gap:6px;overflow-x:auto;padding:2px 2px 8px;-webkit-overflow-scrolling:touch">';
-    visObjs.forEach(function(obj){
+  // ── Чипы объектов ──
+  // Показываем, если есть из чего выбирать: больше одного активного объекта
+  // либо спрятанный архив (иначе до архива было бы не добраться).
+  const archOpen=supplyArchOpen||archObjs.some(function(o){return !!sel[o.id];});
+  const showChips=baseObjs.length>1||hideArch;
+  if(showChips){
+    const chip=function(obj){
       const on=!!sel[obj.id];
       const oMats=matsOf(obj);
       const oLeft=oMats.filter(function(m){return !arrived[m.id];}).length;
       const done=objDoneLabel(obj.id);
-      html+='<div data-a="supply-toggle" data-oid="'+obj.id+'" style="display:flex;align-items:center;gap:6px;padding:7px 11px;border-radius:20px;cursor:pointer;white-space:nowrap;flex-shrink:0;border:1.5px solid '+(on?"#e67e22":"#dde6f0")+';background:'+(on?"#fff7f0":"#fff")+'">'+
+      return '<div data-a="supply-toggle" data-oid="'+obj.id+'" style="display:flex;align-items:center;gap:6px;padding:7px 11px;border-radius:20px;cursor:pointer;white-space:nowrap;flex-shrink:0;border:1.5px solid '+(on?"#e67e22":"#dde6f0")+';background:'+(on?"#fff7f0":"#fff")+'">'+
         '<span style="font-size:14px">'+(done?"📦":obj.icon)+'</span>'+
         '<span style="font-size:12px;font-weight:700;color:'+(done?"#9aabbf":(on?"#e67e22":"#5a7a9a"))+'">'+esc(obj.name)+'</span>'+
         '<span style="font-size:10px;font-weight:800;border-radius:9px;padding:1px 7px;color:#fff;background:'+(oLeft>0?"#e67e22":"#27ae60")+'">'+(oLeft>0?oLeft:"✓")+'</span>'+
       '</div>';
-    });
+    };
+    html+='<div style="display:flex;gap:6px;overflow-x:auto;padding:2px 2px 8px;-webkit-overflow-scrolling:touch">';
+    html+=baseObjs.map(chip).join("");
+    if(hideArch){
+      html+='<div data-a="supply-arch-toggle" data-open="'+(archOpen?"1":"0")+'" style="display:flex;align-items:center;gap:6px;padding:7px 11px;border-radius:20px;cursor:pointer;white-space:nowrap;flex-shrink:0;border:1.5px dashed #d0dae8;background:#f7f9fb;user-select:none">'+
+        '<span style="font-size:14px">📦</span>'+
+        '<span style="font-size:12px;font-weight:700;color:#9aabbf">Архив · '+archObjs.length+'</span>'+
+        '<span style="font-size:9px;color:#c4cdd8;display:inline-block;transform:rotate('+(archOpen?"90":"0")+'deg)">▶</span>'+
+      '</div>';
+      if(archOpen)html+=archObjs.map(chip).join("");
+    }
     html+='</div>';
     if(picked.length)html+='<div style="font-size:10px;color:#9aabbf;margin:0 4px 8px">Фильтр по объектам включён · нажмите ещё раз, чтобы снять</div>';
   }
