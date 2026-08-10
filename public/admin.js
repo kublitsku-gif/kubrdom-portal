@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-10.1";
+const APP_BUILD = "2026-08-10.2";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1838,6 +1838,7 @@ let supplySearch=''; // поиск по материалам
 let receiveOnlyLeft=true; // приёмка: показывать только непринятое (главный рабочий режим)
 let supplyStoreFilter=''; // фильтр по магазину
 let supplyHideDone=false; // показывать только не купленное
+let supplyArchOpen=false; // список выбора: раскрыта ли свёртка «Архив» (завершённые объекты)
 let dbEditWork=null,dbEditMat=null,dbDragWork=null,dbDragMat=null; // "works" | "mats"
 let showNDBWork=false,showNDBMat=null; // showNDBMat = work id
 // === ПЛАНИРОВКИ (база) ===
@@ -8962,7 +8963,9 @@ function tSupplySelect(sel){
     return html+'<div style="text-align:center;color:#aaa;padding:30px">Нет объектов. Создайте объект во вкладке Объекты.</div></div>';
   }
 
-  objects.forEach(function(obj){
+  // Карточка объекта. Вынесена из цикла: активные и архивные рисуются одинаково,
+  // но живут в разных списках (архивные — под свёрткой).
+  function objCard(obj){
     const allMats=obj.stages.flatMap(function(s){return s.works.flatMap(function(w){return(w.mats||[]).map(function(m){return Object.assign({},m,{wn:w.n});});});});
     const totalCost=allMats.reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
     // Осталось купить (не отмечено «куплено») — всего и по этапам.
@@ -8977,7 +8980,7 @@ function tSupplySelect(sel){
     // Снабженец должен видеть, что по объекту всё закрыто: закупать туда уже нечего.
     // Признак производный (из договоров), поэтому берём его тем же objDoneLabel, что и производство.
     const done=objDoneLabel(obj.id);
-    html+=
+    return (
       '<div data-a="supply-toggle" data-oid="'+obj.id+'" style="background:#fff;border-radius:14px;border:2px solid '+(isOn?'#2980b9':'#dde6f0')+';padding:14px 16px;margin-bottom:10px;cursor:pointer;transition:border-color 0.15s,background 0.15s;background:'+(isOn?'#f0f6ff':'#fff')+'">'+
         '<div style="display:flex;align-items:center;gap:12px">'+
           '<div style="width:26px;height:26px;border-radius:8px;border:2px solid '+(isOn?'#2980b9':'#c8d8e8')+';background:'+(isOn?'#2980b9':'transparent')+';display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.15s">'+
@@ -8995,8 +8998,34 @@ function tSupplySelect(sel){
             (assigned.length?'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">'+assigned.map(function(u){return'<span style="font-size:10px;background:'+u.c+'18;color:'+u.c+';border-radius:8px;padding:1px 7px;border:1px solid '+u.c+'33">'+u.av+' '+esc(u.name)+'</span>';}).join("")+'</div>':'')+
           '</div>'+
         '</div>'+
-      '</div>';
-  });
+      '</div>');
+  }
+
+  const activeObjs=objects.filter(function(o){return !objDoneLabel(o.id);});
+  const archObjs=objects.filter(function(o){return !!objDoneLabel(o.id);});
+
+  html+=activeObjs.map(objCard).join("");
+  if(!activeObjs.length){
+    html+='<div style="text-align:center;color:#9aabbf;font-size:12px;padding:18px 0">Все объекты завершены — активных закупок нет</div>';
+  }
+
+  if(archObjs.length){
+    // Свёртка раскрывается сама, если внутри есть выбранный объект: иначе выбор
+    // пропал бы с экрана, а нижняя плашка считала бы его — выглядит как баг.
+    const archSelected=archObjs.some(function(o){return !!sel[o.id];});
+    const open=supplyArchOpen||archSelected;
+    html+=
+      '<div data-a="supply-arch-toggle" data-open="'+(open?"1":"0")+'" style="display:flex;align-items:center;gap:9px;margin:16px 0 10px;padding:11px 14px;background:#fff;border:1px solid #e5ebf2;border-radius:12px;cursor:pointer;user-select:none">'+
+        '<span style="font-size:16px;flex-shrink:0">📦</span>'+
+        '<div style="flex:1;min-width:0">'+
+          '<div style="font-size:12px;font-weight:700;color:#7a9aaa;letter-spacing:0.5px">АРХИВ · '+archObjs.length+'</div>'+
+          '<div style="font-size:10px;color:#a0b4c8;margin-top:1px">Завершённые объекты — закупка по ним закрыта</div>'+
+        '</div>'+
+        (archSelected?'<span style="font-size:10px;font-weight:700;color:#2980b9;background:#2980b914;border:1px solid #2980b933;border-radius:6px;padding:1px 7px;white-space:nowrap">выбран</span>':'')+
+        '<span style="font-size:10px;color:#c4cdd8;flex-shrink:0;display:inline-block;transition:transform 0.15s;transform:rotate('+(open?"90":"0")+'deg)">▶</span>'+
+      '</div>'+
+      (open?archObjs.map(objCard).join(""):"");
+  }
 
   // Bottom CTA
   const selectedObjs=objects.filter(function(o){return!!sel[o.id];});
@@ -12865,6 +12894,8 @@ function bind(){
     };}
     // data-open несёт текущее состояние — иначе секция с defaultOpen:true не закроется с первого тапа
     else if(a==="obj-sec-toggle"){el.onclick=()=>{objSecOpen[el.dataset.k]=el.dataset.open!=="1";render();};}
+    // data-open несёт фактическое состояние: свёртка могла раскрыться сама (выбран архивный объект)
+    else if(a==="supply-arch-toggle"){el.onclick=()=>{supplyArchOpen=el.dataset.open!=="1";render();};}
     else if(a==="receive-filter"){el.onclick=()=>{receiveOnlyLeft=el.dataset.v==="left";render();};}
     else if(a==="supply-view"){el.onclick=()=>{window._supplyViewing=true;render();};}
     else if(a==="supply-back"){el.onclick=()=>{window._supplyViewing=false;supplySearch='';supplyStoreFilter='';supplyHideDone=false;render();};}
