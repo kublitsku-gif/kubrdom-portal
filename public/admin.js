@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-10.7";
+const APP_BUILD = "2026-08-10.8";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -9321,6 +9321,55 @@ function _arrivedPill(attr, isArr){
     (isArr?'color:#fff;background:#27ae60':'color:#e67e22;background:#fff;border:1px solid #e67e2255')+'">'+
     (isArr?'✅ На складе':'📥 на склад')+'</span>';
 }
+
+// ── СТРУКТУРА ЗАТРАТ ───────────────────────────────────────────────────────
+// «Итого 836 611 ₽» само по себе не отвечает на вопрос, куда уходят деньги.
+// Группируем смету объекта по магазинам и по этапам: где сосредоточена сумма
+// и сколько по каждой группе ещё предстоит потратить.
+//
+// keyOf — по чему группируем, colorOf — цвет группы (магазина или этапа).
+function supplyCostRows(mats,keyOf,colorOf){
+  const by={};
+  mats.forEach(function(m){
+    const k=keyOf(m)||"—";
+    const sum=(Number(m.cost)||0)*(m.qty||1);
+    if(!by[k])by[k]={k:k,sum:0,cnt:0,done:0,color:colorOf(m,k)};
+    by[k].sum+=sum;
+    by[k].cnt++;
+    if(purchased[m.id])by[k].done+=sum;
+  });
+  return Object.keys(by).map(function(k){return by[k];}).sort(function(a,b){return b.sum-a.sum;});
+}
+
+// Одна секция: полоса-стек по долям + строки с суммой, процентом и остатком.
+// clickable — строки магазинов включают фильтр списка (у этапов фильтра нет).
+function supplyCostSection(label,rows,total,clickable){
+  if(!rows.length)return "";
+  let h='<div style="font-size:10px;font-weight:700;letter-spacing:0.6px;color:#9aabbf;margin-bottom:7px">'+label+'</div>';
+  h+='<div style="display:flex;height:10px;border-radius:6px;overflow:hidden;background:#eef2f7;margin-bottom:8px">';
+  rows.forEach(function(r){
+    const w=total>0?r.sum/total*100:0;
+    if(w<0.4)return; // сегменты тоньше волоска только мусорят полосу
+    h+='<div style="width:'+w+'%;background:'+r.color+'"></div>';
+  });
+  h+='</div>';
+  rows.forEach(function(r){
+    const pc=total>0?Math.round(r.sum/total*100):0;
+    const left=r.sum-r.done;
+    const attr=clickable?'data-a="supply-store-filter" data-store="'+String(r.k).replace(/"/g,"&quot;")+'" ':'';
+    h+='<div '+attr+'style="display:flex;align-items:center;gap:8px;padding:4px 0'+(clickable?';cursor:pointer':'')+'">'+
+        '<span style="width:9px;height:9px;border-radius:3px;background:'+r.color+';flex-shrink:0"></span>'+
+        '<span style="flex:1;min-width:0;font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.k)+'</span>'+
+        '<span style="font-size:10px;color:#9aabbf;flex-shrink:0">'+r.cnt+' поз.</span>'+
+        '<span style="font-size:12.5px;font-weight:800;color:#0d1b2e;flex-shrink:0;min-width:78px;text-align:right">'+Math.round(r.sum).toLocaleString("ru-RU")+' ₽</span>'+
+        '<span style="font-size:10px;font-weight:700;color:#9aabbf;flex-shrink:0;min-width:32px;text-align:right">'+pc+'%</span>'+
+      '</div>'+
+      (left>0.5
+        ? '<div style="font-size:10px;color:#e67e22;margin:-2px 0 5px 17px">осталось купить '+Math.round(left).toLocaleString("ru-RU")+' ₽</div>'
+        : '<div style="font-size:10px;color:#27ae60;margin:-2px 0 5px 17px">✓ всё куплено</div>');
+  });
+  return h;
+}
 function tSupplyDetail(sel, sortBy){
   const STORECOL={"Озон":"#005bff","Белка":"#d68910","pechki.su":"#c0392b","Егорьевск":"#8e44ad","Лемана":"#e30613","Авито":"#00aaff","Нижний Новгород":"#27ae60"};
   const sortBy2=sortBy||"stage";
@@ -9339,6 +9388,10 @@ function tSupplyDetail(sel, sortBy){
   });
 
   const totalCost=allMats.reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
+  // Полный список до фильтров: структуру затрат считаем по всей смете объекта.
+  // Иначе «только не куплено» или фильтр по магазину переписывали бы её на ходу,
+  // и доли перестали бы складываться в 100 %.
+  const allMatsFull=allMats.slice();
 
   // Header
   // Архивные объекты помечаем и здесь: снабженец мог зайти сюда прямо из фильтра,
@@ -9442,6 +9495,24 @@ function tSupplyDetail(sel, sortBy){
         '</div>'+
       '</div>'+
     '</div>';
+
+  // Структура затрат: куда уходит смета объекта — по магазинам и по этапам.
+  const _byStore=supplyCostRows(allMatsFull,
+    function(m){return m.store||"Без магазина";},
+    function(m,k){return STORECOL[k]||"#7f8c8d";});
+  const _byStage=supplyCostRows(allMatsFull,
+    function(m){return m.sn||"Без этапа";},
+    function(m){return m.sc||"#7f8c8d";});
+  if(_byStore.length>1||_byStage.length>1){
+    html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:14px">'+
+      '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px">'+
+        '<span style="font-size:12px;font-weight:700;color:#1a2a3a">📊 Структура затрат</span>'+
+        '<span style="font-size:14px;font-weight:800;color:#0d1b2e">'+Math.round(totalCost).toLocaleString("ru-RU")+' ₽</span>'+
+      '</div>'+
+      supplyCostSection("🏪 ПО МАГАЗИНАМ · тап — фильтр списка",_byStore,totalCost,true)+
+      (_byStage.length>1?'<div style="height:12px"></div>'+supplyCostSection("📋 ПО ЭТАПАМ",_byStage,totalCost,false):'')+
+    '</div>';
+  }
 
   // Наличие на складе (принято бригадиром/мастером) — обзор для снабженца.
   const _arrCount=allMats.filter(function(m){return !!arrived[m.id];}).length;
