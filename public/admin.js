@@ -3912,6 +3912,30 @@ ${bottomBar}
 </div>`;
 }
 
+// ── Пометка «договор завершён» ──────────────────────────────────────────────
+// Админ закрывает работу двумя способами: статус «Закрыт» и кнопка «📦 В архив»
+// во вкладке «Договора». Производство раньше не видело ни того, ни другого —
+// архивный объект выглядел в списке точно так же, как активный.
+function contractDoneLabel(c){
+  if(!c)return "";
+  if(c.archived)return "📦 В архиве";
+  if(c.status==="closed")return "✓ Закрыт";
+  return "";
+}
+// Объект считается завершённым, только когда завершены ВСЕ его договоры:
+// иначе на объекте ещё идут работы по второму договору.
+function objDoneLabel(oid){
+  const cs=contractDocs.filter(function(d){return d.objId===oid&&(d.status==="signed"||d.status==="closed");});
+  if(!cs.length)return "";
+  if(!cs.every(function(c){return !!contractDoneLabel(c);}))return "";
+  return cs.every(function(c){return c.archived;})?"📦 В архиве":"✓ Завершён";
+}
+function doneBadge(text,small){
+  if(!text)return "";
+  return '<span style="display:inline-flex;align-items:center;font-size:'+(small?9:10)+'px;font-weight:700;color:#27ae60;'+
+    'background:#27ae6014;border:1px solid #27ae6040;border-radius:6px;padding:1px 7px;white-space:nowrap;flex-shrink:0">'+text+'</span>';
+}
+
 // Сворачиваемая секция карточки объекта. В свёрнутом виде — одна строка
 // «название · короткий итог», чтобы перечень работ был у верха экрана, а не
 // через шесть всегда развёрнутых блоков. Итог в шапке даёт понять, надо ли открывать.
@@ -3947,8 +3971,11 @@ function renderObjCard(obj, isAdmin){
   html+='<div style="padding:10px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid '+(_exp?"#f0f4f8":"transparent")+'">';
   html+='<span style="font-size:24px;flex-shrink:0">'+obj.icon+'</span>';
   html+='<div data-a="obj-prev-toggle" data-oid="'+obj.id+'" style="flex:1;min-width:0;cursor:pointer">';
-  html+='<div style="font-size:14px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(_exp?"▾ ":"▸ ")+esc(obj.name)+'</div>';
+  // Бейдж — отдельной строкой: рядом с названием он на телефоне съедает его до многоточия
+  const _objDone=objDoneLabel(obj.id);
+  html+='<div style="font-size:14px;font-weight:700;color:'+(_objDone?"#7a9aaa":"#0d1b2e")+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(_exp?"▾ ":"▸ ")+esc(obj.name)+'</div>';
   html+='<div style="font-size:11px;color:#7a9aaa;margin-top:2px">'+allWorks.length+' работ · '+allMats.length+' материалов · '+fmt(totalCost)+'</div>';
+  if(_objDone)html+='<div style="margin-top:4px">'+doneBadge(_objDone,true)+'</div>';
   // Дедлайн от начальника производства (из договоров объекта)
   (function(){
     const objContracts=contractDocs.filter(function(d){return d.objId===obj.id;});
@@ -4209,6 +4236,19 @@ function tObjects(){
       <div style="font-size:16px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(obj.name)}</div>
     </div>
   </div>`}
+  <!-- Объект завершён — плашкой, а не мелким бейджем: это меняет смысл всего экрана -->
+  ${(()=>{
+    const lbl=objDoneLabel(obj.id);
+    if(!lbl)return "";
+    const archived=lbl.indexOf("Архив")>0||lbl.indexOf("архив")>0;
+    return `<div style="display:flex;align-items:center;gap:9px;margin-bottom:9px;padding:9px 11px;border-radius:10px;background:#27ae600d;border:1px solid #27ae6033">
+      <span style="font-size:16px;flex-shrink:0">${archived?"📦":"✓"}</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;font-weight:700;color:#27ae60">${archived?"Объект в архиве":"Объект завершён"}</div>
+        <div style="font-size:10px;color:#7a9aaa;margin-top:1px">Договор закрыт администратором — работы по объекту приняты</div>
+      </div>
+    </div>`;
+  })()}
   <!-- Сводка + команда одной строкой: у бригадира верх экрана должен занимать
        минимум места, перечень работ важнее реквизитов объекта -->
   ${(()=>{
@@ -7701,7 +7741,10 @@ function tFinanceMine(isBrig){
       '<div style="display:flex;align-items:center;gap:9px;margin-bottom:9px">'+
         '<span style="font-size:20px;flex-shrink:0">'+(r.obj.icon||"📄")+'</span>'+
         '<div style="flex:1;min-width:0">'+
-          '<div style="font-size:13px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.obj.name)+'</div>'+
+          '<div style="display:flex;align-items:center;gap:6px;min-width:0">'+
+            '<span style="font-size:13px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.obj.name)+'</span>'+
+            doneBadge(contractDoneLabel(c),true)+
+          '</div>'+
           '<div style="font-size:10px;color:#9aabbf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.name)+'</div>'+
         '</div>'+
         '<div style="text-align:right;flex-shrink:0">'+
@@ -8820,9 +8863,10 @@ function tReceive(sel){
       const on=!!sel[obj.id];
       const oMats=matsOf(obj);
       const oLeft=oMats.filter(function(m){return !arrived[m.id];}).length;
+      const done=objDoneLabel(obj.id);
       html+='<div data-a="supply-toggle" data-oid="'+obj.id+'" style="display:flex;align-items:center;gap:6px;padding:7px 11px;border-radius:20px;cursor:pointer;white-space:nowrap;flex-shrink:0;border:1.5px solid '+(on?"#e67e22":"#dde6f0")+';background:'+(on?"#fff7f0":"#fff")+'">'+
-        '<span style="font-size:14px">'+obj.icon+'</span>'+
-        '<span style="font-size:12px;font-weight:700;color:'+(on?"#e67e22":"#5a7a9a")+'">'+esc(obj.name)+'</span>'+
+        '<span style="font-size:14px">'+(done?"📦":obj.icon)+'</span>'+
+        '<span style="font-size:12px;font-weight:700;color:'+(done?"#9aabbf":(on?"#e67e22":"#5a7a9a"))+'">'+esc(obj.name)+'</span>'+
         '<span style="font-size:10px;font-weight:800;border-radius:9px;padding:1px 7px;color:#fff;background:'+(oLeft>0?"#e67e22":"#27ae60")+'">'+(oLeft>0?oLeft:"✓")+'</span>'+
       '</div>';
     });
