@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-04.1";
+const APP_BUILD = "2026-08-10.1";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -8974,15 +8974,19 @@ function tSupplySelect(sel){
     });
     const assigned=users.filter(function(u){return u.objs.includes(obj.id);});
     const isOn=!!sel[obj.id];
+    // Снабженец должен видеть, что по объекту всё закрыто: закупать туда уже нечего.
+    // Признак производный (из договоров), поэтому берём его тем же objDoneLabel, что и производство.
+    const done=objDoneLabel(obj.id);
     html+=
       '<div data-a="supply-toggle" data-oid="'+obj.id+'" style="background:#fff;border-radius:14px;border:2px solid '+(isOn?'#2980b9':'#dde6f0')+';padding:14px 16px;margin-bottom:10px;cursor:pointer;transition:border-color 0.15s,background 0.15s;background:'+(isOn?'#f0f6ff':'#fff')+'">'+
         '<div style="display:flex;align-items:center;gap:12px">'+
           '<div style="width:26px;height:26px;border-radius:8px;border:2px solid '+(isOn?'#2980b9':'#c8d8e8')+';background:'+(isOn?'#2980b9':'transparent')+';display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.15s">'+
             (isOn?'<span style="color:#fff;font-size:14px;font-weight:700">✓</span>':'')+
           '</div>'+
-          '<span style="font-size:28px;flex-shrink:0">'+obj.icon+'</span>'+
+          '<span style="font-size:28px;flex-shrink:0">'+(done?'📦':obj.icon)+'</span>'+
           '<div style="flex:1;min-width:0">'+
-            '<div style="font-size:15px;font-weight:700;color:#0d1b2e">'+esc(obj.name)+'</div>'+
+            '<div style="font-size:15px;font-weight:700;color:'+(done?'#7a9aaa':'#0d1b2e')+'">'+esc(obj.name)+'</div>'+
+            (done?'<div style="margin-top:4px">'+doneBadge(done,true)+'</div>':'')+
             '<div style="font-size:11px;color:#7a9aaa;margin-top:2px">'+allMats.length+' матер. · '+totalCost.toLocaleString("ru-RU")+' ₽</div>'+
             (leftCost>0.5
               ? '<div style="margin-top:5px;font-size:11px;font-weight:700;color:#e67e22">🛒 Осталось купить: '+leftCost.toLocaleString("ru-RU")+' ₽</div>'+
@@ -9167,13 +9171,21 @@ function tSupplyDetail(sel, sortBy){
   const totalCost=allMats.reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
 
   // Header
-  let title=targetObjs.length===1?(targetObjs[0].icon+' '+targetObjs[0].name):('🗂️ '+targetObjs.length+' объектa/ов');
+  // Архивные объекты помечаем и здесь: снабженец мог зайти сюда прямо из фильтра,
+  // минуя список выбора, и иначе закупал бы материалы по закрытому договору.
+  const doneObjs=targetObjs.filter(function(o){return !!objDoneLabel(o.id);});
+  let title=targetObjs.length===1?((objDoneLabel(targetObjs[0].id)?'📦':targetObjs[0].icon)+' '+targetObjs[0].name):('🗂️ '+targetObjs.length+' объектa/ов');
   let html='<div>'+
     '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">'+
       '<button data-a="supply-back" style="padding:6px 14px;background:transparent;border:1px solid #d0dae8;border-radius:20px;cursor:pointer;font-size:12px;color:#7a9aaa">← Назад</button>'+
       '<div style="flex:1;min-width:0">'+
-        '<div style="font-size:15px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+title+'</div>'+
-        '<div style="font-size:12px;color:#7a9aaa">'+allMats.length+' материалов · '+totalCost.toLocaleString("ru-RU")+' ₽</div>'+
+        '<div style="font-size:15px;font-weight:700;color:'+(doneObjs.length===targetObjs.length?'#7a9aaa':'#0d1b2e')+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+title+'</div>'+
+        (doneObjs.length
+          ? '<div style="margin-top:3px">'+(targetObjs.length===1
+              ? doneBadge(objDoneLabel(targetObjs[0].id),true)
+              : doneBadge('📦 Завершённых объектов: '+doneObjs.length,true))+'</div>'
+          : '')+
+        '<div style="font-size:12px;color:#7a9aaa;margin-top:2px">'+allMats.length+' материалов · '+totalCost.toLocaleString("ru-RU")+' ₽</div>'+
       '</div>'+
       '<button data-a="supply-add-open" style="padding:6px 12px;background:#27ae60;border:none;border-radius:20px;cursor:pointer;font-size:12px;color:#fff;font-weight:700;white-space:nowrap;flex-shrink:0">+ Материал</button>'+
     '</div>';
