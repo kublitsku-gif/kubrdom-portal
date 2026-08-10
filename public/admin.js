@@ -1836,6 +1836,7 @@ let purchased={}; // {matId: true} — отмечено снабженцем к�
 let arrived={};   // {matId: true} — пришло/принято на склад (отмечает бригадир/мастер); снабженец видит наличие
 let supplySearch=''; // поиск по материалам
 let receiveOnlyLeft=true; // приёмка: показывать только непринятое (главный рабочий режим)
+let supplyGroupOpen={}; // снабжение: {"stage|Имя"|"store|Имя": bool} — раскрыта ли группа
 let supplyStoreFilter=''; // фильтр по магазину
 let supplyHideDone=false; // показывать только не купленное
 let supplyArchOpen=false; // список выбора: раскрыта ли свёртка «Архив» (завершённые объекты)
@@ -9443,15 +9444,21 @@ function tSupplyDetail(sel, sortBy){
       const storeCost=rows.reduce(function(a,g){return a+(Number(g.cost)||0)*g.qty;},0);
       const storeUrl=rows.find(function(g){return g.url&&String(g.url).startsWith("http");});
       const baseUrl=storeUrl?(storeUrl.url.match(/https?:\/\/[^/]+/)||[""])[0]:"";
+      // Группа по магазину сворачивается так же, как этап: закупленный магазин закрыт
+      const storeAllDone=sm.length>0&&sm.every(function(m){return!!purchased[m.id];});
+      const gk="store|"+store;
+      const open=supplyGroupOpen[gk]!=null?supplyGroupOpen[gk]:!storeAllDone;
       html+='<div style="background:#fff;border-radius:14px;border:1px solid '+sc+'44;margin-bottom:12px;overflow:hidden">'+
-        '<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:'+sc+'10;border-bottom:1px solid '+sc+'22">'+
-          '<span style="font-size:12px;font-weight:700;background:'+sc+';color:#fff;border-radius:6px;padding:2px 10px">'+store+'</span>'+
+        '<div data-a="supply-group-toggle" data-k="'+esc(gk)+'" data-open="'+(open?'1':'0')+'" style="display:flex;align-items:center;gap:8px;padding:10px 14px;cursor:pointer;user-select:none;background:'+sc+'10'+(open?';border-bottom:1px solid '+sc+'22':'')+'">'+
+          '<span style="font-size:10px;color:#9aabbf;flex-shrink:0;display:inline-block;transition:transform 0.15s;transform:rotate('+(open?'90':'0')+'deg)">▶</span>'+
+          '<span style="font-size:12px;font-weight:700;background:'+sc+';color:#fff;border-radius:6px;padding:2px 10px;flex-shrink:0">'+store+'</span>'+
+          (storeAllDone?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#27ae6015;border-radius:6px;padding:1px 7px;flex-shrink:0">✓</span>':'')+
           '<span style="flex:1"></span>'+
-          '<span style="font-size:11px;color:'+sc+';font-weight:600">'+rows.length+' поз. · '+storeCost.toLocaleString("ru-RU")+' ₽</span>'+
+          '<span style="font-size:11px;color:'+sc+';font-weight:600;white-space:nowrap">'+rows.length+' поз. · '+storeCost.toLocaleString("ru-RU")+' ₽</span>'+
           _tzBtn(store,sc)+
-          (baseUrl?'<a href="'+baseUrl+'" target="_blank" style="font-size:11px;color:#fff;background:'+sc+';border-radius:6px;padding:4px 10px;text-decoration:none;font-weight:600;flex-shrink:0">🛒 Открыть</a>':'')+
+          (baseUrl?'<a href="'+baseUrl+'" target="_blank" onclick="event.stopPropagation()" style="font-size:11px;color:#fff;background:'+sc+';border-radius:6px;padding:4px 10px;text-decoration:none;font-weight:600;flex-shrink:0">🛒 Открыть</a>':'')+
         '</div>'+
-        '<div style="padding:8px 12px">'+rows.map(mergeRow).join("")+'</div>'+
+        (open?'<div style="padding:8px 12px">'+rows.map(mergeRow).join("")+'</div>':'')+
       '</div>';
     });
   } else if(sortBy2==="stage"){
@@ -9468,20 +9475,26 @@ function tSupplyDetail(sel, sortBy){
       const safeIds=sm.map(function(m){return m.id;}).join(',');
       const mrows=_mergeMats(sm); // слить одинаковые материалы между объектами
       const mDone=mrows.filter(function(g){return g.ids.every(function(id){return!!purchased[id];});}).length;
+      // Полностью закупленный этап сворачиваем: делать с ним больше нечего, а его
+      // список на 20+ позиций отодвигает вниз то, что ещё надо купить.
+      const gk="stage|"+sn;
+      const open=supplyGroupOpen[gk]!=null?supplyGroupOpen[gk]:!stageAllDone;
       html+='<div style="background:#fff;border-radius:14px;border:1px solid '+(stageAllDone?'#27ae60':sc+'44')+';margin-bottom:12px;overflow:hidden;transition:border-color 0.2s">'+
-        '<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:'+(stageAllDone?'linear-gradient(135deg,#27ae6018,transparent)':'linear-gradient(135deg,'+sc+'15,transparent)')+';border-bottom:1px solid '+(stageAllDone?'#27ae6022':sc+'22')+'">'+
-          '<div style="width:8px;height:8px;border-radius:50%;background:'+(stageAllDone?'#27ae60':sc)+'"></div>'+
-          '<span style="font-size:13px;font-weight:700;color:#1a2a3a;flex:1">'+esc(sn)+'</span>'+
-          '<span style="font-size:11px;color:'+(stageAllDone?'#27ae60':sc)+';font-weight:600;margin-right:6px">'+mDone+'/'+mrows.length+' · '+stageCost.toLocaleString("ru-RU")+' ₽</span>'+
+        '<div data-a="supply-group-toggle" data-k="'+esc(gk)+'" data-open="'+(open?'1':'0')+'" style="display:flex;align-items:center;gap:8px;padding:10px 14px;cursor:pointer;user-select:none;background:'+(stageAllDone?'linear-gradient(135deg,#27ae6018,transparent)':'linear-gradient(135deg,'+sc+'15,transparent)')+';border-bottom:1px solid '+(stageAllDone?'#27ae6022':sc+'22')+'">'+
+          '<span style="font-size:10px;color:#9aabbf;flex-shrink:0;display:inline-block;transition:transform 0.15s;transform:rotate('+(open?'90':'0')+'deg)">▶</span>'+
+          '<div style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:'+(stageAllDone?'#27ae60':sc)+'"></div>'+
+          '<span style="font-size:13px;font-weight:700;color:#1a2a3a;flex:1;min-width:0">'+esc(sn)+'</span>'+
+          '<span style="font-size:11px;color:'+(stageAllDone?'#27ae60':sc)+';font-weight:600;margin-right:6px;white-space:nowrap">'+mDone+'/'+mrows.length+' · '+stageCost.toLocaleString("ru-RU")+' ₽</span>'+
           '<button data-a="supply-stage-check" data-ids="'+safeIds+'" data-done="'+(stageAllDone?'1':'0')+'" style="padding:4px 10px;border-radius:7px;cursor:pointer;font-size:11px;font-weight:700;border:1.5px solid '+(stageAllDone?'#27ae60':'#c8d8e8')+';background:'+(stageAllDone?'#27ae60':'#fff')+';color:'+(stageAllDone?'#fff':'#7a9aaa')+';transition:all 0.15s;white-space:nowrap">'+
             (stageAllDone?'✓ Всё куплено':'☐ Отметить всё')+
           '</button>'+
         '</div>'+
-        // Полоска «куплено / осталось» по этапу (в стиле общего «Прогресс закупки»).
-        '<div style="padding:8px 12px 0">'+
-          '<div style="background:#e8eef5;border-radius:6px;height:6px;overflow:hidden;margin-bottom:6px">'+
+        // Тонкая полоска видна и в свёрнутом виде — по ней сразу ясно, надо ли открывать
+        '<div style="padding:8px 12px '+(open?'0':'8px')+'">'+
+          '<div style="background:#e8eef5;border-radius:6px;height:6px;overflow:hidden'+(open?';margin-bottom:6px':'')+'">'+
             '<div style="height:100%;border-radius:6px;background:'+(stageAllDone?'#27ae60':sc)+';width:'+stagePct+'%;transition:width 0.4s"></div>'+
           '</div>'+
+          (open?
           '<div style="display:flex;gap:6px">'+
             '<div style="flex:1;background:#27ae6010;border:1px solid #27ae6033;border-radius:8px;padding:5px 8px;text-align:center">'+
               '<div style="font-size:9px;color:#27ae60;font-weight:700;letter-spacing:0.3px">КУПЛЕНО</div>'+
@@ -9491,9 +9504,9 @@ function tSupplyDetail(sel, sortBy){
               '<div style="font-size:9px;color:'+(stageAllDone?'#27ae60':'#e74c3c')+';font-weight:700;letter-spacing:0.3px">'+(stageAllDone?'ГОТОВО':'ОСТАЛОСЬ')+'</div>'+
               '<div style="font-size:12px;font-weight:700;color:'+(stageAllDone?'#27ae60':'#e74c3c')+'">'+(stageAllDone?'✓':stageLeft.toLocaleString("ru-RU")+' ₽')+'</div>'+
             '</div>'+
-          '</div>'+
+          '</div>':'')+
         '</div>'+
-        '<div style="padding:8px 12px">'+mrows.map(mergeRow).join("")+'</div>'+
+        (open?'<div style="padding:8px 12px">'+mrows.map(mergeRow).join("")+'</div>':'')+
       '</div>';
     });
   } else {
@@ -9505,15 +9518,21 @@ function tSupplyDetail(sel, sortBy){
       const storeCost=sm.reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
       const storeUrl=sm.find(function(m){return m.url&&m.url.startsWith("http");});
       const baseUrl=storeUrl?(storeUrl.url.match(/https?:\/\/[^/]+/)||[""])[0]:"";
+      // Группа по магазину сворачивается так же, как этап: закупленный магазин закрыт
+      const storeAllDone=sm.length>0&&sm.every(function(m){return!!purchased[m.id];});
+      const gk="store|"+store;
+      const open=supplyGroupOpen[gk]!=null?supplyGroupOpen[gk]:!storeAllDone;
       html+='<div style="background:#fff;border-radius:14px;border:1px solid '+sc+'44;margin-bottom:12px;overflow:hidden">'+
-        '<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:'+sc+'10;border-bottom:1px solid '+sc+'22">'+
-          '<span style="font-size:12px;font-weight:700;background:'+sc+';color:#fff;border-radius:6px;padding:2px 10px">'+store+'</span>'+
+        '<div data-a="supply-group-toggle" data-k="'+esc(gk)+'" data-open="'+(open?'1':'0')+'" style="display:flex;align-items:center;gap:8px;padding:10px 14px;cursor:pointer;user-select:none;background:'+sc+'10'+(open?';border-bottom:1px solid '+sc+'22':'')+'">'+
+          '<span style="font-size:10px;color:#9aabbf;flex-shrink:0;display:inline-block;transition:transform 0.15s;transform:rotate('+(open?'90':'0')+'deg)">▶</span>'+
+          '<span style="font-size:12px;font-weight:700;background:'+sc+';color:#fff;border-radius:6px;padding:2px 10px;flex-shrink:0">'+store+'</span>'+
+          (storeAllDone?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#27ae6015;border-radius:6px;padding:1px 7px;flex-shrink:0">✓</span>':'')+
           '<span style="flex:1"></span>'+
-          '<span style="font-size:11px;color:'+sc+';font-weight:600">'+rows.length+' поз. · '+storeCost.toLocaleString("ru-RU")+' ₽</span>'+
+          '<span style="font-size:11px;color:'+sc+';font-weight:600;white-space:nowrap">'+rows.length+' поз. · '+storeCost.toLocaleString("ru-RU")+' ₽</span>'+
           _tzBtn(store,sc)+
-          (baseUrl?'<a href="'+baseUrl+'" target="_blank" style="font-size:11px;color:#fff;background:'+sc+';border-radius:6px;padding:4px 10px;text-decoration:none;font-weight:600;flex-shrink:0">🛒 Открыть</a>':'')+
+          (baseUrl?'<a href="'+baseUrl+'" target="_blank" onclick="event.stopPropagation()" style="font-size:11px;color:#fff;background:'+sc+';border-radius:6px;padding:4px 10px;text-decoration:none;font-weight:600;flex-shrink:0">🛒 Открыть</a>':'')+
         '</div>'+
-        '<div style="padding:8px 12px">'+rows.map(mergeRow).join("")+'</div>'+
+        (open?'<div style="padding:8px 12px">'+rows.map(mergeRow).join("")+'</div>':'')+
       '</div>';
     });
   }
@@ -12929,7 +12948,14 @@ function bind(){
       purchased[mid]=!purchased[mid];
       rerenderTab();   // перерисовать только список снабжения — экран не дёргается
     };}
-    else if(a==="supply-stage-check"){el.onclick=()=>{
+    // Сворачивание группы (этап / магазин). data-open несёт текущее состояние —
+    // у групп разный defaultOpen, поэтому инвертировать надо именно его.
+    else if(a==="supply-group-toggle"){el.onclick=()=>{
+      supplyGroupOpen[el.dataset.k]=el.dataset.open!=="1";
+      rerenderTab();
+    };}
+    else if(a==="supply-stage-check"){el.onclick=(ev)=>{
+      ev&&ev.stopPropagation();  // кнопка внутри кликабельной шапки — не сворачивать группу
       const ids=el.dataset.ids.split(',');
       const allDone=el.dataset.done==="1";
       ids.forEach(function(id){if(id)purchased[id]=!allDone;});
