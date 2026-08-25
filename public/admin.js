@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-25.4";
+const APP_BUILD = "2026-08-25.5";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4135,7 +4135,55 @@ function doneBadge(text,small){
 // «название · короткий итог», чтобы перечень работ был у верха экрана, а не
 // через шесть всегда развёрнутых блоков. Итог в шапке даёт понять, надо ли открывать.
 let objSecOpen={}; // {objId|key: bool} — переопределяет defaultOpen секции
+// Режим правки перечня работ: {objId:true}. Кнопки удаления этапов и работ показываются
+// ТОЛЬКО в нём. Удаление стоит впритык к чекбоксу «сделано» и к иконкам материалов/фото —
+// на телефоне это промах пальцем ценой в этап с десятком работ.
+let objEditWorks={};
+// Пять секций шапки объекта (документы, доп работы, дедлайн, сделанное, видео) занимали
+// ~300px и в большинстве объектов пустые. Режим сбора: пока _objSecBuf активен, objSection
+// не рисует аккордеон, а складывает описание — и все секции выводятся одной строкой чипов.
+let _objSecBuf=null;
+// Короткое имя для чипа, когда показывать нечего (иначе «🛠 —» ни о чём не говорит).
+const OBJ_SEC_SHORT={docs:"Документы",extra:"Доп работы",deadline:"Дедлайн",summary:"Сделано",video:"Видео"};
+// В чипы уезжают только справочные разделы. «Отчёт дня» (dayreport) остаётся развёрнутым
+// блоком: это ежедневный инструмент бригадира, прятать его за чип — ухудшение.
+const OBJ_CHIP_KEYS=["docs","extra","deadline","summary","video"];
+
+function objChipsHtml(oid,list){
+  _objSecBuf=null;
+  if(!list.length)return "";
+  var active=null;
+  list.forEach(function(sec){
+    var k=oid+"|"+sec.key;
+    var op=objSecOpen[k]!=null?objSecOpen[k]:!!sec.defaultOpen;
+    if(op&&!active)active=sec;
+  });
+  var chips=list.map(function(sec){
+    var k=oid+"|"+sec.key;
+    var op=objSecOpen[k]!=null?objSecOpen[k]:!!sec.defaultOpen;
+    var on=active&&active.key===sec.key;
+    var raw=String(sec.summary||"").replace(/<[^>]*>/g,"").trim();
+    var empty=!raw||/^(—|-|0|нет|пока нет|не задан|не задана|не заданы)$/i.test(raw);
+    var icon=(String(sec.title).match(/^\S+/)||[""])[0];
+    var label=empty?(OBJ_SEC_SHORT[sec.key]||raw||"…"):raw;
+    return '<button data-a="obj-chip" data-oid="'+esc(oid)+'" data-key="'+esc(sec.key)+'" data-open="'+(op?"1":"0")+'"'
+      +' style="flex:0 0 auto;display:inline-flex;align-items:center;gap:5px;padding:7px 11px;border-radius:9px;cursor:pointer;font-size:11.5px;font-weight:700;white-space:nowrap;'
+      +'border:1.5px solid '+(on?sec.color:(empty?"#e8edf3":"#dde6f0"))+';background:'+(on?sec.color:"#fff")+';'
+      +'color:'+(on?"#fff":(empty?"#b6c2ce":sec.color))+'">'
+      +'<span style="font-size:13px">'+icon+'</span><span>'+esc(label)+'</span></button>';
+  }).join("");
+  return '<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;margin-bottom:'+(active?"8px":"10px")+';scrollbar-width:none">'+chips+'</div>'
+    +(active?'<div style="background:#fff;border-radius:14px;border:1px solid '+active.color+'44;margin-bottom:10px;overflow:hidden">'
+      +'<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid #f0f3f7">'
+        +'<div style="flex:1;min-width:0;font-size:11px;font-weight:700;letter-spacing:0.6px;color:'+active.color+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+active.title+'</div>'
+        +'<button data-a="obj-chip" data-oid="'+esc(oid)+'" data-key="'+esc(active.key)+'" data-open="1" style="width:24px;height:24px;flex-shrink:0;background:#f0f4f8;border:1px solid #dde6f0;border-radius:6px;cursor:pointer;color:#7a9aaa;font-size:11px">✕</button>'
+      +'</div>'
+      +'<div style="padding:12px 14px">'+active.body+'</div>'
+    +'</div>':'');
+}
+
 function objSection(oid,key,title,color,summary,body,defaultOpen){
+  if(_objSecBuf&&OBJ_CHIP_KEYS.indexOf(key)>=0){ _objSecBuf.push({key:key,title:title,color:color,summary:summary,body:body,defaultOpen:defaultOpen}); return ""; }
   const k=oid+"|"+key;
   const open=objSecOpen[k]!=null?objSecOpen[k]:!!defaultOpen;
   return '<div style="background:#fff;border-radius:14px;border:1px solid '+(open?color+"44":"#e5ebf2")+';margin-bottom:10px;overflow:hidden">'+
@@ -4408,11 +4456,12 @@ function tObjects(){
     const allWorks=obj.stages.flatMap(s=>s.works);
     const totalCost=allWorks.reduce((a,w)=>a+w.cost,0);
     const assigned=users.filter(u=>u.objs.includes(obj.id));
+    const _objEdit=!!objEditWorks[obj.id];
+    _objSecBuf=null;   // страховка от протечки режима сбора при прерванном рендере
     return`<div>
 <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
   <button data-a="close-obj" style="padding:7px 14px;background:transparent;border:1px solid #d0dae8;border-radius:20px;cursor:pointer;font-size:12px;color:#7a9aaa">← Объекты</button>
   <div style="flex:1"></div>
-  ${isAdmin?`<button data-a="del-obj" data-oid="${obj.id}" style="padding:6px 12px;background:transparent;border:1px solid #e74c3c44;border-radius:8px;cursor:pointer;font-size:11px;color:#e74c3c">🗑 Удалить объект</button>`:""}
 </div>
 
 <!-- Заголовок объекта -->
@@ -4464,6 +4513,7 @@ function tObjects(){
   })()}
 </div>
 
+${(()=>{ _objSecBuf=[]; return ""; })()}
 <!-- Документы из договора: спецификация + договор на окна и двери (показ, источник правды — договор) -->
 ${(()=>{
   const objContracts=contractDocs.filter(d=>d.objId===obj.id);
@@ -4805,11 +4855,15 @@ ${objSection(obj.id,"video","🎬 ВИДЕО ОБЪЕКТА","#0088cc",
   }).join(""):`<div style="text-align:center;color:#9aabbf;font-size:11px;padding:10px">Видео по объекту попадают в отдельную тему в Telegram (до 50 МБ)</div>`}
 `,false)}
 
+${objChipsHtml(obj.id,_objSecBuf||[])}
+
 <!-- Этапы и работы объекта — редактируемые -->
-<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-  <div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">ПЕРЕЧЕНЬ РАБОТ</div>
+<div style="display:flex;align-items:center;gap:7px;margin-bottom:10px">
+  <div style="flex:1;font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">ПЕРЕЧЕНЬ РАБОТ</div>
+  ${isAdmin?`<button data-a="obj-edit-toggle" data-oid="${obj.id}" style="padding:5px 12px;background:${_objEdit?"#e74c3c":"transparent"};border:1px solid ${_objEdit?"#e74c3c":"#d0dae8"};border-radius:7px;cursor:pointer;font-size:11px;color:${_objEdit?"#fff":"#7a9aaa"};font-weight:700">${_objEdit?"✓ Готово":"✏️ Править"}</button>`:""}
   ${isAdmin?`<button data-a="obj-add-stage" data-oid="${obj.id}" style="padding:5px 12px;background:#2980b9;border:none;border-radius:7px;cursor:pointer;font-size:11px;color:#fff;font-weight:700">+ Этап</button>`:""}
 </div>
+${_objEdit?`<div style="background:#fdecea;border:1px solid #f5b7b1;border-radius:10px;padding:8px 11px;margin-bottom:10px;font-size:11px;color:#c0392b;line-height:1.4">✏️ Режим правки: показаны кнопки удаления этапов и работ. Нажмите «Готово», когда закончите.</div>`:""}
 <div style="position:relative;margin-bottom:10px">
   <input id="obj-work-search" data-a="obj-work-search" value="${(objWorkSearch||'').replace(/"/g,'&quot;')}" placeholder="🔍 Поиск по работам и материалам…" style="width:100%;padding:9px 32px 9px 12px;border-radius:10px;border:1.5px solid #dde6f0;font-size:13px;outline:none;box-sizing:border-box">
   ${objWorkSearch?`<button data-a="obj-work-search-clear" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:22px;height:22px;border:none;background:#eef2f7;border-radius:50%;cursor:pointer;color:#7a9aaa;font-size:12px">✕</button>`:''}
@@ -4836,7 +4890,7 @@ ${obj.stages.map(s=>{
     <span style="font-size:13px;font-weight:700;color:#1a2a3a;flex:1">${esc(s.n)}</span>
     ${(()=>{const sm=s.works.flatMap(w=>w.mats||[]);const st=getMatStatus(sm);return st?`<span style="font-size:10px;font-weight:700;color:${st.color};background:${st.bg};border-radius:6px;padding:2px 8px;margin-right:6px">${st.label} ${st.done}/${st.total}</span>`:"";})()}
     <span style="font-size:11px;color:${s.c};font-weight:600;margin-right:8px">${_q?(_vw.length+" из "+s.works.length):s.works.length} работ · ${fmt(s.works.reduce((a,w)=>a+w.cost,0))}</span>
-    ${isAdmin?`<button data-a="obj-del-stage" data-oid="${obj.id}" data-sid="${s.id}" style="padding:2px 7px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;font-size:10px;color:#e74c3c">✕</button>`:""}
+    ${isAdmin&&_objEdit?`<button data-a="obj-del-stage" data-oid="${obj.id}" data-sid="${s.id}" style="padding:2px 7px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;font-size:10px;color:#e74c3c">✕</button>`:""}
   </div>
   <div style="padding:8px 12px">
     ${(()=>{const _ri=(w)=>{
@@ -4881,7 +4935,7 @@ ${obj.stages.map(s=>{
             })()}
           </div>
         </div>
-        ${isAdmin?`<button data-a="obj-del-work" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="width:22px;height:22px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>`:""}
+        ${isAdmin&&_objEdit?`<button data-a="obj-del-work" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="width:22px;height:22px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>`:""}
       </div>`;
       // Time-log block when open
       if(isTimeOpen){
@@ -5038,6 +5092,10 @@ ${objMatModal?`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);di
       <button data-a="obj-add-mat" style="width:100%;padding:8px;background:#27ae60;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Добавить материал</button>
     </div>`;})()}
   </div>
+</div>`:""}
+
+${isAdmin?`<div style="margin:18px 0 10px;padding-top:14px;border-top:1px solid #e6ecf3;text-align:center">
+  <button data-a="del-obj" data-oid="${obj.id}" style="padding:8px 16px;background:transparent;border:1px solid #e74c3c44;border-radius:8px;cursor:pointer;font-size:11px;color:#e74c3c">🗑 Удалить объект целиком</button>
 </div>`:""}
 
 <!-- Sticky bottom save bar -->
@@ -14767,9 +14825,30 @@ function bind(){
       objects=objects.map(o=>o.id===oid?{...o,stages:[...o.stages,{id:gid(),n,c:newObjStage.c,works:[]}]}:o);
       showNObjStageTid="";fl();
     };}
+    else if(a==="obj-chip"){el.onclick=()=>{
+      const oid=el.dataset.oid,key=el.dataset.key,wasOpen=el.dataset.open==="1";
+      const next={};
+      Object.keys(objSecOpen).forEach(function(x){ next[x]=x.indexOf(oid+"|")===0?false:objSecOpen[x]; });
+      // все разделы объекта закрываем явно (в т.ч. те, что открыты через defaultOpen и ключа не имеют)
+      ["docs","extra","deadline","summary","video"].forEach(function(kk){ next[oid+"|"+kk]=false; });
+      next[oid+"|"+key]=!wasOpen;
+      objSecOpen=next;
+      rerenderTab();
+    };}
+    else if(a==="obj-edit-toggle"){el.onclick=()=>{
+      const oid=el.dataset.oid;
+      objEditWorks=Object.assign({},objEditWorks,{[oid]:!objEditWorks[oid]});
+      rerenderTab();
+    };}
+    // Удаление этапа уносит ВСЕ работы внутри — показываем в подтверждении, что именно теряем.
     else if(a==="obj-del-stage"){el.onclick=()=>{
       if(!currentUser||!currentUser.roles.includes("admin"))return;
       const oid=el.dataset.oid,sid=el.dataset.sid;
+      const o=objects.find(x=>x.id===oid); const st=o&&o.stages.find(x=>x.id===sid);
+      if(!st)return;
+      const ws=st.works||[];
+      const sum=ws.reduce((a,w)=>a+(w.cost||0),0);
+      if(!confirm('Удалить этап «'+(st.n||"")+'»?\n\nВместе с ним удалятся работы: '+ws.length+' шт. на '+sum.toLocaleString("ru-RU")+' ₽.\nОтменить это нельзя.'))return;
       objects=objects.map(o=>o.id===oid?{...o,stages:o.stages.filter(s=>s.id!==sid)}:o);fl();
     };}
     else if(a==="obj-show-work"){el.onclick=()=>{showNObjWorkSid=el.dataset.sid;render();};}
@@ -15495,6 +15574,13 @@ function bind(){
     else if(a==="obj-del-work"){el.onclick=()=>{
       if(!currentUser||!currentUser.roles.includes("admin"))return;
       const oid=el.dataset.oid,sid=el.dataset.sid,wid=el.dataset.wid;
+      const _o=objects.find(x=>x.id===oid);
+      const _s=_o&&_o.stages.find(x=>x.id===sid);
+      const _w=_s&&(_s.works||[]).find(x=>x.id===wid);
+      if(!_w)return;
+      const _mats=(_w.mats||[]).length;
+      if(!confirm('Удалить работу «'+(_w.n||"")+'»'+(_w.cost?' на '+_w.cost.toLocaleString("ru-RU")+' ₽':'')+'?'
+        +(_mats?'\n\nВместе с ней уйдут материалы: '+_mats+' поз.':'')))return;
       objects=objects.map(o=>o.id===oid?{...o,stages:o.stages.map(s=>s.id===sid?{...s,works:s.works.filter(w=>w.id!==wid)}:s)}:o);fl();
     };}
     else if(a==="obj-open-mats"){el.onclick=()=>{objMatModal={oid:el.dataset.oid,wid:el.dataset.wid,wn:el.dataset.wn};render();};}
