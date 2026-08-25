@@ -1255,6 +1255,7 @@ const TAB_DEFS=[
   {k:"marketing", n:"📣 Маркетинг"},
   {k:"kp",        n:"📋 КП"},
   {k:"voiceai",   n:"🎙 Голосовой ИИ"},
+  {k:"history",   n:"🕘 История"},
 ];
 // rolePermissions[roleId] = массив ключей вкладок, которые открывает роль.
 // Админ НЕ входит сюда — он всегда видит все вкладки (зафиксировано).
@@ -3624,6 +3625,164 @@ function tWizardTab(){
 // render() пересобирает огромный DOM всей страницы (шапка+вкладки+список) → на
 // iOS экран заметно «дёргается» и сбрасывает прокрутку. Своп одного контейнера
 // почти не меняет высоту → окно само сохраняет позицию скролла.
+// ─── ВКЛАДКА «ИСТОРИЯ ДЕЙСТВИЙ» ──────────────────────────────────────────────
+// Данные НЕ живут в снимке (он ограничен 2 МБ на строку D1) — лог пишет Worker в
+// отдельную таблицу audit_log, панель читает его через GET /api/audit постранично.
+let histRows=null;            // null = ещё не загружали
+let histSections={};          // work_id → человеческое название (приходит с сервера)
+let histNext=null;            // курсор следующей страницы
+let histLoading=false;
+let histErr="";
+let histUid="";               // фильтр: сотрудник
+let histSection="";           // фильтр: раздел
+let histQuery="";             // фильтр: поиск
+let histDays=7;               // фильтр: период (0 = всё время)
+
+const HIST_ACT={
+  add:  ["＋","#27ae60","добавлено"],
+  del:  ["✕","#e74c3c","удалено"],
+  edit: ["✎","#2980b9","изменено"],
+  login:["→","#8e44ad","вход"],
+  bulk: ["≡","#7a9aaa","пакет правок"],
+};
+
+// rerenderTab() пересоздаёт DOM вкладки — поле поиска теряет фокус на каждой букве.
+// Возвращаем фокус и каретку, как это делает render() для остальных полей.
+function histRerender(){
+  const act=document.activeElement;
+  const keep=act&&act.id==="hist-q";
+  let pos=null; try{ if(keep)pos=act.selectionStart; }catch(e){}
+  rerenderTab();
+  if(keep){ const e=document.getElementById("hist-q"); if(e){ e.focus(); try{ if(pos!=null)e.setSelectionRange(pos,pos); }catch(_){} } }
+}
+
+function histFrom(){ return histDays?Date.now()-histDays*86400000:0; }
+
+async function histLoad(more){
+  if(histLoading)return;
+  histLoading=true; histErr="";
+  if(!more){ histRows=null; histNext=null; }
+  histRerender();
+  const qs=new URLSearchParams();
+  const from=histFrom(); if(from)qs.set("from",String(from));
+  if(histUid)qs.set("uid",histUid);
+  if(histSection)qs.set("section",histSection);
+  if(histQuery.trim())qs.set("q",histQuery.trim());
+  if(more&&histNext)qs.set("before",histNext);
+  qs.set("limit","60");
+  try{
+    const r=await fetch(API_BASE+"/api/audit?"+qs.toString(),{headers:authHeaders()});
+    const j=await r.json();
+    if(!j||!j.success)throw new Error((j&&j.error)||"Ошибка загрузки");
+    histRows=(more&&histRows?histRows:[]).concat(j.rows||[]);
+    histSections=j.sections||histSections;
+    histNext=j.next||null;
+  }catch(e){ histErr=String((e&&e.message)||e); if(!histRows)histRows=[]; }
+  histLoading=false;
+  histRerender();
+}
+
+function histUserMeta(uid,uname){
+  const u=users.find(function(x){return x&&x.id===uid;});
+  if(u)return{n:u.name||uname||uid,av:u.av||"👤",c:u.c||"#7a9aaa"};
+  return{n:uname||uid,av:uid==="__master__"?"🔑":"👤",c:"#7a9aaa"};
+}
+
+function histDayLabel(ts){
+  const d=new Date(ts), now=new Date();
+  const day=function(x){return x.getFullYear()+"-"+x.getMonth()+"-"+x.getDate();};
+  if(day(d)===day(now))return"Сегодня";
+  const y=new Date(now.getTime()-86400000);
+  if(day(d)===day(y))return"Вчера";
+  return d.toLocaleDateString("ru-RU",{day:"numeric",month:"long",weekday:"short"});
+}
+function histTime(ts){
+  const d=new Date(ts);
+  return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");
+}
+
+function tHistory(){
+  let html='<div>';
+  html+='<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">🕘 ИСТОРИЯ ДЕЙСТВИЙ</div>';
+  const histIsAdm=!!(currentUser&&currentUser.roles.includes("admin"));
+  html+='<div style="font-size:12px;color:#5a7a9a;margin-bottom:12px">'+(histIsAdm
+    ?"Кто и когда что менял в портале. Пишется автоматически, редактировать нельзя. Хранится 180 дней."
+    :"Ваши действия в портале за последние 180 дней. Чужие записи видит только администратор.")+'</div>';
+
+  // Период
+  const periods=[[1,"Сегодня"],[7,"7 дней"],[30,"30 дней"],[0,"Всё время"]];
+  html+='<div style="display:flex;gap:5px;margin-bottom:8px">'+periods.map(function(p){
+    const sel=histDays===p[0];
+    return '<button data-a="hist-days" data-d="'+p[0]+'" style="flex:1;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;border:1.5px solid '+(sel?"#2980b9":"#dde6f0")+';background:'+(sel?"#2980b9":"#fff")+';color:'+(sel?"#fff":"#7a9aaa")+'">'+p[1]+'</button>';
+  }).join("")+'</div>';
+
+  // Сотрудники — только админу: сотруднику сервер отдаёт только его записи, чужие кнопки врали бы.
+  if(histIsAdm){
+  html+='<div style="display:flex;gap:5px;overflow-x:auto;padding-bottom:4px;margin-bottom:8px;scrollbar-width:none">';
+  html+='<button data-a="hist-uid" data-u="" style="flex-shrink:0;padding:6px 11px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;border:1.5px solid '+(histUid?"#dde6f0":"#2980b9")+';background:'+(histUid?"#fff":"#2980b9")+';color:'+(histUid?"#7a9aaa":"#fff")+'">Все</button>';
+  html+=users.map(function(u){
+    const sel=histUid===u.id;
+    return '<button data-a="hist-uid" data-u="'+esc(u.id)+'" style="flex-shrink:0;padding:6px 11px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;white-space:nowrap;border:1.5px solid '+(sel?u.c:"#dde6f0")+';background:'+(sel?u.c:"#fff")+';color:'+(sel?"#fff":"#7a9aaa")+'">'+(u.av||"👤")+' '+esc(u.name)+'</button>';
+  }).join("");
+  html+='</div>';
+  }
+
+  // Раздел + поиск
+  const secKeys=Object.keys(histSections);
+  html+='<div style="display:flex;gap:6px;margin-bottom:10px">';
+  html+='<select data-a="hist-section" style="flex:1;min-width:0;padding:8px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;background:#fff;box-sizing:border-box"><option value="">Все разделы</option>'+
+    secKeys.map(function(k){return '<option value="'+esc(k)+'"'+(histSection===k?" selected":"")+'>'+esc(histSections[k])+'</option>';}).join("")+'</select>';
+  html+='<button data-a="hist-reload" title="Обновить" style="padding:8px 12px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;font-size:13px;color:#5a7080">'+(histLoading?"⏳":"↻")+'</button>';
+  html+='</div>';
+  html+='<input id="hist-q" data-a="hist-q" value="'+esc(histQuery)+'" placeholder="🔍 Поиск по названию или сотруднику…" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:12px">';
+
+  if(histErr){
+    html+='<div style="background:#fdecea;border:1px solid #f5b7b1;color:#c0392b;border-radius:10px;padding:10px 12px;font-size:12px;margin-bottom:10px">⚠️ '+esc(histErr)+'</div>';
+  }
+  if(histRows===null){
+    html+='<div style="text-align:center;color:#9aabbf;font-size:12px;padding:24px">Загружаю историю…</div></div>';
+    return html;
+  }
+  if(!histRows.length){
+    html+='<div style="text-align:center;color:#9aabbf;font-size:12px;padding:24px;border:1px dashed #d0dae8;border-radius:10px">За выбранный период записей нет.<br><span style="font-size:11px">История начинает копиться с момента установки обновления.</span></div></div>';
+    return html;
+  }
+
+  // Лента, сгруппированная по дням
+  let curDay="";
+  histRows.forEach(function(r){
+    const day=histDayLabel(r.ts);
+    if(day!==curDay){
+      curDay=day;
+      html+='<div style="font-size:10px;font-weight:800;color:#9aabbf;letter-spacing:0.8px;text-transform:uppercase;margin:14px 0 7px">'+esc(day)+'</div>';
+    }
+    const a=HIST_ACT[r.action]||HIST_ACT.edit;
+    const um=histUserMeta(r.uid,r.uname);
+    const sec=histSections[r.section]||r.section;
+    html+='<div style="background:#fff;border:1px solid #e6edf5;border-left:3px solid '+um.c+';border-radius:10px;padding:9px 11px;margin-bottom:6px">'+
+      '<div style="display:flex;align-items:center;gap:7px;margin-bottom:3px">'+
+        '<span style="width:18px;height:18px;border-radius:5px;background:'+a[1]+'1a;color:'+a[1]+';font-size:11px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">'+a[0]+'</span>'+
+        '<span style="font-size:12px;font-weight:700;color:'+um.c+'">'+um.av+' '+esc(um.n)+'</span>'+
+        '<span style="font-size:10px;color:#9aabbf;margin-left:auto;flex-shrink:0">'+histTime(r.ts)+'</span>'+
+      '</div>'+
+      '<div style="font-size:12.5px;color:#1a2a3a;line-height:1.35;word-break:break-word">'+esc(r.title)+'</div>'+
+      (r.action==="edit"&&r.field
+        ? '<div style="font-size:11px;color:#7a9aaa;margin-top:3px">'+esc(r.field)+': <span style="color:#c0392b">'+esc(r.old_val==null?"—":r.old_val)+'</span> → <span style="color:#27ae60;font-weight:600">'+esc(r.new_val==null?"—":r.new_val)+'</span></div>'
+        : '')+
+      '<div style="display:flex;align-items:center;gap:6px;margin-top:5px">'+
+        '<span style="font-size:9.5px;font-weight:700;color:#7a9aaa;background:#f0f4f8;border-radius:5px;padding:2px 6px">'+esc(sec)+'</span>'+
+        '<span style="font-size:9.5px;color:#b8c4d2">'+a[2]+(r.cnt>1?" ×"+r.cnt:"")+'</span>'+
+      '</div>'+
+    '</div>';
+  });
+
+  if(histNext){
+    html+='<button data-a="hist-more" style="width:100%;padding:10px;margin-top:8px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:10px;cursor:pointer;font-size:12px;font-weight:700;color:#5a7080">'+(histLoading?"⏳ Загружаю…":"Показать ещё")+'</button>';
+  }
+  html+='</div>';
+  return html;
+}
+
 function rerenderTab(){
   const c=document.getElementById("tab-content");
   if(!c){render();return;}                       // фолбэк, если контейнера ещё нет
@@ -3635,7 +3794,7 @@ function rerenderTab(){
 }
 // Один источник HTML активной вкладки — используется и в page(), и в rerenderTab().
 function tabContentHtml(){
-  return tab==="assign"?tObjects():tab==="myday"?tMyDay():tab==="sheetlist"?tSheetList():tab==="wizard"?tWizardTab():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tab==="kp"?tKP():tab==="voiceai"?tVoiceAi():tCRM();
+  return tab==="assign"?tObjects():tab==="myday"?tMyDay():tab==="sheetlist"?tSheetList():tab==="wizard"?tWizardTab():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tab==="kp"?tKP():tab==="voiceai"?tVoiceAi():tab==="history"?tHistory():tCRM();
 }
 
 function render(){
@@ -3832,6 +3991,7 @@ function page(){
       ["works","🗄️ База данных"],
       ["team","👥 Команда"],
       ["marketing","📣 Маркетинг"],
+      ["history","🕘 История"],
     ];
     // Подстраховка: дописываем вкладки из TAB_DEFS, которых нет в сохранённом порядке
     TAB_DEFS.forEach(function(t){
@@ -12801,7 +12961,14 @@ function bind(){
       render();
     };}
     else if(a==="portal-tab"){el.onclick=()=>{tab=el.dataset.k;render();};}
-    else if(a==="tab"){el.onclick=()=>{tab=el.dataset.k;openTemplate=null;openObject=null;render(); if(el.dataset.k==="voiceai"&&voiceCallsCache===null)voiceLoadCalls();};}
+    else if(a==="tab"){el.onclick=()=>{tab=el.dataset.k;openTemplate=null;openObject=null;render(); if(el.dataset.k==="voiceai"&&voiceCallsCache===null)voiceLoadCalls(); if(el.dataset.k==="history"&&histRows===null)histLoad(false);};}
+    // История действий (лог с сервера, не из снимка)
+    else if(a==="hist-days"){el.onclick=()=>{histDays=Number(el.dataset.d)||0;histLoad(false);};}
+    else if(a==="hist-uid"){el.onclick=()=>{histUid=el.dataset.u||"";histLoad(false);};}
+    else if(a==="hist-section"){el.onchange=()=>{histSection=el.value||"";histLoad(false);};}
+    else if(a==="hist-reload"){el.onclick=()=>{histLoad(false);};}
+    else if(a==="hist-more"){el.onclick=()=>{histLoad(true);};}
+    else if(a==="hist-q"){el.oninput=()=>{histQuery=el.value;clearTimeout(window._histQT);window._histQT=setTimeout(function(){histLoad(false);},450);};}
     // Объекты
     else if(a==="db-tab"){el.onclick=()=>{
       dbSection=el.dataset.dt;

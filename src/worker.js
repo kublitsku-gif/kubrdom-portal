@@ -5,6 +5,8 @@
 // Привязки из wrangler.toml:
 //   env.DB — D1Database (banya-db)
 
+import { recordSnapshotDiff, readAudit, logEvent } from "./audit.js";
+
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -106,6 +108,7 @@ async function loginUser(env, request) {
   const adm = roles.indexOf("admin") >= 0;
   const fin = adm || roles.some(function (r) { return (rolePerms[r] || []).indexOf("finance") >= 0; });
   const token = await makeUserToken(env, { u: u.id, adm: adm, fin: fin, exp: Date.now() + 30 * 24 * 3600 * 1000 });
+  await logEvent(env, { uid: u.id }, "auth", "login", "вошёл в портал", null);
   return json({ success: true, token: token, user: { id: u.id, name: u.name, roles: roles, av: u.av, c: u.c, mustChangePin: !!u.mustChangePin } });
 }
 
@@ -248,7 +251,7 @@ async function getState(env, storageKey, auth) {
 //
 // Я выставил TODO там, где нужна твоя имплементация. Это 5-10 строк кода в зависимости
 // от выбранного варианта. Если сомневаешься — бери (A): это самый гибкий и безопасный.
-async function postState(env, storageKey, request, auth) {
+async function postState(env, storageKey, request, auth, ctx) {
   let body;
   try {
     body = await request.json();
@@ -318,6 +321,18 @@ async function postState(env, storageKey, request, auth) {
     : upsert.bind(storageKey, item.work_id, JSON.stringify(item.data ?? null), now, storageKey, base, now, ...ids)
   );
 
+  // Снимок «до» — для истории действий. Читаем ТОЛЬКО записываемые разделы и ТОЛЬКО
+  // сырые строки: сравнение строк отсеет неизменившееся без парсинга (см. src/audit.js).
+  let auditBefore = null;
+  if (storageKey === "admin_panel" && auth && !auth.client) {
+    try {
+      const prevRows = await env.DB
+        .prepare("SELECT work_id, data FROM work_states WHERE storage_key = ? AND work_id IN (" + ids.map(function () { return "?"; }).join(",") + ")")
+        .bind(storageKey, ...ids).all();
+      auditBefore = new Map((prevRows.results || []).map(function (r) { return [r.work_id, r.data]; }));
+    } catch (e) { auditBefore = null; }
+  }
+
   const results = await env.DB.batch(batch);
 
   // changes = 0 — guard не пропустил запись (base устарел). Неизвестная форма meta →
@@ -328,6 +343,12 @@ async function postState(env, storageKey, request, auth) {
   if (rejected) {
     const items = await readStateItems(env, storageKey, auth);
     return json({ success: false, error: "stale base", conflict: true, storage_key: storageKey, items }, 409);
+  }
+
+  // История пишется ПОСЛЕ успешной записи и не задерживает ответ панели.
+  if (auditBefore) {
+    const task = recordSnapshotDiff(env, auth, auditBefore, allowed).catch(function () {});
+    if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(task);
   }
 
   return json({ success: true, written: batch.length, updated_at: now, skipped });
@@ -1203,7 +1224,7 @@ export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil(aiNudge(env));
   },
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
@@ -1375,6 +1396,16 @@ export default {
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
 
+    // История действий. Админ видит весь портал; обычный сотрудник — ТОЛЬКО свои действия
+    // (uid принудительно подменяется на его собственный, фильтр из запроса игнорируется).
+    // Клиенту раздел не положен вовсе.
+    if (url.pathname === "/api/audit" && request.method === "GET") {
+      if (!auth || auth.client) return json({ success: false, error: "Нет доступа" }, 403);
+      if (!auth.adm) url.searchParams.set("uid", auth.uid || "?");
+      try { return json(await readAudit(env, url)); }
+      catch (e) { return json({ success: false, error: String((e && e.message) || e) }, 500); }
+    }
+
     const match = url.pathname.match(/^\/api\/state\/([^\/]+)\/?$/);
     if (!match) {
       return json({ success: false, error: "Not found" }, 404);
@@ -1384,7 +1415,7 @@ export default {
 
     try {
       if (request.method === "GET")  return await getState(env, storageKey, auth);
-      if (request.method === "POST") return await postState(env, storageKey, request, auth);
+      if (request.method === "POST") return await postState(env, storageKey, request, auth, ctx);
       return json({ success: false, error: "Method not allowed" }, 405);
     } catch (err) {
       return json({ success: false, error: err.message ?? String(err) }, 500);
