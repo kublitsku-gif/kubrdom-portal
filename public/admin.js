@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-25.8";
+const APP_BUILD = "2026-08-25.9";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4186,6 +4186,18 @@ function objChipsHtml(oid,list){
     +'</div>':'');
 }
 
+// ── СДЕЛЬНАЯ ОПЛАТА РАБОТ ────────────────────────────────────────────────────
+// w.pay — сколько получает производство за конкретную работу (₽ за работу целиком).
+// Не путать с w.cost: cost — цена работы для клиента из сметы (в неё входит и материал).
+// Ограничитель — план зарплаты по объекту (finSalaries): сумма расценок не должна его
+// превышать, поэтому рядом всегда показываем «свободно к распределению».
+function workPay(w){ const v=Number(w&&w.pay); return isFinite(v)&&v>0?v:0; }
+function objPayFund(obj){ return (obj.stages||[]).reduce((a,s)=>a+(s.works||[]).reduce((b,w)=>b+workPay(w),0),0); }
+function objSalaryPlan(oid){
+  const d=finSalaries[oid]||{};
+  return Object.keys(d).reduce((a,uid)=>a+(Number(d[uid]&&d[uid].plan)||0),0);
+}
+
 function objSection(oid,key,title,color,summary,body,defaultOpen){
   if(_objSecBuf&&OBJ_CHIP_KEYS.indexOf(key)>=0){ _objSecBuf.push({key:key,title:title,color:color,summary:summary,body:body,defaultOpen:defaultOpen}); return ""; }
   const k=oid+"|"+key;
@@ -4918,6 +4930,31 @@ ${(()=>{
   }).join("")}
 </div>
 
+${(()=>{
+  const canSeeSal=currentUser&&(currentUser.roles.includes("admin")||currentUser.roles.includes("financier")||currentUser.roles.includes("prod_head"));
+  if(objWorkView!=="money"||!canSeeSal)return "";
+  const fund=objPayFund(obj), plan=objSalaryPlan(obj.id);
+  const left=plan-fund, over=left<0;
+  const pct=plan>0?Math.min(100,Math.round(fund/plan*100)):0;
+  const rub=v=>Math.round(Math.abs(v)).toLocaleString("ru-RU")+" ₽";
+  return `<div style="background:#fff;border:1px solid ${over?"#e74c3c55":"#dde6f0"};border-radius:11px;padding:10px 13px;margin-bottom:10px">
+    <div style="display:flex;align-items:center;gap:10px">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:10px;font-weight:800;letter-spacing:0.6px;color:#8e44ad">👷 ОПЛАТА ПРОИЗВОДСТВУ</div>
+        <div style="font-size:11.5px;color:#7a9aaa;margin-top:2px">Назначено по работам${plan>0?` · план зарплаты ${rub(plan)}`:""}</div>
+      </div>
+      <div style="font-size:16px;font-weight:800;color:#8e44ad;white-space:nowrap">${rub(fund)}</div>
+    </div>
+    ${plan>0?`<div style="display:flex;align-items:center;gap:8px;margin-top:7px">
+      <div style="flex:1;height:6px;border-radius:4px;background:#eef2f7;overflow:hidden">
+        <div style="width:${pct}%;height:100%;background:${over?"#e74c3c":"#8e44ad"};border-radius:4px"></div>
+      </div>
+      <span style="font-size:11px;font-weight:800;color:${over?"#e74c3c":"#27ae60"};white-space:nowrap">${over?"превышение "+rub(left):"свободно "+rub(left)}</span>
+    </div>`:`<div style="font-size:11px;color:#e67e22;margin-top:6px">План зарплаты по объекту не задан — задайте его во вкладке «Финансы», тогда будет виден остаток.</div>`}
+    ${isAdmin&&_objEdit?`<button data-a="obj-pay-spread" data-oid="${obj.id}" style="width:100%;margin-top:8px;padding:8px;background:#fff;border:1px dashed #8e44ad;border-radius:9px;cursor:pointer;color:#8e44ad;font-size:11.5px;font-weight:700">⚖️ Разложить план зарплаты по работам пропорционально цене</button>`:""}
+  </div>`;
+})()}
+
 ${showNObjStageTid===obj.id?`<div style="background:#fff;border-radius:12px;border:2px solid #4a7ac8;padding:12px;margin-bottom:10px">
   <input id="ons-n" placeholder="Название этапа" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;margin-bottom:8px;outline:none;box-sizing:border-box">
   <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">${["#e67e22","#2980b9","#27ae60","#9b59b6","#c0392b","#16a085"].map(c=>`<div data-a="pick-ons-c" data-c="${c}" style="width:24px;height:24px;border-radius:50%;background:${c};cursor:pointer;border:${newObjStage.c===c?"3px solid #0d1b2e":"3px solid transparent"}"></div>`).join("")}</div>
@@ -4971,6 +5008,15 @@ ${obj.stages.map(s=>{
             ${isSupplyWork?`<span style="font-size:9px;font-weight:700;color:#e67e22;background:#e67e2214;border:1px solid #e67e2240;border-radius:5px;padding:2px 7px;letter-spacing:0.3px">ДОБАВИЛ СНАБЖЕНЕЦ</span>`:""}
             ${objWorkView==="works"?(()=>{const ql=workQtyLabel(w);return ql?`<span style="font-size:10px;color:#16a085;background:#16a08515;border-radius:5px;padding:2px 7px;font-weight:600">${ql}</span>`:"";})():""}
             ${objWorkView==="money"&&w.cost>0?`<span style="font-size:12px;color:#0d1b2e;font-weight:800">${fmt(w.cost)}</span>`:""}
+            ${objWorkView!=="receive"?(()=>{
+              const pay=workPay(w);
+              // В режиме правки (только админ, только «Деньги») — поле ввода расценки.
+              if(isAdmin&&_objEdit&&objWorkView==="money"){
+                return `<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#8e44ad;font-weight:700">👷<input data-a="obj-pay" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" value="${pay||""}" inputmode="numeric" placeholder="0" style="width:74px;padding:3px 6px;border:1px solid #8e44ad55;border-radius:6px;font-size:11px;font-weight:700;color:#8e44ad;outline:none;text-align:right">₽</span>`;
+              }
+              if(!pay)return "";
+              return `<span title="Оплата производству за эту работу" style="font-size:11px;color:#8e44ad;background:#8e44ad14;border:1px solid #8e44ad33;border-radius:5px;padding:2px 7px;font-weight:700">👷 ${fmt(pay)}</span>`;
+            })():""}
             ${objWorkView!=="money"?"":(()=>{const st=getMatStatus(w.mats||[]);const cnt=(w.mats||[]).length;const c=st?st.color:'#2980b9';const bg=st?st.bg:'rgba(41,128,185,0.1)';const lbl=st&&st.done===st.total&&st.total>0?'✓':(st&&st.done>0?st.done+'/'+st.total+' ':'');return`<button data-a="obj-open-mats" data-oid="${obj.id}" data-wid="${w.id}" data-wn="${esc(w.n)}" style="padding:4px 9px;background:${bg};border:1px solid ${c}44;border-radius:5px;cursor:pointer;font-size:10px;color:${c};font-weight:600">${lbl}📦 ${cnt}</button>`;})()}
             ${(()=>{
               if(objWorkView!=="receive")return "";
@@ -14909,6 +14955,44 @@ function bind(){
       const off=parseInt(getComputedStyle(document.documentElement).getPropertyValue("--stagetop"))||110;
       const y=t.getBoundingClientRect().top+(window.pageYOffset||document.documentElement.scrollTop||0)-off-6;
       window.scrollTo({top:Math.max(0,y),behavior:"smooth"});
+    };}
+    // Ввод расценки. onchange (а не oninput) — чтобы не перерисовывать список на каждую цифру.
+    else if(a==="obj-pay"){el.onchange=()=>{
+      if(!currentUser||!currentUser.roles.includes("admin"))return;
+      const oid=el.dataset.oid,sid=el.dataset.sid,wid=el.dataset.wid;
+      const val=unfmtMoney(el.value);
+      objects=objects.map(o=>o.id!==oid?o:Object.assign({},o,{stages:o.stages.map(st=>st.id!==sid?st:Object.assign({},st,{
+        works:st.works.map(w=>w.id!==wid?w:Object.assign({},w,{pay:val>0?val:0}))
+      }))}));
+      fl();
+    };}
+    // Раскладка плана зарплаты по работам пропорционально их цене — иначе 42 суммы руками.
+    else if(a==="obj-pay-spread"){el.onclick=()=>{
+      if(!currentUser||!currentUser.roles.includes("admin"))return;
+      const oid=el.dataset.oid;
+      const o=objects.find(x=>x.id===oid); if(!o)return;
+      const plan=objSalaryPlan(oid);
+      if(plan<=0){ alert("План зарплаты по объекту не задан.\n\nЗадайте его во вкладке «Финансы» — тогда его можно будет разложить по работам."); return; }
+      const works=(o.stages||[]).flatMap(st=>(st.works||[]).map(w=>({sid:st.id,w:w})));
+      const base=works.reduce((a,x)=>a+(Number(x.w.cost)||0),0);
+      if(base<=0){ alert("У работ объекта не проставлены цены — распределять пропорционально нечему."); return; }
+      const had=objPayFund(o);
+      if(!confirm("Разложить план зарплаты "+plan.toLocaleString("ru-RU")+" ₽ по "+works.length+" работам пропорционально их цене?"
+        +(had?"\n\nТекущие расценки ("+had.toLocaleString("ru-RU")+" ₽) будут перезаписаны.":"")))return;
+      // Остаток от округления кладём в самую дорогую работу, чтобы сумма сошлась с планом до рубля.
+      let acc=0, maxI=0, maxC=-1;
+      const vals=works.map((x,i)=>{
+        const c=Number(x.w.cost)||0;
+        const v=Math.round(plan*c/base);
+        acc+=v; if(c>maxC){maxC=c;maxI=i;}
+        return v;
+      });
+      vals[maxI]+=plan-acc;
+      const byWid={}; works.forEach((x,i)=>{ byWid[x.w.id]=Math.max(0,vals[i]); });
+      objects=objects.map(ob=>ob.id!==oid?ob:Object.assign({},ob,{stages:ob.stages.map(st=>Object.assign({},st,{
+        works:st.works.map(w=>byWid[w.id]!=null?Object.assign({},w,{pay:byWid[w.id]}):w)
+      }))}));
+      fl();
     };}
     else if(a==="obj-work-view"){el.onclick=()=>{
       objWorkView=el.dataset.v||"works";
