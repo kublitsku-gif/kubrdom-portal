@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-25.5";
+const APP_BUILD = "2026-08-25.6";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4501,15 +4501,35 @@ function tObjects(){
     const assignedIds=new Set();
     objContracts.forEach(d=>(d.responsible||[]).forEach(uid=>assignedIds.add(uid)));
     const team=users.filter(u=>assignedIds.has(u.id));
-    return `<div style="display:flex;align-items:center;gap:10px">
-      <div style="flex:1;min-width:0;font-size:11.5px;color:#7a9aaa">
-        ${allWorks.length} работ · <b style="color:#27ae60">${doneCnt} сделано</b>${isAdmin?` · ${fmt(totalCost)}`:""}
+    // Полоса прогресса. У админа она считается ПО ДЕНЬГАМ (дорогая закрытая работа должна
+    // двигать её сильнее дешёвой — тот же принцип, что у прогресса закупки материалов),
+    // у остальных — по числу работ, потому что сумм они не видят.
+    const doneCost=allWorks.filter(w=>w.done).reduce((a,w)=>a+(w.cost||0),0);
+    const leftCost=Math.max(0,totalCost-doneCost);
+    const pct=isAdmin
+      ? (totalCost>0?Math.round(doneCost/totalCost*100):0)
+      : (allWorks.length?Math.round(doneCnt/allWorks.length*100):0);
+    const barColor=pct>=100?"#27ae60":(pct>0?"#2980b9":"#dfe6ee");
+    const rub=v=>Math.round(v).toLocaleString("ru-RU")+" ₽";
+    return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:7px">
+      <div style="flex:1;min-width:0;font-size:12px;color:#7a9aaa">
+        <b style="color:#0d1b2e;font-size:14px">${doneCnt}</b> из ${allWorks.length} ${pluralRu(allWorks.length,"работы","работ","работ")} сделано
       </div>
       ${team.length?`<div style="display:flex;align-items:center;flex-shrink:0" title="${team.map(u=>esc(u.name)).join(", ")}">
         ${team.slice(0,4).map((u,i)=>`<span style="width:26px;height:26px;border-radius:50%;background:${u.c}22;border:2px solid #fff;box-shadow:0 0 0 1px ${u.c}55;display:inline-flex;align-items:center;justify-content:center;font-size:13px;margin-left:${i?"-8px":"0"}">${u.av}</span>`).join("")}
         ${team.length>4?`<span style="font-size:10px;color:#7a9aaa;margin-left:4px">+${team.length-4}</span>`:""}
       </div>`:`<span style="font-size:10px;color:#c4cdd8;flex-shrink:0">команда не назначена</span>`}
-    </div>`;
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <div style="flex:1;height:7px;border-radius:4px;background:#eef2f7;overflow:hidden">
+        <div style="width:${pct}%;height:100%;background:${barColor};border-radius:4px;transition:width 0.25s"></div>
+      </div>
+      <span style="font-size:11px;font-weight:800;color:${pct>0?barColor:"#b6c2ce"};flex-shrink:0;min-width:30px;text-align:right">${pct}%</span>
+    </div>
+    ${isAdmin?`<div style="display:flex;gap:12px;margin-top:6px;font-size:11px;color:#7a9aaa">
+      <span>Закрыто <b style="color:#27ae60">${rub(doneCost)}</b></span>
+      <span>Осталось <b style="color:#0d1b2e">${rub(leftCost)}</b></span>
+    </div>`:""}`;
   })()}
 </div>
 
