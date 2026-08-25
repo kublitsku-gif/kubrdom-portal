@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-25.2";
+const APP_BUILD = "2026-08-25.3";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -5846,7 +5846,7 @@ function renderEstimates(){
     +'</div>';
   }).join("");
   el.innerHTML=
-    '<div style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;padding-bottom:2px">'+
+    '<div id="est-kinds-row" style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;padding-bottom:2px">'+
       EST_KINDS.map(function(kd){var on=estKind===kd.k;
         return '<button class="est-kind" data-k="'+kd.k+'" style="flex:1 0 auto;white-space:nowrap;padding:9px 13px;border-radius:10px;cursor:pointer;font-size:13px;font-weight:700;border:2px solid '+(on?"#16a085":"#dde6f0")+';background:'+(on?"#16a085":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+'">'+kd.emoji+' '+esc(kd.n)+'</button>';
       }).join("")+
@@ -5865,6 +5865,18 @@ function renderEstimates(){
     }).join(""):'<div style="text-align:center;color:#aaa;font-size:13px;padding:20px">'+(_q?'Ничего не найдено':'Смет пока нет')+'</div>')+
     '<button id="est-fab" title="Новая смета" style="position:fixed;right:18px;bottom:84px;z-index:500;display:flex;align-items:center;gap:7px;padding:13px 20px;background:linear-gradient(135deg,#16a085,#0e6e5a);border:none;border-radius:26px;cursor:pointer;color:#fff;font-size:14px;font-weight:800;box-shadow:0 6px 20px rgba(22,160,133,0.5)"><span style="font-size:18px;line-height:1">+</span> Смета</button>';
   el.querySelectorAll(".est-kind").forEach(function(b){b.onclick=function(){estKind=b.dataset.k;estSearch="";renderEstimates();};});
+  // Лента видов прокручивается по горизонтали, а перерисовка сбрасывает scrollLeft в 0 —
+  // выбранный вид справа (напр. последний созданный) уезжал за край и был не виден.
+  // Подкручиваем ленту так, чтобы активная кнопка оказалась в центре видимой части.
+  (function(){
+    var row=document.getElementById("est-kinds-row");
+    if(!row)return;
+    var act=row.querySelector('.est-kind[data-k="'+estKind+'"]');
+    if(!act)return;
+    var want=act.offsetLeft-(row.clientWidth-act.offsetWidth)/2;
+    var max=row.scrollWidth-row.clientWidth;
+    row.scrollLeft=Math.max(0,Math.min(want,max));   // вертикальный скролл страницы не трогаем
+  })();
   var eka=document.getElementById("est-kind-add"); if(eka)eka.onclick=function(){
     var nm=prompt("Название нового вида смет (напр. «Бани из бруса»):","");
     if(!nm||!nm.trim())return;
