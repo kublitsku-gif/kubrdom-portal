@@ -1633,6 +1633,10 @@ let estDrag=null;         // id перетаскиваемой карточки 
 let estSearch="";         // поиск по сметам (по названию работы)
 let estKind="banya";      // активный вид смет: banya | house
 let estPicking=false;     // открыт ли выбор материала для добавления
+// Номер этапа, для которого открыта панель «куда перенести сметы» перед удалением.
+// Удаление этапа необратимо руками: «+ Этап» всегда даёт номер max+1, поэтому вернуть
+// этап с прежним номером через UI было нельзя, а сметы навсегда оставались «без этапа».
+let estStageDel=null;
 let estRoomDel=false;     // режим удаления комнат в карточке сметы
 let estCopyOpen=false;    // раскрыта ли панель «Копировать в…» в карточке сметы
 let estPickSearch="";     // поиск в выборе материала
@@ -5596,6 +5600,28 @@ function _tplRebuild(t, ids){
   out.sort(function(a,b){return (a._k||99)-(b._k||99);});
   t.stages=out;
 }
+// Панель перед удалением этапа: сметы не бросаем в «без этапа» молча, а предлагаем
+// перенести их на соседний этап. Показывается только когда на этапе реально есть сметы.
+function estStageDelPanel(st){
+  var cnt=estimates.filter(function(e){return Number(e.stage)===st.n;}).length;
+  var others=EST_STAGES.filter(function(x){return x.n!==st.n;});
+  return '<div style="background:#fff;border:1.5px solid #e74c3c55;border-radius:12px;padding:11px 12px;margin:0 2px 10px">'
+    +'<div style="font-size:12.5px;font-weight:800;color:#1a2a3a;margin-bottom:4px">Удалить этап «'+esc(st.label)+'»?</div>'
+    +'<div style="font-size:11.5px;color:#7a9aaa;line-height:1.4;margin-bottom:9px">На нём '+cnt+' смет(ы) — во всех видах. Выберите, куда их перенести.'
+      +(st.finish?'<br><b style="color:#c0392b">Это чистовой этап — на него завязана разбивка смет по комнатам.</b>':'')+'</div>'
+    +(others.length
+      ? '<div style="font-size:10px;font-weight:700;color:#9aabbf;margin-bottom:5px">ПЕРЕНЕСТИ НА ЭТАП</div>'
+        +'<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:9px">'+others.map(function(o){
+          return '<button class="est-stage-move" data-from="'+st.n+'" data-to="'+o.n+'" style="flex:1 1 auto;padding:8px 10px;border-radius:8px;cursor:pointer;font-size:11.5px;font-weight:700;border:1.5px solid '+o.color+';background:#fff;color:'+o.color+'">'+o.emoji+' '+esc(o.label)+'</button>';
+        }).join("")+'</div>'
+      : '')
+    +'<div style="display:flex;gap:6px">'
+      +'<button class="est-stage-move" data-from="'+st.n+'" data-to="0" style="flex:1;padding:8px;border-radius:8px;cursor:pointer;font-size:11.5px;font-weight:700;border:1px solid #d0dae8;background:#fff;color:#7a9aaa">Оставить без этапа</button>'
+      +'<button class="est-stage-cancel" style="flex:0 0 auto;padding:8px 14px;border-radius:8px;cursor:pointer;font-size:11.5px;font-weight:700;border:none;background:#f0f4f8;color:#5a7080">Отмена</button>'
+    +'</div>'
+  +'</div>';
+}
+
 function renderEstimates(){
   var el=document.getElementById("dbest-list");
   if(!el)return;
@@ -5774,6 +5800,21 @@ function renderEstimates(){
   EST_STAGES.forEach(function(st){var items=_fl.filter(function(e){return Number(e.stage)===st.n;});if(items.length||!_q)_groups.push({st:st,items:items});});
   var _noStage=_fl.filter(function(e){return !EST_STAGES.find(function(x){return x.n===Number(e.stage);});});
   if(_noStage.length)_groups.push({st:null,items:_noStage});
+  // Осиротевшие ссылки: сметы помнят номер этапа, а самого этапа в справочнике нет.
+  // Это след удалённого этапа — предлагаем вернуть его С ТЕМ ЖЕ номером, иначе привязка мертва.
+  var _orphans=[];
+  _noStage.forEach(function(e){
+    var n=Number(e.stage);
+    if(!n||_orphans.some(function(o){return o.n===n;}))return;
+    _orphans.push({n:n,cnt:estimates.filter(function(x){return Number(x.stage)===n;}).length});
+  });
+  _orphans.sort(function(a,b){return a.n-b.n;});
+  var _orphanHtml=_orphans.map(function(o){
+    return '<div style="display:flex;align-items:center;gap:8px;background:#fff8e6;border:1px solid #f0d9a0;border-radius:10px;padding:9px 11px;margin:0 2px 8px">'
+      +'<div style="flex:1;font-size:11.5px;color:#8a6d1f;line-height:1.35">Сметы помнят удалённый <b>этап '+o.n+'</b> — '+o.cnt+' шт. Верните этап, и они встанут на место.</div>'
+      +'<button class="est-stage-restore" data-st="'+o.n+'" style="flex-shrink:0;padding:7px 11px;background:#16a085;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">↩ Вернуть этап '+o.n+'</button>'
+    +'</div>';
+  }).join("");
   el.innerHTML=
     '<div style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;padding-bottom:2px">'+
       EST_KINDS.map(function(kd){var on=estKind===kd.k;
@@ -5787,8 +5828,8 @@ function renderEstimates(){
     (_fl.length?_groups.map(function(g){
       var head=g.st
         ? '<div class="est-stagehead" data-st="'+g.st.n+'" style="display:flex;align-items:center;gap:7px;margin:16px 2px 8px;padding:4px 4px;border-radius:8px"><span style="font-size:14px">'+g.st.emoji+'</span><span style="width:9px;height:9px;border-radius:50%;background:'+g.st.color+';flex-shrink:0"></span><span style="font-size:11px;font-weight:800;letter-spacing:0.5px;color:'+g.st.color+'">'+g.st.short.toUpperCase()+' · '+g.st.label.toUpperCase()+'</span><span style="font-size:10px;color:#9aabbf">· '+g.items.length+'</span><button class="est-stage-del" data-st="'+g.st.n+'" title="Удалить этап" style="margin-left:auto;width:24px;height:24px;flex-shrink:0;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button></div>'
-        : '<div class="est-stagehead" data-st="0" style="display:flex;align-items:center;gap:7px;margin:16px 2px 8px;padding:4px 4px;border-radius:8px;font-size:11px;font-weight:800;letter-spacing:0.5px;color:#9aabbf">БЕЗ ЭТАПА · '+g.items.length+'<button class="est-nostage-del" title="Удалить все сметы без этапа" style="margin-left:auto;width:24px;height:24px;flex-shrink:0;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button></div>';
-      return head+groupBody(g);
+        : '<div class="est-stagehead" data-st="0" style="display:flex;align-items:center;gap:7px;margin:16px 2px 8px;padding:4px 4px;border-radius:8px;font-size:11px;font-weight:800;letter-spacing:0.5px;color:#9aabbf">БЕЗ ЭТАПА · '+g.items.length+'<button class="est-nostage-del" title="Удалить все сметы без этапа" style="margin-left:auto;width:24px;height:24px;flex-shrink:0;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button></div>'+_orphanHtml;
+      return head+(g.st&&estStageDel===g.st.n?estStageDelPanel(g.st):"")+groupBody(g);
     }).join(""):'<div style="text-align:center;color:#aaa;font-size:13px;padding:20px">'+(_q?'Ничего не найдено':'Смет пока нет')+'</div>')+
     '<button id="est-fab" title="Новая смета" style="position:fixed;right:18px;bottom:84px;z-index:500;display:flex;align-items:center;gap:7px;padding:13px 20px;background:linear-gradient(135deg,#16a085,#0e6e5a);border:none;border-radius:26px;cursor:pointer;color:#fff;font-size:14px;font-weight:800;box-shadow:0 6px 20px rgba(22,160,133,0.5)"><span style="font-size:18px;line-height:1">+</span> Смета</button>';
   el.querySelectorAll(".est-kind").forEach(function(b){b.onclick=function(){estKind=b.dataset.k;estSearch="";renderEstimates();};});
@@ -5809,15 +5850,40 @@ function renderEstimates(){
   var nw=document.getElementById("est-new"); if(nw)nw.onclick=function(){var ne={id:gid(),kind:estKind,name:"Новая смета",lines:[]};estimates.unshift(ne);estOpenId=ne.id;renderEstimates();};
   var fab=document.getElementById("est-fab"); if(fab)fab.onclick=function(){var ne={id:gid(),kind:estKind,name:"Новая смета",lines:[]};estimates.unshift(ne);estOpenId=ne.id;renderEstimates();window.scrollTo(0,0);};
   var sga=document.getElementById("est-stage-add"); if(sga)sga.onclick=function(){ var nm=prompt("Название нового этапа:",""); if(!nm||!nm.trim())return; var mx=EST_STAGES.reduce(function(a,s){return Math.max(a,s.n);},0); EST_STAGES=EST_STAGES.concat([{n:mx+1,label:nm.trim(),short:"Этап "+(mx+1),color:"#16a085",emoji:"🧩"}]); renderEstimates(); };
-  // Удаление этапа: сметы с этим номером этапа не удаляются — рендер сам сложит их в «БЕЗ ЭТАПА».
+  // Удаление этапа. Пустой — сразу по confirm; с привязанными сметами — через панель
+  // выбора «куда перенести»: молча ронять их в «без этапа» нельзя, привязка теряется.
   el.querySelectorAll(".est-stage-del").forEach(function(b){ b.onclick=function(ev){ ev.stopPropagation();
     var n=+b.dataset.st; var st=EST_STAGES.find(function(x){return x.n===n;}); if(!st)return;
     var cnt=estimates.filter(function(e){return Number(e.stage)===n;}).length;
-    var msg="Удалить этап «"+st.label+"»?"
-      +(cnt?"\n\nСмет на этом этапе (во всех видах): "+cnt+". Они не удалятся — перейдут в группу «Без этапа».":"")
-      +(st.finish?"\n\nВнимание: это чистовой этап — на него завязана разбивка смет по комнатам.":"");
-    if(!confirm(msg))return;
+    var _y=window.pageYOffset||document.documentElement.scrollTop||0;
+    if(cnt){ estStageDel=n; renderEstimates(); requestAnimationFrame(function(){window.scrollTo(0,_y);}); return; }
+    if(!confirm("Удалить пустой этап «"+st.label+"»?"))return;
     EST_STAGES=EST_STAGES.filter(function(x){return x.n!==n;});
+    renderEstimates();
+    requestAnimationFrame(function(){window.scrollTo(0,_y);});
+  };});
+  // Перенос смет удаляемого этапа. data-to="0" — осознанно снять этап (stage=0):
+  // так сметы уходят в «Без этапа» и НЕ считаются осиротевшими, плашка возврата не всплывает.
+  el.querySelectorAll(".est-stage-move").forEach(function(b){ b.onclick=function(ev){ ev.stopPropagation();
+    var from=+b.dataset.from, to=+b.dataset.to;
+    estimates=estimates.map(function(e){ return Number(e.stage)===from?Object.assign({},e,{stage:to}):e; });
+    EST_STAGES=EST_STAGES.filter(function(x){return x.n!==from;});
+    estStageDel=null;
+    var _y=window.pageYOffset||document.documentElement.scrollTop||0;
+    renderEstimates();
+    requestAnimationFrame(function(){window.scrollTo(0,_y);});
+  };});
+  el.querySelectorAll(".est-stage-cancel").forEach(function(b){ b.onclick=function(ev){ ev.stopPropagation();
+    estStageDel=null; renderEstimates();
+  };});
+  // Возврат удалённого этапа С ТЕМ ЖЕ номером — единственный способ оживить привязку смет
+  // («+ Этап» всегда даёт max+1 и на старые ссылки не встаёт).
+  el.querySelectorAll(".est-stage-restore").forEach(function(b){ b.onclick=function(ev){ ev.stopPropagation();
+    var n=+b.dataset.st; if(!n||EST_STAGES.some(function(x){return x.n===n;}))return;
+    var nm=prompt("Название возвращаемого этапа "+n+":","Этап "+n);
+    if(!nm||!nm.trim())return;
+    EST_STAGES=EST_STAGES.concat([{n:n,label:nm.trim(),short:"Этап "+n,color:"#16a085",emoji:"🧩"}])
+      .sort(function(a,c){return a.n-c.n;});
     var _y=window.pageYOffset||document.documentElement.scrollTop||0;
     renderEstimates();
     requestAnimationFrame(function(){window.scrollTo(0,_y);});
