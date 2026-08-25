@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-25.3";
+const APP_BUILD = "2026-08-25.4";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -5839,6 +5839,17 @@ function renderEstimates(){
     _orphans.push({n:n,cnt:estimates.filter(function(x){return Number(x.stage)===n;}).length});
   });
   _orphans.sort(function(a,b){return a.n-b.n;});
+  // Итог по виду. Считаем по _fl, то есть по показанному: при активном поиске это сумма
+  // найденного, а не всего вида — иначе цифра противоречила бы списку под ней.
+  var _sumAll=_fl.reduce(function(a,e){return a+estTotal(e);},0);
+  var _posAll=_fl.reduce(function(a,e){return a+((e.lines||[]).length);},0);
+  var _totalHtml=_fl.length?('<div style="display:flex;align-items:center;gap:10px;background:#fff;border:1px solid #dde6f0;border-radius:11px;padding:10px 13px;margin-bottom:10px">'
+    +'<div style="flex:1;min-width:0">'
+      +'<div style="font-size:10px;font-weight:800;letter-spacing:0.6px;color:#9aabbf">'+(_q?"НАЙДЕНО ПО ПОИСКУ":"ВСЕГО ПО ВИДУ")+'</div>'
+      +'<div style="font-size:11.5px;color:#7a9aaa;margin-top:2px">'+_fl.length+' '+pluralRu(_fl.length,"смета","сметы","смет")+' · '+_posAll+' поз.</div>'
+    +'</div>'
+    +'<div style="font-size:17px;font-weight:800;color:#16a085;white-space:nowrap">'+Math.round(_sumAll).toLocaleString("ru-RU")+' ₽</div>'
+  +'</div>'):'';
   var _orphanHtml=_orphans.map(function(o){
     return '<div style="display:flex;align-items:center;gap:8px;background:#fff8e6;border:1px solid #f0d9a0;border-radius:10px;padding:9px 11px;margin:0 2px 8px">'
       +'<div style="flex:1;font-size:11.5px;color:#8a6d1f;line-height:1.35">Сметы помнят удалённый <b>этап '+o.n+'</b> — '+o.cnt+' шт. Верните этап, и они встанут на место.</div>'
@@ -5857,10 +5868,13 @@ function renderEstimates(){
     '<button id="est-stage-add" style="width:100%;margin-bottom:6px;padding:9px;background:#fff;border:1px dashed #16a085;border-radius:10px;cursor:pointer;color:#16a085;font-size:12px;font-weight:700">+ Этап</button>'+
     (EST_KINDS.length>1?'<button id="est-kind-copy-open" style="width:100%;margin-bottom:8px;padding:8px;background:#fff;border:1px dashed #2980b955;border-radius:10px;cursor:pointer;color:#2980b9;font-size:11.5px;font-weight:700">'+(estKindCopyOpen?"▴ Скрыть":"⧉ Скопировать все сметы из другого вида")+'</button>':'')+
     (estKindCopyOpen?estKindCopyPanel():'')+
+    _totalHtml+
     (_fl.length?_groups.map(function(g){
+      var _gsum=g.items.reduce(function(a,e){return a+estTotal(e);},0);
+      var _gsumHtml='<span style="margin-left:auto;font-size:12px;font-weight:800;color:#0d1b2e;white-space:nowrap">'+Math.round(_gsum).toLocaleString("ru-RU")+' ₽</span>';
       var head=g.st
-        ? '<div class="est-stagehead" data-st="'+g.st.n+'" style="display:flex;align-items:center;gap:7px;margin:16px 2px 8px;padding:4px 4px;border-radius:8px"><span style="font-size:14px">'+g.st.emoji+'</span><span style="width:9px;height:9px;border-radius:50%;background:'+g.st.color+';flex-shrink:0"></span><span style="font-size:11px;font-weight:800;letter-spacing:0.5px;color:'+g.st.color+'">'+g.st.short.toUpperCase()+' · '+g.st.label.toUpperCase()+'</span><span style="font-size:10px;color:#9aabbf">· '+g.items.length+'</span><button class="est-stage-del" data-st="'+g.st.n+'" title="Удалить этап" style="margin-left:auto;width:24px;height:24px;flex-shrink:0;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button></div>'
-        : '<div class="est-stagehead" data-st="0" style="display:flex;align-items:center;gap:7px;margin:16px 2px 8px;padding:4px 4px;border-radius:8px;font-size:11px;font-weight:800;letter-spacing:0.5px;color:#9aabbf">БЕЗ ЭТАПА · '+g.items.length+'<button class="est-nostage-del" title="Удалить все сметы без этапа" style="margin-left:auto;width:24px;height:24px;flex-shrink:0;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button></div>'+_orphanHtml;
+        ? '<div class="est-stagehead" data-st="'+g.st.n+'" style="display:flex;align-items:center;gap:7px;margin:16px 2px 8px;padding:4px 4px;border-radius:8px"><span style="font-size:14px">'+g.st.emoji+'</span><span style="width:9px;height:9px;border-radius:50%;background:'+g.st.color+';flex-shrink:0"></span><span style="font-size:11px;font-weight:800;letter-spacing:0.5px;color:'+g.st.color+'">'+g.st.short.toUpperCase()+' · '+g.st.label.toUpperCase()+'</span><span style="font-size:10px;color:#9aabbf">· '+g.items.length+' '+pluralRu(g.items.length,"смета","сметы","смет")+'</span>'+_gsumHtml+'<button class="est-stage-del" data-st="'+g.st.n+'" title="Удалить этап" style="margin-left:8px;width:24px;height:24px;flex-shrink:0;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button></div>'
+        : '<div class="est-stagehead" data-st="0" style="display:flex;align-items:center;gap:7px;margin:16px 2px 8px;padding:4px 4px;border-radius:8px;font-size:11px;font-weight:800;letter-spacing:0.5px;color:#9aabbf">БЕЗ ЭТАПА · '+g.items.length+''+_gsumHtml+'<button class="est-nostage-del" title="Удалить все сметы без этапа" style="margin-left:8px;width:24px;height:24px;flex-shrink:0;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button></div>'+_orphanHtml;
       return head+(g.st&&estStageDel===g.st.n?estStageDelPanel(g.st):"")+groupBody(g);
     }).join(""):'<div style="text-align:center;color:#aaa;font-size:13px;padding:20px">'+(_q?'Ничего не найдено':'Смет пока нет')+'</div>')+
     '<button id="est-fab" title="Новая смета" style="position:fixed;right:18px;bottom:84px;z-index:500;display:flex;align-items:center;gap:7px;padding:13px 20px;background:linear-gradient(135deg,#16a085,#0e6e5a);border:none;border-radius:26px;cursor:pointer;color:#fff;font-size:14px;font-weight:800;box-shadow:0 6px 20px rgba(22,160,133,0.5)"><span style="font-size:18px;line-height:1">+</span> Смета</button>';
