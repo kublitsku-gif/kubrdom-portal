@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-25.6";
+const APP_BUILD = "2026-08-25.7";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4139,6 +4139,10 @@ let objSecOpen={}; // {objId|key: bool} — переопределяет default
 // ТОЛЬКО в нём. Удаление стоит впритык к чекбоксу «сделано» и к иконкам материалов/фото —
 // на телефоне это промах пальцем ценой в этап с десятком работ.
 let objEditWorks={};
+// Режим списка работ. Карточка работы несла сразу 6 управляющих элементов в строке шириной
+// ~390px; на стройке в один момент нужен один слой. works — что делаем, money — почём,
+// receive — приёмка (часы и фото крупными целями).
+let objWorkView="works";   // works | money | receive
 // Пять секций шапки объекта (документы, доп работы, дедлайн, сделанное, видео) занимали
 // ~300px и в большинстве объектов пустые. Режим сбора: пока _objSecBuf активен, objSection
 // не рисует аккордеон, а складывает описание — и все секции выводятся одной строкой чипов.
@@ -4889,6 +4893,31 @@ ${_objEdit?`<div style="background:#fdecea;border:1px solid #f5b7b1;border-radiu
   ${objWorkSearch?`<button data-a="obj-work-search-clear" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:22px;height:22px;border:none;background:#eef2f7;border-radius:50%;cursor:pointer;color:#7a9aaa;font-size:12px">✕</button>`:''}
 </div>
 
+${(()=>{
+  // Быстрый переход по этапам: 42 работы в трёх этапах — это длинная лента, в которой
+  // теряешься. Показываем только когда этапов больше одного и есть что листать.
+  const _q=(objWorkSearch||"").trim().toLowerCase();
+  const _m=(w)=>{ if(!_q)return true; if((w.n||"").toLowerCase().indexOf(_q)>=0)return true; return (w.mats||[]).some(m=>(m.n||"").toLowerCase().indexOf(_q)>=0||(m.store||"").toLowerCase().indexOf(_q)>=0); };
+  const vis=obj.stages.filter(st=>!_q||st.works.some(_m));
+  if(vis.length<2)return "";
+  return `<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;margin-bottom:10px;scrollbar-width:none">`+vis.map(st=>{
+    const nm=String(st.n||"");
+    const short=nm.length>18?nm.slice(0,17)+"…":nm;
+    const cnt=st.works.filter(_m).length;
+    const done=st.works.filter(w=>w.done).length;
+    return `<button data-a="obj-stage-jump" data-sid="${st.id}" style="flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border-radius:9px;cursor:pointer;font-size:11.5px;font-weight:700;white-space:nowrap;border:1.5px solid ${st.c}55;background:#fff;color:${st.c}">
+      <span style="width:7px;height:7px;border-radius:50%;background:${st.c};flex-shrink:0"></span>${esc(short)}
+      <span style="font-size:10px;color:#9aabbf;font-weight:600">${done}/${cnt}</span></button>`;
+  }).join("")+`</div>`;
+})()}
+
+<div style="display:flex;gap:5px;margin-bottom:10px">
+  ${[["works","🔨","Работы"],["money","💰","Деньги"],["receive","📸","Приёмка"]].map(v=>{
+    const on=objWorkView===v[0];
+    return `<button data-a="obj-work-view" data-v="${v[0]}" style="flex:1;padding:8px 4px;border-radius:9px;cursor:pointer;font-size:11.5px;font-weight:700;border:1.5px solid ${on?"#2980b9":"#dde6f0"};background:${on?"#2980b9":"#fff"};color:${on?"#fff":"#7a9aaa"};white-space:nowrap">${v[1]} ${v[2]}</button>`;
+  }).join("")}
+</div>
+
 ${showNObjStageTid===obj.id?`<div style="background:#fff;border-radius:12px;border:2px solid #4a7ac8;padding:12px;margin-bottom:10px">
   <input id="ons-n" placeholder="Название этапа" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;margin-bottom:8px;outline:none;box-sizing:border-box">
   <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">${["#e67e22","#2980b9","#27ae60","#9b59b6","#c0392b","#16a085"].map(c=>`<div data-a="pick-ons-c" data-c="${c}" style="width:24px;height:24px;border-radius:50%;background:${c};cursor:pointer;border:${newObjStage.c===c?"3px solid #0d1b2e":"3px solid transparent"}"></div>`).join("")}</div>
@@ -4904,8 +4933,8 @@ ${obj.stages.map(s=>{
   const _matchW=(w)=>{ if(!_q)return true; if((w.n||"").toLowerCase().indexOf(_q)>=0)return true; return (w.mats||[]).some(m=>(m.n||"").toLowerCase().indexOf(_q)>=0||(m.store||"").toLowerCase().indexOf(_q)>=0); };
   const _vw=s.works.filter(_matchW);
   if(_q&&!_vw.length)return "";
-  return `<div style="background:#fff;border-radius:12px;border:1px solid ${s.c}44;margin-bottom:10px;overflow:hidden">
-  <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:linear-gradient(135deg,${s.c}15,transparent);border-bottom:1px solid ${s.c}22">
+  return `<div id="stage-${s.id}" style="background:#fff;border-radius:12px;border:1px solid ${s.c}44;margin-bottom:10px">
+  <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:linear-gradient(135deg,${s.c}15,${s.c}03),#fff;border-bottom:1px solid ${s.c}22;border-radius:11px 11px 0 0;position:sticky;top:var(--stagetop,110px);z-index:5">
     <div style="width:8px;height:8px;border-radius:50%;background:${s.c}"></div>
     <span style="font-size:13px;font-weight:700;color:#1a2a3a;flex:1">${esc(s.n)}</span>
     ${(()=>{const sm=s.works.flatMap(w=>w.mats||[]);const st=getMatStatus(sm);return st?`<span style="font-size:10px;font-weight:700;color:${st.color};background:${st.bg};border-radius:6px;padding:2px 8px;margin-right:6px">${st.label} ${st.done}/${st.total}</span>`:"";})()}
@@ -4938,20 +4967,22 @@ ${obj.stages.map(s=>{
           <div ${canSheet?`data-a="work-sheet-open" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}"`:""} style="font-size:13px;font-weight:${isSupplyWork?700:600};color:${isDone?'#27ae60':isSupplyWork?'#e67e22':'#1a2a3a'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${canSheet?'cursor:pointer;':''}${isDone?'text-decoration:line-through;text-decoration-color:#27ae6066':''}">${esc(w.n)}</div>
           <div style="display:flex;gap:6px;margin-top:2px;align-items:center;flex-wrap:wrap">
             ${isSupplyWork?`<span style="font-size:9px;font-weight:700;color:#e67e22;background:#e67e2214;border:1px solid #e67e2240;border-radius:5px;padding:2px 7px;letter-spacing:0.3px">ДОБАВИЛ СНАБЖЕНЕЦ</span>`:""}
-            ${(()=>{const ql=workQtyLabel(w);return ql?`<span style="font-size:10px;color:#16a085;background:#16a08515;border-radius:5px;padding:2px 7px;font-weight:600">${ql}</span>`:"";})()}
-            ${w.cost>0?`<span style="font-size:11px;color:#7a9aaa;font-weight:700">${fmt(w.cost)}</span>`:""}
-            ${(()=>{const st=getMatStatus(w.mats||[]);const cnt=(w.mats||[]).length;const c=st?st.color:'#2980b9';const bg=st?st.bg:'rgba(41,128,185,0.1)';const lbl=st&&st.done===st.total&&st.total>0?'✓':(st&&st.done>0?st.done+'/'+st.total+' ':'');return`<button data-a="obj-open-mats" data-oid="${obj.id}" data-wid="${w.id}" data-wn="${esc(w.n)}" style="padding:2px 7px;background:${bg};border:1px solid ${c}44;border-radius:5px;cursor:pointer;font-size:10px;color:${c};font-weight:600">${lbl}📦 ${cnt}</button>`;})()}
+            ${objWorkView==="works"?(()=>{const ql=workQtyLabel(w);return ql?`<span style="font-size:10px;color:#16a085;background:#16a08515;border-radius:5px;padding:2px 7px;font-weight:600">${ql}</span>`:"";})():""}
+            ${objWorkView==="money"&&w.cost>0?`<span style="font-size:12px;color:#0d1b2e;font-weight:800">${fmt(w.cost)}</span>`:""}
+            ${objWorkView!=="money"?"":(()=>{const st=getMatStatus(w.mats||[]);const cnt=(w.mats||[]).length;const c=st?st.color:'#2980b9';const bg=st?st.bg:'rgba(41,128,185,0.1)';const lbl=st&&st.done===st.total&&st.total>0?'✓':(st&&st.done>0?st.done+'/'+st.total+' ':'');return`<button data-a="obj-open-mats" data-oid="${obj.id}" data-wid="${w.id}" data-wn="${esc(w.n)}" style="padding:4px 9px;background:${bg};border:1px solid ${c}44;border-radius:5px;cursor:pointer;font-size:10px;color:${c};font-weight:600">${lbl}📦 ${cnt}</button>`;})()}
             ${(()=>{
+              if(objWorkView!=="receive")return "";
               const canLogTime=currentUser&&(currentUser.roles.includes("admin")||currentUser.roles.includes("financier")||currentUser.roles.includes("brigadier")||currentUser.roles.includes("worker")||currentUser.roles.includes("prod_head"));
               if(!canLogTime&&totalH===0)return "";
-              return `<button data-a="obj-toggle-time" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="padding:2px 7px;background:${totalH>0?'#16a08518':isTimeOpen?'#16a08533':'transparent'};border:1px solid ${isTimeOpen?'#16a085':'#16a08544'};border-radius:5px;cursor:pointer;font-size:10px;color:#16a085;font-weight:600">⏱ ${totalH>0?totalH+'ч ('+logs.length+')':'+'}</button>`;
+              return `<button data-a="obj-toggle-time" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="padding:6px 12px;font-size:12px !important;background:${totalH>0?'#16a08518':isTimeOpen?'#16a08533':'transparent'};border:1px solid ${isTimeOpen?'#16a085':'#16a08544'};border-radius:5px;cursor:pointer;font-size:10px;color:#16a085;font-weight:600">⏱ ${totalH>0?totalH+'ч ('+logs.length+')':'+'}</button>`;
             })()}
             ${(()=>{
+              if(objWorkView!=="receive")return "";
               const showPhoto=canComplete||photos.length>0;
               if(!showPhoto)return "";
               const bg=isPhotoOpen?'#3498db33':photos.length>0?'#3498db18':'transparent';
               const bd=isPhotoOpen?'#3498db':'#3498db44';
-              return `<button data-a="obj-toggle-photo" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="padding:2px 7px;background:${bg};border:1px solid ${bd};border-radius:5px;cursor:pointer;font-size:10px;color:#3498db;font-weight:600">📷 ${photos.length>0?photos.length:'+'}</button>`;
+              return `<button data-a="obj-toggle-photo" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="padding:6px 12px;font-size:12px !important;background:${bg};border:1px solid ${bd};border-radius:5px;cursor:pointer;font-size:10px;color:#3498db;font-weight:600">📷 ${photos.length>0?photos.length:'+'}</button>`;
             })()}
           </div>
         </div>
@@ -13062,7 +13093,20 @@ function tCRMInstruction(){
 }
 
 
+// Липкий заголовок этапа должен вставать ПОД уже прилипшими шапкой и лентой вкладок.
+// Их высоту не зашиваем константой (роли в шапке переносятся на две строки, у ленты
+// бывает подпись «смахни») — меряем по факту и кладём в CSS-переменную --stagetop.
+function updateStageStickyTop(){
+  try{
+    const ts=document.getElementById("tabs-scroll");
+    if(!ts||!ts.parentElement)return;
+    const top=53+ts.parentElement.offsetHeight;   // 53px — высота шапки пользователя (sticky top:0)
+    document.documentElement.style.setProperty("--stagetop",top+"px");
+  }catch(e){}
+}
+
 function bind(){
+  updateStageStickyTop();
   // Defensive: also bind real click listener to all _crmMove buttons (iOS Safari sometimes ignores onclick)
   document.querySelectorAll('[onclick*="_crmMove"]').forEach(function(b){
     if(b._mvBound)return;
@@ -14855,6 +14899,14 @@ function bind(){
       objSecOpen=next;
       rerenderTab();
     };}
+    else if(a==="obj-stage-jump"){el.onclick=()=>{
+      const t=document.getElementById("stage-"+el.dataset.sid);
+      if(!t)return;
+      const off=parseInt(getComputedStyle(document.documentElement).getPropertyValue("--stagetop"))||110;
+      const y=t.getBoundingClientRect().top+(window.pageYOffset||document.documentElement.scrollTop||0)-off-6;
+      window.scrollTo({top:Math.max(0,y),behavior:"smooth"});
+    };}
+    else if(a==="obj-work-view"){el.onclick=()=>{ objWorkView=el.dataset.v||"works"; rerenderTab(); };}
     else if(a==="obj-edit-toggle"){el.onclick=()=>{
       const oid=el.dataset.oid;
       objEditWorks=Object.assign({},objEditWorks,{[oid]:!objEditWorks[oid]});
