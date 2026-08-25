@@ -75,8 +75,12 @@ function run() {
   // Боевой снимок поверх дефолтного стейта панели. Присваиваем через
   // runInContext, иначе не достучаться до let-переменных модуля.
   const snapshot = loadSnapshot(opts.chunks, { refresh: opts.refresh })
+  // Имя чанка ≠ имя переменной для справочников смет: в снимке estStages/estKinds/estRooms,
+  // а в admin.js это EST_STAGES/EST_KINDS/EST_ROOMS. Без маппинга такой чанк молча уезжал
+  // в новую глобальную, а рендер работал на сидовых значениях — проверка врала.
+  const VAR_BY_CHUNK = { estStages: 'EST_STAGES', estKinds: 'EST_KINDS', estRooms: 'EST_ROOMS' }
   const assign = Object.entries(snapshot)
-    .map(([k, v]) => `${k}=${JSON.stringify(v)};`)
+    .map(([k, v]) => `${VAR_BY_CHUNK[k] || k}=${JSON.stringify(v)};`)
     .join('')
   vm.runInContext(assign, ctx)
   vm.runInContext(`currentUser={id:"harness",name:"Харнесс",roles:${JSON.stringify([opts.role])},objs:[],c:"#2980b9",av:"🧪"};`, ctx)

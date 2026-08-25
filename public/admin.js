@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-25.1";
+const APP_BUILD = "2026-08-25.2";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -1526,6 +1526,18 @@ function estKindLabel(k){var m=estKindMeta(k);return m.emoji+" "+m.n;}
 // Разовый посев нового вида копией смет вида-источника (seedFrom). Идемпотентно:
 // помечаем выполненные виды в settings.seededKinds → не копируем повторно и не
 // размножаем между устройствами. Источник пуст → откладываем (флаг не ставим).
+// Копия ВСЕХ смет одного вида в другой (id новые, содержимое независимое, этап сохраняется).
+// Один источник правды для трёх мест: разовый посев seedFrom, создание нового вида и
+// кнопка «Скопировать сметы из вида». Возвращает число скопированных.
+function estCopyKindInto(srcKind, dstKind){
+  var src=estimates.filter(function(e){return (e.kind||"banya")===srcKind;});
+  if(!src.length)return 0;
+  var copies=src.map(function(e){var c=JSON.parse(JSON.stringify(e));c.id=gid();c.kind=dstKind;return c;});
+  estimates=estimates.concat(copies);
+  return copies.length;
+}
+function estKindCount(k){return estimates.filter(function(e){return (e.kind||"banya")===k;}).length;}
+
 function ensureEstKindSeeds(){
   if(!Array.isArray(settings.seededKinds))settings.seededKinds=[];
   var changed=false;
@@ -1535,9 +1547,7 @@ function ensureEstKindSeeds(){
     if(estimates.some(function(e){return (e.kind||"banya")===kd.k;})){     // уже есть свои сметы — не трогаем
       settings.seededKinds.push(kd.k); changed=true; return;
     }
-    var src=estimates.filter(function(e){return (e.kind||"banya")===kd.seedFrom;});
-    if(!src.length)return;                                                 // источник пуст — попробуем позже
-    src.forEach(function(e){var c=JSON.parse(JSON.stringify(e));c.id=gid();c.kind=kd.k;estimates.push(c);});
+    if(!estCopyKindInto(kd.seedFrom, kd.k))return;                         // источник пуст — попробуем позже
     settings.seededKinds.push(kd.k); changed=true;
   });
   return changed;
@@ -1637,6 +1647,7 @@ let estPicking=false;     // открыт ли выбор материала д�
 // Удаление этапа необратимо руками: «+ Этап» всегда даёт номер max+1, поэтому вернуть
 // этап с прежним номером через UI было нельзя, а сметы навсегда оставались «без этапа».
 let estStageDel=null;
+let estKindCopyOpen=false;   // открыт выбор вида-источника для массового копирования смет
 let estRoomDel=false;     // режим удаления комнат в карточке сметы
 let estCopyOpen=false;    // раскрыта ли панель «Копировать в…» в карточке сметы
 let estPickSearch="";     // поиск в выборе материала
@@ -5600,6 +5611,25 @@ function _tplRebuild(t, ids){
   out.sort(function(a,b){return (a._k||99)-(b._k||99);});
   t.stages=out;
 }
+// Панель массового копирования: «набрать» новый вид смет из уже готового.
+// Копии независимые, к существующим сметам вида добавляются (ничего не заменяется).
+function estKindCopyPanel(){
+  var others=EST_KINDS.filter(function(kd){return kd.k!==estKind;});
+  var have=estKindCount(estKind);
+  return '<div style="background:#fff;border:1.5px solid #2980b955;border-radius:12px;padding:11px 12px;margin-bottom:8px">'
+    +'<div style="font-size:12.5px;font-weight:800;color:#1a2a3a;margin-bottom:4px">Скопировать сметы в «'+esc(estKindMeta(estKind).n)+'»</div>'
+    +'<div style="font-size:11.5px;color:#7a9aaa;line-height:1.4;margin-bottom:9px">Выберите вид-источник — все его сметы приедут сюда копиями (с этапами и материалами).'
+      +(have?' В этом виде уже '+have+' смет(ы), они останутся на месте.':'')+'</div>'
+    +'<div style="display:flex;flex-direction:column;gap:5px;margin-bottom:9px">'+others.map(function(kd){
+      var cnt=estKindCount(kd.k);
+      return '<button class="est-kind-copy" data-k="'+kd.k+'"'+(cnt?'':' disabled')+' style="display:flex;align-items:center;gap:8px;width:100%;padding:9px 11px;border-radius:9px;cursor:'+(cnt?'pointer':'default')+';font-size:12px;font-weight:700;text-align:left;border:1.5px solid '+(cnt?'#dde6f0':'#eef2f7')+';background:'+(cnt?'#fff':'#f7f9fb')+';color:'+(cnt?'#3a5a78':'#c3cedb')+'">'
+        +'<span style="font-size:14px">'+kd.emoji+'</span><span style="flex:1">'+esc(kd.n)+'</span>'
+        +'<span style="font-size:11px;font-weight:700;color:'+(cnt?'#9aabbf':'#d5dee8')+'">'+(cnt?cnt+' шт.':'пусто')+'</span></button>';
+    }).join("")+'</div>'
+    +'<button class="est-kind-copy-cancel" style="width:100%;padding:8px;border-radius:8px;cursor:pointer;font-size:11.5px;font-weight:700;border:none;background:#f0f4f8;color:#5a7080">Отмена</button>'
+  +'</div>';
+}
+
 // Панель перед удалением этапа: сметы не бросаем в «без этапа» молча, а предлагаем
 // перенести их на соседний этап. Показывается только когда на этапе реально есть сметы.
 function estStageDelPanel(st){
@@ -5824,7 +5854,9 @@ function renderEstimates(){
     '</div>'+
     '<div style="margin-bottom:10px"><input id="est-search" value="'+(estSearch||"").replace(/"/g,"&quot;")+'" placeholder="🔍 Поиск по работе или материалу..." style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid #dde6f0;font-size:13px;outline:none;box-sizing:border-box"></div>'+
     '<button id="est-new" style="width:100%;margin-bottom:6px;padding:11px;background:#16a085;border:none;border-radius:11px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">+ Новая смета</button>'+
-    '<button id="est-stage-add" style="width:100%;margin-bottom:8px;padding:9px;background:#fff;border:1px dashed #16a085;border-radius:10px;cursor:pointer;color:#16a085;font-size:12px;font-weight:700">+ Этап</button>'+
+    '<button id="est-stage-add" style="width:100%;margin-bottom:6px;padding:9px;background:#fff;border:1px dashed #16a085;border-radius:10px;cursor:pointer;color:#16a085;font-size:12px;font-weight:700">+ Этап</button>'+
+    (EST_KINDS.length>1?'<button id="est-kind-copy-open" style="width:100%;margin-bottom:8px;padding:8px;background:#fff;border:1px dashed #2980b955;border-radius:10px;cursor:pointer;color:#2980b9;font-size:11.5px;font-weight:700">'+(estKindCopyOpen?"▴ Скрыть":"⧉ Скопировать все сметы из другого вида")+'</button>':'')+
+    (estKindCopyOpen?estKindCopyPanel():'')+
     (_fl.length?_groups.map(function(g){
       var head=g.st
         ? '<div class="est-stagehead" data-st="'+g.st.n+'" style="display:flex;align-items:center;gap:7px;margin:16px 2px 8px;padding:4px 4px;border-radius:8px"><span style="font-size:14px">'+g.st.emoji+'</span><span style="width:9px;height:9px;border-radius:50%;background:'+g.st.color+';flex-shrink:0"></span><span style="font-size:11px;font-weight:800;letter-spacing:0.5px;color:'+g.st.color+'">'+g.st.short.toUpperCase()+' · '+g.st.label.toUpperCase()+'</span><span style="font-size:10px;color:#9aabbf">· '+g.items.length+'</span><button class="est-stage-del" data-st="'+g.st.n+'" title="Удалить этап" style="margin-left:auto;width:24px;height:24px;flex-shrink:0;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button></div>'
@@ -5838,13 +5870,25 @@ function renderEstimates(){
     if(!nm||!nm.trim())return;
     var k="k"+gid();
     EST_KINDS=EST_KINDS.concat([{k:k,n:nm.trim(),emoji:"🧾"}]);
-    if(estimates.some(function(e){return (e.kind||"banya")===estKind;}) &&
+    if(estKindCount(estKind) &&
        confirm("Скопировать в новый вид сметы из текущего вида («"+estKindMeta(estKind).n+"»)?")){
-      var src=estimates.filter(function(e){return (e.kind||"banya")===estKind;});
-      src.forEach(function(e){var c=JSON.parse(JSON.stringify(e));c.id=gid();c.kind=k;estimates.push(c);});
+      estCopyKindInto(estKind, k);
     }
     estKind=k; estSearch=""; renderEstimates();
   };
+  var eco=document.getElementById("est-kind-copy-open");
+  if(eco)eco.onclick=function(){ estKindCopyOpen=!estKindCopyOpen; renderEstimates(); };
+  el.querySelectorAll(".est-kind-copy-cancel").forEach(function(b){ b.onclick=function(){ estKindCopyOpen=false; renderEstimates(); };});
+  el.querySelectorAll(".est-kind-copy").forEach(function(b){ b.onclick=function(){
+    var k=b.dataset.k, cnt=estKindCount(k);
+    if(!cnt)return;
+    if(!confirm("Скопировать "+cnt+" смет(ы) из «"+estKindMeta(k).n+"» в «"+estKindMeta(estKind).n+"»?\n\nКопии независимые: правки здесь не затронут оригиналы."))return;
+    var n=estCopyKindInto(k, estKind);
+    estKindCopyOpen=false; estSearch="";
+    renderEstimates();
+    window.scrollTo(0,0);
+    alert("Скопировано смет: "+n);
+  };});
   var es=document.getElementById("est-search");
   if(es){ es.oninput=function(){estSearch=this.value;renderEstimates();}; if(_act==="est-search"){es.focus();var L2=es.value.length;try{es.setSelectionRange(L2,L2);}catch(_e){}} }
   var nw=document.getElementById("est-new"); if(nw)nw.onclick=function(){var ne={id:gid(),kind:estKind,name:"Новая смета",lines:[]};estimates.unshift(ne);estOpenId=ne.id;renderEstimates();};
