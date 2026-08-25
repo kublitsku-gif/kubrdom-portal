@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-25.7";
+const APP_BUILD = "2026-08-25.8";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4945,8 +4945,10 @@ ${obj.stages.map(s=>{
     ${(()=>{const _ri=(w)=>{
       const logs=w.timeLogs||[];
       const totalH=logs.reduce((a,l)=>a+(l.hours||0),0);
-      const isTimeOpen=openTimeWid===w.id;
-      const isPhotoOpen=openPhotoWid===w.id;
+      // ВАЖНО: панель раскрыта только в режиме «Приёмка». Кнопки ⏱/📷, которыми она
+      // закрывается, в других режимах скрыты — раскрытая панель осталась бы навсегда.
+      const isTimeOpen=openTimeWid===w.id&&objWorkView==="receive";
+      const isPhotoOpen=openPhotoWid===w.id&&objWorkView==="receive";
       const isDone=!!w.done;
       const photos=w.photos||[];
       // Can mark complete: production roles + admin
@@ -5005,11 +5007,12 @@ ${obj.stages.map(s=>{
         const today=new Date().toISOString().slice(0,10);
         h+=`<div style="padding:10px 12px;background:#16a08508;border-top:1px solid #16a08522">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-            <div style="font-size:10px;color:#16a085;font-weight:700;letter-spacing:0.5px">⏱ УЧЁТ ВРЕМЕНИ</div>
+            <div style="flex:1;font-size:10px;color:#16a085;font-weight:700;letter-spacing:0.5px">⏱ УЧЁТ ВРЕМЕНИ</div>
             ${logs.length?`<button data-a="obj-toggle-history" data-wid="${w.id}" style="padding:3px 9px;background:transparent;border:1px solid #16a08544;border-radius:6px;cursor:pointer;color:#16a085;font-size:10px;font-weight:700;display:flex;align-items:center;gap:5px">
               <span>ИТОГО: ${totalH} ч (${logs.length})</span>
               <span style="font-size:9px">${timeHistoryExpanded[w.id]?'▲':'▼'}</span>
             </button>`:""}
+            <button data-a="obj-toggle-time" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" title="Свернуть" style="margin-left:6px;width:24px;height:24px;flex-shrink:0;background:#fff;border:1px solid #16a08544;border-radius:6px;cursor:pointer;color:#16a085;font-size:12px">✕</button>
           </div>
           ${logs.length&&timeHistoryExpanded[w.id]?`<div style="margin-bottom:8px">
             ${logs.map(l=>{
@@ -5043,11 +5046,12 @@ ${obj.stages.map(s=>{
       if(isPhotoOpen){
         h+=`<div style="padding:10px 12px;background:#3498db08;border-top:1px solid #3498db22">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-            <div style="font-size:10px;color:#3498db;font-weight:700;letter-spacing:0.5px">📷 ФОТО ВЫПОЛНЕНИЯ${photos.length?' · '+photos.length+' шт':''}</div>
+            <div style="flex:1;min-width:0;font-size:10px;color:#3498db;font-weight:700;letter-spacing:0.5px">📷 ФОТО ВЫПОЛНЕНИЯ${photos.length?' · '+photos.length+' шт':''}</div>
             ${canComplete?`<div style="display:flex;gap:5px;flex-shrink:0">
               <label data-a="obj-photo-label" data-inp="photo-cam-${w.id}" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="padding:4px 9px;background:#3498db;border-radius:6px;cursor:pointer;color:#fff;font-size:10px;font-weight:700;white-space:nowrap">📷 Снять<input id="photo-cam-${w.id}" type="file" accept="image/*" capture="environment" style="display:none"></label>
               <label data-a="obj-photo-label" data-inp="photo-inp-${w.id}" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="padding:4px 9px;background:#eaf2fb;border:1px solid #3498db55;border-radius:6px;cursor:pointer;color:#2b7bc0;font-size:10px;font-weight:700;white-space:nowrap">🖼 Из памяти<input id="photo-inp-${w.id}" type="file" accept="image/*" multiple style="display:none"></label>
             </div>`:""}
+            <button data-a="obj-toggle-photo" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" title="Свернуть" style="margin-left:6px;width:24px;height:24px;flex-shrink:0;background:#fff;border:1px solid #3498db55;border-radius:6px;cursor:pointer;color:#3498db;font-size:12px">✕</button>
           </div>
           ${photos.length?`<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px">
             ${photos.map(p=>`<div style="position:relative;aspect-ratio:1;border-radius:8px;overflow:hidden;background:#dde6f0;border:1px solid #c0d0e0">
@@ -14906,7 +14910,11 @@ function bind(){
       const y=t.getBoundingClientRect().top+(window.pageYOffset||document.documentElement.scrollTop||0)-off-6;
       window.scrollTo({top:Math.max(0,y),behavior:"smooth"});
     };}
-    else if(a==="obj-work-view"){el.onclick=()=>{ objWorkView=el.dataset.v||"works"; rerenderTab(); };}
+    else if(a==="obj-work-view"){el.onclick=()=>{
+      objWorkView=el.dataset.v||"works";
+      openTimeWid=null; openPhotoWid=null;   // не оставляем раскрытые панели от прошлого режима
+      rerenderTab();
+    };}
     else if(a==="obj-edit-toggle"){el.onclick=()=>{
       const oid=el.dataset.oid;
       objEditWorks=Object.assign({},objEditWorks,{[oid]:!objEditWorks[oid]});
@@ -15121,6 +15129,15 @@ function bind(){
     }
     else if(a==="obj-need-time"){el.onclick=()=>{
       const wid=el.dataset.wid;
+      // Замок просит отметить часы, а форма часов живёт в режиме «Приёмка» — сами туда
+      // и переводим и раскрываем запись, иначе подсказка отправляет в никуда.
+      if(objWorkView!=="receive"){
+        objWorkView="receive"; openTimeWid=wid; openPhotoWid=null;
+        rerenderTab();
+        const t=document.querySelector('[data-a="obj-toggle-time"][data-wid="'+wid+'"]');
+        if(t&&t.scrollIntoView)try{t.scrollIntoView({block:"center"});}catch(e){}
+        return;
+      }
       try{
         const toast=document.createElement("div");
         toast.innerHTML="🔒 Сначала отметьте часы<br><span style='font-size:10px;opacity:0.85;font-weight:500'>Нажмите ⏱ на работе</span>";
