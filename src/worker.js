@@ -6,6 +6,7 @@
 //   env.DB — D1Database (banya-db)
 
 import { recordSnapshotDiff, readAudit, logEvent } from "./audit.js";
+import { tgStatus, tgMakeCode, tgUnlink, tgSavePrefs, tgTest, tgWebhook, tgSetupWebhook } from "./notify.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
@@ -130,6 +131,23 @@ async function changePin(env, request, auth) {
   await env.DB.prepare("INSERT INTO work_states (storage_key, work_id, data, updated_at) VALUES ('admin_panel','users',?,?) ON CONFLICT(storage_key,work_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at")
     .bind(JSON.stringify(users), Date.now()).run();
   return json({ success: true });
+}
+
+// Роли и имя сотрудника из снимка — нужны серверу для дефолтных настроек напоминаний
+// и для обращения по имени. Мастер-токен считаем админом.
+async function userRoles(env, auth) {
+  if (!auth || !auth.uid) return [];
+  if (auth.uid === "__master__") return ["admin"];
+  const s = await readSnapshot(env, ["users"]);
+  const u = (s.users || []).find(function (x) { return x && x.id === auth.uid; });
+  return (u && u.roles) || [];
+}
+async function userName(env, auth) {
+  if (!auth || !auth.uid) return "";
+  if (auth.uid === "__master__") return "администратор";
+  const s = await readSnapshot(env, ["users"]);
+  const u = (s.users || []).find(function (x) { return x && x.id === auth.uid; });
+  return (u && u.name) || "";
 }
 
 // Читает нужные разделы снимка из D1 разом. Возвращает { work_id: data }.
@@ -1394,6 +1412,31 @@ export default {
     if (url.pathname === "/api/price" && request.method === "GET") {
       try { return json(await getPrice(url.searchParams.get("url") || "")); }
       catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+
+    // ── Напоминания в Telegram ──
+    // Вебхук бота — ДО авторизации (Telegram не шлёт X-Admin-Token). Свой заголовок-секрет.
+    if (url.pathname === "/api/tg/webhook" && request.method === "POST") {
+      if (env.WEBHOOK_SECRET && request.headers.get("X-Telegram-Bot-Api-Secret-Token") !== env.WEBHOOK_SECRET) {
+        return json({ ok: true });                    // чужой стук — молча ок, без подсказок
+      }
+      try { return json(await tgWebhook(env, request)); } catch { return json({ ok: true }); }
+    }
+    if (url.pathname.indexOf("/api/tg/") === 0) {
+      if (!auth || auth.client || !auth.uid) return json({ success: false, error: "Нужен вход сотрудника" }, 403);
+      const roles = await userRoles(env, auth);
+      try {
+        if (url.pathname === "/api/tg/status" && request.method === "GET") return json(await tgStatus(env, auth, roles));
+        if (url.pathname === "/api/tg/code" && request.method === "POST") return json(await tgMakeCode(env, auth));
+        if (url.pathname === "/api/tg/unlink" && request.method === "POST") return json(await tgUnlink(env, auth));
+        if (url.pathname === "/api/tg/prefs" && request.method === "POST") return json(await tgSavePrefs(env, auth, await request.json().catch(function () { return {}; })));
+        if (url.pathname === "/api/tg/test" && request.method === "POST") return json(await tgTest(env, auth, await userName(env, auth)));
+        if (url.pathname === "/api/tg/setup" && request.method === "POST") {
+          if (!auth.adm) return json({ success: false, error: "Только администратор" }, 403);
+          return json(await tgSetupWebhook(env, new URL(request.url).origin));
+        }
+      } catch (e) { return json({ success: false, error: String((e && e.message) || e) }, 500); }
+      return json({ success: false, error: "Not found" }, 404);
     }
 
     // История действий. Админ видит весь портал; обычный сотрудник — ТОЛЬКО свои действия

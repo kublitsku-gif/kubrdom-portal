@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-26.1";
+const APP_BUILD = "2026-08-26.2";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4069,9 +4069,11 @@ function page(){
     <div style="font-size:13px;font-weight:700;color:#0d1b2e">${esc(currentUser.name)}</div>
     <div style="font-size:10px;color:#7a9aaa">${currentUser.roles.map(rid=>{const r=roles.find(x=>x.id===rid);return r?r.n:"";}).filter(Boolean).join(", ")}</div>
   </div>
+  <button data-a="notify-open" title="Напоминания в Telegram" style="width:30px;height:30px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:13px;color:#7a9aaa;flex-shrink:0">🔔</button>
   <button data-a="pin-change-open" title="Сменить PIN" style="width:30px;height:30px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:13px;color:#7a9aaa;flex-shrink:0">🔑</button>
   <button data-a="logout" style="padding:5px 10px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:11px;color:#7a9aaa">Выйти</button>
 </div>
+${showNotify?notifyPanel():""}
 ${showPinChange?`<div style="background:#fff;border-bottom:1px solid #eef2f7;padding:14px;position:sticky;top:53px;z-index:48;box-shadow:0 4px 10px rgba(0,0,0,0.05)">
   <div style="max-width:340px;margin:0 auto">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
@@ -4139,6 +4141,9 @@ let objSecOpen={}; // {objId|key: bool} — переопределяет default
 // ТОЛЬКО в нём. Удаление стоит впритык к чекбоксу «сделано» и к иконкам материалов/фото —
 // на телефоне это промах пальцем ценой в этап с десятком работ.
 let objEditWorks={};
+// Напоминания в Telegram: панель в шапке (🔔). Данные живут на сервере (свои таблицы D1),
+// в снимок admin_panel не попадают — привязка и настройки у каждого свои.
+let showNotify=false, notifyData=null, notifyBusy=false, notifyLink=null, notifyMsg="";
 // Режим списка работ. Карточка работы несла сразу 6 управляющих элементов в строке шириной
 // ~390px; на стройке в один момент нужен один слой. works — что делаем, money — почём,
 // receive — приёмка (часы и фото крупными целями).
@@ -4213,6 +4218,78 @@ function objSalaryPlan(oid){
   // (роль sales_head), и раскладывать ЕГО по работам бригады было бы прямой ошибкой.
   const d=finSalaries[oid]||{};              // легаси-схема
   return Object.keys(d).reduce((a,uid)=>a+(Number(d[uid]&&d[uid].plan)||0),0);
+}
+
+async function notifyApi(path,opts){
+  const r=await fetch(API_BASE+"/api/tg/"+path,Object.assign({headers:authHeaders({"Content-Type":"application/json"})},opts||{}));
+  return await r.json();
+}
+async function notifyLoad(){
+  notifyBusy=true; rerenderNotify();
+  try{ const j=await notifyApi("status"); notifyData=(j&&j.success)?j:null; if(!j||!j.success)notifyMsg=(j&&j.error)||"Не удалось загрузить"; }
+  catch(e){ notifyMsg="Нет связи с сервером"; }
+  notifyBusy=false; render();
+}
+async function notifyMakeLink(){
+  notifyBusy=true; notifyMsg=""; render();
+  try{
+    const j=await notifyApi("code",{method:"POST"});
+    if(j&&j.success){ notifyLink=j; notifyMsg=""; }
+    else notifyMsg=(j&&j.error)||"Не удалось создать ссылку";
+  }catch(e){ notifyMsg="Нет связи с сервером"; }
+  notifyBusy=false; render();
+}
+async function notifySetPref(kind,val){
+  if(!notifyData)return;
+  const prefs=Object.assign({},notifyData.prefs||{},{[kind]:val});
+  notifyData=Object.assign({},notifyData,{prefs:prefs});   // мгновенный отклик галочки
+  render();
+  try{ await notifyApi("prefs",{method:"POST",body:JSON.stringify({prefs:prefs})}); }
+  catch(e){ notifyMsg="Настройка не сохранилась — нет связи"; render(); }
+}
+function rerenderNotify(){ render(); }
+
+// Панель «Напоминания»: привязка Telegram + персональные галочки.
+function notifyPanel(){
+  const d=notifyData;
+  let h='<div style="background:#fff;border-bottom:1px solid #eef2f7;padding:14px;position:sticky;top:53px;z-index:48;box-shadow:0 4px 10px rgba(0,0,0,0.05)">'
+    +'<div style="max-width:360px;margin:0 auto">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'
+      +'<div style="font-size:13px;font-weight:700;color:#0d1b2e">🔔 Напоминания в Telegram</div>'
+      +'<button data-a="notify-close" style="width:26px;height:26px;background:#f0f4f8;border:1px solid #dde6f0;border-radius:7px;cursor:pointer;font-size:12px;color:#7a9aaa">✕</button>'
+    +'</div>';
+  if(!d){
+    h+='<div style="font-size:12px;color:#9aabbf;padding:8px 0">'+(notifyBusy?"Загружаю…":esc(notifyMsg||"Нет данных"))+'</div>';
+    return h+'</div></div>';
+  }
+  if(!d.linked){
+    h+='<div style="font-size:11.5px;color:#7a9aaa;line-height:1.45;margin-bottom:9px">Telegram пока не привязан. Бот не может написать первым — нужно один раз открыть его и нажать Start.</div>';
+    if(notifyLink&&notifyLink.link){
+      h+='<a href="'+esc(notifyLink.link)+'" target="_blank" rel="noopener" style="display:block;text-align:center;padding:11px;background:#0088cc;border-radius:10px;color:#fff;font-size:13px;font-weight:700;text-decoration:none;margin-bottom:7px">Открыть бота и нажать Start</a>'
+        +'<div style="font-size:10.5px;color:#9aabbf;text-align:center;line-height:1.4">Ссылка действует '+(notifyLink.ttlMin||15)+' мин. После Start вернитесь сюда и нажмите «Обновить».</div>'
+        +'<button data-a="notify-reload" style="width:100%;margin-top:8px;padding:9px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:9px;cursor:pointer;font-size:12px;font-weight:700;color:#5a7080">↻ Обновить</button>';
+    } else {
+      h+='<button data-a="notify-link" style="width:100%;padding:11px;background:#0088cc;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">'+(notifyBusy?"⏳ Создаю ссылку…":"Привязать Telegram")+'</button>';
+    }
+    if(notifyMsg)h+='<div style="font-size:11px;color:#c0392b;margin-top:8px;text-align:center">'+esc(notifyMsg)+'</div>';
+    return h+'</div></div>';
+  }
+  h+='<div style="display:flex;align-items:center;gap:8px;background:#eaf7ef;border:1px solid #27ae6044;border-radius:9px;padding:8px 10px;margin-bottom:10px">'
+    +'<span style="font-size:15px">✅</span><div style="flex:1;min-width:0;font-size:12px;color:#1a7a44;font-weight:700">Привязан'+(d.uname?" · "+esc(d.uname):"")+'</div>'
+    +'<button data-a="notify-test" style="padding:5px 10px;background:#fff;border:1px solid #27ae6055;border-radius:7px;cursor:pointer;font-size:11px;font-weight:700;color:#27ae60">Проверить</button>'
+  +'</div>';
+  h+='<div style="font-size:10px;font-weight:800;color:#9aabbf;letter-spacing:0.5px;margin-bottom:6px">ЧТО ПРИСЫЛАТЬ</div>';
+  Object.keys(d.kinds||{}).forEach(function(k){
+    const meta=d.kinds[k], on=!!(d.prefs||{})[k];
+    h+='<div data-a="notify-pref" data-k="'+esc(k)+'" data-v="'+(on?"0":"1")+'" style="display:flex;align-items:flex-start;gap:9px;padding:9px 10px;border:1px solid '+(on?"#2980b955":"#e6edf5")+';background:'+(on?"#2980b90a":"#fff")+';border-radius:10px;margin-bottom:6px;cursor:pointer">'
+      +'<div style="width:20px;height:20px;flex-shrink:0;border-radius:6px;border:2px solid '+(on?"#2980b9":"#c0d0e0")+';background:'+(on?"#2980b9":"#fff")+';color:#fff;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;line-height:1;margin-top:1px">'+(on?"✓":"")+'</div>'
+      +'<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:700;color:#1a2a3a">'+esc(meta.n)+'</div>'
+      +'<div style="font-size:10.5px;color:#9aabbf;line-height:1.35;margin-top:1px">'+esc(meta.d)+'</div></div>'
+    +'</div>';
+  });
+  h+='<button data-a="notify-unlink" style="width:100%;margin-top:6px;padding:8px;background:transparent;border:1px solid #e74c3c44;border-radius:9px;cursor:pointer;font-size:11px;color:#e74c3c">Отвязать Telegram</button>';
+  if(notifyMsg)h+='<div style="font-size:11px;color:#c0392b;margin-top:8px;text-align:center">'+esc(notifyMsg)+'</div>';
+  return h+'</div></div>';
 }
 
 function objSection(oid,key,title,color,summary,body,defaultOpen){
@@ -13255,7 +13332,24 @@ function bind(){
     const a=el.dataset.a;
     if(a==="login-as"){/* handled by bindLogin */}
     else if(a==="logout"){el.onclick=()=>{try{localStorage.removeItem("kubr_remember");}catch(e){}clearToken();currentUser=null;loginMode=null;loginPinFor=null;loginPinError="";showPinChange=false;tab="assign";render();};}
-    else if(a==="pin-change-open"){el.onclick=()=>{showPinChange=true;render();};}
+    else if(a==="notify-open"){el.onclick=()=>{ showNotify=true; showPinChange=false; notifyMsg=""; render(); if(!notifyData)notifyLoad(); };}
+    else if(a==="notify-close"){el.onclick=()=>{ showNotify=false; notifyLink=null; notifyMsg=""; render(); };}
+    else if(a==="notify-link"){el.onclick=()=>{ notifyMakeLink(); };}
+    else if(a==="notify-reload"){el.onclick=()=>{ notifyLink=null; notifyLoad(); };}
+    else if(a==="notify-unlink"){el.onclick=async()=>{
+      if(!confirm("Отвязать Telegram? Напоминания перестанут приходить."))return;
+      notifyBusy=true; render();
+      try{ await notifyApi("unlink",{method:"POST"}); }catch(e){}
+      notifyLink=null; notifyBusy=false; await notifyLoad();
+    };}
+    else if(a==="notify-test"){el.onclick=async()=>{
+      el.textContent="⏳"; notifyMsg="";
+      try{ const j=await notifyApi("test",{method:"POST"}); notifyMsg=(j&&j.success)?"Отправлено — проверьте Telegram":((j&&j.error)||"Не отправилось"); }
+      catch(e){ notifyMsg="Нет связи с сервером"; }
+      render();
+    };}
+    else if(a==="notify-pref"){el.onclick=()=>{ notifySetPref(el.dataset.k, el.dataset.v==="1"); };}
+    else if(a==="pin-change-open"){el.onclick=()=>{showPinChange=true;showNotify=false;render();};}
     else if(a==="pin-change-close"){el.onclick=()=>{showPinChange=false;render();};}
     else if(a==="pin-change-save"){el.onclick=async ()=>{
       const cur=(document.getElementById("pin-cur")||{}).value||"";
