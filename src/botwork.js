@@ -33,6 +33,9 @@ async function dlgSet(env, uid, st) {
     .bind(uid, JSON.stringify(st), Date.now()).run();
 }
 async function dlgGet(env, uid) {
+  // Таблицу создаём и на чтении: первое сообщение пользователя может прийти раньше,
+  // чем что-либо её создаст, и обработчик упадёт на «no such table».
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS tg_dialog (uid TEXT PRIMARY KEY, state TEXT NOT NULL, updated_at INTEGER NOT NULL)").run();
   const r = await env.DB.prepare("SELECT state FROM tg_dialog WHERE uid=?").bind(uid).first();
   if (!r || !r.state) return null;
   try { return JSON.parse(r.state); } catch { return null; }

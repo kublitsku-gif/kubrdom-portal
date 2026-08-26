@@ -272,7 +272,12 @@ async function runFinance(env, st) {
   // Хеш цифр в ключе: сообщение повторится только когда суммы реально изменятся.
   const key = "fin:" + hashNums(String(debtTotal) + ":" + salLeft + ":" + debts.length);
   let sent = 0;
-  for (const p of people) if (await sendOnce(env, p, "finance", key, text)) sent++;
+  for (const p of people) {
+    const r = p.user.roles || [];
+    const canFin = r.indexOf("admin") >= 0 || r.indexOf("financier") >= 0;
+    if (!canFin) continue;         // личные деньги сотрудник смотрит кнопкой «💰 Финансы» в боте
+    if (await sendOnce(env, p, "finance", key, text)) sent++;
+  }
   return sent;
 }
 

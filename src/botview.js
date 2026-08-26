@@ -47,8 +47,59 @@ function objStats(st, o) {
 }
 
 // ─── 💰 Финансы ──────────────────────────────────────────────────────────────
-export async function viewFinance(env, chat, roles) {
-  if (!canFin(roles)) return await sendTg(env, chat, "Финансы доступны администратору и финансисту.");
+// Личные деньги сотрудника: своя зарплата по объектам и ничего чужого — ни долгов
+// клиентов, ни выплат коллегам. Отказ «вам недоступно» здесь бесполезен: свою-то
+// зарплату человек имеет право видеть, и именно за ней он и приходит.
+export async function viewMyMoney(env, chat, uid) {
+  const st = await snap(env, ["objects", "contractDocs", "finTxns", "users"]);
+  const me = (st.users || []).find(function (x) { return x.id === uid; });
+  if (!me) return await sendTg(env, chat, "Не нашёл вас в списке сотрудников портала.");
+  const docs = (st.contractDocs || []).filter(function (c) { return c.status === "signed" || c.status === "closed"; });
+  const objName = (oid) => { const o = (st.objects || []).find(function (x) { return x.id === oid; }); return o ? o.name : "объект"; };
+
+  let plan = 0, paid = 0;
+  const rows = [];
+  docs.forEach(function (c) {
+    const p = salaryPlan(c, uid), d = salaryPaid(st, c, me);
+    if (!p && !d) return;
+    plan += p; paid += d;
+    rows.push("• <b>" + escapeHtml(objName(c.objId)) + "</b>: выплачено " + money(d)
+      + (p ? " из " + money(p) + " · осталось <b>" + money(Math.max(0, p - d)) + "</b>" : " (плана нет)"));
+  });
+
+  // Штрафы — только свои и только помеченные его id: чужие удержания его не касаются.
+  const fines = (st.finTxns || []).filter(function (t) {
+    return t.type === "expense" && t.userId === uid && String(t.category || "").indexOf("⚠️") === 0;
+  }).reduce(function (a, t) { return a + (Number(t.amount) || 0); }, 0);
+
+  // Сдельные расценки за работы, которые он сам отметил выполненными.
+  let byWorks = 0;
+  (st.objects || []).forEach(function (o) {
+    (o.stages || []).forEach(function (sg) {
+      (sg.works || []).forEach(function (w) { if (w.done && w.doneBy === uid) byWorks += Number(w.pay) || 0; });
+    });
+  });
+
+  if (!rows.length && !fines && !byWorks) {
+    return await sendTg(env, chat, "💰 <b>Мои деньги</b>\n\nПо вам пока нет ни плана зарплаты, ни выплат.\nПлан задаёт администратор в договоре объекта.");
+  }
+  const text = "💰 <b>Мои деньги</b> · " + mskToday() + "\n\n"
+    + (rows.length ? rows.join("\n") + "\n\n" : "")
+    + "Итого выплачено: <b>" + money(paid) + "</b>"
+    + (plan ? "\nПлан по объектам: " + money(plan) : "")
+    + (plan
+      ? (paid >= plan
+        ? "\n✅ Выплачено полностью" + (paid > plan ? " (сверх плана " + money(paid - plan) + ")" : "")
+        : "\nОсталось получить: <b>" + money(plan - paid) + "</b>")
+      : "")
+    + (byWorks ? "\nПо отмеченным вами работам: " + money(byWorks) : "")
+    + (fines ? "\n⚠️ Удержано штрафов: <b>" + money(fines) + "</b>" : "")
+    + link(env, "#tab=finance", "Открыть портал");
+  return await sendTg(env, chat, text);
+}
+
+export async function viewFinance(env, chat, roles, uid) {
+  if (!canFin(roles)) return await viewMyMoney(env, chat, uid);
   const st = await snap(env, ["objects", "contractDocs", "finTxns", "users", "purchased"]);
   const docs = (st.contractDocs || []).filter(function (c) { return c.status === "signed" || c.status === "closed"; });
   const txns = st.finTxns || [];
@@ -239,7 +290,7 @@ export async function viewMaterials(env, chat, oid, page, uid, roles) {
 // ─── Роутер: текстовые кнопки и inline-нажатия просмотра ─────────────────────
 export async function viewText(env, uid, chat, text, roles) {
   const t = String(text || "").trim();
-  if (/^💰|^финанс/i.test(t)) { await viewFinance(env, chat, roles); return true; }
+  if (/^💰|^финанс|^мои деньги/i.test(t)) { await viewFinance(env, chat, roles, uid); return true; }
   if (/^📦|^снабжен/i.test(t)) { await viewSupply(env, chat, uid, roles); return true; }
   if (/^🏗|^объект/i.test(t)) { await viewObjects(env, chat, uid, roles); return true; }
   return false;
