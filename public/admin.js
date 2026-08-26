@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-26.4";
+const APP_BUILD = "2026-08-26.5";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4262,6 +4262,7 @@ function notifyPanel(){
     h+='<div style="font-size:12px;color:#9aabbf;padding:8px 0">'+(notifyBusy?"Загружаю…":esc(notifyMsg||"Нет данных"))+'</div>';
     return h+'</div></div>';
   }
+  // Блок привязки — сверху, настройки — всегда ниже него.
   if(!d.linked){
     h+='<div style="font-size:11.5px;color:#7a9aaa;line-height:1.45;margin-bottom:9px">Telegram пока не привязан. Бот не может написать первым — нужно один раз открыть его и нажать Start.</div>';
     if(notifyLink&&notifyLink.link){
@@ -4271,17 +4272,17 @@ function notifyPanel(){
     } else {
       h+='<button data-a="notify-link" style="width:100%;padding:11px;background:#0088cc;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">'+(notifyBusy?"⏳ Создаю ссылку…":"Привязать Telegram")+'</button>';
     }
+    h+='<button data-a="notify-reload" style="width:100%;margin-top:7px;padding:9px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:9px;cursor:pointer;font-size:12px;font-weight:700;color:#5a7080">↻ Я нажал Start — проверить</button>';
     if(currentUser&&currentUser.roles.includes("admin")){
-      h+='<button data-a="notify-setup" title="Разово: сказать Telegram, куда слать сообщения бота" style="width:100%;margin-top:8px;padding:8px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:9px;cursor:pointer;font-size:11px;font-weight:700;color:#5a7080">⚙️ Настроить бота (разово)</button>';
+      h+='<button data-a="notify-setup" title="Разово: сказать Telegram, куда слать сообщения бота" style="width:100%;margin-top:7px;padding:8px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:9px;cursor:pointer;font-size:11px;font-weight:700;color:#5a7080">⚙️ Настроить бота (разово)</button>';
     }
-    if(notifyMsg)h+='<div style="font-size:11px;color:#c0392b;margin-top:8px;text-align:center">'+esc(notifyMsg)+'</div>';
-    return h+'</div></div>';
-  }
+  } else {
   h+='<div style="display:flex;align-items:center;gap:8px;background:#eaf7ef;border:1px solid #27ae6044;border-radius:9px;padding:8px 10px;margin-bottom:10px">'
     +'<span style="font-size:15px">✅</span><div style="flex:1;min-width:0;font-size:12px;color:#1a7a44;font-weight:700">Привязан'+(d.uname?" · "+esc(d.uname):"")+'</div>'
     +'<button data-a="notify-test" style="padding:5px 10px;background:#fff;border:1px solid #27ae6055;border-radius:7px;cursor:pointer;font-size:11px;font-weight:700;color:#27ae60">Проверить</button>'
   +'</div>';
-  h+='<div style="font-size:10px;font-weight:800;color:#9aabbf;letter-spacing:0.5px;margin-bottom:6px">ЧТО ПРИСЫЛАТЬ</div>';
+  }
+  h+='<div style="font-size:10px;font-weight:800;color:#9aabbf;letter-spacing:0.5px;margin:12px 0 6px">ЧТО ПРИСЫЛАТЬ'+(d.linked?"":' <span style="font-weight:600;color:#c9a227">· заработает после привязки</span>')+'</div>';
   Object.keys(d.kinds||{}).forEach(function(k){
     const meta=d.kinds[k], on=!!(d.prefs||{})[k];
     h+='<div data-a="notify-pref" data-k="'+esc(k)+'" data-v="'+(on?"0":"1")+'" style="display:flex;align-items:flex-start;gap:9px;padding:9px 10px;border:1px solid '+(on?"#2980b955":"#e6edf5")+';background:'+(on?"#2980b90a":"#fff")+';border-radius:10px;margin-bottom:6px;cursor:pointer">'
@@ -4296,7 +4297,7 @@ function notifyPanel(){
   h+=(currentUser&&currentUser.roles.includes("admin"))
     ? '<button data-a="notify-setup" title="Разово: сказать Telegram, куда слать сообщения бота" style="width:100%;margin-top:8px;padding:8px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:9px;cursor:pointer;font-size:11px;font-weight:700;color:#5a7080">⚙️ Настроить бота (разово)</button>'
     : '';
-  h+='<button data-a="notify-unlink" style="width:100%;margin-top:6px;padding:8px;background:transparent;border:1px solid #e74c3c44;border-radius:9px;cursor:pointer;font-size:11px;color:#e74c3c">Отвязать Telegram</button>';
+  if(d.linked)h+='<button data-a="notify-unlink" style="width:100%;margin-top:6px;padding:8px;background:transparent;border:1px solid #e74c3c44;border-radius:9px;cursor:pointer;font-size:11px;color:#e74c3c">Отвязать Telegram</button>';
   if(notifyMsg)h+='<div style="font-size:11px;color:#c0392b;margin-top:8px;text-align:center">'+esc(notifyMsg)+'</div>';
   return h+'</div></div>';
 }
@@ -13341,7 +13342,7 @@ function bind(){
     const a=el.dataset.a;
     if(a==="login-as"){/* handled by bindLogin */}
     else if(a==="logout"){el.onclick=()=>{try{localStorage.removeItem("kubr_remember");}catch(e){}clearToken();currentUser=null;loginMode=null;loginPinFor=null;loginPinError="";showPinChange=false;tab="assign";render();};}
-    else if(a==="notify-open"){el.onclick=()=>{ showNotify=true; showPinChange=false; notifyMsg=""; render(); if(!notifyData)notifyLoad(); };}
+    else if(a==="notify-open"){el.onclick=()=>{ showNotify=true; showPinChange=false; notifyMsg=""; render(); notifyLoad(); };}
     else if(a==="notify-close"){el.onclick=()=>{ showNotify=false; notifyLink=null; notifyMsg=""; render(); };}
     else if(a==="notify-link"){el.onclick=()=>{ notifyMakeLink(); };}
     else if(a==="notify-reload"){el.onclick=()=>{ notifyLink=null; notifyLoad(); };}
