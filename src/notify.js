@@ -181,8 +181,23 @@ export async function tgWebhook(env, request, hooks) {
   const msg = upd && (upd.message || upd.edited_message);
   const text = msg && typeof msg.text === "string" ? msg.text.trim() : "";
   const chatId = msg && msg.chat && msg.chat.id;
-  if (!chatId || !text) return { ok: true };
-  if (msg.chat.type !== "private") return { ok: true };     // в группах бот молчит
+  if (!chatId) return { ok: true };
+  if (msg.chat.type !== "private") return { ok: true };
+
+  // Фото/видео/документ от привязанного сотрудника — отдельная ветка: бригадир снимает
+  // работу прямо на объекте и отправляет боту, подпись не обязательна.
+  const media = msg && (msg.photo || msg.video || msg.document);
+  if (media && hooks && hooks.onMedia) {
+    await ensureNotifyTables(env);
+    const link = await env.DB.prepare("SELECT uid FROM tg_links WHERE chat_id=?").bind(String(chatId)).first();
+    if (!link || !link.uid) {
+      await sendTg(env, chatId, "Сначала привяжите портал: 🔔 Напоминания → «Привязать Telegram».");
+      return { ok: true };
+    }
+    await hooks.onMedia(env, link.uid, chatId, msg, await rolesOf(env, link.uid));
+    return { ok: true };
+  }
+  if (!text) return { ok: true };     // в группах бот молчит
 
   await ensureNotifyTables(env);
   const m = text.match(/^\/start(?:\s+([A-Za-z0-9_-]+))?/);

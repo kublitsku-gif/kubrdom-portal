@@ -7,6 +7,7 @@
 import { sendTg, escapeHtml } from "./notify.js";
 import { objTeam, money, mskToday } from "./reminders.js";
 import { logEvent } from "./audit.js";
+import { ensureTopic, copyToTopic, fetchTgFile, tgBase } from "./tgapi.js";
 
 const PAGE = 8;                                   // работ на экран: больше кнопок не влезает
 const MARK_ROLES = ["admin", "brigadier", "worker", "prod_head"];
@@ -91,9 +92,12 @@ export async function workPick(env, chat, oid, wid, uid, roles) {
     + (f.w.cost ? "Стоимость: " + money(f.w.cost) + "\n" : "")
     + (Number(f.w.pay) ? "Оплата бригаде: <b>" + money(f.w.pay) + "</b>\n" : "")
     + "Часы: " + (hours ? "<b>" + hours + " ч</b> (" + logs.length + " записей)" : "не записаны")
+    + "\nФото: " + ((f.w.photos || []).length ? "<b>" + (f.w.photos || []).length + "</b>" : "нет")
     + (needHours ? "\n\n<i>Без часов отметить нельзя — бот спросит их перед отметкой.</i>" : "");
+  const photos = (f.w.photos || []).length;
   const rows = [
     [{ text: needHours ? "⏱ Записать часы и отметить" : "✅ Отметить выполненной", callback_data: "w:d:" + oid + ":" + wid }],
+    [{ text: "📷 Добавить фото" + (photos ? " (" + photos + ")" : ""), callback_data: "w:ph:" + oid + ":" + wid }],
     [{ text: "‹ К списку", callback_data: "w:l:" + oid + ":0" }],
   ];
   return await sendTg(env, chat, text, { reply_markup: { inline_keyboard: rows } });
@@ -161,6 +165,94 @@ async function commitDone(env, chat, uid, roles, oid, wid, addHours) {
   }
 }
 
+// ─── Фото и видео от бригадира ───────────────────────────────────────────────
+// Фото кладём в R2 и привязываем к работе — ровно как это делает панель (w.photos).
+// Видео НЕ скачиваем: лимит Bot API 20 МБ, а ролик со стройки обычно больше. Вместо
+// этого копируем сообщение в тему объекта и храним ссылку — так же устроено видео
+// объекта в панели.
+export async function workPhotoAsk(env, chat, oid, wid, uid, roles) {
+  if (!canMark(roles)) return await sendTg(env, chat, "Недостаточно прав.");
+  const st = await snap(env, ["objects", "contractDocs", "users"]);
+  if (!allowedObject(st, oid, uid, roles)) return await sendTg(env, chat, "Этот объект вам недоступен.");
+  await dlgSet(env, uid, { mode: "photo", oid: oid, wid: wid });
+  return await sendTg(env, chat, "📷 <b>Пришлите фото или видео</b>\nМожно несколько подряд. Фото попадёт в карточку работы, видео — в тему объекта.\n\nЧтобы закончить — нажмите любую кнопку внизу.");
+}
+
+export async function workMedia(env, uid, chat, msg, roles) {
+  const d = await dlgGet(env, uid);
+  const st = await snap(env, ["objects", "contractDocs", "users"]);
+  if (!d || d.mode !== "photo") {
+    return await sendTg(env, chat, "Не понял, к чему прикрепить. Откройте 🏗 Объекты → объект → ✅ Отметить работу → нужная работа → 📷 Добавить фото.");
+  }
+  if (!allowedObject(st, d.oid, uid, roles)) return await sendTg(env, chat, "Этот объект вам недоступен.");
+  const f = findWork(st, d.oid, d.wid);
+  if (!f) return await sendTg(env, chat, "Работа не найдена.");
+  const me = (st.users || []).find(function (x) { return x.id === uid; });
+  const stamp = new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 16).replace("T", " ");
+  const caption = (f.o.name || "") + " · " + (f.w.n || "") + " · " + ((me && me.name) || uid);
+
+  // ── Видео: копией в тему объекта ──
+  if (msg.video) {
+    const tg = tgBase(env);
+    const t = await ensureTopic(env, tg, f.o.name, f.o.tgTopicId);
+    if (t.error) return await sendTg(env, chat, "Не удалось открыть тему объекта: " + t.error);
+    const mid = await copyToTopic(env, chat, msg.message_id, t.topicId, caption);
+    if (!mid) return await sendTg(env, chat, "Telegram не принял видео.");
+    const objects = (st.objects || []).map(function (o) {
+      if (o.id !== d.oid) return o;
+      return Object.assign({}, o, {
+        tgTopicId: t.topicId,
+        videos: (o.videos || []).concat([{
+          id: "v" + Date.now().toString(36), name: (f.w.n || "Видео"), date: stamp,
+          uploader: (me && me.name) || uid, size: (msg.video.file_size || 0), messageId: mid, topicId: t.topicId,
+        }]),
+      });
+    });
+    await saveObjects(env, objects);
+    await logEvent(env, { uid: uid }, "objects", "add", (f.o.name || "") + " › видео › " + (f.w.n || ""), "через бота");
+    return await sendTg(env, chat, "🎬 Видео добавлено в тему объекта «" + escapeHtml(f.o.name) + "».");
+  }
+
+  // ── Фото: в R2 и в карточку работы ──
+  const ph = msg.photo ? msg.photo[msg.photo.length - 1] : null;   // последний размер = самый крупный
+  const doc = !ph && msg.document && /^image\//.test(String(msg.document.mime_type || "")) ? msg.document : null;
+  const fileId = ph ? ph.file_id : (doc ? doc.file_id : null);
+  if (!fileId) return await sendTg(env, chat, "Пришлите фото или видео (документы других типов не принимаю).");
+  if (!env.FILES) return await sendTg(env, chat, "Хранилище файлов не настроено.");
+
+  const got = await fetchTgFile(env, fileId);
+  if (!got) return await sendTg(env, chat, "Не смог скачать файл из Telegram (возможно, больше 20 МБ).");
+  const ext = ["jpg", "jpeg", "png", "webp", "gif", "heic"].indexOf(got.ext) >= 0 ? got.ext : "jpg";
+  const key = "works/" + crypto.randomUUID() + "." + ext;
+  await env.FILES.put(key, got.buf, { httpMetadata: { contentType: ext === "png" ? "image/png" : "image/jpeg" } });
+
+  const photo = {
+    id: "p" + Date.now().toString(36), data: "/api/file/" + key, date: stamp,
+    uploader: (me && me.name) || uid, uploaderId: uid, size: got.buf.byteLength, name: "telegram." + ext,
+  };
+  const objects = (st.objects || []).map(function (o) {
+    if (o.id !== d.oid) return o;
+    return Object.assign({}, o, { stages: (o.stages || []).map(function (sg) {
+      if (sg.id !== f.s.id) return sg;
+      return Object.assign({}, sg, { works: (sg.works || []).map(function (w) {
+        return w.id !== d.wid ? w : Object.assign({}, w, { photos: (w.photos || []).concat([photo]) });
+      }) });
+    }) });
+  });
+  await saveObjects(env, objects);
+  await logEvent(env, { uid: uid }, "objects", "add", (f.o.name || "") + " › фото › " + (f.w.n || ""), "через бота");
+
+  // Бэкап в тему объекта — как это делает панель (mirrorPhotosToTelegram).
+  try {
+    const t = await ensureTopic(env, tgBase(env), f.o.name, f.o.tgTopicId);
+    if (!t.error) await copyToTopic(env, chat, msg.message_id, t.topicId, caption);
+  } catch { /* бэкап не критичен: фото уже в портале */ }
+
+  const total = (f.w.photos || []).length + 1;
+  return await sendTg(env, chat, "📷 Фото добавлено к работе «" + escapeHtml(f.w.n || "") + "» (всего " + total + ").\nМожно прислать ещё.",
+    { reply_markup: { inline_keyboard: [[{ text: "✅ Отметить работу выполненной", callback_data: "w:d:" + d.oid + ":" + d.wid }]] } });
+}
+
 // ─── Роутер ──────────────────────────────────────────────────────────────────
 export async function workText(env, uid, chat, text, roles) {
   const d = await dlgGet(env, uid);
@@ -181,5 +273,6 @@ export async function workCallback(env, uid, chat, data, roles) {
   if (p[1] === "l") { await workList(env, chat, p[2], p[3], uid, roles); return true; }
   if (p[1] === "p") { await workPick(env, chat, p[2], p[3], uid, roles); return true; }
   if (p[1] === "d") { await workDone(env, chat, p[2], p[3], uid, roles); return true; }
+  if (p[1] === "ph") { await workPhotoAsk(env, chat, p[2], p[3], uid, roles); return true; }
   return false;
 }

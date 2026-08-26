@@ -186,8 +186,54 @@ export async function viewObject(env, chat, oid, uid, roles) {
     + (dls.length ? "\n" + dls.join("\n") : "")
     + link(env, "#obj=" + oid, "Открыть объект");
   const canMark = has(roles, ["admin", "brigadier", "worker", "prod_head"]);
-  const rows = canMark && s.done < s.works ? [[{ text: "✅ Отметить работу выполненной", callback_data: "w:l:" + oid + ":0" }]] : null;
-  return await sendTg(env, chat, text, rows ? { reply_markup: { inline_keyboard: rows } } : undefined);
+  const rows = [];
+  if (canMark && s.done < s.works) rows.push([{ text: "✅ Отметить работу выполненной", callback_data: "w:l:" + oid + ":0" }]);
+  if (s.mats) rows.push([{ text: "📦 Что куплено (" + s.bought + "/" + s.mats + ")", callback_data: "v:mat:" + oid + ":0" }]);
+  return await sendTg(env, chat, text, rows.length ? { reply_markup: { inline_keyboard: rows } } : undefined);
+}
+
+// ─── Материалы объекта: что куплено, что пришло, что ещё нет ─────────────────
+// Бригадиру важно знать, чего ждать и чего не будет: поэтому сначала НЕ купленное,
+// потом купленное, но не принятое, и только затем то, что уже на объекте.
+const MAT_PAGE = 14;
+export async function viewMaterials(env, chat, oid, page, uid, roles) {
+  const st = await snap(env, ["objects", "contractDocs", "users", "purchased", "arrived"]);
+  const o = (st.objects || []).find(function (x) { return x.id === oid; });
+  if (!o) return await sendTg(env, chat, "Объект не найден.");
+  if (!visibleObjects(st, uid, roles).some(function (x) { return x.id === oid; })) return await sendTg(env, chat, "Этот объект вам недоступен.");
+  const purchased = st.purchased || {}, arrived = st.arrived || {};
+
+  const mats = (o.stages || []).flatMap(function (sg) { return (sg.works || []).flatMap(function (w) { return (w.mats || []).map(function (m) { return { m: m, w: w }; }); }); });
+  if (!mats.length) return await sendTg(env, chat, "У объекта «" + escapeHtml(o.name) + "»материалов не заведено.");
+  const rank = (x) => !purchased[x.m.id] ? 0 : (!arrived[x.m.id] ? 1 : 2);
+  mats.sort(function (a, b) { return rank(a) - rank(b); });
+
+  const p = Math.max(0, Number(page) || 0);
+  const slice = mats.slice(p * MAT_PAGE, p * MAT_PAGE + MAT_PAGE);
+  const icon = (x) => rank(x) === 0 ? "⬜" : (rank(x) === 1 ? "🟡" : "✅");
+  const sum = (f) => mats.filter(f).reduce(function (a, x) { return a + (x.m.cost || 0) * (x.m.qty || 1); }, 0);
+  const lines = slice.map(function (x) {
+    const q = x.m.qty && x.m.qty > 1 ? " ×" + x.m.qty : "";
+    return icon(x) + " " + escapeHtml(String(x.m.n || x.m.name || "материал").slice(0, 44)) + q;
+  });
+
+  const nb = mats.filter(function (x) { return rank(x) === 0; }).length;
+  const na = mats.filter(function (x) { return rank(x) === 1; }).length;
+  const ok = mats.length - nb - na;
+  const rows = [];
+  const nav = [];
+  if (p > 0) nav.push({ text: "‹ Назад", callback_data: "v:mat:" + oid + ":" + (p - 1) });
+  if ((p + 1) * MAT_PAGE < mats.length) nav.push({ text: "Ещё ›", callback_data: "v:mat:" + oid + ":" + (p + 1) });
+  if (nav.length) rows.push(nav);
+  rows.push([{ text: "‹ К объекту", callback_data: "v:obj:" + oid }]);
+
+  const text = "📦 <b>Материалы · " + escapeHtml(o.name) + "</b>\n"
+    + "⬜ не куплено: <b>" + nb + "</b> на " + money(sum(function (x) { return rank(x) === 0; })) + "\n"
+    + "🟡 куплено, не принято: <b>" + na + "</b>\n"
+    + "✅ на объекте: <b>" + ok + "</b>\n\n"
+    + lines.join("\n")
+    + "\n\n<i>стр. " + (p + 1) + " из " + Math.ceil(mats.length / MAT_PAGE) + "</i>";
+  return await sendTg(env, chat, text, { reply_markup: { inline_keyboard: rows } });
 }
 
 // ─── Роутер: текстовые кнопки и inline-нажатия просмотра ─────────────────────
@@ -202,5 +248,6 @@ export async function viewCallback(env, uid, chat, data, roles) {
   const parts = String(data || "").split(":");
   if (parts[0] !== "v") return false;
   if (parts[1] === "obj") { await viewObject(env, chat, parts[2], uid, roles); return true; }
+  if (parts[1] === "mat") { await viewMaterials(env, chat, parts[2], parts[3], uid, roles); return true; }
   return false;
 }

@@ -10,7 +10,8 @@ import { tgStatus, tgMakeCode, tgUnlink, tgSavePrefs, tgTest, tgWebhook, tgSetup
 import { runReminders } from "./reminders.js";
 import { finText, finCallback, answerCb } from "./botfin.js";
 import { viewText, viewCallback } from "./botview.js";
-import { workText, workCallback } from "./botwork.js";
+import { ensureTopic } from "./tgapi.js";
+import { workText, workCallback, workMedia } from "./botwork.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
@@ -435,15 +436,7 @@ async function putFile(env, request, url) {
   return json({ success: true, key, url: "/api/file/" + key });
 }
 
-// Гарантирует наличие темы объекта в Telegram: вернёт { topicId } или { error }.
-// topicId > 0 — тема уже есть; 0 — создаём новую по имени объекта.
-async function ensureTopic(env, tg, objName, topicId) {
-  if (topicId) return { topicId };
-  const r = await fetch(tg + "/createForumTopic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: env.TG_CHAT_ID, name: (objName || "Объект").slice(0, 128) }) });
-  const j = await r.json();
-  if (!j.ok) return { error: "Тема: " + j.description };
-  return { topicId: j.result.message_thread_id };
-}
+// ensureTopic живёт в src/tgapi.js — им пользуется и бот при приёме фото от бригадира.
 
 // POST /api/video?objName=...&topicId=...&name=... — видео в Telegram-тему объекта (≤50 МБ). Требует токен.
 async function postVideo(env, request, url) {
@@ -1298,6 +1291,7 @@ export default {
             || (await viewCallback(e, uid, chat, data, roles))
             || (await finCallback(e, uid, chat, data, roles));
         },
+        onMedia: workMedia,
         answerCb: answerCb,
       };
       try { return json(await tgWebhook(env, request, botHooks)); }
