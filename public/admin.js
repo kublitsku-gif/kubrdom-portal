@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-26.9";
+const APP_BUILD = "2026-08-26.10";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4074,7 +4074,7 @@ function page(){
   <button data-a="logout" style="padding:5px 10px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:11px;color:#7a9aaa">Выйти</button>
 </div>
 ${showNotify?notifyPanel():""}
-${showPinChange?`<div style="background:#fff;border-bottom:1px solid #eef2f7;padding:14px;position:sticky;top:53px;z-index:48;box-shadow:0 4px 10px rgba(0,0,0,0.05)">
+${showPinChange?`<div style="background:#fff;border-bottom:1px solid #eef2f7;padding:14px;box-shadow:0 4px 10px rgba(0,0,0,0.05)">
   <div style="max-width:340px;margin:0 auto">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
       <div style="font-size:13px;font-weight:700;color:#0d1b2e">🔑 Пароль входа (PIN)</div>
@@ -4252,7 +4252,7 @@ function rerenderNotify(){ render(); }
 // Панель «Напоминания»: привязка Telegram + персональные галочки.
 function notifyPanel(){
   const d=notifyData;
-  let h='<div style="background:#fff;border-bottom:1px solid #eef2f7;padding:14px;position:sticky;top:53px;z-index:48;box-shadow:0 4px 10px rgba(0,0,0,0.05)">'
+  let h='<div style="background:#fff;border-bottom:1px solid #eef2f7;padding:14px;box-shadow:0 4px 10px rgba(0,0,0,0.05)">'
     +'<div style="max-width:360px;margin:0 auto">'
     +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'
       +'<div style="font-size:13px;font-weight:700;color:#0d1b2e">🔔 Напоминания в Telegram</div>'
