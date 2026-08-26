@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-26.6";
+const APP_BUILD = "2026-08-26.7";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -15971,6 +15971,25 @@ function _startLoops(){
   document.addEventListener("visibilitychange", function(){ if (!document.hidden) pollOnce(); });
 }
 
+// Переход из напоминания: ссылка вида /admin#obj=<id>&view=receive открывает нужный
+// объект сразу в нужном режиме. Хеш читаем ОДИН раз и сразу стираем — иначе обновление
+// страницы через час снова утащит человека в тот же объект.
+function applyDeepLink(){
+  try{
+    const h=(location.hash||"").replace(/^#/,"");
+    if(!h)return;
+    const q={};
+    h.split("&").forEach(function(pair){
+      const i=pair.indexOf("=");
+      if(i>0)q[decodeURIComponent(pair.slice(0,i))]=decodeURIComponent(pair.slice(i+1));
+    });
+    history.replaceState(null,"",location.pathname+location.search);
+    if(q.obj&&objects.some(function(o){return o.id===q.obj;})){ tab="assign"; openObject=q.obj; }
+    else if(q.tab) tab=q.tab;
+    if(q.view&&["works","money","receive"].indexOf(q.view)>=0) objWorkView=q.view;
+  }catch(e){}
+}
+
 (async function boot(){
   const tok = getToken();
   const decoded = tok ? _decodeToken(tok) : null;
@@ -15996,6 +16015,7 @@ function _startLoops(){
     if (!currentUser){ clearToken(); _hydrated = true; render(); return; }  // юзер не восстановлен → экран входа (без циклов)
     _lastSavedJson = JSON.stringify(serializeState());
     _hydrated = true;
+    applyDeepLink();
     render();
     apiLoad().then(function(items){
       if (!items) return;
@@ -16040,6 +16060,7 @@ function _startLoops(){
       _lastSavedJson = JSON.stringify(serializeState());
       _clearPendingSave();   // кэша не было — состояние целиком с сервера, дожимать нечего
       _hydrated = true;
+      applyDeepLink();
       render();
       _startLoops();
       return;

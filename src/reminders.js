@@ -41,6 +41,16 @@ function deadlineInfo(c, uid, today) {
 
 const money = (v) => Math.round(v || 0).toLocaleString("ru-RU") + " ₽";
 
+// Ссылка прямо в нужное место панели. Хеш разбирает applyDeepLink() в admin.js:
+// #obj=<id> открывает объект, &view=receive — сразу режим «Приёмка», #tab=supply — вкладку.
+function portal(env, hash) {
+  const base = (env.PUBLIC_BASE_URL || "https://portal.kubrdom.ru").replace(/\/+$/, "");
+  return base + "/admin" + (hash || "");
+}
+function linkTo(env, hash, label) {
+  return '\n\n👉 <a href="' + portal(env, hash) + '">' + label + '</a>';
+}
+
 // ─── Кому слать ──────────────────────────────────────────────────────────────
 // Привязанные чаты + персональные галочки. Роли берём из снимка: они же дают дефолт,
 // если человек ещё ничего не настраивал.
@@ -126,7 +136,8 @@ async function runDeadlines(env, st, today) {
           ? "🔴 <b>Просрочка по объекту «" + escapeHtml(on) + "»</b>\nДедлайн был " + info.deadline + ", просрочено рабочих дней: " + info.overdue + ".\nШтраф на сегодня: <b>" + money(info.fine) + "</b> (" + money(FINE_PER_DAY) + "/день)."
           : (info.daysLeft === 0
             ? "🟠 <b>Сегодня дедлайн по объекту «" + escapeHtml(on) + "»</b>\nПосле него начинает капать штраф " + money(FINE_PER_DAY) + " в день."
-            : "🟡 <b>Дедлайн по объекту «" + escapeHtml(on) + "» через " + info.daysLeft + " раб. дн.</b>\nСрок: " + info.deadline + ".");
+            : "🟡 <b>Дедлайн по объекту «" + escapeHtml(on) + "» через " + info.daysLeft + " раб. дн.</b>\nСрок: " + info.deadline + ".")
+          + linkTo(env, "#obj=" + c.objId, "Открыть объект");
         if (await sendOnce(env, mine, "deadline", c.id + ":" + uid + ":" + today, text)) sent++;
       }
     }
@@ -139,7 +150,8 @@ async function runDeadlines(env, st, today) {
         + (x.info.overdue > 0 ? "просрочка " + x.info.overdue + " дн, штраф " + money(x.info.fine) : "осталось " + x.info.daysLeft + " раб. дн");
     });
     for (const p of boss) {
-      if (await sendOnce(env, p, "deadline", "digest:" + today, "📋 <b>Дедлайны производства</b>\n" + lines.join("\n"))) sent++;
+      const digest = "📋 <b>Дедлайны производства</b>\n" + lines.join("\n") + linkTo(env, "#tab=assign", "Открыть объекты");
+      if (await sendOnce(env, p, "deadline", "digest:" + today, digest)) sent++;
     }
   }
   return sent;
@@ -163,7 +175,8 @@ async function runHours(env, st, today) {
       if (!isProd(p.user)) continue;
       if (!team.has(p.uid)) continue;                            // только свой объект
       const text = "⏱ <b>Часы за сегодня не записаны</b>\nОбъект: «" + escapeHtml(o.name) + "», открытых работ: " + open.length + "."
-        + "\nОткройте портал → объект → «📸 Приёмка» → ⏱ на работе.\n<i>Без часов галочку «сделано» поставить нельзя.</i>";
+        + "\n<i>Без часов галочку «сделано» поставить нельзя.</i>"
+        + linkTo(env, "#obj=" + o.id + "&view=receive", "Записать часы");
       if (await sendOnce(env, p, "hours", o.id + ":" + today, text)) sent++;
     }
   }
@@ -205,7 +218,8 @@ async function runSupply(env, st, today) {
       return "• <b>" + escapeHtml(r.name) + "</b>: " + parts.join("; ");
     });
     const text = "📦 <b>Снабжение</b>\n" + lines.join("\n")
-      + (isMonday ? "\n\n<i>«Не принято» — отметьте приёмку в «Снабжение → Приёмка на складе».</i>" : "");
+      + (isMonday ? "\n\n<i>«Не принято» — отметьте приёмку в «Снабжение → Приёмка на складе».</i>" : "")
+      + linkTo(env, "#tab=supply", "Открыть снабжение");
     if (await sendOnce(env, p, "supply", "digest:" + today, text)) sent++;
   }
   return sent;
@@ -252,7 +266,8 @@ async function runDaily(env, st, today) {
     + "Правок в портале: <b>" + acts.length + "</b>" + (doneToday ? " (по объектам: " + doneToday + ")" : "") + "\n"
     + (top.length ? "Активнее всех: " + top.map(function (n) { return escapeHtml(n) + " (" + byUser[n] + ")"; }).join(", ") + "\n" : "")
     + "Открытых работ всего: <b>" + openTotal + "</b>\n"
-    + (hot.length ? "🔴 Горит: " + hot.map(escapeHtml).join(", ") : "✅ Просрочек нет");
+    + (hot.length ? "🔴 Горит: " + hot.map(escapeHtml).join(", ") : "✅ Просрочек нет")
+    + linkTo(env, "#tab=history", "Открыть историю действий");
 
   let sent = 0;
   for (const p of people) if (await sendOnce(env, p, "daily", "sum:" + today, text)) sent++;
