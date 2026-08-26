@@ -217,7 +217,8 @@ export async function finText(env, uid, chat, text, roles) {
   const st = await snapshot(env, ["objects", "users", "contractDocs"]);
   const t = String(text || "").trim();
 
-  if (/^\/(money|dengi|деньги|fin)$/i.test(t) || /^(деньги|финансы)$/i.test(t)) {
+  // «💵 Внести деньги» — текст с постоянной клавиатуры, для бота это обычное сообщение.
+  if (/^\/(money|dengi|деньги|fin)$/i.test(t) || /^(деньги|финансы)$/i.test(t) || /внести деньги/i.test(t)) {
     await setDialog(env, uid, { roles: roles });
     return await askCategory(env, chat, roles);
   }
@@ -228,6 +229,11 @@ export async function finText(env, uid, chat, text, roles) {
     if (!(amount > 0)) return await sendTg(env, chat, "Сумма должна быть больше нуля.");
     d.amount = amount; d.roles = roles;
     return await advance(env, chat, st, d, uid);
+  }
+  if (/напоминани/i.test(t)) {
+    const base = (env.PUBLIC_BASE_URL || "https://portal.kubrdom.ru").replace(/\/+$/, "");
+    await sendTg(env, chat, 'Настройка напоминаний — в портале: 🔔 в шапке.\n👉 <a href="' + base + '/admin">Открыть портал</a>');
+    return true;
   }
   const quick = parseQuick(t, st, roles);
   if (quick) return await advance(env, chat, st, quick, uid);

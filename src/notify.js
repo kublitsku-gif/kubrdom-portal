@@ -32,6 +32,13 @@ export async function ensureNotifyTables(env) {
   _ready = true;
 }
 
+// Постоянная клавиатура: висит под полем ввода, её видно всегда. Команду /деньги
+// нужно знать заранее, а кнопку — нет.
+export const MAIN_KB = {
+  keyboard: [[{ text: "💵 Внести деньги" }], [{ text: "🔔 Напоминания" }]],
+  resize_keyboard: true, is_persistent: true,
+};
+
 export async function sendTg(env, chatId, text, extra) {
   if (!env.TG_BOT_TOKEN || !chatId) return false;
   try {
@@ -184,13 +191,18 @@ export async function tgWebhook(env, request, hooks) {
       if (handled) return { ok: true };
     }
     await sendTg(env, chatId, link && link.uid
-      ? "Не понял. Внести деньги — команда /деньги, или строкой: <code>зп Валера 50000</code>, <code>аванс 500000</code>."
-      : "Это бот портала КубрДом. Откройте портал → 🔔 Напоминания → «Привязать Telegram».");
+      ? "Не понял. Нажмите <b>💵 Внести деньги</b> внизу, или напишите строкой: <code>зп Валера 50000</code>, <code>аванс 500000</code>."
+      : "Это бот портала КубрДом. Откройте портал → 🔔 Напоминания → «Привязать Telegram».",
+      link && link.uid ? { reply_markup: MAIN_KB } : undefined);
     return { ok: true };
   }
   const code = m[1];
   if (!code) {
-    await sendTg(env, chatId, "Привет! Откройте портал → 🔔 Напоминания → «Привязать Telegram» и нажмите кнопку — вернётесь сюда уже с кодом.");
+    const known = await env.DB.prepare("SELECT uid FROM tg_links WHERE chat_id=?").bind(String(chatId)).first();
+    await sendTg(env, chatId, known && known.uid
+      ? "С возвращением! Кнопки внизу: <b>💵 Внести деньги</b> — записать аванс, зарплату или закупку."
+      : "Привет! Откройте портал → 🔔 Напоминания → «Привязать Telegram» и нажмите кнопку — вернётесь сюда уже с кодом.",
+      known && known.uid ? { reply_markup: MAIN_KB } : undefined);
     return { ok: true };
   }
   const now = Date.now();
@@ -205,7 +217,8 @@ export async function tgWebhook(env, request, hooks) {
       .bind(row.uid, String(chatId), uname, now),
     env.DB.prepare("DELETE FROM tg_codes WHERE code=?").bind(code),
   ]);
-  await sendTg(env, chatId, "✅ <b>Готово!</b> Напоминания портала КубрДом будут приходить сюда.\nЧто именно присылать — настраивается в портале: 🔔 Напоминания.");
+  await sendTg(env, chatId, "✅ <b>Готово!</b> Напоминания портала КубрДом будут приходить сюда.\n\nВнизу появились кнопки: <b>💵 Внести деньги</b> — записать аванс, зарплату или закупку прямо отсюда.",
+    { reply_markup: MAIN_KB });
   return { ok: true };
 }
 
@@ -218,6 +231,16 @@ export async function tgSetupWebhook(env, publicBase) {
     body: JSON.stringify({ url: url, secret_token: env.WEBHOOK_SECRET || undefined, allowed_updates: ["message", "callback_query"] }),
   });
   const j = await r.json();
+  // Список команд в кнопке «Меню» рядом с полем ввода.
+  try {
+    await fetch(TG_API + env.TG_BOT_TOKEN + "/setMyCommands", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ commands: [
+        { command: "money", description: "💵 Внести деньги в портал" },
+        { command: "start", description: "Показать кнопки" },
+      ] }),
+    });
+  } catch { /* меню — не критично */ }
   const info = await (await fetch(TG_API + env.TG_BOT_TOKEN + "/getWebhookInfo")).json();
   return { success: !!(j && j.ok), url: url, telegram: j, info: info && info.result };
 }
