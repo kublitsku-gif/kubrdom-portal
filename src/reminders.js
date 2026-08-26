@@ -30,7 +30,7 @@ function addBusinessDays(dateStr, days) {
   while (added < days) { d.setDate(d.getDate() + 1); const wd = d.getDay(); if (wd !== 0 && wd !== 6) added++; }
   return d.toISOString().slice(0, 10);
 }
-function deadlineInfo(c, uid, today) {
+export function deadlineInfo(c, uid, today) {
   const dl = (c && c.deadlines && c.deadlines[uid]) || {};
   const deadline = dl.deadline || (dl.startDate ? addBusinessDays(dl.startDate, 35) : "");
   if (!deadline) return { has: false };
@@ -39,7 +39,7 @@ function deadlineInfo(c, uid, today) {
   return { has: true, deadline: deadline, daysLeft: daysLeft, overdue: overdue, fine: overdue * FINE_PER_DAY };
 }
 
-const money = (v) => Math.round(v || 0).toLocaleString("ru-RU") + " ₽";
+export const money = (v) => Math.round(v || 0).toLocaleString("ru-RU") + " ₽";
 
 // Ссылка прямо в нужное место панели. Хеш разбирает applyDeepLink() в admin.js:
 // #obj=<id> открывает объект, &view=receive — сразу режим «Приёмка», #tab=supply — вкладку.
@@ -98,7 +98,7 @@ const isProd = (u) => !!u && (u.roles || []).some(function (r) { return PROD_ROL
 
 // Кто закреплён за объектом. u.objs на боевых данных почти всегда пуст, поэтому главный
 // источник — ответственные в подписанном договоре; objs остаётся запасным вариантом.
-function objTeam(st, oid) {
+export function objTeam(st, oid) {
   const ids = new Set();
   (st.contractDocs || []).forEach(function (c) {
     if (c.objId !== oid) return;

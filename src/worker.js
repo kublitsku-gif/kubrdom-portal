@@ -9,6 +9,7 @@ import { recordSnapshotDiff, readAudit, logEvent } from "./audit.js";
 import { tgStatus, tgMakeCode, tgUnlink, tgSavePrefs, tgTest, tgWebhook, tgSetupWebhook } from "./notify.js";
 import { runReminders } from "./reminders.js";
 import { finText, finCallback, answerCb } from "./botfin.js";
+import { viewText, viewCallback } from "./botview.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
@@ -1274,7 +1275,18 @@ export default {
     if (url.pathname === "/api/tg/webhook" && request.method === "POST") {
       const tts = request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "";
       if (!env.WEBHOOK_SECRET || !safeEqual(tts, env.WEBHOOK_SECRET)) return json({ ok: true });
-      try { return json(await tgWebhook(env, request, { onText: finText, onCallback: finCallback, answerCb: answerCb })); }
+      // Сначала просмотр (кнопки-разделы), потом ввод денег: у них не пересекаются команды,
+      // но порядок фиксируем явно, чтобы «📦 Снабжение» не улетело в разбор быстрой строки.
+      const botHooks = {
+        onText: async function (e, uid, chat, text, roles) {
+          return (await viewText(e, uid, chat, text, roles)) || (await finText(e, uid, chat, text, roles));
+        },
+        onCallback: async function (e, uid, chat, data, roles) {
+          return (await viewCallback(e, uid, chat, data, roles)) || (await finCallback(e, uid, chat, data, roles));
+        },
+        answerCb: answerCb,
+      };
+      try { return json(await tgWebhook(env, request, botHooks)); }
       catch { return json({ ok: true }); }
     }
 

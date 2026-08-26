@@ -35,7 +35,10 @@ export async function ensureNotifyTables(env) {
 // Постоянная клавиатура: висит под полем ввода, её видно всегда. Команду /деньги
 // нужно знать заранее, а кнопку — нет.
 export const MAIN_KB = {
-  keyboard: [[{ text: "💵 Внести деньги" }], [{ text: "🔔 Напоминания" }]],
+  keyboard: [
+    [{ text: "🏗 Объекты" }, { text: "📦 Снабжение" }],
+    [{ text: "💰 Финансы" }, { text: "💵 Внести деньги" }],
+  ],
   resize_keyboard: true, is_persistent: true,
 };
 
@@ -191,7 +194,7 @@ export async function tgWebhook(env, request, hooks) {
       if (handled) return { ok: true };
     }
     await sendTg(env, chatId, link && link.uid
-      ? "Не понял. Нажмите <b>💵 Внести деньги</b> внизу, или напишите строкой: <code>зп Валера 50000</code>, <code>аванс 500000</code>."
+      ? "Не понял. Пользуйтесь кнопками внизу, или напишите строкой: <code>зп Валера 50000</code>, <code>аванс 500000</code>."
       : "Это бот портала КубрДом. Откройте портал → 🔔 Напоминания → «Привязать Telegram».",
       link && link.uid ? { reply_markup: MAIN_KB } : undefined);
     return { ok: true };
@@ -200,7 +203,7 @@ export async function tgWebhook(env, request, hooks) {
   if (!code) {
     const known = await env.DB.prepare("SELECT uid FROM tg_links WHERE chat_id=?").bind(String(chatId)).first();
     await sendTg(env, chatId, known && known.uid
-      ? "С возвращением! Кнопки внизу: <b>💵 Внести деньги</b> — записать аванс, зарплату или закупку."
+      ? "С возвращением! Кнопки внизу: объекты, снабжение, финансы и внесение денег."
       : "Привет! Откройте портал → 🔔 Напоминания → «Привязать Telegram» и нажмите кнопку — вернётесь сюда уже с кодом.",
       known && known.uid ? { reply_markup: MAIN_KB } : undefined);
     return { ok: true };
@@ -217,7 +220,7 @@ export async function tgWebhook(env, request, hooks) {
       .bind(row.uid, String(chatId), uname, now),
     env.DB.prepare("DELETE FROM tg_codes WHERE code=?").bind(code),
   ]);
-  await sendTg(env, chatId, "✅ <b>Готово!</b> Напоминания портала КубрДом будут приходить сюда.\n\nВнизу появились кнопки: <b>💵 Внести деньги</b> — записать аванс, зарплату или закупку прямо отсюда.",
+  await sendTg(env, chatId, "✅ <b>Готово!</b> Напоминания портала КубрДом будут приходить сюда.\n\nВнизу появились кнопки: посмотреть <b>объекты</b>, <b>снабжение</b> и <b>финансы</b>, а также записать аванс, зарплату или закупку.",
     { reply_markup: MAIN_KB });
   return { ok: true };
 }
