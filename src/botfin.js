@@ -128,28 +128,58 @@ async function askCategory(env, chat, roles) {
   rows.push([{ text: "✕ Отмена", callback_data: "f:cancel" }]);
   return await kb(env, chat, "💵 <b>Что вносим?</b>", rows);
 }
-async function askObject(env, chat, st) {
+const k = (v) => Math.round((v || 0) / 1000) + "к";
+
+// Кто закреплён за объектом: ответственные, у кого дедлайн, и те, кому задан план зарплаты.
+function objPeople(st, objId, kind) {
+  const team = objTeam(st, objId);
+  (st.contractDocs || []).forEach(function (c) {
+    if (c.objId !== objId) return;
+    Object.keys(c.salaries || {}).forEach(function (u) { team.add(u); });
+  });
+  return peopleFor(st, kind).filter(function (u) { return team.has(u.id); });
+}
+
+// Шаг выбора объекта показывает то, что нужно ИМЕННО для этой категории: для зарплаты —
+// кто на объекте и сколько ему выплачено, для прихода — сколько клиент ещё должен.
+async function askObject(env, chat, st, catKey) {
   const objs = activeObjects(st);
   if (!objs.length) return await sendTg(env, chat, "Нет подписанных договоров — не к чему привязать запись.");
-  const rows = objs.map(function (o) { return [{ text: o.name, callback_data: "f:obj:" + o.objId }]; });
+  const c = catByKey(catKey);
+  const kind = c && c.who;
+  const isIncome = c && c.type === "income";
+  const lines = [], rows = [];
+
+  objs.forEach(function (o) {
+    const doc = contractOf(st, o.objId);
+    let tail = "", note = "";
+    if (kind) {
+      const ppl = objPeople(st, o.objId, kind);
+      let plan = 0, paid = 0;
+      ppl.forEach(function (u) { plan += salaryPlan(doc, u.id); paid += salaryPaid(st, doc, u); });
+      const names = ppl.map(function (u) { return (u.av || "👤") + " " + u.name; }).join(", ") || "никто не назначен";
+      tail = plan ? " · " + k(paid) + " из " + k(plan) : (paid ? " · " + k(paid) : "");
+      note = " — " + names + (plan ? " · выплачено " + money(paid) + " из " + money(plan)
+        : (paid ? " · выплачено " + money(paid) + " (плана нет)" : " · план не задан"));
+    } else if (isIncome && doc) {
+      const inc = (st.finTxns || []).filter(function (t) { return t.type === "income" && t.contractId === doc.id; })
+        .reduce(function (a, t) { return a + (Number(t.amount) || 0); }, 0);
+      const left = Math.max(0, (Number(doc.amount) || 0) - inc);
+      tail = left ? " · долг " + k(left) : " · оплачен";
+      note = left ? " — клиент должен " + money(left) + " из " + money(doc.amount || 0) : " — оплачен полностью";
+    }
+    lines.push("• <b>" + escapeHtml(o.name) + "</b>" + escapeHtml(note));
+    rows.push([{ text: o.name + tail, callback_data: "f:obj:" + o.objId }]);
+  });
   rows.push([{ text: "✕ Отмена", callback_data: "f:cancel" }]);
-  return await kb(env, chat, "🏗 <b>По какому объекту?</b>", rows);
+  return await kb(env, chat, "🏗 <b>По какому объекту?</b>\n" + lines.join("\n"), rows);
 }
 async function askWho(env, chat, st, kind, objId) {
   const all = peopleFor(st, kind);
   if (!all.length) return await sendTg(env, chat, "Не нашёл, кому платить — в портале нет людей с нужной ролью.");
   // Показываем только тех, кто закреплён за этим объектом: ответственные в договоре и те,
   // кому в нём задан план или дедлайн. Иначе в списке весь штат, и легко заплатить не тому.
-  const team = objId ? objTeam(st, objId) : null;
-  // К составу объекта добавляем тех, кому в договоре задан план зарплаты: человек может
-  // не значиться «ответственным», но деньги по этому объекту ему запланированы — значит он на нём.
-  if (team) {
-    (st.contractDocs || []).forEach(function (c) {
-      if (c.objId !== objId) return;
-      Object.keys(c.salaries || {}).forEach(function (u) { team.add(u); });
-    });
-  }
-  const scoped = team ? all.filter(function (u) { return team.has(u.id); }) : all;
+  const scoped = objId ? objPeople(st, objId, kind) : all;
   const ppl = scoped.length ? scoped : all;      // никто не назначен — лучше показать всех, чем тупик
   const c = contractOf(st, objId);
   const rows = ppl.map(function (u) {
@@ -197,7 +227,7 @@ async function askConfirm(env, chat, st, d) {
 async function advance(env, chat, st, d, uid) {
   const c = catByKey(d.cat);
   if (!c) { await setDialog(env, uid, null); return await askCategory(env, chat, d.roles); }
-  if (!d.objId) { await setDialog(env, uid, d); return await askObject(env, chat, st); }
+  if (!d.objId) { await setDialog(env, uid, d); return await askObject(env, chat, st, d.cat); }
   if (c.who && !d.userId) { await setDialog(env, uid, d); return await askWho(env, chat, st, c.who, d.objId); }
   if (!d.amount) { await setDialog(env, uid, d); return await askAmount(env, chat); }
   await setDialog(env, uid, d);

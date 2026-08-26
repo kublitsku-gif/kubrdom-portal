@@ -49,7 +49,7 @@ function objStats(st, o) {
 // ─── 💰 Финансы ──────────────────────────────────────────────────────────────
 export async function viewFinance(env, chat, roles) {
   if (!canFin(roles)) return await sendTg(env, chat, "Финансы доступны администратору и финансисту.");
-  const st = await snap(env, ["objects", "contractDocs", "finTxns", "users"]);
+  const st = await snap(env, ["objects", "contractDocs", "finTxns", "users", "purchased"]);
   const docs = (st.contractDocs || []).filter(function (c) { return c.status === "signed" || c.status === "closed"; });
   const txns = st.finTxns || [];
   const sum = (pred) => txns.filter(pred).reduce(function (a, t) { return a + (Number(t.amount) || 0); }, 0);
@@ -66,6 +66,21 @@ export async function viewFinance(env, chat, roles) {
   });
   rows.sort(function (a, b) { return b.left - a.left; });
 
+  // Снабжение: касса и материалы — разные вещи, поэтому показываем обе. Проведено по кассе —
+  // транзакции категории 📦; «куплено/осталось» — отметки закупки на самих материалах.
+  const supplyPaid = sum(function (t) { return t.type === "expense" && String(t.category || "").indexOf("📦") === 0; });
+  let matAll = 0, matBought = 0;
+  (st.objects || []).forEach(function (o) {
+    (o.stages || []).forEach(function (sg) {
+      (sg.works || []).forEach(function (w) {
+        (w.mats || []).forEach(function (m) {
+          const v = (m.cost || 0) * (m.qty || 1);
+          matAll += v;
+          if ((st.purchased || {})[m.id]) matBought += v;
+        });
+      });
+    });
+  });
   const per = byPerson(st, docs);
   const income = sum(function (t) { return t.type === "income"; });
   const expense = sum(function (t) { return t.type === "expense"; });
@@ -73,6 +88,9 @@ export async function viewFinance(env, chat, roles) {
     + "Приход: <b>" + money(income) + "</b>\nРасход: <b>" + money(expense) + "</b>\nОстаток: <b>" + money(income - expense) + "</b>\n\n"
     + "Клиенты должны: <b>" + money(debtTotal) + "</b>\n"
     + rows.slice(0, 6).map(function (r) { return "• " + escapeHtml(r.n) + ": " + money(r.left) + " из " + money(r.amount); }).join("\n")
+    + "\n\n📦 Снабжение\nПроведено по кассе: <b>" + money(supplyPaid) + "</b>\n"
+    + "Материалы: куплено <b>" + money(matBought) + "</b> из " + money(matAll)
+    + " · осталось закупить <b>" + money(Math.max(0, matAll - matBought)) + "</b>"
     + "\n\nЗарплата к выплате: <b>" + money(per.left) + "</b>" + (per.over ? " · переплачено " + money(per.over) : "")
     + "\n<i>план " + money(salPlan) + ", выплачено " + money(salPaid) + "</i>\n"
     + per.text
