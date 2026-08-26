@@ -89,7 +89,7 @@ function txnGroup(cat) {
   if (c.indexOf("🧹") === 0) return "salary_prod_bonus";
   return "other";
 }
-function salaryPaid(st, contract, user) {
+export function salaryPaid(st, contract, user) {
   if (!contract || !user) return 0;
   const txns = st.finTxns || [];
   const grp = (user.roles || []).indexOf("sales_head") >= 0 ? "salary_escort" : "salary_prod";
@@ -110,7 +110,7 @@ function salaryPaid(st, contract, user) {
   }
   return total;
 }
-function salaryPlan(contract, uid) { return Number(((contract && contract.salaries) || {})[uid] && contract.salaries[uid].plan) || 0; }
+export function salaryPlan(contract, uid) { return Number(((contract && contract.salaries) || {})[uid] && contract.salaries[uid].plan) || 0; }
 function contractOf(st, objId) {
   return (st.contractDocs || []).find(function (c) { return c.objId === objId && (c.status === "signed" || c.status === "closed"); });
 }

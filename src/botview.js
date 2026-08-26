@@ -5,6 +5,7 @@
 
 import { sendTg, escapeHtml } from "./notify.js";
 import { deadlineInfo, objTeam, money, mskToday } from "./reminders.js";
+import { salaryPaid, salaryPlan } from "./botfin.js";
 
 const has = (roles, list) => (roles || []).some(function (r) { return list.indexOf(r) >= 0; });
 const canFin = (roles) => has(roles, ["admin", "financier"]);
@@ -65,15 +66,43 @@ export async function viewFinance(env, chat, roles) {
   });
   rows.sort(function (a, b) { return b.left - a.left; });
 
+  const per = byPerson(st, docs);
   const income = sum(function (t) { return t.type === "income"; });
   const expense = sum(function (t) { return t.type === "expense"; });
   const text = "💰 <b>Финансы</b> · " + mskToday() + "\n\n"
     + "Приход: <b>" + money(income) + "</b>\nРасход: <b>" + money(expense) + "</b>\nОстаток: <b>" + money(income - expense) + "</b>\n\n"
     + "Клиенты должны: <b>" + money(debtTotal) + "</b>\n"
     + rows.slice(0, 6).map(function (r) { return "• " + escapeHtml(r.n) + ": " + money(r.left) + " из " + money(r.amount); }).join("\n")
-    + "\n\nЗарплата к выплате: <b>" + money(Math.max(0, salPlan - salPaid)) + "</b> (план " + money(salPlan) + ", выплачено " + money(salPaid) + ")"
+    + "\n\nЗарплата к выплате: <b>" + money(per.left) + "</b>" + (per.over ? " · переплачено " + money(per.over) : "")
+    + "\n<i>план " + money(salPlan) + ", выплачено " + money(salPaid) + "</i>\n"
+    + per.text
     + link(env, "#tab=finance", "Открыть финансы");
   return await sendTg(env, chat, text);
+}
+
+// Кому и сколько должны — по всем объектам сразу. Считается той же функцией, что и
+// выплата в боте (botfin.salaryPaid), поэтому «осталось» здесь и на кнопке выплаты совпадают.
+function byPerson(st, docs) {
+  const list = [];
+  (st.users || []).forEach(function (u) {
+    let plan = 0, paid = 0;
+    docs.forEach(function (c) { plan += salaryPlan(c, u.id); paid += salaryPaid(st, c, u); });
+    if (plan > 0 || paid > 0) list.push({ u: u, plan: plan, paid: paid, left: Math.max(0, plan - paid), over: Math.max(0, paid - plan) });
+  });
+  list.sort(function (a, b) { return b.left - a.left; });
+  // Итог «к выплате» = сумма остатков ПО ЛЮДЯМ. Считать его как (общий план − общая выплата)
+  // нельзя: переплата одному человеку гасила бы долг перед другим, и две цифры в одном
+  // сообщении не сходились бы.
+  return {
+    left: list.reduce(function (a, x) { return a + x.left; }, 0),
+    over: list.reduce(function (a, x) { return a + x.over; }, 0),
+    text: list.map(function (x) {
+      return "• " + (x.u.av || "👤") + " <b>" + escapeHtml(x.u.name) + "</b>: выплачено " + money(x.paid)
+        + (x.plan
+          ? " из " + money(x.plan) + (x.over ? " · <b>переплата " + money(x.over) + "</b>" : " · осталось <b>" + money(x.left) + "</b>")
+          : " (плана нет)");
+    }).join("\n"),
+  };
 }
 
 // ─── 📦 Снабжение ────────────────────────────────────────────────────────────
