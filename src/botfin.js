@@ -77,6 +77,43 @@ function activeObjects(st) {
   });
   return out;
 }
+// Выплачено этому человеку по договору. Повторяет getSalaryPaid() панели ОДИН В ОДИН:
+// помеченные его userId транзакции плюс доля непомеченных, поделённая поровну между
+// ответственными той же группы. Иначе бот показывал бы одну сумму, а портал — другую.
+function txnGroup(cat) {
+  const c = String(cat || "");
+  if (c.indexOf("👷") === 0) return "salary_prod";
+  if (c.indexOf("🚚") === 0) return "salary_escort";
+  if (c.indexOf("🛠") === 0) return "salary_prod_extra";
+  if (c.indexOf("🧹") === 0) return "salary_prod_bonus";
+  return "other";
+}
+function salaryPaid(st, contract, user) {
+  if (!contract || !user) return 0;
+  const txns = st.finTxns || [];
+  const grp = (user.roles || []).indexOf("sales_head") >= 0 ? "salary_escort" : "salary_prod";
+  const mine = txns.filter(function (t) { return t.type === "expense" && t.contractId === contract.id && t.userId === user.id && txnGroup(t.category) === grp; });
+  let total = mine.reduce(function (a, t) { return a + (Number(t.amount) || 0); }, 0);
+
+  const untagged = txns.filter(function (t) { return t.type === "expense" && t.contractId === contract.id && !t.userId && txnGroup(t.category) === grp; });
+  if (untagged.length) {
+    const resp = contract.responsible || [];
+    const eligible = (st.users || []).filter(function (u) {
+      if (resp.indexOf(u.id) < 0) return false;
+      if (grp === "salary_escort") return (u.roles || []).indexOf("sales_head") >= 0;
+      return (u.roles || []).some(function (r) { return r === "brigadier" || r === "worker"; });
+    });
+    if (eligible.length && eligible.some(function (u) { return u.id === user.id; })) {
+      total += Math.round(untagged.reduce(function (a, t) { return a + (Number(t.amount) || 0); }, 0) / eligible.length);
+    }
+  }
+  return total;
+}
+function salaryPlan(contract, uid) { return Number(((contract && contract.salaries) || {})[uid] && contract.salaries[uid].plan) || 0; }
+function contractOf(st, objId) {
+  return (st.contractDocs || []).find(function (c) { return c.objId === objId && (c.status === "signed" || c.status === "closed"); });
+}
+
 function peopleFor(st, kind) {
   const want = kind === "escort" ? ESCORT_ROLES : PROD_ROLES;
   return (st.users || []).filter(function (u) { return (u.roles || []).some(function (r) { return want.indexOf(r) >= 0; }); });
@@ -97,12 +134,21 @@ async function askObject(env, chat, st) {
   rows.push([{ text: "✕ Отмена", callback_data: "f:cancel" }]);
   return await kb(env, chat, "🏗 <b>По какому объекту?</b>", rows);
 }
-async function askWho(env, chat, st, kind) {
+async function askWho(env, chat, st, kind, objId) {
   const ppl = peopleFor(st, kind);
   if (!ppl.length) return await sendTg(env, chat, "Не нашёл, кому платить — в портале нет людей с нужной ролью.");
-  const rows = ppl.map(function (u) { return [{ text: (u.av || "👤") + " " + u.name, callback_data: "f:who:" + u.id }]; });
+  const c = contractOf(st, objId);
+  const rows = ppl.map(function (u) {
+    const plan = salaryPlan(c, u.id);
+    const paid = c ? salaryPaid(st, c, u) : 0;
+    // Сумму по объекту показываем прямо на кнопке: видно ДО ввода суммы, кому сколько осталось.
+    const tail = plan ? " · " + Math.round(paid / 1000) + "к из " + Math.round(plan / 1000) + "к"
+      : (paid ? " · выплачено " + Math.round(paid / 1000) + "к" : "");
+    return [{ text: (u.av || "👤") + " " + u.name + tail, callback_data: "f:who:" + u.id }];
+  });
   rows.push([{ text: "✕ Отмена", callback_data: "f:cancel" }]);
-  return await kb(env, chat, "👤 <b>Кому?</b>", rows);
+  const c2 = c ? "\n<i>Показано: выплачено из плана по этому объекту.</i>" : "";
+  return await kb(env, chat, "👤 <b>Кому?</b>" + c2, rows);
 }
 async function askAmount(env, chat) {
   return await sendTg(env, chat, "💰 <b>Сумма?</b>\nНапишите числом, например: <code>50000</code>");
@@ -111,10 +157,22 @@ async function askConfirm(env, chat, st, d) {
   const c = catByKey(d.cat);
   const o = activeObjects(st).find(function (x) { return x.objId === d.objId; });
   const u = (st.users || []).find(function (x) { return x.id === d.userId; });
+  let tail = "";
+  if (u && (c.k === "salpr" || c.k === "salesc")) {
+    const doc = contractOf(st, d.objId);
+    const plan = salaryPlan(doc, u.id), paid = doc ? salaryPaid(st, doc, u) : 0;
+    const after = paid + Math.round(d.amount);
+    tail = "\n\n" + escapeHtml(u.name) + " по этому объекту:\n"
+      + "было выплачено <b>" + money(paid) + "</b>" + (plan ? " из " + money(plan) : "") + "\n"
+      + "станет <b>" + money(after) + "</b>"
+      + (plan ? (after > plan
+        ? " — <b>перебор на " + money(after - plan) + "</b>"
+        : ", останется " + money(plan - after)) : "");
+  }
   const text = "Проверьте запись:\n\n" + c.cat + "\n"
     + (o ? "Объект: <b>" + escapeHtml(o.name) + "</b>\n" : "")
     + (u ? "Кому: <b>" + escapeHtml(u.name) + "</b>\n" : "")
-    + "Сумма: <b>" + money(d.amount) + "</b>\nДата: " + mskToday();
+    + "Сумма: <b>" + money(d.amount) + "</b>\nДата: " + mskToday() + tail;
   return await kb(env, chat, text, [[{ text: "✅ Записать", callback_data: "f:ok" }, { text: "✕ Отмена", callback_data: "f:cancel" }]]);
 }
 
@@ -124,7 +182,7 @@ async function advance(env, chat, st, d, uid) {
   const c = catByKey(d.cat);
   if (!c) { await setDialog(env, uid, null); return await askCategory(env, chat, d.roles); }
   if (!d.objId) { await setDialog(env, uid, d); return await askObject(env, chat, st); }
-  if (c.who && !d.userId) { await setDialog(env, uid, d); return await askWho(env, chat, st, c.who); }
+  if (c.who && !d.userId) { await setDialog(env, uid, d); return await askWho(env, chat, st, c.who, d.objId); }
   if (!d.amount) { await setDialog(env, uid, d); return await askAmount(env, chat); }
   await setDialog(env, uid, d);
   return await askConfirm(env, chat, st, d);
@@ -155,24 +213,31 @@ async function commit(env, chat, uid, d, roles) {
   const title = c.cat + " · " + money(tx.amount) + (o ? " · " + o.name : "") + (who ? " · " + who.name : "");
   await logEvent(env, { uid: uid }, "finTxns", "add", title, "через Telegram-бота");
   await setDialog(env, uid, null);
-  await sendTg(env, chat, "✅ <b>Записано в портал</b>\n" + escapeHtml(title));
+
+  // Итог считаем ПОСЛЕ записи — на свежем списке транзакций, включая только что добавленную.
+  const stAfter = Object.assign({}, st, { finTxns: txns });
+  const doc = contractOf(st, d.objId);
+  let summary = "";
+  if (who && doc && (c.k === "salpr" || c.k === "salesc")) {
+    const plan = salaryPlan(doc, who.id), paid = salaryPaid(stAfter, doc, who);
+    summary = "\n\n" + escapeHtml(who.name) + " по этому объекту: выплачено <b>" + money(paid) + "</b>"
+      + (plan ? " из " + money(plan) + "\nОсталось: <b>" + money(Math.max(0, plan - paid)) + "</b>"
+        + (paid > plan ? " (перебор " + money(paid - plan) + ")" : "") : "");
+  }
+  await sendTg(env, chat, "✅ <b>Записано в портал</b>\n" + escapeHtml(title) + summary);
 
   // Получателю выплаты — личное уведомление с накопительным итогом по объекту.
   if (who) {
     const link = await env.DB.prepare("SELECT chat_id FROM tg_links WHERE uid=?").bind(who.id).first();
     if (link && link.chat_id) {
-      const paid = txns.filter(function (t) { return t.userId === who.id && t.contractId === tx.contractId && /Зарплата|Премия|Доп\. работы/i.test(String(t.category || "")); })
-        .reduce(function (a, t) { return a + (Number(t.amount) || 0); }, 0);
-      const plan = (function () {
-        const c2 = (st.contractDocs || []).find(function (x) { return x.id === tx.contractId; });
-        return Number(((c2 && c2.salaries) || {})[who.id] && c2.salaries[who.id].plan) || 0;
-      })();
+      const paid = doc ? salaryPaid(Object.assign({}, st, { finTxns: txns }), doc, who) : 0;
+      const plan = salaryPlan(doc, who.id);
       const isFine = c.k === "fine";
       const base = (env.PUBLIC_BASE_URL || "https://portal.kubrdom.ru").replace(/\/+$/, "");
       await sendTg(env, link.chat_id,
         (isFine ? "⚠️ <b>Вам начислен штраф " : "💸 <b>Вам проведена выплата ") + money(tx.amount) + "</b>"
         + (o ? "\nОбъект: «" + escapeHtml(o.name) + "»" : "")
-        + (isFine ? "" : "\nВыплачено по объекту: <b>" + money(paid) + "</b>" + (plan ? " из " + money(plan) + " плана" : ""))
+        + (isFine ? "" : "\nВыплачено по объекту: <b>" + money(paid) + "</b>" + (plan ? " из " + money(plan) + "\nОсталось: <b>" + money(Math.max(0, plan - paid)) + "</b>" : ""))
         + '\n\n👉 <a href="' + base + '/admin#tab=finance">Открыть финансы</a>');
     }
   }
@@ -214,7 +279,7 @@ function parseQuick(text, st, roles) {
 
 // ─── Точки входа из вебхука ──────────────────────────────────────────────────
 export async function finText(env, uid, chat, text, roles) {
-  const st = await snapshot(env, ["objects", "users", "contractDocs"]);
+  const st = await snapshot(env, ["objects", "users", "contractDocs", "finTxns"]);
   const t = String(text || "").trim();
 
   // «💵 Внести деньги» — текст с постоянной клавиатуры, для бота это обычное сообщение.
@@ -241,7 +306,7 @@ export async function finText(env, uid, chat, text, roles) {
 }
 
 export async function finCallback(env, uid, chat, data, roles) {
-  const st = await snapshot(env, ["objects", "users", "contractDocs"]);
+  const st = await snapshot(env, ["objects", "users", "contractDocs", "finTxns"]);
   const parts = String(data || "").split(":");
   if (parts[0] !== "f") return false;
   const d = (await getDialog(env, uid)) || { roles: roles };
