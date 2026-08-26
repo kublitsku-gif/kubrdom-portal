@@ -225,7 +225,58 @@ async function runSupply(env, st, today) {
   return sent;
 }
 
-// ─── 4. Сводка дня (вечер) ───────────────────────────────────────────────────
+// ─── 4. Финансы: долг клиентов и зарплата к выплате ──────────────────────────
+// Эти суммы меняются раз в несколько дней, а не ежечасно. Поэтому проверяем ежедневно,
+// но КЛЮЧ дедупликации содержит хеш самих цифр: пока ничего не изменилось, повторное
+// сообщение не уйдёт вообще, а как только цифра сдвинулась — придёт в то же утро.
+function hashNums(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+
+async function runFinance(env, st) {
+  const people = await audience(env, st.users || [], "finance");
+  if (!people.length) return 0;
+  const txns = st.finTxns || [];
+  const docs = (st.contractDocs || []).filter(function (c) { return c.status === "signed" || c.status === "closed"; });
+  if (!docs.length) return 0;
+
+  const sumBy = (pred) => txns.filter(pred).reduce(function (a, t) { return a + (Number(t.amount) || 0); }, 0);
+  const debts = [];
+  let salPlan = 0, salPaid = 0;
+
+  docs.forEach(function (c) {
+    const income = sumBy(function (t) { return t.type === "income" && t.contractId === c.id; });
+    const left = (Number(c.amount) || 0) - income;
+    if (left > 0) debts.push({ name: c.name || "Договор", obj: objName(st.objects, c.objId), left: left, amount: Number(c.amount) || 0, paid: income });
+    Object.keys(c.salaries || {}).forEach(function (uid) { salPlan += Number((c.salaries[uid] || {}).plan) || 0; });
+    salPaid += sumBy(function (t) { return t.type === "expense" && t.contractId === c.id && /Зарплата/i.test(String(t.category || "")); });
+  });
+
+  debts.sort(function (a, b) { return b.left - a.left; });
+  const debtTotal = debts.reduce(function (a, d) { return a + d.left; }, 0);
+  const salLeft = Math.max(0, salPlan - salPaid);
+  if (!debtTotal && !salLeft) return 0;
+
+  const top = debts.slice(0, 5);
+  const lines = top.map(function (d) {
+    return "• <b>" + escapeHtml(d.obj) + "</b>: " + money(d.left) + " из " + money(d.amount);
+  });
+  const text = "💰 <b>Финансы</b>\n"
+    + "Клиенты должны: <b>" + money(debtTotal) + "</b>" + (debts.length > 5 ? " (показаны 5 крупнейших из " + debts.length + ")" : "") + "\n"
+    + lines.join("\n")
+    + "\n\nЗарплата к выплате: <b>" + money(salLeft) + "</b> (план " + money(salPlan) + ", выплачено " + money(salPaid) + ")"
+    + linkTo(env, "#tab=finance", "Открыть финансы");
+
+  // Хеш цифр в ключе: сообщение повторится только когда суммы реально изменятся.
+  const key = "fin:" + hashNums(String(debtTotal) + ":" + salLeft + ":" + debts.length);
+  let sent = 0;
+  for (const p of people) if (await sendOnce(env, p, "finance", key, text)) sent++;
+  return sent;
+}
+
+// ─── 5. Сводка дня (вечер) ───────────────────────────────────────────────────
 async function runDaily(env, st, today) {
   const people = await audience(env, st.users || [], "daily");
   if (!people.length) return 0;
@@ -280,12 +331,13 @@ export async function runReminders(env, cronExpr, diag) {
   await ensureNotifyTables(env);
   DIAG.length = 0;
   const today = mskToday();
-  const st = await loadState(env, ["objects", "users", "contractDocs", "purchased", "arrived"]);
+  const st = await loadState(env, ["objects", "users", "contractDocs", "purchased", "arrived", "finTxns"]);
   DIAG.push("снимок: объектов " + ((st.objects || []).length) + ", сотрудников " + ((st.users || []).length) + ", договоров " + ((st.contractDocs || []).length) + ", дата " + today);
   let sent = 0;
   if (cronExpr === "0 6 * * *") {                    // 09:00 МСК — утро
     sent += await runDeadlines(env, st, today);
     sent += await runSupply(env, st, today);
+    sent += await runFinance(env, st);
   } else if (cronExpr === "0 16 * * *") {            // 19:00 МСК — вечер
     sent += await runHours(env, st, today);
   } else if (cronExpr === "0 17 * * *") {            // 20:00 МСК — сводка

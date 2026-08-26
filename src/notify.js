@@ -16,6 +16,7 @@ export const NOTIFY_KINDS = {
   hours:    { n: "Часы и отметки работ", d: "вечером, если за день по объекту не записаны часы",              roles: ["brigadier", "worker", "prod_head", "admin"] },
   supply:   { n: "Снабжение",            d: "не куплено к старту этапа; куплено, но не принято на складе",     roles: ["supply", "prod_head", "admin", "brigadier"] },
   daily:    { n: "Сводка дня",           d: "вечером одним сообщением: что сделано, часы, что горит",          roles: ["admin", "financier", "prod_head"] },
+  finance:  { n: "Финансы",              d: "долги клиентов и зарплата к выплате — когда суммы изменились",     roles: ["admin", "financier"] },
 };
 
 let _ready = false;
