@@ -1263,6 +1263,15 @@ export default {
       catch (err) { return new Response(String(err), { status: 500, headers: CORS_HEADERS }); }
     }
 
+    // Вебхук бота напоминаний — ДО авторизации: Telegram не шлёт X-Admin-Token.
+    // Защита — секрет-токен в заголовке (ставится при setWebhook). Ответ всегда 200:
+    // на 4xx Telegram ретраит обновление часами.
+    if (url.pathname === "/api/tg/webhook" && request.method === "POST") {
+      const tts = request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "";
+      if (!env.WEBHOOK_SECRET || !safeEqual(tts, env.WEBHOOK_SECRET)) return json({ ok: true });
+      try { return json(await tgWebhook(env, request)); } catch { return json({ ok: true }); }
+    }
+
     // Вебхук sales-бота (Telegram) — ДО авторизации (Telegram не шлёт X-Admin-Token).
     // Защита: секрет-токен в заголовке (ставим его при setWebhook = ADMIN_TOKEN).
     if (url.pathname === "/api/ai/webhook" && request.method === "POST") {
@@ -1414,14 +1423,7 @@ export default {
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
 
-    // ── Напоминания в Telegram ──
-    // Вебхук бота — ДО авторизации (Telegram не шлёт X-Admin-Token). Свой заголовок-секрет.
-    if (url.pathname === "/api/tg/webhook" && request.method === "POST") {
-      if (env.WEBHOOK_SECRET && request.headers.get("X-Telegram-Bot-Api-Secret-Token") !== env.WEBHOOK_SECRET) {
-        return json({ ok: true });                    // чужой стук — молча ок, без подсказок
-      }
-      try { return json(await tgWebhook(env, request)); } catch { return json({ ok: true }); }
-    }
+    // ── Напоминания в Telegram (вебхук — выше, до авторизации) ──
     if (url.pathname.indexOf("/api/tg/") === 0) {
       if (!auth || auth.client || !auth.uid) return json({ success: false, error: "Нужен вход сотрудника" }, 403);
       const roles = await userRoles(env, auth);
