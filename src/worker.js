@@ -305,6 +305,13 @@ async function postState(env, storageKey, request, auth, ctx) {
   const allowed = body.items.filter(function (item) {
     if (!adm && ADMIN_KEYS.indexOf(item.work_id) >= 0) { skipped.push(item.work_id); return false; }
     if (!fin && FIN_KEYS.indexOf(item.work_id) >= 0)   { skipped.push(item.work_id); return false; }
+    // Страховка от потери управления: снимок без единого админа не принимаем. Такой список
+    // означает, что войти и всё починить будет уже некому — а через панель это делается
+    // одним тапом по «удалить».
+    if (item.work_id === "users" && Array.isArray(item.data)) {
+      const hasAdmin = item.data.some(function (u) { return u && Array.isArray(u.roles) && u.roles.indexOf("admin") >= 0; });
+      if (!hasAdmin) { skipped.push("users:no-admin"); return false; }
+    }
     return true;
   });
 

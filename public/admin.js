@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-26.10";
+const APP_BUILD = "2026-08-26.11";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -13860,7 +13860,26 @@ function bind(){
       if(n)users=users.map(u=>u.id===uid?{...u,name:n,av:av||u.av,phone:phone,pin:(pin||u.pin||"1111"),mustChangePin:force}:u);
       editU=null;fl();
     };}
-    else if(a==="del-u"){el.onclick=()=>{users=users.filter(u=>u.id!==el.dataset.uid);fl();};}
+    // Удаление сотрудника — необратимо и в один тап уносило доступ к порталу целиком
+    // (админ удалил сам себя и перестал существовать для сервера). Три преграды:
+    // нельзя удалить себя, нельзя убрать последнего админа, и всегда подтверждение.
+    else if(a==="del-u"){el.onclick=()=>{
+      const uid=el.dataset.uid;
+      const u=users.find(x=>x.id===uid);
+      if(!u)return;
+      if(currentUser&&uid===currentUser.id){
+        alert("Нельзя удалить свою собственную учётку.\n\nЕсли она действительно не нужна — пусть её удалит другой администратор.");
+        return;
+      }
+      const admins=users.filter(x=>(x.roles||[]).includes("admin"));
+      if((u.roles||[]).includes("admin")&&admins.length<=1){
+        alert("Это последний администратор портала.\n\nСначала назначьте админом кого-то ещё, иначе управлять порталом будет некому.");
+        return;
+      }
+      if(!confirm("Удалить сотрудника «"+(u.name||uid)+"»?\n\nОн потеряет доступ к порталу. Отменить это нельзя."))return;
+      users=users.filter(x=>x.id!==uid);
+      fl();
+    };}
     else if(a==="show-nr"){el.onclick=()=>{showNR=true;nr={n:"",c:"#9b59b6",group:"other"};render();};}
     else if(a==="cancel-nr"){el.onclick=()=>{showNR=false;render();};}
     else if(a==="nr-group"){el.onclick=()=>{nr.group=el.dataset.g;render();};}
