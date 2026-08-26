@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-26.3";
+const APP_BUILD = "2026-08-26.4";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4290,6 +4290,9 @@ function notifyPanel(){
       +'<div style="font-size:10.5px;color:#9aabbf;line-height:1.35;margin-top:1px">'+esc(meta.d)+'</div></div>'
     +'</div>';
   });
+  h+=(currentUser&&currentUser.roles.includes("admin"))
+    ? '<button data-a="notify-run" title="Прогнать утренние напоминания прямо сейчас" style="width:100%;margin-top:8px;padding:8px;background:#fff;border:1px dashed #0088cc;border-radius:9px;cursor:pointer;font-size:11px;font-weight:700;color:#0088cc">▶️ Прогнать напоминания сейчас</button>'
+    : '';
   h+=(currentUser&&currentUser.roles.includes("admin"))
     ? '<button data-a="notify-setup" title="Разово: сказать Telegram, куда слать сообщения бота" style="width:100%;margin-top:8px;padding:8px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:9px;cursor:pointer;font-size:11px;font-weight:700;color:#5a7080">⚙️ Настроить бота (разово)</button>'
     : '';
@@ -13359,6 +13362,14 @@ function bind(){
       try{
         const j=await notifyApi("setup",{method:"POST"});
         notifyMsg=(j&&j.success)?"Бот настроен — теперь можно привязывать":("Не вышло: "+((j&&j.error)||"Telegram отказал"));
+      }catch(e){ notifyMsg="Нет связи с сервером"; }
+      render();
+    };}
+    else if(a==="notify-run"){el.onclick=async()=>{
+      el.textContent="⏳ Считаю…"; notifyMsg="";
+      try{
+        const j=await notifyApi("run",{method:"POST",body:JSON.stringify({cron:"0 6 * * *"})});
+        notifyMsg=(j&&j.success)?("Отправлено сообщений: "+j.sent+(j.sent?"":" — либо не за что напоминать, либо сегодня уже слали")):((j&&j.error)||"Ошибка");
       }catch(e){ notifyMsg="Нет связи с сервером"; }
       render();
     };}

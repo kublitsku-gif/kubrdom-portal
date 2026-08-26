@@ -17,7 +17,7 @@ bucket_name = "kubrdom-files"
 # Avito: id аккаунта «Светлица» (не секрет). Ключи — в секретах AVITO_CLIENT_ID/SECRET.
 # Cron: «дожим» молчащих клиентов нейропродавца — раз в сутки 06:00 UTC (~09:00 МСК).
 [triggers]
-crons = ["0 6 * * *"]
+crons = ["0 6 * * *", "0 16 * * *", "0 17 * * *"]
 
 [vars]
 TG_CHAT_ID = "-1003606281018"
