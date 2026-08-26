@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-26.2";
+const APP_BUILD = "2026-08-26.3";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4271,6 +4271,9 @@ function notifyPanel(){
     } else {
       h+='<button data-a="notify-link" style="width:100%;padding:11px;background:#0088cc;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">'+(notifyBusy?"⏳ Создаю ссылку…":"Привязать Telegram")+'</button>';
     }
+    if(currentUser&&currentUser.roles.includes("admin")){
+      h+='<button data-a="notify-setup" title="Разово: сказать Telegram, куда слать сообщения бота" style="width:100%;margin-top:8px;padding:8px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:9px;cursor:pointer;font-size:11px;font-weight:700;color:#5a7080">⚙️ Настроить бота (разово)</button>';
+    }
     if(notifyMsg)h+='<div style="font-size:11px;color:#c0392b;margin-top:8px;text-align:center">'+esc(notifyMsg)+'</div>';
     return h+'</div></div>';
   }
@@ -4287,6 +4290,9 @@ function notifyPanel(){
       +'<div style="font-size:10.5px;color:#9aabbf;line-height:1.35;margin-top:1px">'+esc(meta.d)+'</div></div>'
     +'</div>';
   });
+  h+=(currentUser&&currentUser.roles.includes("admin"))
+    ? '<button data-a="notify-setup" title="Разово: сказать Telegram, куда слать сообщения бота" style="width:100%;margin-top:8px;padding:8px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:9px;cursor:pointer;font-size:11px;font-weight:700;color:#5a7080">⚙️ Настроить бота (разово)</button>'
+    : '';
   h+='<button data-a="notify-unlink" style="width:100%;margin-top:6px;padding:8px;background:transparent;border:1px solid #e74c3c44;border-radius:9px;cursor:pointer;font-size:11px;color:#e74c3c">Отвязать Telegram</button>';
   if(notifyMsg)h+='<div style="font-size:11px;color:#c0392b;margin-top:8px;text-align:center">'+esc(notifyMsg)+'</div>';
   return h+'</div></div>';
@@ -13346,6 +13352,14 @@ function bind(){
       el.textContent="⏳"; notifyMsg="";
       try{ const j=await notifyApi("test",{method:"POST"}); notifyMsg=(j&&j.success)?"Отправлено — проверьте Telegram":((j&&j.error)||"Не отправилось"); }
       catch(e){ notifyMsg="Нет связи с сервером"; }
+      render();
+    };}
+    else if(a==="notify-setup"){el.onclick=async()=>{
+      el.textContent="⏳ Настраиваю…"; notifyMsg="";
+      try{
+        const j=await notifyApi("setup",{method:"POST"});
+        notifyMsg=(j&&j.success)?"Бот настроен — теперь можно привязывать":("Не вышло: "+((j&&j.error)||"Telegram отказал"));
+      }catch(e){ notifyMsg="Нет связи с сервером"; }
       render();
     };}
     else if(a==="notify-pref"){el.onclick=()=>{ notifySetPref(el.dataset.k, el.dataset.v==="1"); };}
