@@ -9,6 +9,7 @@
 
 import { sendTg, escapeHtml } from "./notify.js";
 import { logEvent } from "./audit.js";
+import { objTeam } from "./reminders.js";
 
 const TG_API = "https://api.telegram.org/bot";
 const MSK_OFFSET_MS = 3 * 3600 * 1000;
@@ -135,8 +136,21 @@ async function askObject(env, chat, st) {
   return await kb(env, chat, "🏗 <b>По какому объекту?</b>", rows);
 }
 async function askWho(env, chat, st, kind, objId) {
-  const ppl = peopleFor(st, kind);
-  if (!ppl.length) return await sendTg(env, chat, "Не нашёл, кому платить — в портале нет людей с нужной ролью.");
+  const all = peopleFor(st, kind);
+  if (!all.length) return await sendTg(env, chat, "Не нашёл, кому платить — в портале нет людей с нужной ролью.");
+  // Показываем только тех, кто закреплён за этим объектом: ответственные в договоре и те,
+  // кому в нём задан план или дедлайн. Иначе в списке весь штат, и легко заплатить не тому.
+  const team = objId ? objTeam(st, objId) : null;
+  // К составу объекта добавляем тех, кому в договоре задан план зарплаты: человек может
+  // не значиться «ответственным», но деньги по этому объекту ему запланированы — значит он на нём.
+  if (team) {
+    (st.contractDocs || []).forEach(function (c) {
+      if (c.objId !== objId) return;
+      Object.keys(c.salaries || {}).forEach(function (u) { team.add(u); });
+    });
+  }
+  const scoped = team ? all.filter(function (u) { return team.has(u.id); }) : all;
+  const ppl = scoped.length ? scoped : all;      // никто не назначен — лучше показать всех, чем тупик
   const c = contractOf(st, objId);
   const rows = ppl.map(function (u) {
     const plan = salaryPlan(c, u.id);
@@ -147,7 +161,9 @@ async function askWho(env, chat, st, kind, objId) {
     return [{ text: (u.av || "👤") + " " + u.name + tail, callback_data: "f:who:" + u.id }];
   });
   rows.push([{ text: "✕ Отмена", callback_data: "f:cancel" }]);
-  const c2 = c ? "\n<i>Показано: выплачено из плана по этому объекту.</i>" : "";
+  const c2 = scoped.length
+    ? (c ? "\n<i>Показано: выплачено из плана по этому объекту.</i>" : "")
+    : "\n<i>В договоре объекта никто не назначен — показаны все.</i>";
   return await kb(env, chat, "👤 <b>Кому?</b>" + c2, rows);
 }
 async function askAmount(env, chat) {

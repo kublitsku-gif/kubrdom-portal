@@ -10,6 +10,7 @@ import { tgStatus, tgMakeCode, tgUnlink, tgSavePrefs, tgTest, tgWebhook, tgSetup
 import { runReminders } from "./reminders.js";
 import { finText, finCallback, answerCb } from "./botfin.js";
 import { viewText, viewCallback } from "./botview.js";
+import { workText, workCallback } from "./botwork.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
@@ -1279,10 +1280,16 @@ export default {
       // но порядок фиксируем явно, чтобы «📦 Снабжение» не улетело в разбор быстрой строки.
       const botHooks = {
         onText: async function (e, uid, chat, text, roles) {
-          return (await viewText(e, uid, chat, text, roles)) || (await finText(e, uid, chat, text, roles));
+          // Порядок важен: workText первым — он ловит число, когда бот ждёт часы,
+          // и не должен конкурировать с вводом суммы в финансовом диалоге.
+          return (await workText(e, uid, chat, text, roles))
+            || (await viewText(e, uid, chat, text, roles))
+            || (await finText(e, uid, chat, text, roles));
         },
         onCallback: async function (e, uid, chat, data, roles) {
-          return (await viewCallback(e, uid, chat, data, roles)) || (await finCallback(e, uid, chat, data, roles));
+          return (await workCallback(e, uid, chat, data, roles))
+            || (await viewCallback(e, uid, chat, data, roles))
+            || (await finCallback(e, uid, chat, data, roles));
         },
         answerCb: answerCb,
       };

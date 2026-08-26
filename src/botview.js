@@ -138,7 +138,9 @@ export async function viewObject(env, chat, oid, uid, roles) {
     + (s.pay ? "Оплата бригаде по работам: <b>" + money(s.pay) + "</b>\n" : "")
     + (dls.length ? "\n" + dls.join("\n") : "")
     + link(env, "#obj=" + oid, "Открыть объект");
-  return await sendTg(env, chat, text);
+  const canMark = has(roles, ["admin", "brigadier", "worker", "prod_head"]);
+  const rows = canMark && s.done < s.works ? [[{ text: "✅ Отметить работу выполненной", callback_data: "w:l:" + oid + ":0" }]] : null;
+  return await sendTg(env, chat, text, rows ? { reply_markup: { inline_keyboard: rows } } : undefined);
 }
 
 // ─── Роутер: текстовые кнопки и inline-нажатия просмотра ─────────────────────
