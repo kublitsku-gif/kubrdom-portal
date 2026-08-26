@@ -131,6 +131,16 @@ export async function tgTest(env, auth, name) {
   return ok ? { success: true } : { success: false, error: "Telegram не принял сообщение" };
 }
 
+// Роли сотрудника из снимка — по ним решаем, что человеку можно в боте.
+export async function rolesOf(env, uid) {
+  try {
+    const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key='admin_panel' AND work_id='users'").first();
+    const users = row && row.data ? JSON.parse(row.data) : [];
+    const u = (users || []).find(function (x) { return x && x.id === uid; });
+    return (u && u.roles) || [];
+  } catch { return []; }
+}
+
 export function escapeHtml(s) {
   return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -138,8 +148,26 @@ export function escapeHtml(s) {
 // ─── Вебхук бота ─────────────────────────────────────────────────────────────
 // Единственное, что обрабатываем — «/start <код>». Всё остальное вежливо игнорируем:
 // бот не должен превращаться в чат-интерфейс к порталу.
-export async function tgWebhook(env, request) {
+// hooks = { onText(env, uid, chat, text, roles), onCallback(env, uid, chat, data, roles), answerCb }
+// Передаются снаружи (worker.js), чтобы notify.js не импортировал botfin.js, который сам
+// импортирует отсюда sendTg — цикл модулей ни к чему.
+export async function tgWebhook(env, request, hooks) {
   let upd; try { upd = await request.json(); } catch { return { ok: true }; }
+
+  // Нажатие inline-кнопки
+  const cb = upd && upd.callback_query;
+  if (cb && hooks && hooks.onCallback) {
+    const chatId = cb.message && cb.message.chat && cb.message.chat.id;
+    if (hooks.answerCb) await hooks.answerCb(env, cb.id);
+    if (chatId) {
+      await ensureNotifyTables(env);
+      const link = await env.DB.prepare("SELECT uid FROM tg_links WHERE chat_id=?").bind(String(chatId)).first();
+      if (link && link.uid) await hooks.onCallback(env, link.uid, chatId, cb.data, await rolesOf(env, link.uid));
+      else await sendTg(env, chatId, "Сначала привяжите портал: откройте 🔔 Напоминания и нажмите «Привязать Telegram».");
+    }
+    return { ok: true };
+  }
+
   const msg = upd && (upd.message || upd.edited_message);
   const text = msg && typeof msg.text === "string" ? msg.text.trim() : "";
   const chatId = msg && msg.chat && msg.chat.id;
@@ -149,7 +177,15 @@ export async function tgWebhook(env, request) {
   await ensureNotifyTables(env);
   const m = text.match(/^\/start(?:\s+([A-Za-z0-9_-]+))?/);
   if (!m) {
-    await sendTg(env, chatId, "Это бот напоминаний портала КубрДом. Чтобы получать напоминания, откройте портал → 🔔 Напоминания → «Привязать Telegram».");
+    // Не /start — возможно, это ввод финансов. Отдаём наружу; если там не поняли, отвечаем подсказкой.
+    const link = await env.DB.prepare("SELECT uid FROM tg_links WHERE chat_id=?").bind(String(chatId)).first();
+    if (link && link.uid && hooks && hooks.onText) {
+      const handled = await hooks.onText(env, link.uid, chatId, text, await rolesOf(env, link.uid));
+      if (handled) return { ok: true };
+    }
+    await sendTg(env, chatId, link && link.uid
+      ? "Не понял. Внести деньги — команда /деньги, или строкой: <code>зп Валера 50000</code>, <code>аванс 500000</code>."
+      : "Это бот портала КубрДом. Откройте портал → 🔔 Напоминания → «Привязать Telegram».");
     return { ok: true };
   }
   const code = m[1];
@@ -179,7 +215,7 @@ export async function tgSetupWebhook(env, publicBase) {
   const url = (publicBase || env.PUBLIC_BASE_URL || "").replace(/\/+$/, "") + "/api/tg/webhook";
   const r = await fetch(TG_API + env.TG_BOT_TOKEN + "/setWebhook", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url: url, secret_token: env.WEBHOOK_SECRET || undefined, allowed_updates: ["message"] }),
+    body: JSON.stringify({ url: url, secret_token: env.WEBHOOK_SECRET || undefined, allowed_updates: ["message", "callback_query"] }),
   });
   const j = await r.json();
   const info = await (await fetch(TG_API + env.TG_BOT_TOKEN + "/getWebhookInfo")).json();

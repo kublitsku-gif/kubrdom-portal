@@ -8,6 +8,7 @@
 import { recordSnapshotDiff, readAudit, logEvent } from "./audit.js";
 import { tgStatus, tgMakeCode, tgUnlink, tgSavePrefs, tgTest, tgWebhook, tgSetupWebhook } from "./notify.js";
 import { runReminders } from "./reminders.js";
+import { finText, finCallback, answerCb } from "./botfin.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
@@ -1273,7 +1274,8 @@ export default {
     if (url.pathname === "/api/tg/webhook" && request.method === "POST") {
       const tts = request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "";
       if (!env.WEBHOOK_SECRET || !safeEqual(tts, env.WEBHOOK_SECRET)) return json({ ok: true });
-      try { return json(await tgWebhook(env, request)); } catch { return json({ ok: true }); }
+      try { return json(await tgWebhook(env, request, { onText: finText, onCallback: finCallback, answerCb: answerCb })); }
+      catch { return json({ ok: true }); }
     }
 
     // Вебхук sales-бота (Telegram) — ДО авторизации (Telegram не шлёт X-Admin-Token).
