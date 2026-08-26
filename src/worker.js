@@ -7,6 +7,7 @@
 
 import { recordSnapshotDiff, readAudit, logEvent } from "./audit.js";
 import { tgStatus, tgMakeCode, tgUnlink, tgSavePrefs, tgTest, tgWebhook, tgSetupWebhook } from "./notify.js";
+import { runReminders } from "./reminders.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
@@ -1240,7 +1241,10 @@ async function getPrice(url){
 
 export default {
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(aiNudge(env));
+    // 0 6 — 09:00 МСК (дожим клиентов + утренние напоминания), 0 16 — 19:00 (часы),
+    // 0 17 — 20:00 (сводка дня). Расписание — в wrangler.toml.
+    if (event.cron === "0 6 * * *") ctx.waitUntil(aiNudge(env));
+    ctx.waitUntil(runReminders(env, event.cron).catch(function () {}));
   },
   async fetch(request, env, ctx) {
     if (request.method === "OPTIONS") {
@@ -1433,6 +1437,12 @@ export default {
         if (url.pathname === "/api/tg/unlink" && request.method === "POST") return json(await tgUnlink(env, auth));
         if (url.pathname === "/api/tg/prefs" && request.method === "POST") return json(await tgSavePrefs(env, auth, await request.json().catch(function () { return {}; })));
         if (url.pathname === "/api/tg/test" && request.method === "POST") return json(await tgTest(env, auth, await userName(env, auth)));
+        if (url.pathname === "/api/tg/run" && request.method === "POST") {
+          if (!auth.adm) return json({ success: false, error: "Только администратор" }, 403);
+          const b = await request.json().catch(function () { return {}; });
+          const r = await runReminders(env, String((b && b.cron) || "0 6 * * *"), true);
+          return json({ success: true, sent: r.sent, diag: r.diag });
+        }
         if (url.pathname === "/api/tg/setup" && request.method === "POST") {
           if (!auth.adm) return json({ success: false, error: "Только администратор" }, 403);
           return json(await tgSetupWebhook(env, new URL(request.url).origin));

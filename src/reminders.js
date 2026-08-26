@@ -56,18 +56,23 @@ async function audience(env, users, kind) {
     if (r.prefs) { try { prefs = Object.assign(prefs, JSON.parse(r.prefs)); } catch { /* битый JSON — остаётся дефолт */ } }
     if (prefs[kind]) out.push({ uid: r.uid, chat: r.chat_id, user: u });
   }
+  DIAG.push("audience(" + kind + "): привязок " + (rows.results || []).length + ", подходит " + out.length);
   return out;
 }
 
 // Одно напоминание одного вида по одному поводу — один раз. Ключ хранит дату, поэтому
 // «просрочка» повторится завтра, а «за 3 дня до дедлайна» — нет.
+const DIAG = [];                                    // причины, почему сообщение не ушло
 async function sendOnce(env, who, kind, key, text) {
   const res = await env.DB.prepare("INSERT OR IGNORE INTO notify_log (uid, kind, k, sent_at) VALUES (?,?,?,?)")
     .bind(who.uid, kind, key, Date.now()).run();
   const changed = res && res.meta && typeof res.meta.changes === "number" ? res.meta.changes : 1;
-  if (!changed) return false;                       // уже слали
+  if (!changed) { DIAG.push(kind + "/" + who.uid + ": уже слали сегодня"); return false; }
   const ok = await sendTg(env, who.chat, text);
-  if (!ok) await env.DB.prepare("DELETE FROM notify_log WHERE uid=? AND kind=? AND k=?").bind(who.uid, kind, key).run();
+  if (!ok) {
+    await env.DB.prepare("DELETE FROM notify_log WHERE uid=? AND kind=? AND k=?").bind(who.uid, kind, key).run();
+    DIAG.push(kind + "/" + who.uid + ": Telegram не принял (chat " + who.chat + ")");
+  }
   return ok;
 }
 
@@ -256,10 +261,12 @@ async function runDaily(env, st, today) {
 
 // ─── Точка входа для крона ───────────────────────────────────────────────────
 // cronExpr — то, что пришло в scheduled(event.cron); разные часы = разные наборы.
-export async function runReminders(env, cronExpr) {
+export async function runReminders(env, cronExpr, diag) {
   await ensureNotifyTables(env);
+  DIAG.length = 0;
   const today = mskToday();
   const st = await loadState(env, ["objects", "users", "contractDocs", "purchased", "arrived"]);
+  DIAG.push("снимок: объектов " + ((st.objects || []).length) + ", сотрудников " + ((st.users || []).length) + ", договоров " + ((st.contractDocs || []).length) + ", дата " + today);
   let sent = 0;
   if (cronExpr === "0 6 * * *") {                    // 09:00 МСК — утро
     sent += await runDeadlines(env, st, today);
@@ -269,7 +276,7 @@ export async function runReminders(env, cronExpr) {
   } else if (cronExpr === "0 17 * * *") {            // 20:00 МСК — сводка
     sent += await runDaily(env, st, today);
   }
-  return sent;
+  return diag ? { sent: sent, diag: DIAG.slice() } : sent;
 }
 
 // Ручной прогон из панели (админ): «а что бы ушло прямо сейчас».

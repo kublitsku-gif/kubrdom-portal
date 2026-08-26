@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-26.5";
+const APP_BUILD = "2026-08-26.6";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4298,7 +4298,7 @@ function notifyPanel(){
     ? '<button data-a="notify-setup" title="Разово: сказать Telegram, куда слать сообщения бота" style="width:100%;margin-top:8px;padding:8px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:9px;cursor:pointer;font-size:11px;font-weight:700;color:#5a7080">⚙️ Настроить бота (разово)</button>'
     : '';
   if(d.linked)h+='<button data-a="notify-unlink" style="width:100%;margin-top:6px;padding:8px;background:transparent;border:1px solid #e74c3c44;border-radius:9px;cursor:pointer;font-size:11px;color:#e74c3c">Отвязать Telegram</button>';
-  if(notifyMsg)h+='<div style="font-size:11px;color:#c0392b;margin-top:8px;text-align:center">'+esc(notifyMsg)+'</div>';
+  if(notifyMsg)h+='<div style="font-size:11px;color:#5a7080;margin-top:8px;white-space:pre-wrap;background:#f6f8fa;border:1px solid #e6edf5;border-radius:8px;padding:8px 10px;line-height:1.4">'+esc(notifyMsg)+'</div>';
   return h+'</div></div>';
 }
 
@@ -13370,7 +13370,9 @@ function bind(){
       el.textContent="⏳ Считаю…"; notifyMsg="";
       try{
         const j=await notifyApi("run",{method:"POST",body:JSON.stringify({cron:"0 6 * * *"})});
-        notifyMsg=(j&&j.success)?("Отправлено сообщений: "+j.sent+(j.sent?"":" — либо не за что напоминать, либо сегодня уже слали")):((j&&j.error)||"Ошибка");
+        notifyMsg=(j&&j.success)
+          ?("Отправлено: "+j.sent+(j.diag&&j.diag.length?"\n"+j.diag.join("\n"):""))
+          :((j&&j.error)||"Ошибка");
       }catch(e){ notifyMsg="Нет связи с сервером"; }
       render();
     };}
