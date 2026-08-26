@@ -38,7 +38,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-25.9";
+const APP_BUILD = "2026-08-26.1";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -4193,8 +4193,25 @@ function objChipsHtml(oid,list){
 // превышать, поэтому рядом всегда показываем «свободно к распределению».
 function workPay(w){ const v=Number(w&&w.pay); return isFinite(v)&&v>0?v:0; }
 function objPayFund(obj){ return (obj.stages||[]).reduce((a,s)=>a+(s.works||[]).reduce((b,w)=>b+workPay(w),0),0); }
+// План зарплаты по объекту. Источник правды — ДОГОВОР (contractDocs[].salaries), а не
+// finSalaries: последний остался от старой схемы и на боевых объектах пуст.
+// Считаем только производственные роли: в договоре рядом лежит вознаграждение РОПа
+// и сопровождения, а расценки работ — деньги бригады, смешивать их нельзя.
 function objSalaryPlan(oid){
-  const d=finSalaries[oid]||{};
+  const PROD=["brigadier","worker","prod_head"];
+  const isProd=uid=>{ const u=users.find(x=>x.id===uid); return !!u&&(u.roles||[]).some(r=>PROD.indexOf(r)>=0); };
+  const docs=contractDocs.filter(d=>d.objId===oid);
+  const signed=docs.filter(d=>d.status==="signed"||d.status==="closed");
+  const scope=signed.length?signed:docs;
+  let prod=0;
+  scope.forEach(d=>{
+    const sd=d.salaries||{};
+    Object.keys(sd).forEach(uid=>{ if(isProd(uid))prod+=Number(sd[uid]&&sd[uid].plan)||0; });
+  });
+  if(prod>0)return prod;
+  // any>0 сознательно НЕ используем: на объекте может стоять только вознаграждение РОПа
+  // (роль sales_head), и раскладывать ЕГО по работам бригады было бы прямой ошибкой.
+  const d=finSalaries[oid]||{};              // легаси-схема
   return Object.keys(d).reduce((a,uid)=>a+(Number(d[uid]&&d[uid].plan)||0),0);
 }
 
@@ -4941,7 +4958,7 @@ ${(()=>{
     <div style="display:flex;align-items:center;gap:10px">
       <div style="flex:1;min-width:0">
         <div style="font-size:10px;font-weight:800;letter-spacing:0.6px;color:#8e44ad">👷 ОПЛАТА ПРОИЗВОДСТВУ</div>
-        <div style="font-size:11.5px;color:#7a9aaa;margin-top:2px">Назначено по работам${plan>0?` · план зарплаты ${rub(plan)}`:""}</div>
+        <div style="font-size:11.5px;color:#7a9aaa;margin-top:2px">Назначено по работам${plan>0?` · зарплата бригады по договору ${rub(plan)}`:""}</div>
       </div>
       <div style="font-size:16px;font-weight:800;color:#8e44ad;white-space:nowrap">${rub(fund)}</div>
     </div>
@@ -4950,7 +4967,7 @@ ${(()=>{
         <div style="width:${pct}%;height:100%;background:${over?"#e74c3c":"#8e44ad"};border-radius:4px"></div>
       </div>
       <span style="font-size:11px;font-weight:800;color:${over?"#e74c3c":"#27ae60"};white-space:nowrap">${over?"превышение "+rub(left):"свободно "+rub(left)}</span>
-    </div>`:`<div style="font-size:11px;color:#e67e22;margin-top:6px">План зарплаты по объекту не задан — задайте его во вкладке «Финансы», тогда будет виден остаток.</div>`}
+    </div>`:`<div style="font-size:11px;color:#e67e22;margin-top:6px">Зарплата бригады в договоре объекта не задана — задайте её во вкладке «Договора», тогда будет виден остаток.</div>`}
     ${isAdmin&&_objEdit?`<button data-a="obj-pay-spread" data-oid="${obj.id}" style="width:100%;margin-top:8px;padding:8px;background:#fff;border:1px dashed #8e44ad;border-radius:9px;cursor:pointer;color:#8e44ad;font-size:11.5px;font-weight:700">⚖️ Разложить план зарплаты по работам пропорционально цене</button>`:""}
   </div>`;
 })()}
@@ -14972,7 +14989,7 @@ function bind(){
       const oid=el.dataset.oid;
       const o=objects.find(x=>x.id===oid); if(!o)return;
       const plan=objSalaryPlan(oid);
-      if(plan<=0){ alert("План зарплаты по объекту не задан.\n\nЗадайте его во вкладке «Финансы» — тогда его можно будет разложить по работам."); return; }
+      if(plan<=0){ alert("Зарплата бригады по этому объекту не задана.\n\nЗадайте её в договоре объекта (вкладка «Договора») — тогда её можно будет разложить по работам.\n\nВознаграждение РОПа и сопровождения в расчёт не берётся."); return; }
       const works=(o.stages||[]).flatMap(st=>(st.works||[]).map(w=>({sid:st.id,w:w})));
       const base=works.reduce((a,x)=>a+(Number(x.w.cost)||0),0);
       if(base<=0){ alert("У работ объекта не проставлены цены — распределять пропорционально нечему."); return; }
