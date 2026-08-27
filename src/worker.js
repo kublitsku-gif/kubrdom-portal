@@ -397,8 +397,18 @@ const DOC_TYPES = {
 };
 const FILE_TYPES = Object.assign({}, IMG_TYPES, DOC_TYPES);
 
+// Имя файла для Content-Disposition: режем путь и кавычки, оставляем безопасный ASCII-фолбэк.
+function attachmentName(raw, key) {
+  const base = String(raw || "").split(/[\\/]/).pop().replace(/["\r\n]/g, "").trim();
+  const name = base || String(key || "file").split("/").pop();
+  const ascii = name.replace(/[^\x20-\x7e]/g, "_") || "file";
+  // filename* (RFC 5987) несёт кириллицу, filename — фолбэк для старых клиентов.
+  return 'attachment; filename="' + ascii + '"; filename*=UTF-8\'\'' + encodeURIComponent(name);
+}
+
 // GET /api/file/<key> — публичная отдача файла из R2 (для <img> и ссылок «Открыть», без токена).
-async function getFile(env, key) {
+// ?dl=<имя> — отдать как скачивание (Content-Disposition: attachment), иначе PDF/картинки инлайн.
+async function getFile(env, key, dl) {
   if (!env.FILES) return json({ success: false, error: "R2 not configured" }, 500);
   const obj = await env.FILES.get(key);
   if (!obj) return new Response("Not found", { status: 404, headers: CORS_HEADERS });
@@ -408,7 +418,10 @@ async function getFile(env, key) {
   headers.set("Cache-Control", "public, max-age=31536000, immutable");
   // Защита: не угадывать тип (тип фиксируем сами по расширению при загрузке).
   headers.set("X-Content-Type-Options", "nosniff");
-  if (ct.indexOf("image/") === 0) {
+  if (dl) {
+    // Явное скачивание: iOS Safari кладёт файл в «Файлы», десктоп — в «Загрузки».
+    headers.set("Content-Disposition", attachmentName(dl === "1" ? "" : dl, key));
+  } else if (ct.indexOf("image/") === 0) {
     // Картинки — инлайн в песочнице: нейтрализует любой «активный» контент при отдаче.
     headers.set("Content-Security-Policy", "default-src 'none'; sandbox");
   } else if (ct !== "application/pdf") {
@@ -1259,7 +1272,7 @@ export default {
     // Публичная отдача файлов из R2 (для <img src>) — ДО авторизации, т.к. <img> не шлёт заголовки.
     const fileMatch = url.pathname.match(/^\/api\/file\/(.+)$/);
     if (fileMatch && request.method === "GET") {
-      try { return await getFile(env, decodeURIComponent(fileMatch[1])); }
+      try { return await getFile(env, decodeURIComponent(fileMatch[1]), url.searchParams.get("dl")); }
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
 

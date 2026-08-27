@@ -2178,6 +2178,7 @@ function specsEditorHtml(o){
              '<span style="font-size:17px">'+icon+'</span>'+
              '<div style="flex:1;min-width:0;font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(name||"Файл")+'</div>'+
              '<a href="'+url+'" target="_blank" rel="noopener" style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;color:'+color+';font-size:11px;font-weight:700;text-decoration:none">Открыть</a>'+
+             fileDownloadBtn(url,name||"Файл",color,28,6)+
              '<button data-a="file-print" data-url="'+esc(url)+'" data-name="'+esc(name||"Файл")+'" data-mime="" title="Печать" style="width:28px;height:28px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;cursor:pointer;color:'+color+';font-size:13px;flex-shrink:0">🖨</button>'+
            '</div>';
       }
@@ -2198,6 +2199,7 @@ function specsEditorHtml(o){
              '<span style="font-size:17px">'+icon+'</span>'+
              '<div style="flex:1;min-width:0;font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(name||"Файл")+'</div>'+
              '<a href="'+url+'" target="_blank" rel="noopener" style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;color:'+color+';font-size:11px;font-weight:700;text-decoration:none">Открыть</a>'+
+             fileDownloadBtn(url,name||"Файл",color,28,6)+
              '<button data-a="file-print" data-url="'+esc(url)+'" data-name="'+esc(name||"Файл")+'" data-mime="" title="Печать" style="width:28px;height:28px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;cursor:pointer;color:'+color+';font-size:13px;flex-shrink:0">🖨</button>'+
            '</div>';
       }
@@ -3272,6 +3274,7 @@ function clientProjectContent(c, activeTab){
           '<span style="font-size:20px">'+(isImg?"🖼":((f.mime||"").indexOf("pdf")>=0?"📕":"📄"))+'</span>'+
           '<div style="flex:1;min-width:0;font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name||"Файл")+'</div>'+
           '<a href="'+f.data+'" target="_blank" rel="noopener" style="padding:6px 12px;background:'+color+'18;border:1px solid '+color+'44;border-radius:7px;color:'+color+';font-size:11px;font-weight:700;text-decoration:none">Открыть</a>'+
+          fileDownloadBtn(f.data,f.name||"Файл",color,30,7)+
           '<button data-a="file-print" data-url="'+esc(f.data)+'" data-name="'+esc(f.name||"Файл")+'" data-mime="'+esc(f.mime||"")+'" title="Печать" style="width:30px;height:30px;background:'+color+'18;border:1px solid '+color+'44;border-radius:7px;cursor:pointer;color:'+color+';font-size:14px;flex-shrink:0">🖨</button>'+
         '</div>'+
       '</div>';
@@ -4681,6 +4684,7 @@ ${(()=>{
         '</span>'+
         '<span style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;color:'+color+';font-size:11px;font-weight:700;flex-shrink:0">Открыть</span>'+
       '</a>'+
+      fileDownloadBtn(f.data,f.name||fallbackName,color,34,8)+
       '<button data-a="file-print" data-url="'+esc(f.data)+'" data-name="'+esc(f.name||fallbackName)+'" data-mime="'+esc(f.mime||"")+'" title="Печать" style="width:34px;height:34px;background:'+color+'18;border:1px solid '+color+'44;border-radius:8px;cursor:pointer;color:'+color+';font-size:15px;flex-shrink:0">🖨</button>'+
     '</div>';
   };
@@ -6927,6 +6931,23 @@ function filePrintRetryOverlay(file,name){
   document.body.appendChild(ov);
 }
 
+// Ссылка «скачать». PDF Worker отдаёт инлайн (Safari открывает во вьюере и файл никуда
+// не сохраняется), поэтому для R2-файлов просим отдать его как вложение: ?dl=<имя>.
+// Атрибута download мало — он не работает для кросс-оригин и игнорируется iOS-вьюером.
+function fileDownloadUrl(url,name){
+  const u=String(url||"");
+  if(u.indexOf("/api/file/")!==0) return u;   // data:/внешние ссылки — как есть
+  return u+(u.indexOf("?")>=0?"&":"?")+"dl="+encodeURIComponent(name||"file");
+}
+function fileDownloadBtn(url,name,color,size,radius){
+  const s=size||28, r=radius||6;
+  return '<a href="'+esc(fileDownloadUrl(url,name))+'" download="'+esc(name||"file")+'" '+
+    'onclick="event.stopPropagation()" title="Скачать" '+
+    'style="display:flex;align-items:center;justify-content:center;width:'+s+'px;height:'+s+'px;'+
+    'background:'+color+'18;border:1px solid '+color+'44;border-radius:'+r+'px;color:'+color+';'+
+    'font-size:'+(s>=34?15:s>=30?14:13)+'px;text-decoration:none;flex-shrink:0">⬇</a>';
+}
+
 async function printFileAttachment(url,name,mime){
   const canShareFiles=!!(navigator.share&&navigator.canShare);
   if(!canShareFiles){ openFilePrintable(url,name); return; }   // десктоп
@@ -7007,6 +7028,7 @@ function buildContractFiles(c){
            '</div>'+
            (kind==="act"?'<label onclick="event.stopPropagation()" style="display:flex;align-items:center;gap:5px;padding:5px 9px;background:'+(f.signed?'#27ae6015':'#fff')+';border:1px solid '+(f.signed?'#27ae6055':'#d0dae8')+';border-radius:6px;cursor:pointer;font-size:10px;font-weight:700;color:'+(f.signed?'#27ae60':'#9aabbf')+';white-space:nowrap;flex-shrink:0"><input type="checkbox" data-a="ct-act-signed" data-cid="'+c.id+'" data-fid="'+f.id+'"'+(f.signed?' checked':'')+' style="accent-color:#27ae60;margin:0">'+(f.signed?'подписан':'не подписан')+'</label>':'')+
            '<a href="'+f.data+'" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;cursor:pointer;color:'+color+';font-size:11px;font-weight:700;text-decoration:none;white-space:nowrap">Открыть</a>'+
+           fileDownloadBtn(f.data,f.name||"Файл",color,28,6)+
            '<button data-a="file-print" data-url="'+esc(f.data)+'" data-name="'+esc(f.name||"Файл")+'" data-mime="'+esc(f.mime||"")+'" title="Печать" style="width:28px;height:28px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;cursor:pointer;color:'+color+';font-size:13px;flex-shrink:0">🖨</button>'+
            '<button data-a="ct-file-del" data-cid="'+c.id+'" data-fid="'+f.id+'" style="width:28px;height:28px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:12px;flex-shrink:0">✕</button>'+
            '</div>';
