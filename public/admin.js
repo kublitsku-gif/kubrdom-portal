@@ -7053,84 +7053,74 @@ function tContractDetail(cid){
       '<div style="font-size:14px;font-weight:700;color:#0d1b2e;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.name)+'</div>'+
     '</div>';
 
-  // Важные даты — подписание и дедлайн
-  (function(){
-    const dlInfo=contractDeadlineInfo(c.deadlineDate);
-    html+='<div style="display:flex;gap:8px;margin-bottom:10px">'+
-      '<div style="flex:1;background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:10px 12px">'+
-        '<div style="font-size:9px;color:#7a9aaa;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">📅 ПОДПИСАНИЕ</div>'+
-        '<div style="font-size:14px;font-weight:700;color:#1a2a3a">'+(c.signDate||"—")+'</div>'+
+  // ─── ШАПКА ДОГОВОРА: ПЛОТНЫЙ ДАШБОРД ────────────────────────────────────
+  // Раньше здесь стояло шесть отдельных белых карточек (даты, PIN, CRM, статус,
+  // архив, детали) одинакового веса: настройка PIN занимала столько же места,
+  // сколько красная просрочка, а сумма договора лежала в середине списка.
+  // Теперь: блок денег → сетка полей → строка действий. Действия и их data-a
+  // прежние (ct-status, ct-edit-toggle, ct-archive-toggle, ct-clientpin-*) —
+  // поменялась только подача, обработчики трогать не пришлось.
+  const ewTotal=(c.extraWorks||[]).reduce(function(a,w){
+    return a+(w.cost||0)+(w.mats||[]).reduce(function(b,m){return b+(m.cost||0)*(m.qty||1);},0);
+  },0);
+  const mainAmount=c.amount||0;
+  const grandTotal=mainAmount+ewTotal;
+  // Оплата клиента — та же формула, что в кабинете клиента: матч по объекту ТОЛЬКО
+  // при непустом objId, иначе платежи всех договоров без объекта склеиваются в один.
+  const ctPaid=finTxns.filter(function(t){
+    return t.type==="income"&&((c.objId&&t.objId===c.objId)||t.contractId===c.id);
+  }).reduce(function(a,t){return a+(t.amount||0);},0);
+  const ctLeft=Math.max(0,grandTotal-ctPaid);
+  const payPct=grandTotal>0?Math.min(100,Math.round(ctPaid/grandTotal*100)):0;
+  const dlInfo=contractDeadlineInfo(c.deadlineDate);
+  const canSeePin=currentUser&&(currentUser.roles.includes("admin")||currentUser.roles.includes("client_mgr"));
+  const isEditing=contractEditId===cid;
+
+  // Блок денег — первое, что видно: сумма, полоса оплаты, оплачено/остаток.
+  html+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:14px;padding:13px 15px;margin-bottom:9px">'+
+    '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">'+
+      '<div style="min-width:0">'+
+        '<div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.5px">СУММА ДОГОВОРА</div>'+
+        '<div style="font-size:25px;font-weight:800;color:#0d1b2e;letter-spacing:-0.5px;line-height:1.15;font-variant-numeric:tabular-nums">'+grandTotal.toLocaleString("ru-RU")+' ₽</div>'+
       '</div>'+
-      '<div style="flex:1;background:#fff;border:1px solid '+(dlInfo?dlInfo.color+"44":"#dde6f0")+';border-radius:12px;padding:10px 12px">'+
-        '<div style="font-size:9px;color:#e67e22;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">🏁 ДЕДЛАЙН</div>'+
-        '<div style="font-size:14px;font-weight:700;color:#1a2a3a">'+(c.deadlineDate||"—")+'</div>'+
-        (dlInfo?'<div style="font-size:9px;font-weight:700;color:'+dlInfo.color+';margin-top:2px">'+(dlInfo.overdue?"🔴 ":(dlInfo.color==="#f39c12"?"🟡 ":"🟢 "))+dlInfo.label+'</div>':'')+
+      '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">'+
+        '<span style="font-size:10px;font-weight:700;border-radius:6px;padding:2px 8px;background:'+st.color+'15;color:'+st.color+'">'+st.label+'</span>'+
+        (dlInfo?'<span style="font-size:10px;font-weight:700;border-radius:6px;padding:2px 8px;white-space:nowrap;background:'+dlInfo.color+'15;color:'+dlInfo.color+'">'+(dlInfo.overdue?"🔴 ":(dlInfo.color==="#f39c12"?"🟡 ":"🟢 "))+dlInfo.label+'</span>':'')+
       '</div>'+
-    '</div>';
-  })();
+    '</div>'+
+    (grandTotal>0?'<div style="height:5px;border-radius:3px;background:#eef2f6;overflow:hidden;margin-top:10px"><div style="height:100%;width:'+payPct+'%;background:#27ae60;border-radius:3px"></div></div>':'')+
+    '<div style="display:flex;gap:14px;margin-top:11px">'+
+      '<div style="flex:1;min-width:0"><div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.5px">ОПЛАЧЕНО</div><div style="font-size:14px;font-weight:700;color:#27ae60;font-variant-numeric:tabular-nums">'+ctPaid.toLocaleString("ru-RU")+'</div></div>'+
+      '<div style="flex:1;min-width:0"><div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.5px">ОСТАТОК</div><div style="font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;color:'+(ctLeft>0?"#f39c12":"#27ae60")+'">'+(ctLeft>0?ctLeft.toLocaleString("ru-RU"):"✓")+'</div></div>'+
+      (ewTotal>0?'<div style="flex:1;min-width:0"><div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.5px">ДОП. РАБОТЫ</div><div style="font-size:14px;font-weight:700;color:#8e44ad;font-variant-numeric:tabular-nums">+'+ewTotal.toLocaleString("ru-RU")+'</div></div>':'')+
+    '</div>'+
+  '</div>';
 
-  // PIN клиента для входа в кабинет — только админ и менеджер по сопровождению
-  (function(){
-    const canSee=currentUser&&(currentUser.roles.includes("admin")||currentUser.roles.includes("client_mgr"));
-    if(!canSee) return;
-    const eff=effectiveClientPin(c);
-    const isCustom=c.clientPin&&c.clientPin.trim();
-    html+='<div style="background:#fff;border:1px solid #d6890044;border-radius:12px;padding:12px 14px;margin-bottom:10px">'+
-      '<div style="font-size:10px;color:#d68910;font-weight:700;letter-spacing:0.5px;margin-bottom:6px">🔑 PIN КЛИЕНТА ДЛЯ ВХОДА</div>'+
-      '<div style="font-size:11px;color:#7a9aaa;margin-bottom:8px">Клиент входит по номеру договора или фамилии + этот PIN. По умолчанию — последние 4 цифры его телефона'+(eff?' ('+eff+')':' (телефон не указан)')+'.</div>'+
-      '<div style="display:flex;gap:6px">'+
-        '<input id="ct-clientpin-'+c.id+'" type="text" inputmode="numeric" maxlength="6" value="'+(isCustom?c.clientPin:"")+'" placeholder="'+(eff||"PIN")+'" style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:14px;outline:none;letter-spacing:3px;box-sizing:border-box">'+
-        '<button data-a="ct-clientpin-save" data-cid="'+c.id+'" style="padding:8px 14px;background:#d68910;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Задать</button>'+
-        (isCustom?'<button data-a="ct-clientpin-reset" data-cid="'+c.id+'" style="padding:8px 12px;background:transparent;border:1px solid #dde6f0;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:12px">Сброс</button>':'')+
-      '</div>';
-    html+='</div>';
-  })();
-
-  // CRM client card
-  if(crmLinked){
-    html+=
-      '<div style="background:linear-gradient(135deg,#27ae6012,#27ae6006);border:1px solid #27ae6033;border-radius:12px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:flex-start;gap:10px">'+
-        '<div style="width:36px;height:36px;border-radius:10px;background:#27ae6020;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">👤</div>'+
-        '<div style="flex:1;min-width:0">'+
-          '<div style="font-size:13px;font-weight:700;color:#1a2a3a">'+esc(crmLinked.name)+'</div>'+
-          '<div style="font-size:11px;color:#5a7a9a;margin-top:2px">'+crmLinked.phone+'</div>'+
-          '<div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap">'+
-            '<span style="font-size:10px;background:#27ae6015;color:#27ae60;border-radius:6px;padding:1px 8px;font-weight:700">📝 Этап: '+(CRM_STAGE_NAMES[crmLinked.stage]||crmLinked.stage)+'</span>'+
-            (crmLinked.notes?'<span style="font-size:10px;color:#7a9aaa;font-style:italic">'+esc(crmLinked.notes)+'</span>':'')+
-          '</div>'+
-          (crmLinked.msg?'<div style="font-size:11px;color:#7a9aaa;margin-top:4px;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">«'+esc(crmLinked.msg)+'»</div>':'')+
-        '</div>'+
-        '<button data-a="ct-goto-crm" data-crmid="'+crmLinked.id+'" style="padding:4px 8px;background:#27ae60;border:none;border-radius:6px;cursor:pointer;font-size:10px;color:#fff;font-weight:700;flex-shrink:0;white-space:nowrap">→ CRM</button>'+
-      '</div>';
-  }
-
-  // Status
-  html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:10px">';
-  html+='<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">СТАТУС</div>';
-  html+='<div style="display:flex;gap:6px">';
+  // Строка действий: статус слева, редкие действия справа. Раньше это были три
+  // отдельные карточки (статус, архив, кнопка «Изменить» внутри «Деталей»).
+  html+='<div style="display:flex;gap:6px;margin-bottom:9px">';
   Object.keys(STATUS).forEach(function(k){
     const s=STATUS[k];
-    html+='<button data-a="ct-status" data-cid="'+c.id+'" data-s="'+k+'" style="flex:1;padding:7px 4px;border-radius:8px;border:none;cursor:pointer;font-size:11px;font-weight:700;background:'+(c.status===k?s.color:'#f0f4f8')+';color:'+(c.status===k?'#fff':'#7a9aaa')+'">'+s.label+'</button>';
+    const on=c.status===k;
+    html+='<button data-a="ct-status" data-cid="'+c.id+'" data-s="'+k+'" style="flex:1;padding:7px 4px;border-radius:9px;cursor:pointer;font-size:11px;font-weight:700;border:1px solid '+(on?s.color:'#dde6f0')+';background:'+(on?s.color:'#fff')+';color:'+(on?'#fff':'#7a9aaa')+'">'+s.label+'</button>';
   });
-  html+='</div></div>';
+  html+='</div>';
 
-  // Архив: убрать завершённый/закрытый договор из активного списка (уходит в подвкладку «Архив»)
-  html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:10px">'+
-    '<button data-a="ct-archive-toggle" data-cid="'+c.id+'" style="width:100%;padding:9px;border-radius:9px;cursor:pointer;font-size:12px;font-weight:700;border:1px solid '+(c.archived?'#27ae6055':'#dde6f0')+';background:'+(c.archived?'#eaf6ee':'#f7f9fb')+';color:'+(c.archived?'#27ae60':'#8a97a6')+'">'+(c.archived?'↩️ Вернуть из архива':'📦 Отправить в архив')+'</button>'+
-    '<div style="font-size:10px;color:#9aabbf;text-align:center;margin-top:6px">'+(c.archived?'Договор в архиве — скрыт из активного списка':'Уберёт из активного списка, договор останется во вкладке «Архив»')+'</div>'+
+  html+='<div style="display:flex;gap:6px;margin-bottom:9px">'+
+    '<button data-a="ct-edit-toggle" data-cid="'+cid+'" style="flex:1;padding:8px;border-radius:9px;border:none;cursor:pointer;font-size:11.5px;font-weight:700;background:'+(isEditing?'#f0f4f8':'#2980b9')+';color:'+(isEditing?'#7a9aaa':'#fff')+'">'+(isEditing?'✕ Отмена':'✏️ Изменить')+'</button>'+
+    (crmLinked?'<button data-a="ct-goto-crm" data-crmid="'+crmLinked.id+'" style="flex:1;padding:8px;border-radius:9px;border:1px solid #27ae6055;cursor:pointer;font-size:11.5px;font-weight:700;background:#fff;color:#27ae60">→ CRM</button>':'')+
+    '<button data-a="ct-archive-toggle" data-cid="'+c.id+'" style="flex:1;padding:8px;border-radius:9px;cursor:pointer;font-size:11.5px;font-weight:700;border:1px solid '+(c.archived?'#27ae6055':'#dde6f0')+';background:'+(c.archived?'#eaf6ee':'#fff')+';color:'+(c.archived?'#27ae60':'#8a97a6')+'">'+(c.archived?'↩️ Из архива':'📦 В архив')+'</button>'+
   '</div>';
 
-  // Details — editable or view
-  const isEditing=contractEditId===cid;
+  // Поля договора. В режиме просмотра — плотная сетка, в режиме правки — прежняя
+  // форма целиком (её поля и id не менялись).
+  html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:'+(isEditing?'12px 14px':'3px 14px')+';margin-bottom:9px">';
+
   // Источник значений edit-формы: черновик (переживает перерисовки), фолбэк — сам договор.
   const ed=(isEditing&&ctEditDraft&&ctEditDraft.cid===cid)?ctEditDraft:{name:c.name,amount:c.amount,signDate:c.signDate,deadlineDate:c.deadlineDate,note:c.note,objId:c.objId};
-  html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:10px">';
-  html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'+
-    '<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px">ДЕТАЛИ</div>'+
-    '<button data-a="ct-edit-toggle" data-cid="'+cid+'" style="padding:3px 10px;background:'+(isEditing?'#f0f4f8':'#2980b9')+';border:none;border-radius:6px;cursor:pointer;font-size:11px;color:'+(isEditing?'#7a9aaa':'#fff')+';font-weight:600">'+(isEditing?'✕ Отмена':'✏️ Изменить')+'</button>'+
-  '</div>';
 
   if(isEditing){
+    html+='<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">ДЕТАЛИ</div>';
     html+=
       '<select id="ct-edit-obj" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;margin-bottom:8px;outline:none;background:#fff;box-sizing:border-box">'+
         '<option value=""'+(!ed.objId?' selected':'')+'>— Без объекта —</option>'+
@@ -7152,49 +7142,57 @@ function tContractDetail(cid){
       '<textarea id="ct-edit-note" placeholder="Примечания" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;height:60px;resize:none;outline:none;margin-bottom:10px;box-sizing:border-box">'+esc(ed.note||'')+'</textarea>'+
       '<button data-a="ct-edit-save" data-cid="'+cid+'" style="width:100%;padding:9px;background:#27ae60;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">💾 Сохранить изменения</button>';
   } else {
-    // Calculate extra works total
-    const ewTotal=(c.extraWorks||[]).reduce(function(a,w){
-      return a+(w.cost||0)+(w.mats||[]).reduce(function(b,m){return b+(m.cost||0)*(m.qty||1);},0);
-    },0);
-    const mainAmount=c.amount||0;
-    const grandTotal=mainAmount+ewTotal;
-
-    const rows=[
-      {label:"Объект", val:obj?obj.icon+" "+obj.name:"—"},
-      {label:"Тип",    val:c.type==="main"?"Основной":"Доп. работы"},
-      {label:"Клиент", val:ctClientName(c)||"—"},
-      {label:"Дата",   val:c.signDate||"—"},
-    ];
-    rows.forEach(function(row){
-      html+=
-        '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f4f6f9">'+
-          '<span style="font-size:12px;color:#7a9aaa">'+row.label+'</span>'+
-          '<span style="font-size:12px;font-weight:600;color:#1a2a3a">'+row.val+'</span>'+
-        '</div>';
-    });
-
-    // Sum breakdown
-    html+='<div style="margin-top:8px;padding-top:8px;border-top:2px solid #e8eef5">';
-    html+=
-      '<div style="display:flex;justify-content:space-between;padding:4px 0">'+
-        '<span style="font-size:12px;color:#7a9aaa">Основной договор</span>'+
-        '<span style="font-size:13px;font-weight:700;color:#2980b9">'+(mainAmount?fmt(mainAmount):"—")+'</span>'+
-      '</div>';
-    if(ewTotal>0){
-      html+=
-        '<div style="display:flex;justify-content:space-between;padding:4px 0">'+
-          '<span style="font-size:12px;color:#7a9aaa">Доп. работы</span>'+
-          '<span style="font-size:13px;font-weight:700;color:#8e44ad">+'+fmt(ewTotal)+'</span>'+
-        '</div>';
+    // Просмотр: плотная сетка полей вместо стопки строк «ключ — значение».
+    // auto-fit сам схлопывает две колонки в одну на узких экранах (iPhone SE, 320 px),
+    // поэтому медиазапрос не нужен и значения нигде не режутся.
+    const cells=[];
+    cells.push({k:"Объект",     v:obj?esc(obj.icon+" "+obj.name):"—"});
+    cells.push({k:"Тип",        v:c.type==="main"?"Основной":"Доп. работы"});
+    cells.push({k:"Клиент",     v:esc(ctClientName(c)||"—")});
+    if(crmLinked&&crmLinked.phone) cells.push({k:"Телефон", v:esc(crmLinked.phone)});
+    cells.push({k:"Подписание", v:c.signDate||"—"});
+    cells.push({k:"Дедлайн",    v:c.deadlineDate?'<span style="color:'+(dlInfo?dlInfo.color:"#1a2a3a")+'">'+c.deadlineDate+'</span>':"—"});
+    if(crmLinked) cells.push({k:"Этап CRM", v:esc(CRM_STAGE_NAMES[crmLinked.stage]||crmLinked.stage||"—")});
+    if(mainAmount&&ewTotal>0) cells.push({k:"Основной договор", v:'<span style="color:#2980b9">'+fmt(mainAmount)+'</span>'});
+    // PIN клиента: раньше — целая карточка с формой третьим блоком сверху. Теперь
+    // ячейка как все, а форма раскрывается по тапу (ctPinEdit).
+    if(canSeePin){
+      const effPin=effectiveClientPin(c);
+      cells.push({
+        k:"PIN клиента",
+        v:'<span style="color:'+(effPin?"#d68910":"#9aabbf")+'">'+(effPin||"не задан")+'</span>'+
+          '<span style="font-size:10px;color:#9aabbf;font-weight:600"> · изменить</span>',
+        a:'ct-pin-edit'
+      });
     }
-    html+=
-      '<div style="display:flex;justify-content:space-between;padding:6px 0;margin-top:4px;border-top:1px dashed #d0dae8">'+
-        '<span style="font-size:13px;font-weight:700;color:#1a2a3a">ИТОГО</span>'+
-        '<span style="font-size:15px;font-weight:700;color:#27ae60">'+(grandTotal?fmt(grandTotal):"—")+'</span>'+
+    // margin-bottom:-1px прячет разделитель последней строки: он совпал бы с краем карточки.
+    // minmax(124px) подобран так, чтобы две колонки влезали даже на 320 px (iPhone SE):
+    // 124·2 + 14 gap = 262 < 268 доступных. Значения переносятся, а не режутся
+    // многоточием — длинное имя объекта важнее ровной высоты строк.
+    html+='<div style="overflow:hidden"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(124px,1fr));gap:0 14px;margin-bottom:-1px">';
+    cells.forEach(function(cell){
+      html+='<div'+(cell.a?' data-a="'+cell.a+'" data-cid="'+cid+'" style="cursor:pointer;':' style="')+'padding:8px 0;border-bottom:1px solid #f0f3f7;min-width:0">'+
+        '<div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.5px;text-transform:uppercase">'+cell.k+'</div>'+
+        '<div style="font-size:12.5px;font-weight:700;color:#1a2a3a;margin-top:2px;overflow-wrap:anywhere">'+cell.v+'</div>'+
       '</div>';
-    html+='</div>';
+    });
+    html+='</div></div>';
 
-    if(c.note) html+='<div style="margin-top:8px;font-size:12px;color:#5a7a9a;background:#f8fafc;border-radius:8px;padding:8px">'+esc(c.note)+'</div>';
+    // Форма PIN — только когда её вызвали тапом по ячейке.
+    if(canSeePin&&ctPinEdit===cid){
+      const effPin=effectiveClientPin(c);
+      const isCustom=c.clientPin&&c.clientPin.trim();
+      html+='<div style="margin:9px 0 11px;padding:11px 12px;background:#d689100a;border:1px solid #d6891033;border-radius:10px">'+
+        '<div style="font-size:11px;color:#7a9aaa;margin-bottom:8px">Клиент входит по номеру договора или фамилии и этому PIN. По умолчанию — последние 4 цифры его телефона'+(effPin?' ('+effPin+')':' (телефон не указан)')+'.</div>'+
+        '<div style="display:flex;gap:6px">'+
+          '<input id="ct-clientpin-'+c.id+'" type="text" inputmode="numeric" maxlength="6" value="'+(isCustom?c.clientPin:"")+'" placeholder="'+(effPin||"PIN")+'" style="flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:14px;outline:none;letter-spacing:3px;box-sizing:border-box">'+
+          '<button data-a="ct-clientpin-save" data-cid="'+c.id+'" style="padding:8px 14px;background:#d68910;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700;flex-shrink:0">Задать</button>'+
+          (isCustom?'<button data-a="ct-clientpin-reset" data-cid="'+c.id+'" style="padding:8px 12px;background:transparent;border:1px solid #dde6f0;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:12px;flex-shrink:0">Сброс</button>':'')+
+        '</div>'+
+      '</div>';
+    }
+
+    if(c.note) html+='<div style="margin:9px 0 11px;font-size:12px;color:#5a7a9a;background:#f8fafc;border-radius:8px;padding:8px 10px">'+esc(c.note)+'</div>';
   }
   html+='</div>';
 
@@ -10789,6 +10787,10 @@ let contractDocs=[
 ]; // {id, objId, type:"main"|"extra", name, amount, signDate, client, status:"draft"|"signed"|"closed", file:"", note}
 let contractView=null; // null=list, id=detail
 let contractEditId=null; // id being edited
+// Какому договору раскрыта форма PIN клиента. Раньше форма стояла отдельной
+// карточкой третьим блоком сверху — её трогают раз за жизнь договора, поэтому
+// теперь она раскрывается тапом по ячейке «PIN клиента» в сетке полей.
+let ctPinEdit=null;
 // Несохранённые правки edit-формы договора. Поля живут в innerHTML и гибнут при любой
 // перерисовке (выбор клиента, файл, фоновый рендер) — поэтому рендерим их из черновика
 // и синкаем на каждый ввод. «Отмена» просто выбрасывает черновик, договор не тронут.
@@ -14246,7 +14248,7 @@ function bind(){
       fl();
     };}
     else if(a==="ct-open"){el.onclick=()=>{contractView=el.dataset.cid;render();};}
-    else if(a==="ct-back"){el.onclick=()=>{contractView=null;render();};}
+    else if(a==="ct-back"){el.onclick=()=>{contractView=null;ctPinEdit=null;render();};}
     // ─── Шаблон договора (подвкладка) ───
     else if(a==="ct-subtab"){el.onclick=()=>{ctSubTab=el.dataset.st;render();};}
     else if(a==="ct-tpl-exec"){el.onclick=()=>{ctTplGet().execKey=el.dataset.k;ctTplPersist();render();};}
@@ -14531,6 +14533,12 @@ function bind(){
         return Object.assign({},x,{extraWorks:ew});
       });
       fl();
+    };}
+    else if(a==="ct-pin-edit"){el.onclick=()=>{
+      const cid=el.dataset.cid;
+      ctPinEdit=ctPinEdit===cid?null:cid;
+      rerenderTab();
+      if(ctPinEdit){ const i=document.getElementById("ct-clientpin-"+cid); if(i){ i.focus(); } }
     };}
     else if(a==="ct-clientpin-save"){el.onclick=()=>{
       const cid=el.dataset.cid;
