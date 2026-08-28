@@ -6,6 +6,7 @@
 import { sendTg, escapeHtml } from "./notify.js";
 import { deadlineInfo, objTeam, money, mskToday } from "./reminders.js";
 import { salaryPaid, salaryPlan } from "./botfin.js";
+import { needStatus, needState, objectSupply } from "./supply.js";
 
 const has = (roles, list) => (roles || []).some(function (r) { return list.indexOf(r) >= 0; });
 const canFin = (roles) => has(roles, ["admin", "financier"]);
@@ -31,18 +32,21 @@ function visibleObjects(st, uid, roles) {
 function objStats(st, o) {
   const works = (o.stages || []).flatMap(function (s) { return s.works || []; });
   const done = works.filter(function (w) { return w.done; });
-  const mats = works.flatMap(function (w) { return w.mats || []; });
-  const purchased = st.purchased || {}, arrived = st.arrived || {};
   const cost = works.reduce(function (a, w) { return a + (w.cost || 0); }, 0);
   const doneCost = done.reduce(function (a, w) { return a + (w.cost || 0); }, 0);
+  // Материалы считает общий модуль: партии, а при их отсутствии — старые флаги.
+  const sup = objectSupply(o, st.purchases || [], st.purchased || {}, st.arrived || {});
+  // Деньги бригаде теперь на этапе; расценки по работам остаются запасным источником.
+  const pay = (o.stages || []).reduce(function (a, s) {
+    const v = Number(s.pay);
+    return a + (isFinite(v) && v > 0 ? v : (s.works || []).reduce(function (b, w) { return b + (Number(w.pay) || 0); }, 0));
+  }, 0);
   return {
     works: works.length, done: done.length, cost: cost, doneCost: doneCost,
     pct: cost > 0 ? Math.round(doneCost / cost * 100) : 0,
-    mats: mats.length,
-    bought: mats.filter(function (m) { return purchased[m.id]; }).length,
-    notArrived: mats.filter(function (m) { return purchased[m.id] && !arrived[m.id]; }).length,
-    notBoughtSum: mats.filter(function (m) { return !purchased[m.id]; }).reduce(function (a, m) { return a + (m.cost || 0) * (m.qty || 1); }, 0),
-    pay: works.reduce(function (a, w) { return a + (Number(w.pay) || 0); }, 0),
+    mats: sup.need, bought: sup.bought + sup.got, got: sup.got,
+    notArrived: sup.bought, notBought: sup.none + sup.partial,
+    notBoughtSum: sup.needSum, spent: sup.spent, pay: pay,
   };
 }
 
@@ -177,7 +181,7 @@ function byPerson(st, docs) {
 // ─── 📦 Снабжение ────────────────────────────────────────────────────────────
 export async function viewSupply(env, chat, uid, roles) {
   if (!canSupply(roles)) return await sendTg(env, chat, "Снабжение вам недоступно.");
-  const st = await snap(env, ["objects", "contractDocs", "users", "purchased", "arrived"]);
+  const st = await snap(env, ["objects", "contractDocs", "users", "purchased", "arrived", "purchases"]);
   const objs = visibleObjects(st, uid, roles);
   if (!objs.length) return await sendTg(env, chat, "Объектов не найдено.");
   let nb = 0, na = 0, nbSum = 0;
@@ -197,7 +201,7 @@ export async function viewSupply(env, chat, uid, roles) {
 
 // ─── 🏗 Объекты ──────────────────────────────────────────────────────────────
 export async function viewObjects(env, chat, uid, roles) {
-  const st = await snap(env, ["objects", "contractDocs", "users", "purchased", "arrived"]);
+  const st = await snap(env, ["objects", "contractDocs", "users", "purchased", "arrived", "purchases"]);
   const objs = visibleObjects(st, uid, roles);
   if (!objs.length) return await sendTg(env, chat, "За вами не закреплено ни одного объекта.");
   const lines = objs.map(function (o) {
@@ -210,7 +214,7 @@ export async function viewObjects(env, chat, uid, roles) {
 }
 
 export async function viewObject(env, chat, oid, uid, roles) {
-  const st = await snap(env, ["objects", "contractDocs", "users", "purchased", "arrived", "finTxns"]);
+  const st = await snap(env, ["objects", "contractDocs", "users", "purchased", "arrived", "finTxns", "purchases"]);
   const o = (st.objects || []).find(function (x) { return x.id === oid; });
   if (!o) return await sendTg(env, chat, "Объект не найден.");
   if (!visibleObjects(st, uid, roles).some(function (x) { return x.id === oid; })) return await sendTg(env, chat, "Этот объект вам недоступен.");
@@ -248,30 +252,44 @@ export async function viewObject(env, chat, oid, uid, roles) {
 // потом купленное, но не принятое, и только затем то, что уже на объекте.
 const MAT_PAGE = 14;
 export async function viewMaterials(env, chat, oid, page, uid, roles) {
-  const st = await snap(env, ["objects", "contractDocs", "users", "purchased", "arrived"]);
+  const st = await snap(env, ["objects", "contractDocs", "users", "purchased", "arrived", "purchases"]);
   const o = (st.objects || []).find(function (x) { return x.id === oid; });
   if (!o) return await sendTg(env, chat, "Объект не найден.");
   if (!visibleObjects(st, uid, roles).some(function (x) { return x.id === oid; })) return await sendTg(env, chat, "Этот объект вам недоступен.");
-  const purchased = st.purchased || {}, arrived = st.arrived || {};
-
   const mats = (o.stages || []).flatMap(function (sg) { return (sg.works || []).flatMap(function (w) { return (w.mats || []).map(function (m) { return { m: m, w: w }; }); }); });
-  if (!mats.length) return await sendTg(env, chat, "У объекта «" + escapeHtml(o.name) + "»материалов не заведено.");
-  const rank = (x) => !purchased[x.m.id] ? 0 : (!arrived[x.m.id] ? 1 : 2);
-  mats.sort(function (a, b) { return rank(a) - rank(b); });
+  if (!mats.length) return await sendTg(env, chat, "У объекта «" + escapeHtml(o.name) + "» материалов не заведено.");
+
+  // Статус — общим модулем: количества, а не «да/нет». Порядок: сперва то, чего нет.
+  const ST = { none: 0, partial: 1, bought: 2, partialGot: 3, got: 4 };
+  const ICON = { none: "⬜", partial: "🟠", bought: "🛒", partialGot: "🟡", got: "✅" };
+  mats.forEach(function (x) {
+    x.st = needStatus(x.m.id, x.m, st.purchases || [], st.purchased || {}, st.arrived || {});
+    x.state = needState(x.st);
+  });
+  mats.sort(function (a, b) { return ST[a.state] - ST[b.state]; });
 
   const p = Math.max(0, Number(page) || 0);
   const slice = mats.slice(p * MAT_PAGE, p * MAT_PAGE + MAT_PAGE);
-  const icon = (x) => rank(x) === 0 ? "⬜" : (rank(x) === 1 ? "🟡" : "✅");
-  const sum = (f) => mats.filter(f).reduce(function (a, x) { return a + (x.m.cost || 0) * (x.m.qty || 1); }, 0);
   const lines = slice.map(function (x) {
-    const q = x.m.qty && x.m.qty > 1 ? " ×" + x.m.qty : "";
-    return icon(x) + " " + escapeHtml(String(x.m.n || x.m.name || "материал").slice(0, 44)) + q;
+    const partial = x.state === "partialGot" || x.state === "partial";
+    const q = partial ? " · " + x.st.got + " из " + x.st.want : (x.st.want > 1 ? " ×" + x.st.want : "");
+    return ICON[x.state] + " " + escapeHtml(String(x.m.n || x.m.name || "материал").slice(0, 40)) + q;
   });
 
-  const nb = mats.filter(function (x) { return rank(x) === 0; }).length;
-  const na = mats.filter(function (x) { return rank(x) === 1; }).length;
-  const ok = mats.length - nb - na;
+  const cnt = (s) => mats.filter(function (x) { return x.state === s; }).length;
+  const sumNeed = mats.filter(function (x) { return x.state === "none" || x.state === "partial"; })
+    .reduce(function (a, x) { return a + (x.st.want - x.st.bought) * (x.m.cost || 0); }, 0);
+  const waiting = cnt("bought") + cnt("partialGot");
+
   const rows = [];
+  // Принять можно только то, что уже куплено, и только производству — по одной кнопке
+  // на позицию: приёмка в боте и в панели пишут в одну и ту же партию.
+  if (has(roles, ["admin", "brigadier", "worker", "prod_head"])) {
+    slice.filter(function (x) { return x.state === "bought" || x.state === "partialGot"; }).slice(0, 5)
+      .forEach(function (x) {
+        rows.push([{ text: "✅ Принять · " + String(x.m.n || "").slice(0, 28), callback_data: "v:rcv:" + oid + ":" + x.m.id }]);
+      });
+  }
   const nav = [];
   if (p > 0) nav.push({ text: "‹ Назад", callback_data: "v:mat:" + oid + ":" + (p - 1) });
   if ((p + 1) * MAT_PAGE < mats.length) nav.push({ text: "Ещё ›", callback_data: "v:mat:" + oid + ":" + (p + 1) });
@@ -279,9 +297,9 @@ export async function viewMaterials(env, chat, oid, page, uid, roles) {
   rows.push([{ text: "‹ К объекту", callback_data: "v:obj:" + oid }]);
 
   const text = "📦 <b>Материалы · " + escapeHtml(o.name) + "</b>\n"
-    + "⬜ не куплено: <b>" + nb + "</b> на " + money(sum(function (x) { return rank(x) === 0; })) + "\n"
-    + "🟡 куплено, не принято: <b>" + na + "</b>\n"
-    + "✅ на объекте: <b>" + ok + "</b>\n\n"
+    + "⬜ не куплено: <b>" + (cnt("none") + cnt("partial")) + "</b> на " + money(sumNeed) + "\n"
+    + "🛒 в пути: <b>" + waiting + "</b>\n"
+    + "✅ на объекте: <b>" + cnt("got") + "</b>\n\n"
     + lines.join("\n")
     + "\n\n<i>стр. " + (p + 1) + " из " + Math.ceil(mats.length / MAT_PAGE) + "</i>";
   return await sendTg(env, chat, text, { reply_markup: { inline_keyboard: rows } });
@@ -295,9 +313,36 @@ export async function viewText(env, uid, chat, text, roles) {
   if (/^🏗|^объект/i.test(t)) { await viewObjects(env, chat, uid, roles); return true; }
   return false;
 }
+// Приёмка позиции из бота: пишем и в партию, и в старый флаг — панель читает оба.
+export async function receiveFromBot(env, chat, oid, matId, uid, roles) {
+  if (!has(roles, ["admin", "brigadier", "worker", "prod_head"])) return await sendTg(env, chat, "Приёмку отмечают бригадир, мастер или админ.");
+  const st = await snap(env, ["objects", "contractDocs", "users", "purchased", "arrived", "purchases"]);
+  if (!visibleObjects(st, uid, roles).some(function (x) { return x.id === oid; })) return await sendTg(env, chat, "Этот объект вам недоступен.");
+  const m = (st.objects || []).flatMap(function (o) { return (o.stages || []).flatMap(function (sg) { return (sg.works || []).flatMap(function (w) { return w.mats || []; }); }); })
+    .find(function (x) { return x.id === matId; });
+  if (!m) return await sendTg(env, chat, "Материал не найден.");
+
+  const stamp = mskToday();
+  const purchases = (st.purchases || []).map(function (p) {
+    if (!(p.items || []).some(function (i) { return i.needId === matId; })) return p;
+    return Object.assign({}, p, { items: p.items.map(function (i) {
+      return i.needId !== matId ? i : Object.assign({}, i, { gotQty: Number(i.qty) || 0, gotAt: stamp, gotBy: uid });
+    }) });
+  });
+  const arrived = Object.assign({}, st.arrived || {}); arrived[matId] = true;
+  const now = Date.now();
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO work_states (storage_key, work_id, data, updated_at) VALUES ('admin_panel','purchases',?,?) ON CONFLICT(storage_key,work_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at").bind(JSON.stringify(purchases), now),
+    env.DB.prepare("INSERT INTO work_states (storage_key, work_id, data, updated_at) VALUES ('admin_panel','arrived',?,?) ON CONFLICT(storage_key,work_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at").bind(JSON.stringify(arrived), now),
+  ]);
+  await sendTg(env, chat, "✅ Принято на объект: <b>" + escapeHtml(m.n || "материал") + "</b>");
+  return await viewMaterials(env, chat, oid, 0, uid, roles);
+}
+
 export async function viewCallback(env, uid, chat, data, roles) {
   const parts = String(data || "").split(":");
   if (parts[0] !== "v") return false;
+  if (parts[1] === "rcv") { await receiveFromBot(env, chat, parts[2], parts[3], uid, roles); return true; }
   if (parts[1] === "obj") { await viewObject(env, chat, parts[2], uid, roles); return true; }
   if (parts[1] === "mat") { await viewMaterials(env, chat, parts[2], parts[3], uid, roles); return true; }
   return false;
