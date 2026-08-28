@@ -62,13 +62,17 @@ export async function workList(env, chat, oid, page, uid, roles) {
   const o = (st.objects || []).find(function (x) { return x.id === oid; });
   if (!o) return await sendTg(env, chat, "Объект не найден.");
 
-  const open = (o.stages || []).flatMap(function (s) { return (s.works || []).filter(function (w) { return !w.done; }).map(function (w) { return { s: s, w: w }; }); });
+  // Номер этапа держим при работе: в плоском списке кнопок Telegram иначе не понять,
+  // к какому этапу она относится, а порядок работ этого не проговаривает.
+  const open = (o.stages || []).flatMap(function (s, si) {
+    return (s.works || []).filter(function (w) { return !w.done; }).map(function (w) { return { s: s, w: w, n: si + 1 }; });
+  });
   if (!open.length) return await sendTg(env, chat, "🎉 На объекте «" + escapeHtml(o.name) + "» все работы отмечены выполненными.");
 
   const p = Math.max(0, Number(page) || 0);
   const slice = open.slice(p * PAGE, p * PAGE + PAGE);
   const rows = slice.map(function (x) {
-    const label = (x.w.n || "Работа").slice(0, 40) + ((x.w.timeLogs || []).length ? " ⏱" : "");
+    const label = x.n + " · " + (x.w.n || "Работа").slice(0, 36) + ((x.w.timeLogs || []).length ? " ⏱" : "");
     return [{ text: label, callback_data: "w:p:" + oid + ":" + x.w.id }];
   });
   const nav = [];
@@ -76,8 +80,15 @@ export async function workList(env, chat, oid, page, uid, roles) {
   if ((p + 1) * PAGE < open.length) nav.push({ text: "Ещё ›", callback_data: "w:l:" + oid + ":" + (p + 1) });
   if (nav.length) rows.push(nav);
 
-  return await sendTg(env, chat, "✅ <b>Какая работа выполнена?</b>\n«" + escapeHtml(o.name) + "» · осталось " + open.length
-    + "\n<i>⏱ — по работе уже есть записанные часы.</i>", { reply_markup: { inline_keyboard: rows } });
+  const byStage = (o.stages || []).map(function (s, si) {
+    const left = (s.works || []).filter(function (w) { return !w.done; }).length;
+    const all = (s.works || []).length;
+    return left ? (si + 1) + " — " + escapeHtml(String(s.n || "").replace(/^ЭТАП\s*\d+\s*[—-]?\s*/i, "").trim() || "этап") + ": осталось " + left + " из " + all : null;
+  }).filter(Boolean);
+
+  return await sendTg(env, chat, "✅ <b>Какая работа выполнена?</b>\n«" + escapeHtml(o.name) + "» · осталось " + open.length + "\n"
+    + (byStage.length ? byStage.join("\n") + "\n" : "")
+    + "\n<i>Цифра на кнопке — номер этапа. ⏱ — по работе уже есть часы.</i>", { reply_markup: { inline_keyboard: rows } });
 }
 
 // ─── Карточка работы ─────────────────────────────────────────────────────────
