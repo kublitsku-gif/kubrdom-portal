@@ -4160,6 +4160,19 @@ let showNotify=false, notifyData=null, notifyBusy=false, notifyLink=null, notify
 // ~390px; на стройке в один момент нужен один слой. works — что делаем, money — почём,
 // receive — приёмка (часы и фото крупными целями).
 let objWorkView="works";   // works | money | receive
+// Фильтр готовности внутри режима «Работы»: за что бригада может взяться прямо сейчас.
+// null = выбора ещё не было, тогда берём умолчание по роли (см. readyFilter).
+let objReadyFilter=null;   // go | wait | done | stages
+// Бригада открывает объект, чтобы понять, что делать сегодня, — ей сразу «Можно делать».
+// Админу и финансисту нужна полная карта этапов, им ничего не фильтруем.
+function readyFilter(){
+  if(objReadyFilter)return objReadyFilter;
+  const cu=currentUser;
+  if(!cu)return "stages";
+  const prod=cu.roles.some(function(r){return r==="brigadier"||r==="worker"||r==="prod_head";});
+  const boss=cu.roles.includes("admin")||cu.roles.includes("financier");
+  return prod&&!boss?"go":"stages";
+}
 // Пять секций шапки объекта (документы, доп работы, дедлайн, сделанное, видео) занимали
 // ~300px и в большинстве объектов пустые. Режим сбора: пока _objSecBuf активен, objSection
 // не рисует аккордеон, а складывает описание — и все секции выводятся одной строкой чипов.
@@ -5039,6 +5052,9 @@ ${_objEdit?`<div style="background:#fdecea;border:1px solid #f5b7b1;border-radiu
 ${(()=>{
   // Быстрый переход по этапам: 42 работы в трёх этапах — это длинная лента, в которой
   // теряешься. Показываем только когда этапов больше одного и есть что листать.
+  // При включённом фильтре готовности лента и так короткая, а часть этапов скрыта —
+  // якоря вели бы в никуда.
+  if(objWorkView==="works"&&readyFilter()!=="stages")return "";
   const _q=(objWorkSearch||"").trim().toLowerCase();
   const _m=(w)=>{ if(!_q)return true; if((w.n||"").toLowerCase().indexOf(_q)>=0)return true; return (w.mats||[]).some(m=>(m.n||"").toLowerCase().indexOf(_q)>=0||(m.store||"").toLowerCase().indexOf(_q)>=0); };
   const vis=obj.stages.filter(st=>!_q||st.works.some(_m));
@@ -5060,6 +5076,30 @@ ${(()=>{
     return `<button data-a="obj-work-view" data-v="${v[0]}" style="flex:1;padding:8px 4px;border-radius:9px;cursor:pointer;font-size:11.5px;font-weight:700;border:1.5px solid ${on?"#2980b9":"#dde6f0"};background:${on?"#2980b9":"#fff"};color:${on?"#fff":"#7a9aaa"};white-space:nowrap">${v[1]} ${v[2]}</button>`;
   }).join("")}
 </div>
+
+${(()=>{
+  // Фильтр готовности. Отвечает не на «какой статус у материала», а на «за что браться
+  // сейчас»: работы, где всё привезли, отделены от тех, что стоят из-за снабжения.
+  // Только в режиме «Работы» — в «Деньгах» и «Приёмке» нужен весь список целиком.
+  if(objWorkView!=="works")return "";
+  const _q=(objWorkSearch||"").trim().toLowerCase();
+  const _m=(w)=>{ if(!_q)return true; if((w.n||"").toLowerCase().indexOf(_q)>=0)return true; return (w.mats||[]).some(m=>(m.n||"").toLowerCase().indexOf(_q)>=0||(m.store||"").toLowerCase().indexOf(_q)>=0); };
+  const all=obj.stages.flatMap(st=>(st.works||[]).filter(_m));
+  if(!all.length)return "";
+  const cnt={go:0,wait:0,done:0};
+  all.forEach(w=>{cnt[workGroup(w)]++;});
+  const cur=readyFilter();
+  const tab=(v,ic,lb,n,c)=>{
+    const on=cur===v;
+    return `<button data-a="obj-ready-filter" data-v="${v}" style="flex:1;min-width:0;padding:6px 3px;border-radius:9px;cursor:pointer;border:1.5px solid ${on?c:"#dde6f0"};background:${on?c:"#fff"};color:${on?"#fff":"#7a9aaa"};font-size:10px;font-weight:700;line-height:1.3">${ic} ${lb}${n!=null?`<br><span style="font-size:13px">${n}</span>`:""}</button>`;
+  };
+  return `<div style="display:flex;gap:5px;margin-bottom:10px">
+    ${tab("go","▶","Можно делать",cnt.go,"#27ae60")}
+    ${tab("wait","⏳","Ждём материал",cnt.wait,"#e67e22")}
+    ${tab("done","✓","Сделано",cnt.done,"#7f8c9a")}
+    ${tab("stages","📋","По этапам",null,"#2980b9")}
+  </div>`;
+})()}
 
 ${(()=>{
   const canSeeSal=currentUser&&(currentUser.roles.includes("admin")||currentUser.roles.includes("financier")||currentUser.roles.includes("prod_head"));
@@ -5099,8 +5139,11 @@ ${showNObjStageTid===obj.id?`<div style="background:#fff;border-radius:12px;bord
 ${obj.stages.map(s=>{
   const _q=(objWorkSearch||"").trim().toLowerCase();
   const _matchW=(w)=>{ if(!_q)return true; if((w.n||"").toLowerCase().indexOf(_q)>=0)return true; return (w.mats||[]).some(m=>(m.n||"").toLowerCase().indexOf(_q)>=0||(m.store||"").toLowerCase().indexOf(_q)>=0); };
-  const _vw=s.works.filter(_matchW);
-  if(_q&&!_vw.length)return "";
+  // Фильтр готовности прячет работы внутри этапа, а не ломает структуру: бригадир всё
+  // равно видит, к какому этапу относится то, за что можно взяться. Пустой этап скрываем.
+  const _rf=objWorkView==="works"?readyFilter():"stages";
+  const _vw=s.works.filter(_matchW).filter(w=>_rf==="stages"||workGroup(w)===_rf);
+  if((_q||_rf!=="stages")&&!_vw.length)return "";
   return `<div id="stage-${s.id}" style="background:#fff;border-radius:12px;border:1px solid ${s.c}44;margin-bottom:10px">
   <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:linear-gradient(135deg,${s.c}15,${s.c}03),#fff;border-bottom:1px solid ${s.c}22;border-radius:11px 11px 0 0;position:sticky;top:var(--stagetop,110px);z-index:5">
     <div style="width:8px;height:8px;border-radius:50%;background:${s.c}"></div>
@@ -5127,7 +5170,9 @@ ${obj.stages.map(s=>{
       // закрывается, в других режимах скрыты — раскрытая панель осталась бы навсегда.
       const isTimeOpen=openTimeWid===w.id&&objWorkView==="receive";
       const isPhotoOpen=openPhotoWid===w.id&&objWorkView==="receive";
-      const isMatsOpen=openMatsWid===w.id&&objWorkView==="receive";
+      // Материалы раскрываются и в «Работах»: там теперь стоит плашка готовности, и приёмка
+      // должна быть под пальцем, а не в другом разделе портала.
+      const isMatsOpen=openMatsWid===w.id&&(objWorkView==="receive"||objWorkView==="works");
       const isDone=!!w.done;
       const photos=w.photos||[];
       // Can mark complete: production roles + admin
@@ -5149,6 +5194,18 @@ ${obj.stages.map(s=>{
           <div style="display:flex;gap:6px;margin-top:2px;align-items:center;flex-wrap:wrap">
             ${isSupplyWork?`<span style="font-size:9px;font-weight:700;color:#e67e22;background:#e67e2214;border:1px solid #e67e2240;border-radius:5px;padding:2px 7px;letter-spacing:0.3px">ДОБАВИЛ СНАБЖЕНЕЦ</span>`:""}
             ${objWorkView==="works"?(()=>{const ql=workQtyLabel(w);return ql?`<span style="font-size:10px;color:#16a085;background:#16a08515;border-radius:5px;padding:2px 7px;font-weight:600">${ql}</span>`:"";})():""}
+            ${objWorkView!=="works"?"":(()=>{
+              // Плашка готовности материалов. Тап раскрывает список с кнопкой «Принять» —
+              // тот же обработчик, что в «Снабжении», статус на портале один.
+              const ms=w.mats||[];
+              if(!ms.length)return "";
+              const r=workReady(w);
+              const anyNone=r.missing.some(m=>matStatus(m).bought<=0);
+              const c=r.ok?"#27ae60":anyNone?"#c0392b":"#e67e22";
+              const bg=r.ok?"#eafaf0":anyNone?"#fdeeec":"#fdf3e3";
+              const lbl=r.ok?"всё на объекте · "+ms.length:"ждём "+r.missing.length+" из "+ms.length;
+              return `<button data-a="obj-toggle-mats" data-wid="${w.id}" style="padding:2px 8px;background:${isMatsOpen?c+"22":bg};border:1px solid ${c}55;border-radius:5px;cursor:pointer;font-size:10px;color:${c};font-weight:700">📦 ${lbl}</button>`;
+            })()}
             ${objWorkView==="money"&&w.cost>0&&canSeeClientMoney()?`<span style="font-size:12px;color:#0d1b2e;font-weight:800">${fmt(w.cost)}</span>`:""}
             ${objWorkView!=="receive"&&workPay(w)?`<span title="Расценка по этой работе (старая схема)" style="font-size:11px;color:#8e44ad;background:#8e44ad14;border:1px solid #8e44ad33;border-radius:5px;padding:2px 7px;font-weight:700">👷 ${fmt(workPay(w))}</span>`:""}
             ${objWorkView!=="money"?"":(()=>{const st=getMatStatus(w.mats||[]);const cnt=(w.mats||[]).length;const c=st?st.color:'#2980b9';const bg=st?st.bg:'rgba(41,128,185,0.1)';const lbl=st&&st.done===st.total&&st.total>0?'✓':(st&&st.done>0?st.done+'/'+st.total+' ':'');return`<button data-a="obj-open-mats" data-oid="${obj.id}" data-wid="${w.id}" data-wn="${esc(w.n)}" style="padding:4px 9px;background:${bg};border:1px solid ${c}44;border-radius:5px;cursor:pointer;font-size:10px;color:${c};font-weight:600">${lbl}📦 ${cnt}</button>`;})()}
@@ -5176,6 +5233,14 @@ ${obj.stages.map(s=>{
               return `<button data-a="obj-toggle-photo" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="padding:6px 12px;font-size:12px !important;background:${bg};border:1px solid ${bd};border-radius:5px;cursor:pointer;font-size:10px;color:#3498db;font-weight:600">📷 ${photos.length>0?photos.length:'+'}</button>`;
             })()}
           </div>
+          ${objWorkView!=="works"||isDone?"":(()=>{
+            // Причина простоя прямо в карточке: бригадиру не надо раскрывать список,
+            // чтобы понять, чего ждёт работа, — а снабженцу это готовая заявка.
+            const r=workReady(w);
+            if(r.ok)return "";
+            return `<div style="margin-top:4px;display:flex;flex-direction:column;gap:1px">`+missingBlocks(r.missing).map(b=>
+              `<div style="font-size:10px;line-height:1.35;color:${b.c};font-weight:700">${b.t}: <span style="font-weight:500">${esc(b.v)}</span></div>`).join("")+`</div>`;
+          })()}
         </div>
         ${isAdmin&&_objEdit?`<button data-a="obj-del-work" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="width:22px;height:22px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>`:""}
       </div>`;
@@ -5309,6 +5374,29 @@ ${obj.stages.map(s=>{
     </div>`:`<button data-a="obj-show-work" data-sid="${s.id}" style="width:100%;margin-top:5px;padding:7px;background:transparent;border:1px dashed ${s.c}66;border-radius:7px;cursor:pointer;font-size:12px;color:${s.c};font-weight:600">+ Добавить работу</button>`):""}
   </div>
 </div>`;}).join("")}
+
+${(()=>{
+  // Пустая выборка фильтра — не поломка, а нормальное состояние («всё готовое сделано»).
+  // Молча пустой экран читался бы как потеря работ, поэтому объясняем и даём выход.
+  if(objWorkView!=="works")return "";
+  const rf=readyFilter();
+  if(rf==="stages")return "";
+  const _q=(objWorkSearch||"").trim().toLowerCase();
+  const _m=(w)=>{ if(!_q)return true; if((w.n||"").toLowerCase().indexOf(_q)>=0)return true; return (w.mats||[]).some(m=>(m.n||"").toLowerCase().indexOf(_q)>=0||(m.store||"").toLowerCase().indexOf(_q)>=0); };
+  const all=obj.stages.flatMap(st=>(st.works||[]).filter(_m));
+  if(all.some(w=>workGroup(w)===rf))return "";
+  const TXT={
+    go:{i:"🎉",t:"Готовых работ не осталось",s:"Всё, что обеспечено материалами, уже сделано. Посмотрите, что стоит из-за снабжения."},
+    wait:{i:"✅",t:"Ничего не ждёт материалов",s:"По всем незакрытым работам материалы на объекте."},
+    done:{i:"🔨",t:"Пока ничего не сделано",s:"Отмечайте работы галочкой — они будут собираться здесь."}
+  }[rf]||{i:"—",t:"Пусто",s:""};
+  return `<div style="background:#fff;border:1px dashed #d0dae8;border-radius:14px;padding:24px 16px;text-align:center;margin-bottom:10px">
+    <div style="font-size:32px;margin-bottom:6px">${TXT.i}</div>
+    <div style="font-size:14px;font-weight:700;color:#1a2a3a">${TXT.t}</div>
+    <div style="font-size:12px;color:#7a9aaa;margin-top:4px;line-height:1.4">${TXT.s}</div>
+    <button data-a="obj-ready-filter" data-v="stages" style="margin-top:12px;padding:9px 16px;background:#2980b9;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">📋 Показать все по этапам</button>
+  </div>`;
+})()}
 
 ${objMatModal?`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:flex-start;justify-content:center;padding:60px 16px;z-index:200">
   <div style="background:#fff;border-radius:16px;width:100%;max-width:440px;padding:20px">
@@ -9525,6 +9613,36 @@ const MAT_STATE={
   bought:    {i:"🛒",c:"#e67e22",t:"куплено, в пути"},
   partialGot:{i:"🟡",c:"#f39c12",t:"привезли частично"},
   got:       {i:"✅",c:"#27ae60",t:"на объекте"} };
+
+// Готовность работы к старту: все ли её материалы уже на объекте. Работа без материалов
+// готова всегда — иначе «аренда площадки» и «вывоз мусора» вечно висели бы в «ждём».
+function workReady(w){
+  const ms=(w&&w.mats)||[];
+  const missing=ms.filter(function(m){return matStateOf(m)!=="got";});
+  return { ok:!missing.length, missing:missing, total:ms.length, got:ms.length-missing.length };
+}
+// Группа работы для фильтра готовности. Сделанную не тянем в «Можно делать», даже если
+// материалы по ней так и не отметили — она уже позади.
+function workGroup(w){ return w.done?"done":(workReady(w).ok?"go":"wait"); }
+
+// Чего именно не хватает — строкой с количеством: «Плинтус 15×42 (60 шт)» понятнее, чем
+// «ждём 2». Частично привезённое показываем ОСТАТКОМ, а не полной потребностью.
+function missingText(m){
+  const st=matStatus(m), nm=m.n||"—";
+  return st.got>0 ? nm+" (ещё "+numRu(st.want-st.got)+" из "+numRu(st.want)+")"
+                  : nm+" ("+numRu(st.want)+")";
+}
+// Две причины простоя с разными адресатами: «не купили» — вопрос к снабженцу,
+// «купили, но не привезли» — к водителю (или материал уже лежит, просто не отметили).
+function missingBlocks(missing){
+  const notBought=[], inTransit=[];
+  missing.forEach(function(m){ (matStatus(m).bought>0?inTransit:notBought).push(missingText(m)); });
+  const line=function(a){ return a.slice(0,3).join(" · ")+(a.length>3?" · +"+(a.length-3):""); };
+  const out=[];
+  if(notBought.length)out.push({t:"Не куплено",v:line(notBought),c:"#c0392b"});
+  if(inTransit.length)out.push({t:"Куплено, не на объекте",v:line(inTransit),c:"#b8791a"});
+  return out;
+}
 
 // Приёмка потребности: пишем и в партию, и в легаси-флаг, пока старые экраны читают его.
 function receiveNeed(matId, on){
@@ -15465,7 +15583,12 @@ function bind(){
     };}
     else if(a==="obj-work-view"){el.onclick=()=>{
       objWorkView=el.dataset.v||"works";
-      openTimeWid=null; openPhotoWid=null;   // не оставляем раскрытые панели от прошлого режима
+      openTimeWid=null; openPhotoWid=null; openMatsWid=null;   // не оставляем раскрытые панели от прошлого режима
+      rerenderTab();
+    };}
+    else if(a==="obj-ready-filter"){el.onclick=()=>{
+      objReadyFilter=el.dataset.v||"stages";
+      openTimeWid=null; openPhotoWid=null; openMatsWid=null;
       rerenderTab();
     };}
     else if(a==="obj-edit-toggle"){el.onclick=()=>{
@@ -15651,6 +15774,16 @@ function bind(){
             setTimeout(function(){try{document.body.removeChild(toast);}catch(e){}},2000);
           }catch(e){}
           return false;
+        }
+        // Материал по работе даже не куплен — почти наверняка отметка по ошибке (или
+        // снабженец забыл отметить закупку). Жёстко не блокируем: на объекте бывает всё,
+        // и запертая галочка злит сильнее, чем один вопрос. Но переспрашиваем — молчаливое
+        // «сделано» по некупленному материалу потом разбирают неделями.
+        if(w0&&!w0.done){
+          const none=workReady(w0).missing.filter(function(m){return matStatus(m).bought<=0;});
+          if(none.length&&!confirm("По работе «"+(w0.n||"")+"» не куплено материалов: "+none.length+"\n\n"
+              +none.slice(0,4).map(missingText).join("\n")+(none.length>4?"\n…":"")
+              +"\n\nВсё равно отметить работу сделанной?"))return false;
         }
         let became=null;
         objects=objects.map(function(o){
