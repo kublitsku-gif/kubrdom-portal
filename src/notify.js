@@ -15,6 +15,7 @@ export const NOTIFY_KINDS = {
   deadline: { n: "Дедлайны и просрочка", d: "за 3 дня, за день, в день дедлайна и каждое утро при просрочке", roles: ["brigadier", "worker", "prod_head", "admin", "financier"] },
   hours:    { n: "Часы и отметки работ", d: "вечером, если за день по объекту не записаны часы",              roles: ["brigadier", "worker", "prod_head", "admin"] },
   supply:   { n: "Снабжение",            d: "не куплено к старту этапа; куплено, но не принято на складе",     roles: ["supply", "prod_head", "admin", "brigadier"] },
+  issues:   { n: "Вопросы с объекта",    d: "новый вопрос по вашему направлению и ответ на ваш вопрос",        roles: ["supply", "prod_head", "admin", "client_mgr", "sales_head", "brigadier"] },
   daily:    { n: "Сводка дня",           d: "вечером одним сообщением: что сделано, часы, что горит",          roles: ["admin", "financier", "prod_head"] },
   finance:  { n: "Финансы",              d: "долги клиентов и зарплата к выплате — когда суммы изменились",     roles: ["admin", "financier"] },
 };
@@ -38,9 +39,16 @@ export const MAIN_KB = {
   keyboard: [
     [{ text: "🏗 Объекты" }, { text: "📦 Снабжение" }],
     [{ text: "💰 Финансы" }, { text: "💵 Внести деньги" }],
+    [{ text: "❓ Вопрос" }],
   ],
   resize_keyboard: true, is_persistent: true,
 };
+// Подписи кнопок постоянной клавиатуры. Telegram присылает их обычным текстом, поэтому
+// диалог, который ждёт свободный ввод, обязан уметь их отличить — иначе нажатие
+// «🏗 Объекты» посреди ввода уедет в текст ответа, а человек застрянет в диалоге.
+export const MAIN_BTNS = MAIN_KB.keyboard.reduce(function (a, row) {
+  return a.concat(row.map(function (b) { return b.text; }));
+}, []);
 
 export async function sendTg(env, chatId, text, extra) {
   if (!env.TG_BOT_TOKEN || !chatId) return false;
@@ -186,7 +194,8 @@ export async function tgWebhook(env, request, hooks) {
 
   // Фото/видео/документ от привязанного сотрудника — отдельная ветка: бригадир снимает
   // работу прямо на объекте и отправляет боту, подпись не обязательна.
-  const media = msg && (msg.photo || msg.video || msg.document);
+  // voice здесь обязателен: вопрос с площадки чаще всего наговаривают, а не печатают.
+  const media = msg && (msg.photo || msg.video || msg.document || msg.voice || msg.audio || msg.video_note);
   if (media && hooks && hooks.onMedia) {
     await ensureNotifyTables(env);
     const link = await env.DB.prepare("SELECT uid FROM tg_links WHERE chat_id=?").bind(String(chatId)).first();

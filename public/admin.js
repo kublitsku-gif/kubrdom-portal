@@ -4635,6 +4635,22 @@ function patchIssue(iid,patch){
   issues=issues.map(function(t){ return t.id!==iid?t:Object.assign({},t,patch); });
 }
 
+// Ответ автору в Telegram. Сначала ДОЖИМАЕМ сохранение: Worker читает вопрос из D1,
+// и на дебаунсе в 800 мс он успел бы прочитать состояние без ответа — автор получил
+// бы пустое уведомление. Ошибку глотаем: ответ уже записан в портал, а не доехавшее
+// сообщение в мессенджер не повод откатывать действие.
+async function issueNotifyAuthor(iid){
+  try{
+    clearTimeout(scheduleSave._t);
+    await apiSave();
+    await fetch(API_BASE+"/api/tg/issue-reply",{
+      method:"POST",
+      headers:authHeaders({"Content-Type":"application/json"}),
+      body:JSON.stringify({id:iid}),
+    });
+  }catch(e){}
+}
+
 // Тикет → позиция «📦 Докупка (снабжение)». Этап берём от привязанной работы, иначе
 // первый незакрытый: материал должен лечь туда, где стройка стоит сейчас, а не в конец.
 function issueToSupply(t,name,cost){
@@ -15938,7 +15954,16 @@ function bind(){
       fl();
     };}
     else if(a==="iss-status"){el.onclick=()=>{
-      patchIssue(el.dataset.iid,{status:el.dataset.s});
+      const s=el.dataset.s;
+      if(s==="rejected"){
+        const why=prompt("Почему отклоняем? Автор увидит это в Telegram.","");
+        if(why===null)return;
+        patchIssue(el.dataset.iid,{status:"rejected",answer:String(why).trim()||"Отклонено.",
+          answerBy:(currentUser&&currentUser.id)||"",answerByName:(currentUser&&currentUser.name)||""});
+        fl(); issueNotifyAuthor(el.dataset.iid);
+        return;
+      }
+      patchIssue(el.dataset.iid,{status:s});
       fl();
     };}
     else if(a==="iss-payer"){el.onclick=()=>{
@@ -15957,6 +15982,7 @@ function bind(){
         answerAt:new Date(Date.now()+3*3600*1000).toISOString().slice(0,16).replace("T"," "),
       });
       fl();
+      issueNotifyAuthor(t.id);
     };}
     // Тикет → докупка снабжения. Имя материала спрашиваем отдельно: текст вопроса —
     // это фраза человека («не хватило вагонки, надо ещё 6 квадратов»), а в закупку нужна
@@ -15975,6 +16001,7 @@ function bind(){
       patchIssue(t.id,{status:"done",linkedNote:"в докупку: "+String(name).trim()+" · "+cost.toLocaleString("ru-RU")+" ₽",
         answer:t.answer||"Заведено в докупку снабжения."});
       fl();
+      issueNotifyAuthor(t.id);
     };}
     // Тикет → план доп работ договора. Это деньги КЛИЕНТА: пожелание, о котором
     // договорились устно и которое иначе не попадёт ни в смету, ни в счёт.
@@ -15992,6 +16019,7 @@ function bind(){
       patchIssue(t.id,{status:"done",payer:"client",linkedNote:"в доп работы: "+String(title).trim()+" · "+amount.toLocaleString("ru-RU")+" ₽",
         answer:t.answer||"Согласовано, внесено в план доп работ."});
       fl();
+      issueNotifyAuthor(t.id);
     };}
     else if(a==="obj-ready-filter"){el.onclick=()=>{
       objReadyFilter=el.dataset.v||"stages";

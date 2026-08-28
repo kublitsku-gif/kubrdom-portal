@@ -12,6 +12,7 @@ import { finText, finCallback, answerCb } from "./botfin.js";
 import { viewText, viewCallback } from "./botview.js";
 import { ensureTopic } from "./tgapi.js";
 import { workText, workCallback, workMedia } from "./botwork.js";
+import { issueText, issueCallback, issueMedia, issueReplyToAuthor } from "./botissue.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
@@ -1295,16 +1296,25 @@ export default {
         onText: async function (e, uid, chat, text, roles) {
           // Порядок важен: workText первым — он ловит число, когда бот ждёт часы,
           // и не должен конкурировать с вводом суммы в финансовом диалоге.
+          // issueText идёт до viewText/finText: пока человек описывает вопрос, любая
+          // его фраза — это текст вопроса, а не команда разделу.
           return (await workText(e, uid, chat, text, roles))
+            || (await issueText(e, uid, chat, text, roles))
             || (await viewText(e, uid, chat, text, roles))
             || (await finText(e, uid, chat, text, roles));
         },
         onCallback: async function (e, uid, chat, data, roles) {
           return (await workCallback(e, uid, chat, data, roles))
+            || (await issueCallback(e, uid, chat, data, roles))
             || (await viewCallback(e, uid, chat, data, roles))
             || (await finCallback(e, uid, chat, data, roles));
         },
-        onMedia: workMedia,
+        // issueMedia первым и только он возвращает false, если это не его диалог:
+        // workMedia на чужое медиа отвечает подсказкой, то есть «съедает» сообщение.
+        onMedia: async function (e, uid, chat, msg, roles) {
+          if (await issueMedia(e, uid, chat, msg, roles)) return true;
+          return await workMedia(e, uid, chat, msg, roles);
+        },
         answerCb: answerCb,
       };
       try { return json(await tgWebhook(env, request, botHooks)); }
@@ -1481,6 +1491,15 @@ export default {
         if (url.pathname === "/api/tg/setup" && request.method === "POST") {
           if (!auth.adm) return json({ success: false, error: "Только администратор" }, 403);
           return json(await tgSetupWebhook(env, new URL(request.url).origin));
+        }
+        // Ответ на вопрос ушёл в снимок — теперь сообщаем автору в личку. Отдельный вызов,
+        // а не разбор снимка: панель точно знает, какой тикет она закрыла, а сравнивать
+        // снимки ради одного уведомления значит гонять весь objects на каждое сохранение.
+        if (url.pathname === "/api/tg/issue-reply" && request.method === "POST") {
+          const b = await request.json().catch(function () { return {}; });
+          const iid = b && b.id ? String(b.id) : "";
+          if (!iid) return json({ success: false, error: "Не указан вопрос" }, 400);
+          return json(await issueReplyToAuthor(env, iid));
         }
       } catch (e) { return json({ success: false, error: String((e && e.message) || e) }, 500); }
       return json({ success: false, error: "Not found" }, 404);

@@ -9,7 +9,8 @@
     "build:admin": "esbuild public/admin.js --target=es2017 --bundle --format=iife --outfile=dist/admin.js --allow-overwrite",
     "lint": "eslint .",
     "preview": "vite preview",
-    "harness": "node tools/render-harness.js"
+    "harness": "node tools/render-harness.js",
+    "test:bot": "node tools/test-botissue.mjs"
   },
   "dependencies": {
     "react": "^19.2.6",
