@@ -5186,7 +5186,14 @@ ${obj.stages.map(s=>{
       // по ходу стройки. Красим в оранжевый снабжения, чтобы мастер не искал в ней
       // работу и не списывал часы. Завершённая работа остаётся зелёной.
       const isSupplyWork=w.n===SUPPLY_WORK_NAME;
-      let h=`<div style="background:${isDone?'#27ae6008':isSupplyWork?'#e67e220f':'#f8fafc'};border:1px solid ${isDone?'#27ae6055':isSupplyWork?'#e67e2255':'#dde6f0'};border-radius:8px;margin-bottom:4px;overflow:hidden">
+      // Светофор снабжения: цветной рельс слева. Читается боковым зрением при прокрутке,
+      // поэтому «есть ли материал» видно без чтения плашек. На сделанных работах не рисуем —
+      // там уже зелёная заливка, а неотмеченная закупка прошлого этапа была бы ложной тревогой.
+      const _rd=isDone?null:workReady(w);
+      const _rail=(!_rd||!_rd.total)?null
+        :_rd.ok?"#27ae60"
+        :_rd.missing.some(m=>matStatus(m).bought<=0)?"#c0392b":"#e67e22";
+      let h=`<div style="background:${isDone?'#27ae6008':isSupplyWork?'#e67e220f':'#f8fafc'};border:1px solid ${isDone?'#27ae6055':isSupplyWork?'#e67e2255':'#dde6f0'};${_rail?`border-left:4px solid ${_rail};`:""}border-radius:8px;margin-bottom:4px;overflow:hidden">
       <div style="display:flex;align-items:center;gap:8px;padding:7px 10px">
         ${canComplete?(canCheck?`<button data-a="obj-toggle-done" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="width:24px;height:24px;flex-shrink:0;background:${isDone?'#27ae60':'#fff'};border:2px solid ${isDone?'#27ae60':'#c0d0e0'};border-radius:6px;cursor:pointer;color:#fff;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0;line-height:1">${isDone?'✓':''}</button>`:`<button data-a="obj-need-time" data-wid="${w.id}" style="width:24px;height:24px;flex-shrink:0;background:#f8fafc;border:2px dashed #d0dae8;border-radius:6px;cursor:pointer;color:#9aabbf;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0;line-height:1" title="Сначала отметьте часы">🔒</button>`):`<div style="width:24px;height:24px;flex-shrink:0;background:${isDone?'#27ae60':'#f0f4f8'};border:2px solid ${isDone?'#27ae60':'#dde6f0'};border-radius:6px;color:#fff;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1">${isDone?'✓':''}</div>`}
         <div style="flex:1;min-width:0">
@@ -5194,17 +5201,12 @@ ${obj.stages.map(s=>{
           <div style="display:flex;gap:6px;margin-top:2px;align-items:center;flex-wrap:wrap">
             ${isSupplyWork?`<span style="font-size:9px;font-weight:700;color:#e67e22;background:#e67e2214;border:1px solid #e67e2240;border-radius:5px;padding:2px 7px;letter-spacing:0.3px">ДОБАВИЛ СНАБЖЕНЕЦ</span>`:""}
             ${objWorkView==="works"?(()=>{const ql=workQtyLabel(w);return ql?`<span style="font-size:10px;color:#16a085;background:#16a08515;border-radius:5px;padding:2px 7px;font-weight:600">${ql}</span>`:"";})():""}
-            ${objWorkView!=="works"?"":(()=>{
-              // Плашка готовности материалов. Тап раскрывает список с кнопкой «Принять» —
-              // тот же обработчик, что в «Снабжении», статус на портале один.
-              const ms=w.mats||[];
-              if(!ms.length)return "";
-              const r=workReady(w);
-              const anyNone=r.missing.some(m=>matStatus(m).bought<=0);
-              const c=r.ok?"#27ae60":anyNone?"#c0392b":"#e67e22";
-              const bg=r.ok?"#eafaf0":anyNone?"#fdeeec":"#fdf3e3";
-              const lbl=r.ok?"всё на объекте · "+ms.length:"ждём "+r.missing.length+" из "+ms.length;
-              return `<button data-a="obj-toggle-mats" data-wid="${w.id}" style="padding:2px 8px;background:${isMatsOpen?c+"22":bg};border:1px solid ${c}55;border-radius:5px;cursor:pointer;font-size:10px;color:${c};font-weight:700">📦 ${lbl}</button>`;
+            ${objWorkView!=="works"||!_rail?"":(()=>{
+              // Плашка готовности — расшифровка рельса словами. Тап раскрывает список
+              // с кнопкой «Принять»: тот же обработчик, что в «Снабжении», статус один.
+              const bg=_rd.ok?"#eafaf0":_rail==="#c0392b"?"#fdeeec":"#fdf3e3";
+              const lbl=_rd.ok?"всё на объекте · "+_rd.total:"ждём "+_rd.missing.length+" из "+_rd.total;
+              return `<button data-a="obj-toggle-mats" data-wid="${w.id}" style="padding:2px 8px;background:${isMatsOpen?_rail+"22":bg};border:1px solid ${_rail}55;border-radius:5px;cursor:pointer;font-size:10px;color:${_rail};font-weight:700">📦 ${lbl}</button>`;
             })()}
             ${objWorkView==="money"&&w.cost>0&&canSeeClientMoney()?`<span style="font-size:12px;color:#0d1b2e;font-weight:800">${fmt(w.cost)}</span>`:""}
             ${objWorkView!=="receive"&&workPay(w)?`<span title="Расценка по этой работе (старая схема)" style="font-size:11px;color:#8e44ad;background:#8e44ad14;border:1px solid #8e44ad33;border-radius:5px;padding:2px 7px;font-weight:700">👷 ${fmt(workPay(w))}</span>`:""}
@@ -5233,12 +5235,10 @@ ${obj.stages.map(s=>{
               return `<button data-a="obj-toggle-photo" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="padding:6px 12px;font-size:12px !important;background:${bg};border:1px solid ${bd};border-radius:5px;cursor:pointer;font-size:10px;color:#3498db;font-weight:600">📷 ${photos.length>0?photos.length:'+'}</button>`;
             })()}
           </div>
-          ${objWorkView!=="works"||isDone?"":(()=>{
+          ${objWorkView!=="works"||!_rd||_rd.ok?"":(()=>{
             // Причина простоя прямо в карточке: бригадиру не надо раскрывать список,
             // чтобы понять, чего ждёт работа, — а снабженцу это готовая заявка.
-            const r=workReady(w);
-            if(r.ok)return "";
-            return `<div style="margin-top:4px;display:flex;flex-direction:column;gap:1px">`+missingBlocks(r.missing).map(b=>
+            return `<div style="margin-top:4px;display:flex;flex-direction:column;gap:1px">`+missingBlocks(_rd.missing).map(b=>
               `<div style="font-size:10px;line-height:1.35;color:${b.c};font-weight:700">${b.t}: <span style="font-weight:500">${esc(b.v)}</span></div>`).join("")+`</div>`;
           })()}
         </div>
