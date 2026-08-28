@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build && npm run build:admin",
-    "build:admin": "esbuild public/admin.js --target=es2017 --outfile=dist/admin.js --allow-overwrite",
+    "build:admin": "esbuild public/admin.js --target=es2017 --bundle --format=iife --outfile=dist/admin.js --allow-overwrite",
     "lint": "eslint .",
     "preview": "vite preview",
     "harness": "node tools/render-harness.js"

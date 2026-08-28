@@ -38,7 +38,11 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Версия сборки — видна в логине и внизу панели. Менять при каждом деплое с правками панели:
 // давно открытая вкладка выполняет СТАРЫЙ admin.js, и «починили, а у меня не работает» = старая
 // версия на устройстве. По этой подписи это видно сразу.
-const APP_BUILD = "2026-08-26.15";
+// Логика закупок — общая с ботом и Worker'ом (src/supply.js): статус материала должен
+// одинаково считаться в панели и в Telegram, иначе бригадир и снабженец увидят разное.
+import { needStatus, needState, objectSupply, migrateLegacy, needQty } from "../src/supply.js";
+
+const APP_BUILD = "2026-08-26.16";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -248,6 +252,7 @@ function serializeState(){
     { work_id: "dbWorks",         data: dbWorks         },
     { work_id: "expProducts",     data: expProducts     },
     { work_id: "dbPlans",         data: dbPlans         },
+    { work_id: "purchases",       data: purchases       },
     { work_id: "purchased",       data: purchased       },
     { work_id: "arrived",         data: arrived         },
     { work_id: "finTxns",         data: finTxns         },
@@ -291,6 +296,7 @@ function applyState(items){
   contractDocs    = arr("contractDocs",    contractDocs);
   crmClients      = arr("crmClients",      crmClients);
   rolePermissions = obj("rolePermissions", rolePermissions);
+  purchases       = arr("purchases",       purchases);
   purchased       = obj("purchased",       purchased);
   arrived         = obj("arrived",         arrived);
   finSalaries     = obj("finSalaries",     finSalaries);
@@ -1848,6 +1854,9 @@ let expProducts=[
   var bo=objects.find(function(x){return x.id==="obj_banya_kievka";}); if(bo&&t1) bo.stages=JSON.parse(JSON.stringify(t1.stages));
   var ho=objects.find(function(x){return x.id==="obj_dom_dmitrovka";}); if(ho&&t2) ho.stages=JSON.parse(JSON.stringify(t2.stages));
 }catch(e){console.warn("tpl/obj rebuild",e);}})();
+// Партии закупки (новая модель): что купили, почём, по какому чеку и сколько доехало.
+// purchased/arrived остаются как легаси-слой: пока партий нет, статусы считаются по ним.
+let purchases=[];
 let purchased={}; // {matId: true} — отмечено снабженцем как куплено
 let arrived={};   // {matId: true} — пришло/принято на склад (отмечает бригадир/мастер); снабженец видит наличие
 let supplySearch=''; // поиск по материалам
@@ -9473,9 +9482,108 @@ function receiverObjects(){
   return objects.filter(function(o){return mine.includes(o.id);});
 }
 
+// === ПАРТИИ ЗАКУПОК ==========================================================
+// Партия — это чек: что купили одним заходом, почём и сколько доехало. Одна партия
+// закрывает потребности сразу нескольких работ, поэтому приёмка ведётся количеством,
+// а не галочкой: «нужно 100 м, привезли 60» теперь выразимо.
+// Пока снабженец пользуется старым экраном с галочками, а статусы уже считаются по
+// партиям, эти два мира обязаны сходиться. Отметил «куплено» — позиция попадает в
+// открытую партию объекта (создаём её при первой отметке за день); снял — уходит.
+// Без этого после переноса новые закупки просто исчезали бы из расчёта.
+function syncNeedToBatch(matId, on){
+  if(!purchases.length) return;                       // партий нет — работает старая схема
+  let found=null, owner=null;
+  for(const w of objects.flatMap(o=>(o.stages||[]).flatMap(s=>(s.works||[]).map(w=>({o:o,w:w})))))
+    for(const m of (w.w.mats||[])) if(m.id===matId){ found=m; owner=w.o; break; }
+  if(!found||!owner) return;
+  const day=new Date(Date.now()+3*3600*1000).toISOString().slice(0,10);
+  if(!on){
+    purchases=purchases.map(p=>Object.assign({},p,{items:(p.items||[]).filter(i=>i.needId!==matId)}))
+                       .filter(p=>(p.items||[]).length);
+    return;
+  }
+  if(purchases.some(p=>(p.items||[]).some(i=>i.needId===matId))) return;   // уже есть
+  const openId="pur_"+owner.id+"_"+day;
+  const exists=purchases.find(p=>p.id===openId);
+  const item={ id:"pi_"+matId, needId:matId, name:found.n||"", qty:needQty(found),
+    price:Number(found.cost)||0, gotQty:arrived[matId]?needQty(found):0, gotAt:arrived[matId]?day:null };
+  purchases=exists
+    ? purchases.map(p=>p.id!==openId?p:Object.assign({},p,{items:(p.items||[]).concat([item])}))
+    : purchases.concat([{ id:openId, date:day, store:"", objId:owner.id,
+        by:(currentUser&&currentUser.id)||"", note:"закупка "+day, items:[item] }]);
+}
+
+function batchSum(p){ return (p.items||[]).reduce((a,i)=>a+(Number(i.qty)||0)*(Number(i.price)||0),0); }
+function batchGot(p){ return (p.items||[]).filter(i=>(Number(i.gotQty)||0)>=(Number(i.qty)||0)).length; }
+
+function tBatches(){
+  const legacyCnt=Object.keys(purchased||{}).filter(k=>purchased[k]).length;
+  let h='<div>';
+  h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">'
+    +'<button data-a="batch-back" style="padding:7px 13px;background:#fff;border:1px solid #d0dae8;border-radius:9px;cursor:pointer;font-size:12px;color:#5a7080">← Снабжение</button>'
+    +'<div style="flex:1;font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">🧾 ПАРТИИ ЗАКУПОК</div>'
+  +'</div>';
+
+  if(!purchases.length&&legacyCnt){
+    h+='<div style="background:#fff8e6;border:1px solid #f0d9a0;border-radius:11px;padding:12px 13px;margin-bottom:12px">'
+      +'<div style="font-size:12.5px;font-weight:700;color:#8a6d1f;margin-bottom:4px">Отметки закупки ещё не перенесены</div>'
+      +'<div style="font-size:11.5px;color:#8a6d1f;line-height:1.4;margin-bottom:9px">Сейчас закупка хранится галочками ('+legacyCnt+' поз.). Перенос соберёт из них партии по объектам — с ценами и приёмкой. Статусы сохранятся, ничего не пропадёт.</div>'
+      +'<button data-a="batch-migrate" style="width:100%;padding:9px;background:#e67e22;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">⤵ Перенести отметки в партии</button>'
+    +'</div>';
+  }
+
+  const tot=purchases.reduce((a,p)=>a+batchSum(p),0);
+  const pos=purchases.reduce((a,p)=>a+(p.items||[]).length,0);
+  h+='<div style="display:flex;gap:8px;margin-bottom:12px">'
+    +'<div style="flex:1;background:#fff;border:1px solid #dde6f0;border-radius:11px;padding:10px 12px"><div style="font-size:10px;font-weight:800;color:#9aabbf;letter-spacing:0.5px">ПАРТИЙ</div><div style="font-size:18px;font-weight:800;color:#0d1b2e">'+purchases.length+'</div></div>'
+    +'<div style="flex:1;background:#fff;border:1px solid #dde6f0;border-radius:11px;padding:10px 12px"><div style="font-size:10px;font-weight:800;color:#9aabbf;letter-spacing:0.5px">ПОЗИЦИЙ</div><div style="font-size:18px;font-weight:800;color:#0d1b2e">'+pos+'</div></div>'
+    +'<div style="flex:1.4;background:#fff;border:1px solid #dde6f0;border-radius:11px;padding:10px 12px"><div style="font-size:10px;font-weight:800;color:#9aabbf;letter-spacing:0.5px">ПОТРАЧЕНО</div><div style="font-size:18px;font-weight:800;color:#16a085">'+fmt(Math.round(tot))+'</div></div>'
+  +'</div>';
+
+  if(!purchases.length){
+    h+='<div style="text-align:center;color:#9aabbf;font-size:12px;padding:22px;border:1px dashed #d0dae8;border-radius:11px">Партий пока нет.</div>';
+    return h+'</div>';
+  }
+
+  purchases.slice().sort((a,b)=>String(b.date||"").localeCompare(String(a.date||""))).forEach(function(p){
+    const o=objects.find(x=>x.id===p.objId);
+    const open=window._batchOpen===p.id;
+    const items=p.items||[];
+    const got=batchGot(p);
+    h+='<div style="background:#fff;border:1px solid '+(got>=items.length?"#27ae6044":"#dde6f0")+';border-radius:12px;margin-bottom:8px;overflow:hidden">'
+      +'<div data-a="batch-open" data-id="'+esc(p.id)+'" style="display:flex;align-items:center;gap:9px;padding:11px 13px;cursor:pointer">'
+        +'<span style="font-size:17px">'+(got>=items.length?"✅":"🚚")+'</span>'
+        +'<div style="flex:1;min-width:0">'
+          +'<div style="font-size:13px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(o?o.name:"Объект")+(p.store?" · "+esc(p.store):"")+'</div>'
+          +'<div style="font-size:11px;color:#9aabbf">'+esc(String(p.date||"").slice(0,10))+' · '+items.length+' поз. · принято '+got+'/'+items.length+'</div>'
+        +'</div>'
+        +'<div style="font-size:13px;font-weight:800;color:#16a085;white-space:nowrap">'+fmt(Math.round(batchSum(p)))+'</div>'
+      +'</div>';
+    if(open){
+      h+='<div style="border-top:1px solid #f0f3f7;padding:10px 13px">';
+      if(p.note)h+='<div style="font-size:11px;color:#9aabbf;margin-bottom:8px">'+esc(p.note)+'</div>';
+      items.forEach(function(it){
+        const need=Number(it.qty)||0, gq=Number(it.gotQty)||0;
+        const full=gq>=need;
+        h+='<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:'+(full?"#eaf7ef":"#f8fafc")+';border:1px solid '+(full?"#27ae6033":"#dde6f0")+';border-radius:9px;margin-bottom:5px">'
+          +'<div style="flex:1;min-width:0">'
+            +'<div style="font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(it.name||"—")+'</div>'
+            +'<div style="font-size:10.5px;color:'+(full?"#27ae60":"#e67e22")+';font-weight:600">принято '+numRu(gq)+' из '+numRu(need)+(it.price?' · '+fmt(Math.round(need*it.price)):'')+'</div>'
+          +'</div>'
+          +'<button data-a="batch-recv" data-pid="'+esc(p.id)+'" data-iid="'+esc(it.id)+'" style="padding:6px 11px;background:'+(full?"#fff":"#27ae60")+';border:1px solid '+(full?"#27ae6055":"#27ae60")+';border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;color:'+(full?"#27ae60":"#fff")+';white-space:nowrap">'+(full?"✓ принято":"Принять")+'</button>'
+        +'</div>';
+      });
+      h+='</div>';
+    }
+    h+='</div>';
+  });
+  return h+'</div>';
+}
+
 function tSupply(){
   const sel=window._supplySelected||{};      // {objId: true/false}
   const viewing=window._supplyViewing||false; // showing detail
+  if(window._supplyPage==="batches"&&!isReceiverView())return tBatches();
   if(isReceiverView())return tReceive(sel);   // бригадир/мастер — приёмка одним экраном
   const sortBy=window._supplySort||"stage";
   if(!viewing) return tSupplySelect(sel);
@@ -9651,11 +9759,17 @@ function tReceive(sel){
   return html+'<div style="height:20px"></div></div>';
 }
 
+function supplyBatchesBtn(){
+  return '<button data-a="batch-page" style="width:100%;margin-bottom:10px;padding:9px;background:#fff;border:1px dashed #16a085;border-radius:10px;cursor:pointer;color:#16a085;font-size:12px;font-weight:700">🧾 Партии закупок'
+    +(purchases.length?" · "+purchases.length:"")+'</button>';
+}
+
 function tSupplySelect(sel){
   const anySelected=Object.values(sel).some(Boolean);
   let html='<div>'+
     '<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:4px">СНАБЖЕНИЕ</div>'+
-    '<div style="font-size:12px;color:#5a7a9a;margin-bottom:14px">Выберите один или несколько объектов</div>';
+    '<div style="font-size:12px;color:#5a7a9a;margin-bottom:14px">Выберите один или несколько объектов</div>'+
+    supplyBatchesBtn();
 
   if(!objects.length){
     return html+'<div style="text-align:center;color:#aaa;padding:30px">Нет объектов. Создайте объект во вкладке Объекты.</div></div>';
@@ -13847,6 +13961,7 @@ function bind(){
     else if(a==="supply-check"){el.onclick=()=>{
       const mid=el.dataset.mid;
       purchased[mid]=!purchased[mid];
+      syncNeedToBatch(mid, !!purchased[mid]);   // держим партии в согласии со старой галочкой
       rerenderTab();   // перерисовать только список снабжения — экран не дёргается
     };}
     // Сворачивание группы (этап / магазин). data-open несёт текущее состояние —
@@ -13859,8 +13974,39 @@ function bind(){
       ev&&ev.stopPropagation();  // кнопка внутри кликабельной шапки — не сворачивать группу
       const ids=el.dataset.ids.split(',');
       const allDone=el.dataset.done==="1";
-      ids.forEach(function(id){if(id)purchased[id]=!allDone;});
+      ids.forEach(function(id){if(id){ purchased[id]=!allDone; syncNeedToBatch(id, !allDone); }});
       rerenderTab();
+    };}
+    else if(a==="batch-page"){el.onclick=()=>{ window._supplyPage="batches"; rerenderTab(); };}
+    else if(a==="batch-back"){el.onclick=()=>{ window._supplyPage=null; window._batchOpen=null; rerenderTab(); };}
+    else if(a==="batch-open"){el.onclick=()=>{ window._batchOpen=window._batchOpen===el.dataset.id?null:el.dataset.id; rerenderTab(); };}
+    // Перенос старых отметок в партии — разово, только админ/снабженец, с подтверждением:
+    // операция меняет форму данных, откатывать её потом дорого.
+    else if(a==="batch-migrate"){el.onclick=()=>{
+      if(purchases.length){ alert("Партии уже есть — повторный перенос отменён."); return; }
+      const cnt=Object.keys(purchased||{}).filter(k=>purchased[k]).length;
+      if(!confirm("Перенести "+cnt+" отметок закупки в партии по объектам?\n\nСтатусы «куплено» и «принято» сохранятся. Старые отметки останутся на месте как страховка."))return;
+      const stamp=new Date(Date.now()+3*3600*1000).toISOString().slice(0,16).replace("T"," ");
+      purchases=migrateLegacy(objects,purchased,arrived,stamp);
+      fl();
+      alert("Готово. Партий: "+purchases.length+", позиций: "+purchases.reduce((a,p)=>a+p.items.length,0));
+    };}
+    // Приёмка позиции партии: принимаем целиком либо снимаем отметку.
+    else if(a==="batch-recv"){el.onclick=()=>{
+      const pid=el.dataset.pid, iid=el.dataset.iid;
+      const stamp=new Date(Date.now()+3*3600*1000).toISOString().slice(0,16).replace("T"," ");
+      purchases=purchases.map(function(p){
+        if(p.id!==pid)return p;
+        return Object.assign({},p,{items:(p.items||[]).map(function(it){
+          if(it.id!==iid)return it;
+          const need=Number(it.qty)||0, got=Number(it.gotQty)||0;
+          const next=got>=need?0:need;
+          // Легаси-флаг держим в согласии, пока старые экраны читают его.
+          if(it.needId){ if(next>0)arrived[it.needId]=true; else delete arrived[it.needId]; }
+          return Object.assign({},it,{gotQty:next,gotAt:next?stamp:null,gotBy:next?(currentUser&&currentUser.id)||"":""});
+        })});
+      });
+      fl();
     };}
     else if(a==="supply-arrived"){el.onclick=(ev)=>{
       ev&&ev.stopPropagation();  // не переключать заодно «куплено» на строке снабженца

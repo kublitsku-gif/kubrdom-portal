@@ -15,6 +15,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import vm from 'node:vm'
+import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { createBrowserContext } from './harness/browser-stubs.js'
 import { loadSnapshot, listChunks, DEFAULT_CHUNKS } from './harness/d1-snapshot.js'
@@ -70,7 +71,13 @@ function run() {
   if (!opts.expr) return console.log(HELP)
 
   const ctx = createBrowserContext()
-  vm.runInContext(fs.readFileSync(ADMIN_JS, 'utf8'), ctx, { filename: 'admin.js' })
+  // admin.js теперь импортирует общие модули из src/ — vm такого не исполнит, поэтому
+  // сначала собираем ровно тем же способом, что и прод (esbuild --bundle), и гоняем сборку.
+  const bundled = path.join(ROOT, 'tools', '.cache', 'admin.bundle.js')
+  fs.mkdirSync(path.dirname(bundled), { recursive: true })
+  execFileSync('npx', ['esbuild', ADMIN_JS, '--target=es2017', '--bundle', '--format=cjs',   // cjs не оборачивает в IIFE — функции панели остаются видимыми для vm
+    '--outfile=' + bundled, '--allow-overwrite'], { stdio: ['ignore', 'ignore', 'inherit'] })
+  vm.runInContext(fs.readFileSync(bundled, 'utf8'), ctx, { filename: 'admin.js' })
 
   // Боевой снимок поверх дефолтного стейта панели. Присваиваем через
   // runInContext, иначе не достучаться до let-переменных модуля.
