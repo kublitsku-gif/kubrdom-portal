@@ -215,7 +215,9 @@ function showLogin(message){
 // Все НАБОРЫ ДАННЫХ панели (не UI-буферы) — единый снимок состояния.
 // Счётчики коллекций по последнему ответу сервера — страж apiSave сверяется с ними.
 let _serverCounts=null;
-const GUARDED_KEYS=["objects","templates","contractDocs","crmClients","dbWorks","dbPlans","expProducts","finTxns","users"];
+// issues в страже обязателен: вкладку со старым кодом, которая раздел вовсе не знает,
+// иначе некому остановить — её сейв молча затёр бы все тикеты пустотой.
+const GUARDED_KEYS=["objects","templates","contractDocs","crmClients","dbWorks","dbPlans","expProducts","finTxns","users","issues"];
 // Страж v2 (после потери данных 15–28.06.2026, когда стейл-вкладка затёрла облако демо-данными):
 // _serverVerified — true только после УСПЕШНОГО GET /api/state с настоящего сервера.
 // Кэш localStorage сюда НЕ попадает: раньше applyState(кэш) заполнял _serverCounts, и
@@ -262,6 +264,7 @@ function serializeState(){
     { work_id: "receipts",        data: receipts        },
     { work_id: "contractDocs",    data: contractDocs    },
     { work_id: "crmClients",      data: crmClients      },
+    { work_id: "issues",          data: issues          },
     { work_id: "settings",        data: settings        },
   ];
 }
@@ -295,6 +298,7 @@ function applyState(items){
   receipts        = arr("receipts",        receipts);
   contractDocs    = arr("contractDocs",    contractDocs);
   crmClients      = arr("crmClients",      crmClients);
+  issues          = arr("issues",          issues);
   rolePermissions = obj("rolePermissions", rolePermissions);
   purchases       = arr("purchases",       purchases);
   purchased       = obj("purchased",       purchased);
@@ -1237,6 +1241,7 @@ window._bindMoneyInputs=function(){
       if(this.id==="ct-amount")contractNew.amount=numVal;
       else if(this.id.indexOf("ctsal-plan-")===0)_syncSalPlan(this.id,numVal);
       else if(this.dataset.stagepay==="1")_syncStagePay(this.dataset.oid,this.dataset.sid,numVal);
+      else if(this.dataset.issamt==="1")patchIssue(this.dataset.iid,{amount:numVal});
     });
     // Резервный синк на change (срабатывает при уходе из поля) — на случай, если на конкретном
     // устройстве события input ведут себя нестандартно (IME/автозаполнение/старый движок).
@@ -1245,6 +1250,9 @@ window._bindMoneyInputs=function(){
     }
     if(inp.dataset.stagepay==="1"){
       inp.addEventListener("change",function(){ _syncStagePay(this.dataset.oid,this.dataset.sid,unfmtMoney(this.value)); });
+    }
+    if(inp.dataset.issamt==="1"){
+      inp.addEventListener("change",function(){ patchIssue(this.dataset.iid,{amount:unfmtMoney(this.value)}); });
     }
   });
 };
@@ -1877,6 +1885,41 @@ let expProducts=[
 let purchases=[];
 let purchased={}; // {matId: true} — отмечено снабженцем как куплено
 let arrived={};   // {matId: true} — пришло/принято на склад (отмечает бригадир/мастер); снабженец видит наличие
+// ─── ВОПРОСЫ ПО ОБЪЕКТУ ──────────────────────────────────────────────────────
+// Обращение с объекта: «не хватило вагонки», «клиент просит другие окна». Отдельный
+// раздел снимка, а НЕ поле внутри objects: тикеты пишет ещё и бот, и если бы они лежали
+// в objects, любая правка работы в панели конфликтовала бы с новым тикетом от бота —
+// раздел менялся бы с двух сторон. Отдельным массивом записей с id их разводит
+// штатное трёхстороннее слияние (_mergeIdArrays).
+// Фото и голосовые в снимок НЕ кладём (лимит строки D1 — 2 МБ): они остаются в теме
+// объекта в Telegram, здесь только ссылка на сообщение.
+let issues=[];
+const ISSUE_KIND={
+  supply:  {n:"Материал",  i:"📦", c:"#e67e22"},
+  change:  {n:"Изменение", i:"✏️", c:"#8e44ad"},
+  question:{n:"Вопрос",    i:"❓", c:"#2980b9"},
+};
+const ISSUE_ST={
+  new:     {n:"Новый",         i:"🆕", c:"#c0392b", bg:"#fdeeec"},
+  work:    {n:"В работе",      i:"👀", c:"#2980b9", bg:"#e9f1fa"},
+  hold:    {n:"Нужно решение", i:"💰", c:"#c08a1e", bg:"#fbf3e2"},
+  done:    {n:"Решён",         i:"✅", c:"#27ae60", bg:"#eafaf0"},
+  rejected:{n:"Отклонён",      i:"✖️", c:"#7f8c9a", bg:"#f0f3f6"},
+};
+const ISSUE_OPEN=function(t){ return t.status!=="done"&&t.status!=="rejected"; };
+function objIssues(oid){ return issues.filter(function(t){return t.objId===oid;}); }
+// Сумму утверждает тот, кто отвечает за деньги: доп работа уходит в договор клиента,
+// докупка — в расходы. Бригада заводит вопрос, но не согласовывает себе смету.
+function canApproveIssue(){
+  return !!(currentUser&&(currentUser.roles.includes("admin")||currentUser.roles.includes("financier")));
+}
+// Отвечать и закрывать может тот, кто ведёт объект, — включая снабженца: половина
+// вопросов адресована именно ему и ответ «везу завтра» должен ставить он сам.
+function canAnswerIssue(){
+  return !!(currentUser&&currentUser.roles.some(function(r){
+    return ["admin","financier","brigadier","worker","prod_head","supply","client_mgr","sales_head"].indexOf(r)>=0;
+  }));
+}
 let supplySearch=''; // поиск по материалам
 let receiveOnlyLeft=true; // приёмка: показывать только непринятое (главный рабочий режим)
 let supplyGroupOpen={}; // снабжение: {"stage|Имя"|"store|Имя": bool} — раскрыта ли группа
@@ -4564,6 +4607,166 @@ function buildTeamRow(oid, isAdmin){
   '</div>';
 }
 
+// ── ВОПРОСЫ ПО ОБЪЕКТУ ──
+// Экран для того, что заводит бот с площадки, и вторая половина маршрута: у вопроса
+// «докупить материал» и вопроса «поменять окна» разные адресаты и разные деньги, поэтому
+// тикет не заканчивается словом «решён» — он уходит либо в докупку снабжения, либо в план
+// доп работ договора. Обе цели в портале уже есть, тикет только доводит до них.
+let issueFormOid=null;          // у какого объекта раскрыта форма «задать вопрос»
+let issueNew={text:"",kind:"supply",wid:""};
+let issueShowDone={};           // {oid:true} — показывать закрытые
+
+function issueWorkName(t){
+  const o=objects.find(function(x){return x.id===t.objId;});
+  if(!o||!t.wid)return "";
+  for(const s of (o.stages||[])){ const w=(s.works||[]).find(function(x){return x.id===t.wid;}); if(w)return w.n||""; }
+  return "";
+}
+function issueDate(t){
+  const s=String(t.at||"");
+  return s?s.slice(0,10).split("-").reverse().join("."):"";
+}
+function issueAuthor(t){
+  if(t.byName)return t.byName;
+  const u=users.find(function(x){return x.id===t.by;});
+  return u?u.name:"—";
+}
+function patchIssue(iid,patch){
+  issues=issues.map(function(t){ return t.id!==iid?t:Object.assign({},t,patch); });
+}
+
+// Тикет → позиция «📦 Докупка (снабжение)». Этап берём от привязанной работы, иначе
+// первый незакрытый: материал должен лечь туда, где стройка стоит сейчас, а не в конец.
+function issueToSupply(t,name,cost){
+  const o=objects.find(function(x){return x.id===t.objId;});
+  if(!o||!(o.stages||[]).length)return null;
+  let sid="";
+  if(t.wid)for(const s of o.stages){ if((s.works||[]).some(function(w){return w.id===t.wid;})){ sid=s.id; break; } }
+  if(!sid){ const open=o.stages.find(function(s){return (s.works||[]).some(function(w){return !w.done;});}); sid=(open||o.stages[o.stages.length-1]).id; }
+  const mid=gid();
+  objects=objects.map(function(ob){
+    if(ob.id!==o.id)return ob;
+    return Object.assign({},ob,{stages:ob.stages.map(function(s){
+      if(s.id!==sid)return s;
+      const works=s.works||[];
+      const i=works.findIndex(function(w){return w.n===SUPPLY_WORK_NAME;});
+      const work=i>=0?works[i]:{id:gid(),estId:"",n:SUPPLY_WORK_NAME,cost:0,labor:0,note:"",mats:[],timeLogs:[]};
+      const nextWork=Object.assign({},work,{mats:(work.mats||[]).concat([{
+        id:mid, n:name, store:"", url:"", note:"по вопросу с объекта",
+        cost:Number(cost)||0, qty:1, mode:"piece", unitCost:Number(cost)||0,
+      }])});
+      nextWork.cost=wMatTotal(nextWork);
+      return Object.assign({},s,{works:i>=0?works.map(function(w,k){return k===i?nextWork:w;}):works.concat([nextWork])});
+    })});
+  });
+  return mid;
+}
+
+// Тикет → строка плана доп работ в договоре объекта. Подписанный договор в приоритете:
+// класть пожелание клиента в черновик, который может и не быть подписан, — потерять его.
+function issueToExtra(t,title,amount){
+  const docs=contractDocs.filter(function(c){return c.objId===t.objId;});
+  const c=docs.find(function(x){return x.status==="signed";})||docs.find(function(x){return x.status!=="closed";})||docs[0];
+  if(!c)return null;
+  const wid=gid();
+  contractDocs=contractDocs.map(function(x){
+    if(x.id!==c.id)return x;
+    return Object.assign({},x,{extraWorksPlan:(x.extraWorksPlan||[]).concat([{id:wid,title:title,amount:Number(amount)||0}])});
+  });
+  return c.id;
+}
+
+function buildIssuesSection(obj){
+  if(!obj)return "";
+  const list=objIssues(obj.id);
+  const open=list.filter(ISSUE_OPEN);
+  const closed=list.filter(function(t){return !ISSUE_OPEN(t);});
+  const canAns=canAnswerIssue(), canApp=canApproveIssue();
+  const showDone=!!issueShowDone[obj.id];
+  const formOpen=issueFormOid===obj.id;
+
+  const card=function(t){
+    const st=ISSUE_ST[t.status]||ISSUE_ST.new;
+    const kd=ISSUE_KIND[t.kind]||ISSUE_KIND.question;
+    const wn=issueWorkName(t);
+    const isOpen=ISSUE_OPEN(t);
+    let h='<div style="background:#fff;border:1px solid #e3eaf2;border-left:4px solid '+st.c+';border-radius:10px;padding:9px 11px;margin-bottom:6px">';
+    h+='<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">'+
+      '<span style="font-size:9.5px;font-weight:700;border-radius:5px;padding:2px 7px;background:'+st.bg+';color:'+st.c+'">'+st.i+' '+st.n+'</span>'+
+      '<span style="font-size:9.5px;font-weight:700;border-radius:5px;padding:2px 7px;background:'+kd.c+'14;color:'+kd.c+'">'+kd.i+' '+kd.n+'</span>'+
+      '<span style="font-size:9.5px;color:#9aabbf">'+esc(issueAuthor(t))+' · '+issueDate(t)+(t.src==="bot"?' · из бота':'')+'</span>'+
+    '</div>';
+    h+='<div style="font-size:12.5px;font-weight:600;color:'+(isOpen?"#1a2a3a":"#7a9aaa")+';line-height:1.35">'+esc(t.text||"—")+'</div>';
+    if(wn)h+='<div style="font-size:10px;color:#9aabbf;margin-top:2px">↳ '+esc(wn)+'</div>';
+    if(t.tgLink)h+='<div style="margin-top:4px"><a href="'+esc(t.tgLink)+'" target="_blank" rel="noopener" style="font-size:10px;font-weight:700;color:#0088cc;text-decoration:none">📎 Фото и голосовое в теме объекта →</a></div>';
+    if(t.answer)h+='<div style="margin-top:5px;padding:6px 8px;background:#f4f9f6;border-left:2px solid #27ae60;border-radius:0 6px 6px 0;font-size:11px;color:#2f6a4b;line-height:1.4"><b>Ответ:</b> '+esc(t.answer)+'</div>';
+    if(t.linkedNote)h+='<div style="margin-top:5px;font-size:10px;font-weight:700;color:#8e44ad">→ '+esc(t.linkedNote)+'</div>';
+
+    // Деньги: сумма и за чей счёт. Показываем только там, где вопрос стоит денег.
+    if(isOpen&&canApp&&(t.kind==="supply"||t.kind==="change")){
+      const payer=t.payer||(t.kind==="supply"?"company":"client");
+      h+='<div style="margin-top:7px;padding-top:7px;border-top:1px solid #f0f3f7;display:flex;align-items:center;gap:6px;flex-wrap:wrap">'+
+        '<span style="font-size:10px;color:#8497a5;font-weight:600">Сумма</span>'+
+        '<input id="iss-amt-'+t.id+'" type="text" inputmode="numeric" data-money="1" data-issamt="1" data-iid="'+t.id+'" value="'+(t.amount?fmtMoney(t.amount):"")+'" placeholder="0" style="width:88px;padding:5px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;text-align:right;box-sizing:border-box">'+
+        ['company','client'].map(function(p){
+          const on=payer===p;
+          return '<button data-a="iss-payer" data-iid="'+t.id+'" data-p="'+p+'" style="padding:5px 9px;border-radius:7px;cursor:pointer;font-size:10px;font-weight:700;border:1.5px solid '+(on?"#26456E":"#dde6f0")+';background:'+(on?"#26456E":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+'">'+(p==="company"?"за счёт компании":"за счёт клиента")+'</button>';
+        }).join("")+
+      '</div>';
+      h+='<div style="display:flex;gap:5px;margin-top:6px;flex-wrap:wrap">'+
+        '<button data-a="iss-to-supply" data-iid="'+t.id+'" style="flex:1;min-width:120px;padding:7px 9px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;border:none;background:#e67e22;color:#fff">📦 В докупку</button>'+
+        '<button data-a="iss-to-extra" data-iid="'+t.id+'" style="flex:1;min-width:120px;padding:7px 9px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;border:none;background:#8e44ad;color:#fff">🛠 В доп работы</button>'+
+      '</div>';
+    }
+    if(isOpen&&canAns){
+      h+='<div style="display:flex;gap:5px;margin-top:6px;flex-wrap:wrap">'+
+        (t.status==="new"?'<button data-a="iss-status" data-iid="'+t.id+'" data-s="work" style="padding:6px 10px;border-radius:7px;cursor:pointer;font-size:10.5px;font-weight:700;border:1.5px solid #2980b9;background:#fff;color:#2980b9">Взять в работу</button>':'')+
+        (t.status!=="hold"&&canApp?'<button data-a="iss-status" data-iid="'+t.id+'" data-s="hold" style="padding:6px 10px;border-radius:7px;cursor:pointer;font-size:10.5px;font-weight:700;border:1.5px solid #c08a1e;background:#fff;color:#c08a1e">Нужно решение</button>':'')+
+        '<button data-a="iss-answer" data-iid="'+t.id+'" style="padding:6px 10px;border-radius:7px;cursor:pointer;font-size:10.5px;font-weight:700;border:none;background:#27ae60;color:#fff">Ответить и закрыть</button>'+
+        '<button data-a="iss-status" data-iid="'+t.id+'" data-s="rejected" style="padding:6px 10px;border-radius:7px;cursor:pointer;font-size:10.5px;font-weight:700;border:1.5px solid #e74c3c55;background:#fff;color:#c0392b">Отклонить</button>'+
+      '</div>';
+    }
+    if(!isOpen&&canAns)h+='<div style="margin-top:6px"><button data-a="iss-status" data-iid="'+t.id+'" data-s="work" style="padding:5px 10px;border-radius:7px;cursor:pointer;font-size:10px;font-weight:700;border:1px solid #d0dae8;background:#fff;color:#7a9aaa">↩ Вернуть в работу</button></div>';
+    return h+'</div>';
+  };
+
+  let body="";
+  if(formOpen){
+    body+='<div style="background:#fafbfc;border:1px dashed #c0392b55;border-radius:10px;padding:10px;margin-bottom:9px">'+
+      '<div style="font-size:9px;letter-spacing:0.5px;font-weight:700;color:#c0392b;margin-bottom:6px">НОВЫЙ ВОПРОС</div>'+
+      '<div style="display:flex;gap:5px;margin-bottom:7px;flex-wrap:wrap">'+
+        Object.keys(ISSUE_KIND).map(function(k){
+          const on=issueNew.kind===k, kd=ISSUE_KIND[k];
+          return '<button data-a="iss-kind" data-k="'+k+'" style="padding:6px 11px;border-radius:16px;cursor:pointer;font-size:11px;font-weight:700;border:1.5px solid '+(on?kd.c:"#dde6f0")+';background:'+(on?kd.c:"#fff")+';color:'+(on?"#fff":"#7a9aaa")+'">'+kd.i+' '+kd.n+'</button>';
+        }).join("")+
+      '</div>'+
+      '<textarea id="iss-text" data-a="iss-text" rows="2" placeholder="Что случилось? Например: не хватило вагонки на парную, нужно ещё 6 м²" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12.5px;outline:none;box-sizing:border-box;font-family:inherit;resize:vertical">'+esc(issueNew.text||"")+'</textarea>'+
+      '<div style="display:flex;gap:6px;margin-top:7px">'+
+        '<button data-a="iss-add" data-oid="'+obj.id+'" style="flex:1;padding:9px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700;border:none;background:#c0392b;color:#fff">Задать вопрос</button>'+
+        '<button data-a="iss-form" data-oid="" style="padding:9px 14px;border-radius:8px;cursor:pointer;font-size:12px;color:#7a9aaa;border:1px solid #d0dae8;background:#fff">✕</button>'+
+      '</div>'+
+    '</div>';
+  } else {
+    body+='<button data-a="iss-form" data-oid="'+obj.id+'" style="width:100%;padding:9px;margin-bottom:9px;border-radius:9px;cursor:pointer;font-size:12px;font-weight:700;border:1px dashed #c0392b88;background:#fff;color:#c0392b">+ Задать вопрос</button>';
+  }
+
+  if(!list.length){
+    body+='<div style="text-align:center;padding:14px;color:#9aabbf;font-size:11.5px;border:1px dashed #d0dae8;border-radius:10px;line-height:1.45">Вопросов пока нет. Их можно задать отсюда или из Telegram-бота — кнопкой «❓ Вопрос».</div>';
+  } else {
+    body+=open.map(card).join("");
+    if(!open.length)body+='<div style="text-align:center;padding:12px;color:#27ae60;font-size:11.5px;font-weight:700">✅ Открытых вопросов нет</div>';
+    if(closed.length){
+      body+='<button data-a="iss-show-done" data-oid="'+obj.id+'" style="width:100%;margin-top:6px;padding:7px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;border:1px solid #e3eaf2;background:#f8fafc;color:#7a9aaa">'+(showDone?"▲ Скрыть закрытые":"▼ Закрытые · "+closed.length)+'</button>';
+      if(showDone)body+='<div style="margin-top:6px">'+closed.map(card).join("")+'</div>';
+    }
+  }
+
+  const summary=open.length
+    ? '<span style="color:#c0392b">'+open.length+' открыт'+(open.length===1?"":"ых")+'</span>'
+    : (list.length?'<span style="color:#27ae60">✓ все закрыты</span>':'<span style="color:#9aabbf">нет</span>');
+  return objSection(obj.id,"issues","❓ ВОПРОСЫ ПО ОБЪЕКТУ","#c0392b",summary,body,open.length>0);
+}
+
 // ── СВОДКА: сделанные работы + затраченное время по объекту ──
 // Показывается всем, кто видит объект. Учитывает ТОЛЬКО выполненные работы (w.done).
 // Время сводится двумя способами: по исполнителям и по этапам.
@@ -5054,6 +5257,9 @@ ${(()=>{
   // Раскрыт только когда горит: просрочка или дедлайн на носу
   return objSection(obj.id,"deadline",title,"#d35800",summary,out,!!worst&&(worst.overdueDays>0||worst.daysLeft<=3));
 })()}
+
+<!-- Вопросы по объекту: обращения с площадки и от клиента -->
+${buildIssuesSection(obj)}
 
 <!-- Сводка: сделанные работы + затраченное время (видна всем) -->
 ${buildWorkSummary(obj)}
@@ -15698,6 +15904,94 @@ function bind(){
       objWorkView=el.dataset.v||"works";
       openTimeWid=null; openPhotoWid=null; openMatsWid=null;   // не оставляем раскрытые панели от прошлого режима
       rerenderTab();
+    };}
+    // ── ВОПРОСЫ ПО ОБЪЕКТУ ──
+    else if(a==="iss-form"){el.onclick=()=>{
+      issueFormOid=el.dataset.oid||null;
+      if(issueFormOid)issueNew={text:"",kind:"supply",wid:""};
+      rerenderTab();
+    };}
+    else if(a==="iss-kind"){el.onclick=()=>{
+      // Текст из поля забираем ДО перерисовки, иначе набранное потеряется на смене типа.
+      const ta=document.getElementById("iss-text");
+      issueNew=Object.assign({},issueNew,{kind:el.dataset.k,text:ta?ta.value:issueNew.text});
+      rerenderTab();
+    };}
+    else if(a==="iss-text"){el.oninput=()=>{ issueNew=Object.assign({},issueNew,{text:el.value}); };}
+    else if(a==="iss-show-done"){el.onclick=()=>{
+      const oid=el.dataset.oid;
+      issueShowDone=Object.assign({},issueShowDone,{[oid]:!issueShowDone[oid]});
+      rerenderTab();
+    };}
+    else if(a==="iss-add"){el.onclick=()=>{
+      const oid=el.dataset.oid;
+      const ta=document.getElementById("iss-text");
+      const text=((ta?ta.value:issueNew.text)||"").trim();
+      if(!text){ alert("Опишите вопрос — что именно нужно решить."); return; }
+      issues=issues.concat([{
+        id:gid(), objId:oid, wid:issueNew.wid||"", kind:issueNew.kind||"question",
+        text:text, status:"new", src:"panel",
+        by:(currentUser&&currentUser.id)||"", byName:(currentUser&&currentUser.name)||"",
+        at:new Date(Date.now()+3*3600*1000).toISOString().slice(0,16).replace("T"," "),
+      }]);
+      issueFormOid=null; issueNew={text:"",kind:"supply",wid:""};
+      fl();
+    };}
+    else if(a==="iss-status"){el.onclick=()=>{
+      patchIssue(el.dataset.iid,{status:el.dataset.s});
+      fl();
+    };}
+    else if(a==="iss-payer"){el.onclick=()=>{
+      patchIssue(el.dataset.iid,{payer:el.dataset.p});
+      fl();
+    };}
+    else if(a==="iss-answer"){el.onclick=()=>{
+      const t=issues.find(x=>x.id===el.dataset.iid);
+      if(!t)return;
+      const ans=prompt("Ответ по вопросу:\n\n«"+(t.text||"")+"»", t.answer||"");
+      if(ans===null)return;
+      if(!String(ans).trim()){ alert("Пустой ответ не сохраняем — напишите, что решили."); return; }
+      patchIssue(t.id,{
+        status:"done", answer:String(ans).trim(),
+        answerBy:(currentUser&&currentUser.id)||"", answerByName:(currentUser&&currentUser.name)||"",
+        answerAt:new Date(Date.now()+3*3600*1000).toISOString().slice(0,16).replace("T"," "),
+      });
+      fl();
+    };}
+    // Тикет → докупка снабжения. Имя материала спрашиваем отдельно: текст вопроса —
+    // это фраза человека («не хватило вагонки, надо ещё 6 квадратов»), а в закупку нужна
+    // позиция. Сумма уже в тикете — её вводили тут же, в поле рядом.
+    else if(a==="iss-to-supply"){el.onclick=()=>{
+      if(!canApproveIssue()){ alert("Согласовать сумму может администратор или финансист."); return; }
+      const t=issues.find(x=>x.id===el.dataset.iid);
+      if(!t)return;
+      const cost=Number(t.amount)||0;
+      if(cost<=0){ alert("Сначала укажите сумму — без неё позиция уйдёт в закупку с нулевой ценой."); return; }
+      const name=prompt("Название материала для докупки:", (t.text||"").slice(0,80));
+      if(name===null||!String(name).trim())return;
+      if(!confirm("Добавить «"+String(name).trim()+"» на "+cost.toLocaleString("ru-RU")+" ₽ в «"+SUPPLY_WORK_NAME+"»?"))return;
+      const mid=issueToSupply(t,String(name).trim(),cost);
+      if(!mid){ alert("У объекта нет этапов — некуда положить докупку."); return; }
+      patchIssue(t.id,{status:"done",linkedNote:"в докупку: "+String(name).trim()+" · "+cost.toLocaleString("ru-RU")+" ₽",
+        answer:t.answer||"Заведено в докупку снабжения."});
+      fl();
+    };}
+    // Тикет → план доп работ договора. Это деньги КЛИЕНТА: пожелание, о котором
+    // договорились устно и которое иначе не попадёт ни в смету, ни в счёт.
+    else if(a==="iss-to-extra"){el.onclick=()=>{
+      if(!canApproveIssue()){ alert("Согласовать сумму может администратор или финансист."); return; }
+      const t=issues.find(x=>x.id===el.dataset.iid);
+      if(!t)return;
+      const amount=Number(t.amount)||0;
+      if(amount<=0){ alert("Сначала укажите сумму доп работы."); return; }
+      const title=prompt("Название доп работы для договора:", (t.text||"").slice(0,80));
+      if(title===null||!String(title).trim())return;
+      if(!confirm("Добавить «"+String(title).trim()+"» на "+amount.toLocaleString("ru-RU")+" ₽ в план доп работ договора?"))return;
+      const cid=issueToExtra(t,String(title).trim(),amount);
+      if(!cid){ alert("У объекта нет договора — доп работу некуда записать. Заведите договор во вкладке «Договора»."); return; }
+      patchIssue(t.id,{status:"done",payer:"client",linkedNote:"в доп работы: "+String(title).trim()+" · "+amount.toLocaleString("ru-RU")+" ₽",
+        answer:t.answer||"Согласовано, внесено в план доп работ."});
+      fl();
     };}
     else if(a==="obj-ready-filter"){el.onclick=()=>{
       objReadyFilter=el.dataset.v||"stages";
