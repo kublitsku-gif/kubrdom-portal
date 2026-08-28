@@ -104,7 +104,7 @@ export async function viewMyMoney(env, chat, uid) {
 
 export async function viewFinance(env, chat, roles, uid) {
   if (!canFin(roles)) return await viewMyMoney(env, chat, uid);
-  const st = await snap(env, ["objects", "contractDocs", "finTxns", "users", "purchased"]);
+  const st = await snap(env, ["objects", "contractDocs", "finTxns", "users", "purchased", "purchases"]);
   const docs = (st.contractDocs || []).filter(function (c) { return c.status === "signed" || c.status === "closed"; });
   const txns = st.finTxns || [];
   const sum = (pred) => txns.filter(pred).reduce(function (a, t) { return a + (Number(t.amount) || 0); }, 0);
@@ -124,6 +124,12 @@ export async function viewFinance(env, chat, roles, uid) {
   // Снабжение: касса и материалы — разные вещи, поэтому показываем обе. Проведено по кассе —
   // транзакции категории 📦; «куплено/осталось» — отметки закупки на самих материалах.
   const supplyPaid = sum(function (t) { return t.type === "expense" && String(t.category || "").indexOf("📦") === 0; });
+  // Партии без проводки — это закупки, которых нет в расходах: прибыль выглядит завышенной.
+  const batches = st.purchases || [];
+  const notPosted = batches.filter(function (p) { return !p.txnId; });
+  const notPostedSum = notPosted.reduce(function (a, p) {
+    return a + (p.items || []).reduce(function (b, i) { return b + (Number(i.qty) || 0) * (Number(i.price) || 0); }, 0);
+  }, 0);
   let matAll = 0, matBought = 0;
   (st.objects || []).forEach(function (o) {
     (o.stages || []).forEach(function (sg) {
@@ -146,6 +152,7 @@ export async function viewFinance(env, chat, roles, uid) {
     + "\n\n📦 Снабжение\nПроведено по кассе: <b>" + money(supplyPaid) + "</b>\n"
     + "Материалы: куплено <b>" + money(matBought) + "</b> из " + money(matAll)
     + " · осталось закупить <b>" + money(Math.max(0, matAll - matBought)) + "</b>"
+    + (notPosted.length ? "\n⚠️ Не проведено по кассе: <b>" + notPosted.length + " парт. на " + money(notPostedSum) + "</b>" : "")
     + "\n\nЗарплата к выплате: <b>" + money(per.left) + "</b>" + (per.over ? " · переплачено " + money(per.over) : "")
     + "\n<i>план " + money(salPlan) + ", выплачено " + money(salPaid) + "</i>\n"
     + per.text

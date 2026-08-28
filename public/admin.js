@@ -42,7 +42,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // одинаково считаться в панели и в Telegram, иначе бригадир и снабженец увидят разное.
 import { needStatus, needState, objectSupply, migrateLegacy, needQty } from "../src/supply.js";
 
-const APP_BUILD = "2026-08-26.17";
+const APP_BUILD = "2026-08-26.18";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -9539,6 +9539,14 @@ function receiveNeed(matId, on){
   });
 }
 
+// Партия, проведённая по кассе, ссылается на транзакцию расхода. Автоматически ничего
+// не проводим: исторические партии (перенос старых отметок) — это закупки прошлых месяцев,
+// и молча завести их в расходы задним числом значило бы испортить финансы.
+function batchTxn(p){ return p&&p.txnId?finTxns.find(t=>t.id===p.txnId):null; }
+function canPostBatch(){
+  return !!(currentUser&&(currentUser.roles.includes("admin")||currentUser.roles.includes("financier")||currentUser.roles.includes("supply")));
+}
+
 function batchSum(p){ return (p.items||[]).reduce((a,i)=>a+(Number(i.qty)||0)*(Number(i.price)||0),0); }
 function batchGot(p){ return (p.items||[]).filter(i=>(Number(i.gotQty)||0)>=(Number(i.qty)||0)).length; }
 
@@ -9560,6 +9568,13 @@ function tBatches(){
 
   const tot=purchases.reduce((a,p)=>a+batchSum(p),0);
   const pos=purchases.reduce((a,p)=>a+(p.items||[]).length,0);
+  const notPosted=purchases.filter(p=>!batchTxn(p));
+  if(notPosted.length){
+    h+='<div style="background:#fff;border:1px solid #e67e2244;border-radius:11px;padding:10px 12px;margin-bottom:10px">'
+      +'<div style="font-size:11.5px;color:#8a5a1f;line-height:1.4">Не проведено по кассе: <b>'+notPosted.length+'</b> парт. на <b>'+fmt(Math.round(notPosted.reduce((a,p)=>a+batchSum(p),0)))+'</b>. '
+      +'Пока закупка не проведена, она не попадает в расходы и прибыль считается завышенной.</div>'
+    +'</div>';
+  }
   h+='<div style="display:flex;gap:8px;margin-bottom:12px">'
     +'<div style="flex:1;background:#fff;border:1px solid #dde6f0;border-radius:11px;padding:10px 12px"><div style="font-size:10px;font-weight:800;color:#9aabbf;letter-spacing:0.5px">ПАРТИЙ</div><div style="font-size:18px;font-weight:800;color:#0d1b2e">'+purchases.length+'</div></div>'
     +'<div style="flex:1;background:#fff;border:1px solid #dde6f0;border-radius:11px;padding:10px 12px"><div style="font-size:10px;font-weight:800;color:#9aabbf;letter-spacing:0.5px">ПОЗИЦИЙ</div><div style="font-size:18px;font-weight:800;color:#0d1b2e">'+pos+'</div></div>'
@@ -9581,7 +9596,8 @@ function tBatches(){
         +'<span style="font-size:17px">'+(got>=items.length?"✅":"🚚")+'</span>'
         +'<div style="flex:1;min-width:0">'
           +'<div style="font-size:13px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(o?o.name:"Объект")+(p.store?" · "+esc(p.store):"")+'</div>'
-          +'<div style="font-size:11px;color:#9aabbf">'+esc(String(p.date||"").slice(0,10))+' · '+items.length+' поз. · принято '+got+'/'+items.length+'</div>'
+          +'<div style="font-size:11px;color:#9aabbf">'+esc(String(p.date||"").slice(0,10))+' · '+items.length+' поз. · принято '+got+'/'+items.length
+            +(batchTxn(p)?' · <span style="color:#16a085;font-weight:700">проведено</span>':' · <span style="color:#e67e22;font-weight:700">не проведено</span>')+'</div>'
         +'</div>'
         +'<div style="font-size:13px;font-weight:800;color:#16a085;white-space:nowrap">'+fmt(Math.round(batchSum(p)))+'</div>'
       +'</div>';
@@ -9599,6 +9615,15 @@ function tBatches(){
           +'<button data-a="batch-recv" data-pid="'+esc(p.id)+'" data-iid="'+esc(it.id)+'" style="padding:6px 11px;background:'+(full?"#fff":"#27ae60")+';border:1px solid '+(full?"#27ae6055":"#27ae60")+';border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;color:'+(full?"#27ae60":"#fff")+';white-space:nowrap">'+(full?"✓ принято":"Принять")+'</button>'
         +'</div>';
       });
+      if(canPostBatch()){
+        const t=batchTxn(p);
+        h+=t
+          ? '<div style="display:flex;align-items:center;gap:8px;margin-top:8px;padding:9px 11px;background:#eafaf6;border:1px solid #16a08544;border-radius:9px">'
+              +'<div style="flex:1;font-size:11.5px;color:#0e7a67;font-weight:700">💰 Проведено по кассе · '+fmt(Math.round(Number(t.amount)||0))+'</div>'
+              +'<button data-a="batch-unpost" data-id="'+esc(p.id)+'" style="padding:5px 10px;background:#fff;border:1px solid #e74c3c44;border-radius:7px;cursor:pointer;font-size:11px;color:#e74c3c">Отменить</button>'
+            +'</div>'
+          : '<button data-a="batch-post" data-id="'+esc(p.id)+'" style="width:100%;margin-top:8px;padding:9px;background:#16a085;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">💰 Провести по кассе · '+fmt(Math.round(batchSum(p)))+'</button>';
+      }
       h+='</div>';
     }
     h+='</div>';
@@ -14025,6 +14050,29 @@ function bind(){
       alert("Готово. Партий: "+purchases.length+", позиций: "+purchases.reduce((a,p)=>a+p.items.length,0));
     };}
     // Приёмка позиции партии: принимаем целиком либо снимаем отметку.
+    else if(a==="batch-post"){el.onclick=()=>{
+      if(!canPostBatch())return;
+      const p=purchases.find(x=>x.id===el.dataset.id); if(!p||batchTxn(p))return;
+      const sum=Math.round(batchSum(p));
+      if(sum<=0){ alert("В партии нет сумм — проводить нечего."); return; }
+      const o=objects.find(x=>x.id===p.objId);
+      const doc=contractDocs.find(c=>c.objId===p.objId&&(c.status==="signed"||c.status==="closed"));
+      if(!confirm("Провести закупку по кассе?\n\n"+(o?o.name+"\n":"")+"Сумма: "+sum.toLocaleString("ru-RU")+" ₽\nПозиций: "+(p.items||[]).length+"\n\nПоявится расход «📦 Закупка материалов» — он уменьшит прибыль по объекту."))return;
+      const txn={ id:"tx"+Date.now().toString(36), type:"expense", category:"📦 Закупка материалов",
+        amount:sum, date:String(p.date||"").slice(0,10)||todayISO(), objId:p.objId||"",
+        contractId:doc?doc.id:"", note:"партия закупки"+(p.store?" · "+p.store:"") };
+      finTxns=finTxns.concat([txn]);
+      purchases=purchases.map(x=>x.id!==p.id?x:Object.assign({},x,{txnId:txn.id}));
+      fl();
+    };}
+    else if(a==="batch-unpost"){el.onclick=()=>{
+      if(!canPostBatch())return;
+      const p=purchases.find(x=>x.id===el.dataset.id); if(!p||!p.txnId)return;
+      if(!confirm("Отменить проведение? Расходная транзакция будет удалена."))return;
+      finTxns=finTxns.filter(t=>t.id!==p.txnId);
+      purchases=purchases.map(x=>x.id!==p.id?x:Object.assign({},x,{txnId:null}));
+      fl();
+    };}
     else if(a==="batch-recv"){el.onclick=()=>{
       const pid=el.dataset.pid, iid=el.dataset.iid;
       const stamp=new Date(Date.now()+3*3600*1000).toISOString().slice(0,16).replace("T"," ");
