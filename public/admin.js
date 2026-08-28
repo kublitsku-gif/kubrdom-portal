@@ -12146,6 +12146,8 @@ function ctTplDefaults(){
     warrantyMonths:12,
     payments:ot.payNotes.map(function(note){return {amount:0,note:note};}),
     signOn:false,           // ✍️ вставлять факсимиле подписи Кублицкого Ю.Г. (черновик, localStorage)
+    portalObjId:"",         // объект портала, к которому привяжется заведённый договор
+    portalCid:"",           // id уже заведённой карточки договора (защита от дублей)
     // ─── Акт выполненных работ (docType="act") ───
     docType:"contract",     // "contract" | "act"
     actStage:0,             // индекс закрываемого этапа в payments; -1 = финальный (весь договор)
@@ -12222,6 +12224,126 @@ function dateRuShort(iso){ // 2026-04-21 → 21.04.2026
   if(!iso)return "";
   const m=String(iso).match(ISO_DATE_RE);
   return m?m[3]+"."+m[2]+"."+m[1]:esc(String(iso));
+}
+
+// ── «Договор в портал»: заполненный шаблон → карточка в списке договоров ─────
+// Раньше подписанный по шаблону договор приходилось перебивать руками в «+ Договор»:
+// те же номер, клиент, сумма и сроки вводились дважды и расходились. Кнопка внизу
+// формы заводит карточку из полей шаблона.
+// ПАСПОРТНЫЕ ДАННЫЕ В ПОРТАЛ НЕ УХОДЯТ: паспорт, дата рождения и прописка живут только
+// в черновике localStorage (kubr_ctTpl) и в снимок D1 не попадают — переносим ФИО,
+// телефон, сумму и сроки.
+
+// Ответственные по умолчанию: менеджеры по договорам + один РОП + один производственник
+// (ФОТ правится в карточке). Общее для «+ Договор» и «Завести из шаблона».
+function ctDefaultResponsible(){
+  const ids=users.filter(function(u){return u.roles.includes("contract_mgr");}).map(function(u){return u.id;});
+  const rop=users.find(function(u){return u.roles.includes("sales_head");});
+  const prod=users.find(function(u){return u.roles.some(function(r){return r==="worker"||r==="brigadier";});});
+  if(rop&&ids.indexOf(rop.id)<0)ids.push(rop.id);
+  if(prod&&ids.indexOf(prod.id)<0)ids.push(prod.id);
+  return ids;
+}
+
+// Дедлайн договора = дата подписания + срок работ. Срок в договоре считается в РАБОЧИХ
+// днях (п. 4.2: «в {СРОК} рабочих дней с момента получения первого аванса»), поэтому
+// выходные пропускаем — иначе дедлайн в карточке приходил бы на две недели раньше срока.
+function ctTplDeadline(){
+  const t=ctTplGet();
+  let days=parseInt(t.workDays,10)||0;
+  if(!t.date||days<=0)return "";
+  const d=new Date(String(t.date)+"T00:00:00");
+  if(isNaN(d.getTime()))return "";
+  while(days>0){
+    d.setDate(d.getDate()+1);
+    const wd=d.getDay();
+    if(wd!==0&&wd!==6)days--;
+  }
+  return d.toISOString().slice(0,10);
+}
+
+// CRM-клиент шаблона: сперва по ФИО, затем по последним 10 цифрам телефона
+// (в CRM он записан как «+7 (985) …», в шаблоне может быть как угодно).
+function ctTplCrmClient(){
+  const t=ctTplGet();
+  const fio=String(t.fio||"").trim().toLowerCase();
+  const digits=String(t.phone||"").replace(/\D/g,"");
+  let cl=fio?crmClients.find(function(c){return String(c.name||"").trim().toLowerCase()===fio;}):null;
+  if(!cl&&digits.length>=10){
+    const tail=digits.slice(-10);
+    cl=crmClients.find(function(c){return String(c.phone||"").replace(/\D/g,"").slice(-10)===tail;});
+  }
+  return cl||null;
+}
+
+// Завести договор в портале из шаблона. Возвращает id заведённой карточки или ""
+// (не заполнено обязательное поле / отказ на вопросе о дубле). Без ФИО и суммы
+// карточку заводить нельзя: по ним договор ищут в списке и по ним считают деньги.
+function ctTplToPortal(){
+  const t=ctTplGet();
+  const fio=String(t.fio||"").trim();
+  const amount=Number(t.amount)||0;
+  if(!fio){alert("Заполните ФИО заказчика — без него договор в портале не найти.");return "";}
+  if(!amount){alert("Заполните сумму договора.");return "";}
+  const num=String(t.num||"").trim();
+  const dup=num?contractDocs.find(function(c){return ctShortNum(c.name)===num;}):null;
+  if(dup&&!confirm("Договор № "+num+" уже есть в портале ("+(ctClientName(dup)||"без клиента")+").\n\nЗавести ещё один?"))return "";
+  // Объект берём только существующий: удалили объект — договор заводится черновиком
+  // «без объекта», а не с битой ссылкой.
+  const obj=objects.find(function(o){return o.id===(t.portalObjId||"");});
+  const objId=obj?obj.id:"";
+  const cl=ctTplCrmClient();
+  const phone=String(t.phone||"").trim();
+  const id=gid();
+  contractDocs.push({
+    id, objId, type:"main",
+    name:num?("Договор подряда № "+num):("Договор №"+(contractDocs.length+47)+(obj?" — "+obj.name:"")),
+    amount,
+    signDate:t.date||new Date().toISOString().slice(0,10),
+    deadlineDate:ctTplDeadline(),
+    client:fio, status:"draft",
+    // Телефон кладём в примечание: поиск по договорам берёт номер у привязанного
+    // CRM-клиента, а без привязки искать по телефону было бы нечем.
+    note:"Заведён из шаблона договора · "+ctTplObjType().n+(phone?" · тел. "+phone:""),
+    crmClientId:cl?cl.id:"",
+    responsible:ctDefaultResponsible(), salaries:{}, extraWorks:[], files:[]
+  });
+  t.portalCid=id;
+  ctTplPersist();
+  ctSubTab="list";
+  contractView=id;   // открываем карточку — там сразу правят объект, статус и ФОТ
+  return id;
+}
+
+// Карточка «добавить в портал» под графиком платежей (только режим договора).
+// `card` — хелпер обёртки из tContractTemplate.
+function ctTplPortalCard(card){
+  const t=ctTplGet();
+  const added=t.portalCid?contractDocs.find(function(c){return c.id===t.portalCid;}):null;
+  if(added){
+    const obj=objects.find(function(o){return o.id===added.objId;});
+    return card("✓ ДОГОВОР ЗАВЕДЁН В ПОРТАЛЕ",
+      '<div style="font-size:12.5px;color:#1a2a3a;font-weight:700;margin-bottom:3px">'+esc(added.name)+'</div>'+
+      '<div style="font-size:11px;color:#5a7a9a;margin-bottom:10px">'+esc(ctClientName(added)||"без клиента")+' · '+fmtMoney(added.amount||0)+' ₽ · '+esc(obj?obj.name:"без объекта")+'</div>'+
+      '<button data-a="ct-tpl-open-portal" style="width:100%;padding:10px;background:#27ae60;border:none;border-radius:9px;cursor:pointer;font-size:12.5px;color:#fff;font-weight:700">→ Открыть карточку договора</button>'+
+      '<button data-a="ct-tpl-unlink-portal" style="width:100%;margin-top:6px;padding:8px;background:transparent;border:1px solid #dde6f0;border-radius:8px;cursor:pointer;font-size:11.5px;color:#7a9aaa">Отвязать (завести ещё один)</button>');
+  }
+  const cl=ctTplCrmClient();
+  const dl=ctTplDeadline();
+  const objOpts=objects.map(function(o){
+    return '<option value="'+o.id+'"'+(t.portalObjId===o.id?' selected':'')+'>'+o.icon+' '+esc(o.name)+'</option>';
+  }).join("");
+  return card("➕ ДОБАВИТЬ ДОГОВОР В ПОРТАЛ",
+    '<select id="ct-tpl-obj" data-a="ct-tpl-obj-change" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;margin-bottom:8px;outline:none;background:#fff">'+
+      '<option value=""'+(!t.portalObjId?' selected':'')+'>— Без объекта (черновик) —</option>'+objOpts+
+    '</select>'+
+    '<div style="font-size:11px;color:#5a7a9a;line-height:1.7;margin-bottom:10px">'+
+      '№ <b>'+esc(String(t.num||"—"))+'</b> · '+esc(String(t.fio||"").trim()||"клиент не заполнен")+' · <b>'+fmtMoney(Number(t.amount)||0)+' ₽</b>'+
+      (dl?'<br>Дедлайн: <b>'+dateRuShort(dl)+'</b> ('+dateRuShort(t.date)+' + '+(parseInt(t.workDays,10)||0)+' раб. дн)':'')+
+      (cl?'<br>Привяжется к клиенту CRM: <b>'+esc(cl.name)+'</b>':'<br>В CRM такого клиента нет — договор заведётся без привязки')+
+      '<br><span style="color:#9aabbf">Паспортные данные в портал не уходят — остаются в этом черновике.</span>'+
+    '</div>'+
+    '<button data-a="ct-tpl-to-portal" style="width:100%;padding:11px;background:#2980b9;border:none;border-radius:9px;cursor:pointer;font-size:13px;color:#fff;font-weight:700">➕ Завести договор в портале</button>');
 }
 
 // Сумма платежей vs сумма договора — индикатор под графиком платежей
@@ -12385,6 +12507,8 @@ function tContractTemplate(){
     txtHtml+='<button data-a="ct-tpl-text-reset-all" style="width:100%;margin-top:10px;padding:9px;background:#fff2f0;border:1px solid #e74c3c44;border-radius:8px;cursor:pointer;font-size:12px;color:#e74c3c;font-weight:700">↺ Вернуть весь стандартный текст ('+esc(ctTplObjType().n)+')</button>';
   }
   html+=card("📜 ТЕКСТ ДОГОВОРА — "+esc(ctTplObjType().n),txtHtml);
+
+  html+=ctTplPortalCard(card);
 
   html+='<div style="display:flex;gap:8px;margin-bottom:20px">'+
     '<button data-a="ct-tpl-print" style="flex:1;padding:12px;background:#27ae60;border:none;border-radius:10px;cursor:pointer;font-size:14px;color:#fff;font-weight:700">🖨 Сформировать договор (PDF)</button>'+
@@ -14964,14 +15088,9 @@ function bind(){
       }
       const cl=crmClients.find(function(c){return c.name===client;});
       const crmClientId=cl?cl.id:"";
-      const escortIds=users.filter(function(u){return u.roles.includes("contract_mgr");}).map(function(u){return u.id;});
-      // ФОТ (РАБОТА) по умолчанию = РОП 150k + производство 200k. Гарантируем в ответственных
-      // одного sales_head (РОП) и одного worker/brigadier (производство); суммы/людей правят в карточке.
-      const _defResp=escortIds.slice();
-      const _ropU=users.find(function(u){return u.roles.includes("sales_head");});
-      const _prodU=users.find(function(u){return u.roles.some(function(r){return r==="worker"||r==="brigadier";});});
-      if(_ropU&&_defResp.indexOf(_ropU.id)<0)_defResp.push(_ropU.id);
-      if(_prodU&&_defResp.indexOf(_prodU.id)<0)_defResp.push(_prodU.id);
+      // ФОТ (РАБОТА) по умолчанию = РОП 150k + производство 200k: гарантируем в ответственных
+      // одного sales_head и одного worker/brigadier; суммы/людей правят в карточке.
+      const _defResp=ctDefaultResponsible();
       contractDocs.push({id:gid(),objId,type:contractNew.type,name:name.trim(),amount,signDate:date,deadlineDate,client,status:"draft",note,crmClientId,responsible:_defResp,salaries:{},extraWorks:contractNew.extraWorks||[],files:contractNew.files||[]});
       contractAddForm=false;
       contractNew={objId:"",type:"main",name:"",amount:"",signDate:new Date().toISOString().slice(0,10),client:"",status:"draft",note:"",deadlineDate:"",extraWorks:[],files:[]};
@@ -14997,6 +15116,10 @@ function bind(){
       ctTplPersist();
       render();
     };}
+    else if(a==="ct-tpl-obj-change"){el.onchange=()=>{ctTplGet().portalObjId=el.value||"";ctTplPersist();render();};}
+    else if(a==="ct-tpl-open-portal"){el.onclick=()=>{ctSubTab="list";contractView=ctTplGet().portalCid;render();};}
+    else if(a==="ct-tpl-unlink-portal"){el.onclick=()=>{ctTplGet().portalCid="";ctTplPersist();render();};}
+    else if(a==="ct-tpl-to-portal"){el.onclick=()=>{ if(ctTplToPortal())fl(); };}
     else if(a==="ct-tpl-pay-add"){el.onclick=()=>{ctTplGet().payments.push({amount:0,note:""});ctTplPersist();render();};}
     else if(a==="ct-tpl-pay-del"){el.onclick=()=>{
       const i=parseInt(el.dataset.i,10);
