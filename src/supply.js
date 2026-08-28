@@ -42,7 +42,14 @@ export function needStatus(matId, need, purchases, legacyPurchased, legacyArrive
   return { want: want, bought: bought, got: got, spent: spent, legacy: false };
 }
 
-export const needState = (s) => (s.got >= s.want ? "got" : s.bought >= s.want ? "bought" : s.bought > 0 ? "partial" : "none");
+// Состояния по возрастанию готовности. Частичную ПРИЁМКУ отличаем отдельно: для бригадира
+// «привезли 25 из 50» — это совсем не то же самое, что «всё куплено и едет».
+export const needState = (s) =>
+  s.got >= s.want ? "got"
+  : s.got > 0 ? "partialGot"
+  : s.bought >= s.want ? "bought"
+  : s.bought > 0 ? "partial"
+  : "none";
 
 // Сводка по объекту: сколько позиций в каком состоянии и сколько денег потрачено.
 export function objectSupply(obj, purchases, legacyPurchased, legacyArrived) {
@@ -53,7 +60,7 @@ export function objectSupply(obj, purchases, legacyPurchased, legacyArrived) {
         const st = needStatus(m.id, m, purchases, legacyPurchased, legacyArrived);
         const state = needState(st);
         out.need++;
-        out[state === "got" ? "got" : state === "bought" ? "bought" : state === "partial" ? "partial" : "none"]++;
+        out[state === "got" ? "got" : state === "partialGot" || state === "bought" ? "bought" : state === "partial" ? "partial" : "none"]++;
         out.spent += st.spent;
         if (state === "none" || state === "partial") out.needSum += (st.want - st.bought) * (Number(m.cost) || 0);
       });

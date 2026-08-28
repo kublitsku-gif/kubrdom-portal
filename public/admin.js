@@ -42,7 +42,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // одинаково считаться в панели и в Telegram, иначе бригадир и снабженец увидят разное.
 import { needStatus, needState, objectSupply, migrateLegacy, needQty } from "../src/supply.js";
 
-const APP_BUILD = "2026-08-26.16";
+const APP_BUILD = "2026-08-26.17";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -5156,7 +5156,7 @@ ${obj.stages.map(s=>{
               if(objWorkView!=="receive")return "";
               const ms=w.mats||[];
               if(!ms.length)return "";
-              const got=ms.filter(function(m){return arrived[m.id];}).length;
+              const got=ms.filter(function(m){return matStateOf(m)==="got";}).length;
               const wait=ms.length-got;
               const c=wait?"#e67e22":"#27ae60";
               return `<button data-a="obj-toggle-mats" data-wid="${w.id}" style="padding:6px 12px;background:${isMatsOpen?c+"22":c+"12"};border:1px solid ${c}55;border-radius:5px;cursor:pointer;font-size:12px;color:${c};font-weight:700">📦 ${got}/${ms.length}${wait?" · ждём "+wait:" ✓"}</button>`;
@@ -5189,17 +5189,19 @@ ${obj.stages.map(s=>{
             <button data-a="obj-toggle-mats" data-wid="${w.id}" title="Свернуть" style="width:24px;height:24px;background:#fff;border:1px solid #e67e2255;border-radius:6px;cursor:pointer;color:#e67e22;font-size:12px">✕</button>
           </div>`
         +ms.map(function(m){
-          const bought=!!purchased[m.id], got=!!arrived[m.id];
-          const icon=got?"✅":bought?"🛒":"⬜";
-          const label=got?"на объекте":bought?"куплено, в пути":"не куплено";
-          const col=got?"#27ae60":bought?"#e67e22":"#9aabbf";
-          return `<div style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:#fff;border:1px solid ${col}33;border-radius:8px;margin-bottom:4px">
-            <span style="font-size:14px">${icon}</span>
+          const st=matStatus(m), state=needState(st), meta=MAT_STATE[state];
+          const got=state==="got";
+          // Количества вместо «да/нет»: видно, что привезли не всё.
+          const qty=st.want>1||st.bought!==st.want
+            ? numRu(st.got)+" из "+numRu(st.want)+(st.bought>st.got?" · куплено "+numRu(st.bought):"")
+            : "";
+          return `<div style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:#fff;border:1px solid ${meta.c}33;border-radius:8px;margin-bottom:4px">
+            <span style="font-size:14px">${meta.i}</span>
             <div style="flex:1;min-width:0">
               <div style="font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.n||"—")}</div>
-              <div style="font-size:10px;color:${col};font-weight:600">${label}${m.qty>1?" · "+numRu(m.qty)+" шт":""}</div>
+              <div style="font-size:10px;color:${meta.c};font-weight:600">${meta.t}${qty?" · "+qty:""}</div>
             </div>
-            ${bought?`<button data-a="supply-arrived" data-mid="${m.id}" style="padding:5px 10px;background:${got?"#eaf7ef":"#fff"};border:1px solid ${got?"#27ae6055":"#d0dae8"};border-radius:7px;cursor:pointer;font-size:11px;font-weight:700;color:${got?"#27ae60":"#5a7080"};white-space:nowrap">${got?"✓ принято":"Принять"}</button>`:""}
+            ${st.bought>0?`<button data-a="work-mat-recv" data-mid="${m.id}" style="padding:5px 10px;background:${got?"#eaf7ef":"#fff"};border:1px solid ${got?"#27ae6055":"#d0dae8"};border-radius:7px;cursor:pointer;font-size:11px;font-weight:700;color:${got?"#27ae60":"#5a7080"};white-space:nowrap">${got?"✓ принято":"Принять"}</button>`:""}
           </div>`;
         }).join("")
         +`</div>`;
@@ -9511,6 +9513,30 @@ function syncNeedToBatch(matId, on){
     ? purchases.map(p=>p.id!==openId?p:Object.assign({},p,{items:(p.items||[]).concat([item])}))
     : purchases.concat([{ id:openId, date:day, store:"", objId:owner.id,
         by:(currentUser&&currentUser.id)||"", note:"закупка "+day, items:[item] }]);
+}
+
+// Статус потребности одной строкой: сколько нужно, куплено и уже на объекте.
+// Считает общий модуль (src/supply.js) — тот же, что у бота, чтобы цифры совпадали.
+function matStatus(m){ return needStatus(m.id, m, purchases, purchased, arrived); }
+function matStateOf(m){ return needState(matStatus(m)); }
+const MAT_STATE={
+  none:      {i:"⬜",c:"#9aabbf",t:"не куплено"},
+  partial:   {i:"🟠",c:"#e67e22",t:"куплено частично"},
+  bought:    {i:"🛒",c:"#e67e22",t:"куплено, в пути"},
+  partialGot:{i:"🟡",c:"#f39c12",t:"привезли частично"},
+  got:       {i:"✅",c:"#27ae60",t:"на объекте"} };
+
+// Приёмка потребности: пишем и в партию, и в легаси-флаг, пока старые экраны читают его.
+function receiveNeed(matId, on){
+  const stamp=new Date(Date.now()+3*3600*1000).toISOString().slice(0,16).replace("T"," ");
+  if(on) arrived[matId]=true; else delete arrived[matId];
+  purchases=purchases.map(function(p){
+    if(!(p.items||[]).some(function(i){return i.needId===matId;}))return p;
+    return Object.assign({},p,{items:p.items.map(function(it){
+      if(it.needId!==matId)return it;
+      return Object.assign({},it,{gotQty:on?(Number(it.qty)||0):0,gotAt:on?stamp:null,gotBy:on?((currentUser&&currentUser.id)||""):""});
+    })});
+  });
 }
 
 function batchSum(p){ return (p.items||[]).reduce((a,i)=>a+(Number(i.qty)||0)*(Number(i.price)||0),0); }
@@ -13975,6 +14001,13 @@ function bind(){
       const ids=el.dataset.ids.split(',');
       const allDone=el.dataset.done==="1";
       ids.forEach(function(id){if(id){ purchased[id]=!allDone; syncNeedToBatch(id, !allDone); }});
+      rerenderTab();
+    };}
+    else if(a==="work-mat-recv"){el.onclick=()=>{
+      const mid=el.dataset.mid;
+      const m=objects.flatMap(o=>(o.stages||[]).flatMap(s=>(s.works||[]).flatMap(w=>w.mats||[]))).find(x=>x.id===mid);
+      if(!m)return;
+      receiveNeed(mid, matStateOf(m)!=="got");   // принято целиком → снять, иначе принять
       rerenderTab();
     };}
     else if(a==="batch-page"){el.onclick=()=>{ window._supplyPage="batches"; rerenderTab(); };}
