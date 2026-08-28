@@ -1204,6 +1204,20 @@ function _syncSalPlan(id,numVal){
   }catch(e){}
 }
 
+// Оплата этапа в договоре — та же ловушка, что у плана зарплаты: перерисовка по поллингу
+// стирала набранное, и 💾 записывал 0. Поэтому пишем в стейт на каждый ввод, а кнопка
+// остаётся подтверждением («сохранить сейчас»), а не единственным путём сохранения.
+function _syncStagePay(oid,sid,numVal){
+  try{
+    objects=objects.map(function(o){
+      if(o.id!==oid)return o;
+      return Object.assign({},o,{stages:(o.stages||[]).map(function(st){
+        return st.id!==sid?st:Object.assign({},st,{pay:numVal>0?numVal:0});
+      })});
+    });
+  }catch(e){}
+}
+
 window._bindMoneyInputs=function(){
   document.querySelectorAll("input[data-money='1']").forEach(function(inp){
     if(inp._moneyBound)return;
@@ -1222,11 +1236,15 @@ window._bindMoneyInputs=function(){
       const numVal=unfmtMoney(this.value);
       if(this.id==="ct-amount")contractNew.amount=numVal;
       else if(this.id.indexOf("ctsal-plan-")===0)_syncSalPlan(this.id,numVal);
+      else if(this.dataset.stagepay==="1")_syncStagePay(this.dataset.oid,this.dataset.sid,numVal);
     });
     // Резервный синк на change (срабатывает при уходе из поля) — на случай, если на конкретном
     // устройстве события input ведут себя нестандартно (IME/автозаполнение/старый движок).
     if(inp.id&&inp.id.indexOf("ctsal-plan-")===0){
       inp.addEventListener("change",function(){ _syncSalPlan(this.id,unfmtMoney(this.value)); });
+    }
+    if(inp.dataset.stagepay==="1"){
+      inp.addEventListener("change",function(){ _syncStagePay(this.dataset.oid,this.dataset.sid,unfmtMoney(this.value)); });
     }
   });
 };
@@ -4257,6 +4275,37 @@ function objSalaryPlan(oid){
   // (роль sales_head), и раскладывать ЕГО по работам бригады было бы прямой ошибкой.
   const d=finSalaries[oid]||{};              // легаси-схема
   return Object.keys(d).reduce((a,uid)=>a+(Number(d[uid]&&d[uid].plan)||0),0);
+}
+// План бригады ПО ОДНОМУ ДОГОВОРУ — для разбивки по этапам на карточке договора.
+// Отличие от objSalaryPlan: там сумма по всем договорам объекта, здесь ровно тот план,
+// который человек видит рядом на экране. Пустую сумму заменяем ставкой по умолчанию —
+// иначе кнопка «разложить» предлагала бы разложить ноль там, где суммы просто не вбили.
+function contractProdPlan(c){
+  const resp=(c&&c.responsible)||[], sal=(c&&c.salaries)||{};
+  return users
+    .filter(function(u){return resp.includes(u.id)&&u.roles.some(function(r){return r==="brigadier"||r==="worker";});})
+    .reduce(function(a,u){
+      const ud=sal[u.id]||{};
+      return a+(ud.plan!=null&&ud.plan!==0?ud.plan:getDefaultSalary(u));
+    },0);
+}
+// Разложить сумму по этапам пропорционально цене работ в них. Остаток от округления
+// кладём в самый дорогой этап, чтобы сумма этапов сошлась с планом до рубля.
+// Возвращает null, если раскладывать не по чему — решение показать ошибку за вызывающим.
+function spreadByStageCost(obj, plan){
+  const stages=(obj&&obj.stages)||[];
+  if(!stages.length)return null;
+  const costs=stages.map(function(st){return (st.works||[]).reduce(function(a,w){return a+(Number(w.cost)||0);},0);});
+  const base=costs.reduce(function(a,c){return a+c;},0);
+  if(base<=0)return null;
+  let acc=0, maxI=0, maxC=-1;
+  const vals=costs.map(function(c,i){
+    const v=Math.round(plan*c/base); acc+=v;
+    if(c>maxC){maxC=c;maxI=i;}
+    return v;
+  });
+  vals[maxI]+=plan-acc;
+  return vals;
 }
 
 async function notifyApi(path,opts){
@@ -7452,6 +7501,46 @@ function tContractDetail(cid){
 
   // Block 1: ЗАРПЛАТА ПРОИЗВОДСТВУ
   html+=_renderSalSection({title:"💼 ЗАРПЛАТА ПРОИЗВОДСТВУ",color:"#e67e22",users:prodUsers});
+
+  // Block 1.2: ОПЛАТА ПО ЭТАПАМ ОБЪЕКТА
+  // Назначается здесь же, где план зарплаты: сумма этапов — это разбивка того же плана,
+  // и держать их на разных экранах значит гарантированно получить расхождение.
+  if(prodUsers.length&&c.objId){
+    const obj0=objects.find(function(x){return x.id===c.objId;});
+    if(obj0&&(obj0.stages||[]).length){
+      const planT=contractProdPlan(c);
+      const fund=objPayFund(obj0);
+      const left=planT-fund, over=left<0;
+      html+='<div style="background:#fff;border-radius:12px;border:1px solid #8e44ad33;padding:12px 14px;margin-bottom:10px">';
+      html+='<div style="font-size:10px;color:#8e44ad;font-weight:700;letter-spacing:1px;margin-bottom:4px">👷 ОПЛАТА БРИГАДЕ ПО ЭТАПАМ</div>';
+      html+='<div style="font-size:11px;color:#7a9aaa;line-height:1.4;margin-bottom:10px">Разбивка плана по этапам объекта. Это то, что видит бригадир в объекте вместо цены для клиента.</div>';
+      (obj0.stages||[]).forEach(function(st,i){
+        const works=(st.works||[]).length;
+        const done=(st.works||[]).filter(function(w){return w.done;}).length;
+        html+=
+          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">'+
+            '<div style="width:8px;height:8px;border-radius:50%;background:'+(st.c||"#8e44ad")+';flex-shrink:0"></div>'+
+            '<div style="flex:1;min-width:0">'+
+              '<div style="font-size:12px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(st.n||("Этап "+(i+1)))+'</div>'+
+              '<div style="font-size:10px;color:#9aabbf">'+works+' работ · сделано '+done+'</div>'+
+            '</div>'+
+            '<input id="ctstage-'+cid+'-'+st.id+'" type="text" inputmode="numeric" data-money="1" data-stagepay="1" data-oid="'+obj0.id+'" data-sid="'+st.id+'" value="'+(stagePay(st)?fmtMoney(stagePay(st)):"")+'" placeholder="0" style="width:96px;padding:6px 8px;border-radius:7px;border:1px solid #8e44ad55;font-size:12px;outline:none;text-align:right;box-sizing:border-box;flex-shrink:0">'+
+            '<button data-a="ct-stage-save" data-cid="'+cid+'" data-oid="'+obj0.id+'" data-sid="'+st.id+'" style="padding:7px 10px;background:#8e44ad;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:13px;font-weight:700;flex-shrink:0">💾</button>'+
+          '</div>';
+      });
+      html+=
+        '<div style="display:flex;justify-content:space-between;padding-top:6px;border-top:1px solid #f4f6f9;margin-top:4px">'+
+          '<span style="font-size:11px;color:#7a9aaa">Разложено по этапам:</span>'+
+          '<span style="font-size:11px;font-weight:700;color:#8e44ad">'+fund.toLocaleString("ru-RU")+' ₽</span>'+
+        '</div>'+
+        '<div style="display:flex;justify-content:space-between;margin-top:3px">'+
+          '<span style="font-size:11px;color:#7a9aaa">'+(over?"Превышение плана:":"Осталось разложить:")+'</span>'+
+          '<span style="font-size:11px;font-weight:800;color:'+(over?"#e74c3c":"#27ae60")+'">'+Math.abs(left).toLocaleString("ru-RU")+' ₽</span>'+
+        '</div>'+
+        '<button data-a="ct-stage-spread" data-cid="'+cid+'" data-oid="'+obj0.id+'" style="width:100%;margin-top:9px;padding:8px;background:#fff;border:1px dashed #8e44ad;border-radius:9px;cursor:pointer;color:#8e44ad;font-size:11.5px;font-weight:700">⚖️ Разложить '+planT.toLocaleString("ru-RU")+' ₽ по этапам пропорционально цене</button>';
+      html+='</div>';
+    }
+  }
 
   // Block 1.5: ДЕДЛАЙНЫ БРИГАДИРОВ (only prod_head + admin can edit)
   if(prodUsers.length){
@@ -14831,6 +14920,35 @@ function bind(){
       });
       fl();
     };}
+    // Оплата бригаде за этап. Значение уже лежит в стейте (синк на ввод), кнопка нужна,
+    // чтобы человек видел подтверждение и чтобы сохранение ушло в облако сразу.
+    else if(a==="ct-stage-save"){el.onclick=()=>{
+      const cid=el.dataset.cid, oid=el.dataset.oid, sid=el.dataset.sid;
+      const inp=document.getElementById("ctstage-"+cid+"-"+sid);
+      if(!inp)return;
+      _syncStagePay(oid,sid,unfmtMoney(inp.value));
+      fl();
+    };}
+    // Раскладка плана договора по этапам пропорционально цене работ — иначе три-пять сумм
+    // на объект приходится считать в уме при каждом изменении договора.
+    else if(a==="ct-stage-spread"){el.onclick=()=>{
+      const cid=el.dataset.cid, oid=el.dataset.oid;
+      const c=contractDocs.find(x=>x.id===cid);
+      const o=objects.find(x=>x.id===oid);
+      if(!c||!o)return;
+      const plan=contractProdPlan(c);
+      if(plan<=0){ alert("План бригады по этому договору не задан.\n\nВпишите суммы в блоке «Зарплата производству» выше — тогда их можно будет разложить по этапам."); return; }
+      const vals=spreadByStageCost(o,plan);
+      if(!vals){ alert("У работ объекта не проставлены цены — распределять пропорционально нечему."); return; }
+      const had=objPayFund(o);
+      if(!confirm("Разложить "+plan.toLocaleString("ru-RU")+" ₽ по "+(o.stages||[]).length+" этапам пропорционально их цене?"
+        +(had?"\n\nТекущие суммы ("+had.toLocaleString("ru-RU")+" ₽) будут перезаписаны.":"")))return;
+      objects=objects.map(ob=>ob.id!==oid?ob:Object.assign({},ob,{stages:ob.stages.map((st,i)=>Object.assign({},st,{
+        pay:Math.max(0,vals[i]),
+        works:(st.works||[]).map(w=>w.pay?Object.assign({},w,{pay:0}):w)   // старые расценки по работам гасим, чтобы не считалось дважды
+      }))}));
+      fl();
+    };}
     else if(a==="ct-extra-add"){el.onclick=()=>{
       const cid=el.dataset.cid;
       const c=contractDocs.find(function(x){return x.id===cid;});
@@ -15565,16 +15683,11 @@ function bind(){
       const plan=objSalaryPlan(oid);
       if(plan<=0){ alert("Зарплата бригады по этому объекту не задана.\n\nЗадайте её в договоре объекта (вкладка «Договора») — тогда её можно будет разложить по работам.\n\nВознаграждение РОПа и сопровождения в расчёт не берётся."); return; }
       const stages=(o.stages||[]);
-      const costs=stages.map(st=>(st.works||[]).reduce((a,w)=>a+(Number(w.cost)||0),0));
-      const base=costs.reduce((a,c)=>a+c,0);
-      if(base<=0){ alert("У работ объекта не проставлены цены — распределять пропорционально нечему."); return; }
+      const vals=spreadByStageCost(o,plan);
+      if(!vals){ alert("У работ объекта не проставлены цены — распределять пропорционально нечему."); return; }
       const had=objPayFund(o);
       if(!confirm("Разложить зарплату бригады "+plan.toLocaleString("ru-RU")+" ₽ по "+stages.length+" этапам пропорционально их цене?"
         +(had?"\n\nТекущие суммы ("+had.toLocaleString("ru-RU")+" ₽) будут перезаписаны.":"")))return;
-      // Остаток от округления кладём в самый дорогой этап — сумма этапов сходится с планом до рубля.
-      let acc=0, maxI=0, maxC=-1;
-      const vals=costs.map((c,i)=>{ const v=Math.round(plan*c/base); acc+=v; if(c>maxC){maxC=c;maxI=i;} return v; });
-      vals[maxI]+=plan-acc;
       objects=objects.map(ob=>ob.id!==oid?ob:Object.assign({},ob,{stages:ob.stages.map((st,i)=>Object.assign({},st,{
         pay:Math.max(0,vals[i]),
         works:(st.works||[]).map(w=>w.pay?Object.assign({},w,{pay:0}):w)   // старые расценки по работам гасим, чтобы не считалось дважды
