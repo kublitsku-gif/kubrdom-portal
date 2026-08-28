@@ -6980,47 +6980,62 @@ function buildContractFiles(c){
     if(n<1024*1024) return Math.round(n/1024)+" КБ";
     return (n/1024/1024).toFixed(1)+" МБ";
   }
+  // Пять видов файлов — одной карточкой, строкой на вид. Раньше каждый вид был
+  // отдельной белой карточкой с заголовком и рамкой «Нет файлов» на 12 px отступов:
+  // пустой договор занимал пять экранов ничем. Теперь пустые виды — просто строки
+  // со счётчиком, список раскрывается тапом (ctFilesOpen). Кнопки прикрепления и
+  // все data-a прежние: ct-file-label, ct-plan-pick, ct-file-del, ct-act-signed.
   function section(kind,title,color){
     const files=(c.files||[]).filter(function(f){return f.kind===kind;});
-    let h='<div style="background:#fff;border-radius:12px;border:1px solid '+color+'33;padding:12px 14px;margin-bottom:10px">';
-    h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'+
-         '<div style="font-size:10px;color:'+color+';font-weight:700;letter-spacing:0.5px">'+title+(files.length?' · '+files.length:'')+'</div>'+
-         '<span style="display:flex;gap:6px;align-items:center">'+
-         (kind==="plan"?'<button data-a="ct-plan-pick" data-cid="'+c.id+'" style="padding:4px 11px;background:#6c5ce7;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">📐 Из базы</button>':'')+
-         '<label data-a="ct-file-label" data-cid="'+c.id+'" data-kind="'+kind+'" style="padding:4px 11px;background:'+color+';border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">+ Прикрепить<input id="ct-file-inp-'+c.id+'-'+kind+'" type="file" multiple style="display:none"></label>'+
-         '</span>'+
-       '</div>';
-    if(!files.length){
-      h+='<div style="font-size:11px;color:#9aabbf;text-align:center;padding:12px;border:1px dashed '+color+'44;border-radius:8px">Нет файлов. Нажмите «+ Прикрепить»</div>';
-    } else {
+    const open=ctFilesOpen===c.id+":"+kind;
+    let h='<div style="border-bottom:1px solid #f0f3f7">';
+    h+='<div style="display:flex;align-items:center;gap:8px;padding:8px 0">'+
+      '<span data-a="ct-files-open" data-cid="'+c.id+'" data-kind="'+kind+'" style="flex:1;min-width:0;display:flex;align-items:center;gap:7px;cursor:pointer">'+
+        '<span style="font-size:10.5px;font-weight:700;color:'+(files.length?color:'#9aabbf')+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+title+'</span>'+
+        (files.length
+          ?'<span style="font-size:9.5px;font-weight:700;color:'+color+';background:'+color+'15;border-radius:10px;padding:1px 7px;flex-shrink:0">'+files.length+'</span>'
+          :'<span style="font-size:9.5px;color:#c3cedb;flex-shrink:0">пусто</span>')+
+      '</span>'+
+      (kind==="plan"?'<button data-a="ct-plan-pick" data-cid="'+c.id+'" style="padding:3px 9px;background:#6c5ce7;border:none;border-radius:6px;cursor:pointer;color:#fff;font-size:10px;font-weight:700;flex-shrink:0">📐 База</button>':'')+
+      '<label data-a="ct-file-label" data-cid="'+c.id+'" data-kind="'+kind+'" style="padding:3px 9px;background:'+color+';border:none;border-radius:6px;cursor:pointer;color:#fff;font-size:10px;font-weight:700;flex-shrink:0">＋ Файл<input id="ct-file-inp-'+c.id+'-'+kind+'" type="file" multiple style="display:none"></label>'+
+    '</div>';
+    if(open&&files.length){
+      h+='<div style="padding-bottom:8px">';
       files.forEach(function(f){
         const isImg=(f.mime||"").indexOf("image")===0;
-        h+='<div style="display:flex;align-items:center;gap:9px;padding:8px 10px;background:#fafbfc;border:1px solid #f0f3f7;border-radius:8px;margin-bottom:5px">';
+        h+='<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:#fafbfc;border:1px solid #f0f3f7;border-radius:8px;margin-bottom:4px">';
         if(isImg){
-          h+='<img src="'+f.data+'" style="width:34px;height:34px;border-radius:6px;object-fit:cover;flex-shrink:0;border:1px solid #e0e6ee" alt="">';
+          h+='<img src="'+f.data+'" style="width:30px;height:30px;border-radius:6px;object-fit:cover;flex-shrink:0;border:1px solid #e0e6ee" alt="">';
         } else {
-          h+='<div style="width:34px;height:34px;border-radius:6px;background:'+color+'15;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0">'+fileIcon(f)+'</div>';
+          h+='<div style="width:30px;height:30px;border-radius:6px;background:'+color+'15;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0">'+fileIcon(f)+'</div>';
         }
         h+='<div style="flex:1;min-width:0">'+
-             '<div style="font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name)+'</div>'+
+             '<div style="font-size:11.5px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name)+'</div>'+
              '<div style="font-size:9px;color:#9aabbf">'+(f.date||"")+(f.size?' · '+fmtSize(f.size):'')+'</div>'+
            '</div>'+
-           (kind==="act"?'<label onclick="event.stopPropagation()" style="display:flex;align-items:center;gap:5px;padding:5px 9px;background:'+(f.signed?'#27ae6015':'#fff')+';border:1px solid '+(f.signed?'#27ae6055':'#d0dae8')+';border-radius:6px;cursor:pointer;font-size:10px;font-weight:700;color:'+(f.signed?'#27ae60':'#9aabbf')+';white-space:nowrap;flex-shrink:0"><input type="checkbox" data-a="ct-act-signed" data-cid="'+c.id+'" data-fid="'+f.id+'"'+(f.signed?' checked':'')+' style="accent-color:#27ae60;margin:0">'+(f.signed?'подписан':'не подписан')+'</label>':'')+
-           '<a href="'+f.data+'" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;cursor:pointer;color:'+color+';font-size:11px;font-weight:700;text-decoration:none;white-space:nowrap">Открыть</a>'+
-           '<button data-a="file-print" data-url="'+esc(f.data)+'" data-name="'+esc(f.name||"Файл")+'" data-mime="'+esc(f.mime||"")+'" title="Печать" style="width:28px;height:28px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;cursor:pointer;color:'+color+';font-size:13px;flex-shrink:0">🖨</button>'+
-           '<button data-a="ct-file-del" data-cid="'+c.id+'" data-fid="'+f.id+'" style="width:28px;height:28px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:12px;flex-shrink:0">✕</button>'+
+           (kind==="act"?'<label onclick="event.stopPropagation()" style="display:flex;align-items:center;gap:4px;padding:4px 8px;background:'+(f.signed?'#27ae6015':'#fff')+';border:1px solid '+(f.signed?'#27ae6055':'#d0dae8')+';border-radius:6px;cursor:pointer;font-size:9.5px;font-weight:700;color:'+(f.signed?'#27ae60':'#9aabbf')+';white-space:nowrap;flex-shrink:0"><input type="checkbox" data-a="ct-act-signed" data-cid="'+c.id+'" data-fid="'+f.id+'"'+(f.signed?' checked':'')+' style="accent-color:#27ae60;margin:0">'+(f.signed?'подписан':'не подписан')+'</label>':'')+
+           '<a href="'+f.data+'" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="padding:4px 9px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;cursor:pointer;color:'+color+';font-size:10.5px;font-weight:700;text-decoration:none;white-space:nowrap;flex-shrink:0">Открыть</a>'+
+           '<button data-a="file-print" data-url="'+esc(f.data)+'" data-name="'+esc(f.name||"Файл")+'" data-mime="'+esc(f.mime||"")+'" title="Печать" style="width:26px;height:26px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;cursor:pointer;color:'+color+';font-size:12px;flex-shrink:0">🖨</button>'+
+           '<button data-a="ct-file-del" data-cid="'+c.id+'" data-fid="'+f.id+'" style="width:26px;height:26px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>'+
            '</div>';
       });
+      h+='</div>';
     }
     h+='</div>';
     return h;
   }
-  let html='<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin:14px 0 8px">📎 ФАЙЛЫ</div>';
-  html+=section("contract","📄 ФАЙЛ ДОГОВОРА","#2980b9");
-  html+=section("plan","📐 ФАЙЛ ПЛАНИРОВКИ И ПРОЕКТ","#8e44ad");
-  html+=section("spec","📋 ФАЙЛ СПЕЦИФИКАЦИИ","#16a085");
-  html+=section("act","✅ АКТЫ ВЫПОЛНЕННЫХ РАБОТ","#e67e22");
-  html+=section("wind","🪟 ДОГОВОР НА ОКНА И ДВЕРИ","#34495e");
+  const _totalFiles=(c.files||[]).length;
+  let html='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:2px 13px 4px;margin:9px 0">';
+  html+='<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0 3px;border-bottom:1px solid #f0f3f7">'+
+    '<span style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px">📎 ФАЙЛЫ</span>'+
+    '<span style="font-size:10px;color:#9aabbf;font-weight:700">'+(_totalFiles||"нет")+'</span>'+
+  '</div>';
+  html+=section("contract","📄 Договор","#2980b9");
+  html+=section("plan","📐 Планировка и проект","#8e44ad");
+  html+=section("spec","📋 Спецификация","#16a085");
+  html+=section("act","✅ Акты выполненных работ","#e67e22");
+  html+=section("wind","🪟 Окна и двери","#34495e");
+  html+='</div>';
   return html;
 }
 
@@ -7037,7 +7052,6 @@ function tContractDetail(cid){
   const obj=objects.find(function(o){return o.id===c.objId;});
   const STATUS={draft:{label:"Черновик",color:"#7f8c8d"},signed:{label:"Подписан",color:"#2980b9"},closed:{label:"Закрыт",color:"#27ae60"}};
   const st=STATUS[c.status]||STATUS.draft;
-  const responsible=c.responsible||[];
   const salaries=c.salaries||{};
 
   // Find linked CRM client
@@ -7196,279 +7210,304 @@ function tContractDetail(cid){
   }
   html+='</div>';
 
-  // Responsible — who manages this contract
-  html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:10px">';
-  html+='<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">ОТВЕТСТВЕННЫЕ ЗА ДОГОВОР</div>';
-  html+='<div style="display:flex;flex-wrap:wrap;gap:6px">';
-  users.forEach(function(u){
-    const on=responsible.includes(u.id);
-    html+=
-      '<div data-a="ct-resp-toggle" data-cid="'+c.id+'" data-uid="'+u.id+'" style="display:flex;align-items:center;gap:5px;padding:5px 10px;border-radius:16px;cursor:pointer;background:'+(on?u.c:'#f4f6f8')+';border:1.5px solid '+(on?u.c:'#dde6f0')+'">'+
-        '<span style="font-size:13px">'+u.av+'</span>'+
-        '<span style="font-size:11px;font-weight:600;color:'+(on?'#fff':'#7a9aaa')+'">'+esc(u.name)+'</span>'+
-        (on?'<span style="font-size:10px;color:rgba(255,255,255,0.8)">✓</span>':'')+
-      '</div>';
-  });
-  html+='</div></div>';
-
-  // ===== SALARY SECTIONS — managed here, used in финансы (read-only) =====
-  function _renderSalSection(opts){
-    // opts: {title, color, users, salaryKey}
-    const us=opts.users;
-    if(!us.length)return "";
-    let h='<div style="background:#fff;border-radius:12px;border:1px solid '+opts.color+'33;padding:12px 14px;margin-bottom:10px">';
-    h+='<div style="font-size:10px;color:'+opts.color+';font-weight:700;letter-spacing:1px;margin-bottom:10px">'+opts.title+'</div>';
-    us.forEach(function(u){
-      const ud=salaries[u.id]||{};
-      const effPlan=ud.plan!=null&&ud.plan!==0?ud.plan:getDefaultSalary(u);
-      const paid=getSalaryPaid(c,u);
-      const left=Math.max(0,effPlan-paid);
-      h+=
-        '<div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #f4f6f9">'+
-          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
-            '<div style="width:30px;height:30px;border-radius:8px;background:'+u.c+';display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0">'+u.av+'</div>'+
-            '<div style="flex:1;min-width:0">'+
-              '<div style="font-size:12px;font-weight:700;color:#1a2a3a">'+esc(u.name)+'</div>'+
-              '<div style="font-size:10px;color:#9aabbf">'+u.roles.map(function(r){const ro=roles.find(function(x){return x.id===r;});return ro?esc(ro.n):"";}).filter(Boolean).join(", ")+'</div>'+
-            '</div>'+
-            (left>0?
-              '<span style="font-size:10px;color:#e67e22;font-weight:700;background:#e67e2212;border-radius:6px;padding:2px 7px;white-space:nowrap">−'+left.toLocaleString("ru-RU")+'</span>':
-              paid>0?'<span style="font-size:10px;color:#27ae60;font-weight:700;background:#27ae6012;border-radius:6px;padding:2px 7px">✓ Выпл.</span>':
-              '<span style="font-size:10px;color:#9aabbf;background:#f0f4f8;border-radius:6px;padding:2px 7px">План</span>')+
-          '</div>'+
-          '<div style="display:flex;gap:6px;align-items:end">'+
-            '<div style="flex:1;min-width:0">'+
-              '<div style="font-size:9px;color:#9aabbf;margin-bottom:3px">ПЛАН ₽ (по умолчанию '+getDefaultSalary(u).toLocaleString("ru-RU")+')</div>'+
-              '<input id="ctsal-plan-'+cid+'-'+u.id+'" type="text" inputmode="numeric" data-money="1" value="'+(ud.plan!=null&&ud.plan!==0?fmtMoney(ud.plan):"")+'" placeholder="введите сумму" style="width:100%;padding:6px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;text-align:right;box-sizing:border-box">'+
-            '</div>'+
-            '<div style="flex:1;min-width:0">'+
-              '<div style="font-size:9px;color:#9aabbf;margin-bottom:3px">ВЫПЛАЧЕНО ₽</div>'+
-              '<div style="padding:6px 8px;border-radius:7px;border:1px solid #f0f4f8;background:#f8fafc;font-size:12px;text-align:right;color:'+(paid>0?"#27ae60":"#9aabbf")+';font-weight:600">'+paid.toLocaleString("ru-RU")+'</div>'+
-            '</div>'+
-            '<button data-a="ct-sal-save" data-cid="'+cid+'" data-uid="'+u.id+'" style="padding:7px 10px;background:'+u.c+';border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:13px;font-weight:700;flex-shrink:0">💾</button>'+
-          '</div>'+
-        '</div>';
-    });
-    // Totals
-    let planT=0,paidT=0;
-    us.forEach(function(u){
-      const ud=salaries[u.id]||{};
-      const ep=ud.plan!=null&&ud.plan!==0?ud.plan:getDefaultSalary(u);
-      planT+=ep;
-      paidT+=getSalaryPaid(c,u);
-    });
-    h+=
-      '<div style="display:flex;justify-content:space-between;padding-top:4px">'+
-        '<span style="font-size:11px;color:#7a9aaa">Итого план:</span>'+
-        '<span style="font-size:11px;font-weight:700;color:#1a2a3a">'+planT.toLocaleString("ru-RU")+' ₽</span>'+
-      '</div>'+
-      '<div style="display:flex;justify-content:space-between;margin-top:3px">'+
-        '<span style="font-size:11px;color:#7a9aaa">Итого выплачено:</span>'+
-        '<span style="font-size:11px;font-weight:700;color:#27ae60">'+paidT.toLocaleString("ru-RU")+' ₽</span>'+
-      '</div>';
-    h+='</div>';
-    return h;
-  }
-
-  // Resolve eligible users from contract responsible list (NOT all in object)
+  // ─── КОМАНДА И ЗАРПЛАТЫ ─────────────────────────────────────────────────
+  // Было три карточки: «Ответственные» (чипы всех сотрудников), «Зарплата
+  // производству» и «Зарплата РОПа» — по две строки и поле ввода на каждого,
+  // даже когда план никто не правит. Стало одна карточка: строка на человека,
+  // редактор плана раскрывается тапом (ctSalEdit), список ответственных — под
+  // свёрткой (ctRespOpen). Поля ввода и data-a прежние: ctsal-plan-<cid>-<uid>,
+  // ct-sal-save, ct-resp-toggle.
   const respIds=c.responsible||[];
   const respUsers=users.filter(function(u){return respIds.includes(u.id);});
   const prodUsers=respUsers.filter(function(u){return u.roles.some(function(r){return r==="brigadier"||r==="worker";});});
   const escortUsers=respUsers.filter(function(u){return u.roles.includes("sales_head");});
 
-  // Block 1: ЗАРПЛАТА ПРОИЗВОДСТВУ
-  html+=_renderSalSection({title:"💼 ЗАРПЛАТА ПРОИЗВОДСТВУ",color:"#e67e22",users:prodUsers});
+  html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:11px 13px;margin-bottom:9px">';
+  html+='<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:'+(respUsers.length?'8px':'0')+'">'+
+    '<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px">КОМАНДА И ЗАРПЛАТЫ</div>'+
+    '<button data-a="ct-resp-open" data-cid="'+c.id+'" style="padding:3px 9px;background:'+(ctRespOpen===c.id?'#f0f4f8':'#fff')+';border:1px solid #dde6f0;border-radius:7px;cursor:pointer;font-size:10.5px;font-weight:700;color:#7a9aaa;flex-shrink:0">'+(ctRespOpen===c.id?'✕ Готово':'👥 Состав')+'</button>'+
+  '</div>';
 
-  // Block 1.5: ДЕДЛАЙНЫ БРИГАДИРОВ (only prod_head + admin can edit)
+  // Состав: чипы всех сотрудников — только когда его открыли.
+  if(ctRespOpen===c.id){
+    html+='<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:9px;padding-bottom:9px;border-bottom:1px solid #f0f3f7">';
+    users.forEach(function(u){
+      const on=respIds.includes(u.id);
+      html+='<div data-a="ct-resp-toggle" data-cid="'+c.id+'" data-uid="'+u.id+'" style="display:flex;align-items:center;gap:5px;padding:4px 9px;border-radius:14px;cursor:pointer;background:'+(on?u.c:'#f4f6f8')+';border:1.5px solid '+(on?u.c:'#dde6f0')+'">'+
+        '<span style="font-size:12px">'+u.av+'</span>'+
+        '<span style="font-size:10.5px;font-weight:600;color:'+(on?'#fff':'#7a9aaa')+'">'+esc(u.name)+'</span>'+
+        (on?'<span style="font-size:9px;color:rgba(255,255,255,0.8)">✓</span>':'')+
+      '</div>';
+    });
+    html+='</div>';
+  }
+
+  // Строка на человека: план, выплачено, долг. Тап — редактор плана.
+  let salPlanT=0,salPaidT=0;
+  const _salRow=function(u,accent){
+    const ud=salaries[u.id]||{};
+    const plan=ud.plan!=null&&ud.plan!==0?ud.plan:getDefaultSalary(u);
+    const paid=getSalaryPaid(c,u);
+    const left=Math.max(0,plan-paid);
+    salPlanT+=plan; salPaidT+=paid;
+    const open=ctSalEdit===c.id+":"+u.id;
+    let h='<div data-a="ct-sal-open" data-cid="'+c.id+'" data-uid="'+u.id+'" style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f0f3f7;cursor:pointer">'+
+      '<span style="font-size:15px;flex-shrink:0">'+u.av+'</span>'+
+      '<span style="flex:1;min-width:0;font-size:12px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(u.name)+'</span>'+
+      '<span style="font-size:11px;color:#9aabbf;font-variant-numeric:tabular-nums;white-space:nowrap">'+plan.toLocaleString("ru-RU")+'</span>'+
+      '<span style="font-size:11px;font-weight:700;color:'+(paid>0?'#27ae60':'#9aabbf')+';font-variant-numeric:tabular-nums;white-space:nowrap">'+paid.toLocaleString("ru-RU")+'</span>'+
+      '<span style="font-size:11px;font-weight:700;width:62px;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;color:'+(left>0?'#e67e22':'#27ae60')+'">'+(left>0?'−'+left.toLocaleString("ru-RU"):'✓')+'</span>'+
+    '</div>';
+    if(open){
+      h+='<div style="display:flex;gap:6px;align-items:center;padding:8px 0 9px">'+
+        '<span style="font-size:9px;color:#9aabbf;font-weight:700;flex-shrink:0">ПЛАН ₽</span>'+
+        '<input id="ctsal-plan-'+cid+'-'+u.id+'" type="text" inputmode="numeric" data-money="1" value="'+(ud.plan!=null&&ud.plan!==0?fmtMoney(ud.plan):"")+'" placeholder="'+getDefaultSalary(u).toLocaleString("ru-RU")+'" style="flex:1;min-width:0;padding:6px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;text-align:right;box-sizing:border-box">'+
+        '<button data-a="ct-sal-save" data-cid="'+cid+'" data-uid="'+u.id+'" style="padding:6px 11px;background:'+accent+';border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:12px;font-weight:700;flex-shrink:0">💾</button>'+
+      '</div>';
+    }
+    return h;
+  };
+
+  if(respUsers.length){
+    // Подписи групп нужны, только когда в договоре есть обе.
+    const bothGroups=prodUsers.length&&escortUsers.length;
+    const _grpLabel=function(t,color){return '<div style="font-size:9px;color:'+color+';font-weight:700;letter-spacing:0.5px;padding:6px 0 2px">'+t+'</div>';};
+    // Шапка колонок — иначе три числа в строке не читаются.
+    html+='<div style="display:flex;align-items:center;gap:8px;padding-bottom:4px">'+
+      '<span style="width:15px;flex-shrink:0"></span><span style="flex:1"></span>'+
+      '<span style="font-size:8.5px;color:#9aabbf;font-weight:700;letter-spacing:0.4px">ПЛАН</span>'+
+      '<span style="font-size:8.5px;color:#9aabbf;font-weight:700;letter-spacing:0.4px">ВЫПЛ</span>'+
+      '<span style="font-size:8.5px;color:#9aabbf;font-weight:700;letter-spacing:0.4px;width:62px;text-align:right">ДОЛГ</span>'+
+    '</div>';
+    if(bothGroups) html+=_grpLabel("💼 ПРОИЗВОДСТВО","#e67e22");
+    prodUsers.forEach(function(u){html+=_salRow(u,"#e67e22");});
+    if(bothGroups) html+=_grpLabel("🚚 СОПРОВОЖДЕНИЕ","#9b59b6");
+    escortUsers.forEach(function(u){html+=_salRow(u,"#9b59b6");});
+    // Остальные ответственные (снабженец, финансист) зарплаты по договору не получают —
+    // показываем строкой без чисел, чтобы состав команды был виден целиком.
+    const otherUsers=respUsers.filter(function(u){return prodUsers.indexOf(u)<0&&escortUsers.indexOf(u)<0;});
+    if(otherUsers.length){
+      html+='<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 0 2px">';
+      otherUsers.forEach(function(u){
+        html+='<span style="display:flex;align-items:center;gap:4px;font-size:10.5px;color:#7a9aaa;background:#f4f6f8;border-radius:12px;padding:3px 8px"><span style="font-size:12px">'+u.av+'</span>'+esc(u.name)+'</span>';
+      });
+      html+='</div>';
+    }
+    if(prodUsers.length||escortUsers.length){
+      const salLeftT=Math.max(0,salPlanT-salPaidT);
+      html+='<div style="display:flex;align-items:center;gap:8px;padding-top:8px;margin-top:2px;border-top:1px solid #e8eef5">'+
+        '<span style="flex:1;font-size:10.5px;color:#7a9aaa;font-weight:700">ИТОГО</span>'+
+        '<span style="font-size:11.5px;font-weight:700;color:#1a2a3a;font-variant-numeric:tabular-nums">'+salPlanT.toLocaleString("ru-RU")+'</span>'+
+        '<span style="font-size:11.5px;font-weight:700;color:#27ae60;font-variant-numeric:tabular-nums">'+salPaidT.toLocaleString("ru-RU")+'</span>'+
+        '<span style="font-size:11.5px;font-weight:700;width:62px;text-align:right;font-variant-numeric:tabular-nums;color:'+(salLeftT>0?'#e67e22':'#27ae60')+'">'+(salLeftT>0?'−'+salLeftT.toLocaleString("ru-RU"):'✓')+'</span>'+
+      '</div>';
+    }
+  } else {
+    html+='<div style="font-size:11px;color:#9aabbf;text-align:center;padding:10px 8px;border:1px dashed #dde6f0;border-radius:8px">Никто не назначен. Нажмите «👥 Состав»</div>';
+  }
+  html+='</div>';
+
+  // ─── ДЕДЛАЙНЫ БРИГАДИРОВ ────────────────────────────────────────────────
+  // Было: подкарточка на каждого бригадира с двумя полями дат, кнопкой сохранения,
+  // блоком штрафа и свёрткой истории — всё развёрнуто всегда. Стало: строка с датой
+  // и статусом, редактор дат и штраф раскрываются тапом (ctDlEdit). Просрочка и
+  // сумма штрафа видны не раскрывая — это то, ради чего в блок и заходят.
   if(prodUsers.length){
     const canEdit=currentUser&&(currentUser.roles.includes("admin")||currentUser.roles.includes("prod_head"));
-    html+='<div style="background:#fff;border-radius:12px;border:1px solid #d3580033;padding:12px 14px;margin-bottom:10px">';
-    html+='<div style="font-size:11px;color:#d35800;font-weight:700;letter-spacing:0.5px;margin-bottom:10px">📅 ДЕДЛАЙНЫ БРИГАДИРОВ · 35 рабочих дней</div>';
-    if(!canEdit){
-      html+='<div style="font-size:10px;color:#9aabbf;font-style:italic;margin-bottom:8px">Управляется Начальником производства</div>';
-    }
+    html+='<div style="background:#fff;border-radius:12px;border:1px solid #d3580033;padding:11px 13px;margin-bottom:9px">';
+    html+='<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:2px">'+
+      '<div style="font-size:10px;color:#d35800;font-weight:700;letter-spacing:0.5px">📅 ДЕДЛАЙНЫ · 35 РАБОЧИХ ДНЕЙ</div>'+
+      (canEdit?'':'<span style="font-size:9px;color:#9aabbf;font-style:italic;flex-shrink:0">ведёт начальник производства</span>')+
+    '</div>';
     prodUsers.forEach(function(u){
       const info=getBrigadierDeadlineInfo(c,u.id);
       const finesApplied=getFinesApplied(c.id,u.id);
       const pendingFine=Math.max(0,info.fine-finesApplied);
       const history=(c.deadlines&&c.deadlines[u.id]&&c.deadlines[u.id].history)||[];
-      const status=!info.hasDeadline?{label:"⚪ Не задан",color:"#9aabbf",bg:"#f0f4f8"}
-        :info.overdueDays>0?{label:"🔴 Просрочка "+info.overdueDays+" дн",color:"#e74c3c",bg:"#e74c3c12"}
-        :info.daysLeft<=3?{label:"🟡 До дедлайна "+info.daysLeft+" р.дн",color:"#f39c12",bg:"#f39c1212"}
-        :{label:"🟢 Осталось "+info.daysLeft+" р.дн",color:"#27ae60",bg:"#27ae6012"};
-      html+='<div style="background:#fafbfc;border-radius:8px;border:1px solid #e5ebf2;padding:10px;margin-bottom:6px">';
-      html+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">';
-      html+='<span style="font-size:16px">'+u.av+'</span>';
-      html+='<span style="flex:1;font-size:13px;font-weight:700;color:#1a2a3a">'+esc(u.name)+'</span>';
-      html+='<span style="font-size:10px;font-weight:700;color:'+status.color+';background:'+status.bg+';padding:3px 8px;border-radius:5px">'+status.label+'</span>';
-      html+='</div>';
+      const open=ctDlEdit===c.id+":"+u.id;
+      const status=!info.hasDeadline?{label:"не задан",color:"#9aabbf",bg:"#f0f4f8"}
+        :info.overdueDays>0?{label:"🔴 "+info.overdueDays+" дн",color:"#e74c3c",bg:"#e74c3c12"}
+        :info.daysLeft<=3?{label:"🟡 "+info.daysLeft+" р.дн",color:"#f39c12",bg:"#f39c1212"}
+        :{label:"🟢 "+info.daysLeft+" р.дн",color:"#27ae60",bg:"#27ae6012"};
+      // Свёрнутая строка: кто, до какой даты, статус и штраф.
+      html+='<div data-a="ct-dl-open" data-cid="'+c.id+'" data-uid="'+u.id+'" style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f0f3f7;cursor:pointer">'+
+        '<span style="font-size:15px;flex-shrink:0">'+u.av+'</span>'+
+        '<span style="flex:1;min-width:0;font-size:12px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(u.name)+'</span>'+
+        (info.hasDeadline?'<span style="font-size:10.5px;color:#7a9aaa;font-variant-numeric:tabular-nums;white-space:nowrap">'+info.deadline+'</span>':'')+
+        '<span style="font-size:10px;font-weight:700;color:'+status.color+';background:'+status.bg+';padding:2px 7px;border-radius:5px;white-space:nowrap;flex-shrink:0">'+status.label+'</span>'+
+        (pendingFine>0?'<span style="font-size:10px;font-weight:700;color:#e74c3c;background:#e74c3c12;padding:2px 7px;border-radius:5px;white-space:nowrap;flex-shrink:0">−'+pendingFine.toLocaleString("ru-RU")+'</span>':'')+
+      '</div>';
+      if(!open) return;
+      html+='<div style="padding:9px 0 10px;border-bottom:1px solid #f0f3f7">';
       if(canEdit){
-        html+='<div style="display:flex;gap:5px;align-items:center;margin-bottom:5px">';
-        html+='<span style="font-size:9px;color:#9aabbf;font-weight:700;width:60px">СТАРТ:</span>';
-        html+='<input id="dl-start-'+c.id+'-'+u.id+'" type="date" value="'+(info.startDate||"")+'" style="flex:1;padding:6px 8px;border-radius:6px;border:1px solid #d0dae8;font-size:11px;outline:none;box-sizing:border-box">';
-        html+='</div>';
-        html+='<div style="display:flex;gap:5px;align-items:center;margin-bottom:6px">';
-        html+='<span style="font-size:9px;color:#9aabbf;font-weight:700;width:60px">ДЕДЛАЙН:</span>';
-        html+='<input id="dl-end-'+c.id+'-'+u.id+'" type="date" value="'+(info.deadline||"")+'" style="flex:1;padding:6px 8px;border-radius:6px;border:1px solid #d0dae8;font-size:11px;outline:none;box-sizing:border-box">';
-        html+='</div>';
-        html+='<button data-a="dl-save" data-cid="'+c.id+'" data-uid="'+u.id+'" style="width:100%;padding:6px;background:#d35800;border:none;border-radius:6px;cursor:pointer;color:#fff;font-size:11px;font-weight:700;margin-bottom:5px">💾 Сохранить дедлайн</button>';
+        html+='<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">'+
+          '<span style="font-size:9px;color:#9aabbf;font-weight:700;width:58px;flex-shrink:0">СТАРТ</span>'+
+          '<input id="dl-start-'+c.id+'-'+u.id+'" type="date" value="'+(info.startDate||"")+'" style="flex:1;min-width:0;padding:6px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:11px;outline:none;box-sizing:border-box">'+
+        '</div>'+
+        '<div style="display:flex;gap:6px;align-items:center;margin-bottom:7px">'+
+          '<span style="font-size:9px;color:#9aabbf;font-weight:700;width:58px;flex-shrink:0">ДЕДЛАЙН</span>'+
+          '<input id="dl-end-'+c.id+'-'+u.id+'" type="date" value="'+(info.deadline||"")+'" style="flex:1;min-width:0;padding:6px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:11px;outline:none;box-sizing:border-box">'+
+        '</div>'+
+        '<button data-a="dl-save" data-cid="'+c.id+'" data-uid="'+u.id+'" style="width:100%;padding:7px;background:#d35800;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">💾 Сохранить дедлайн</button>';
       } else if(info.hasDeadline){
-        html+='<div style="display:flex;gap:10px;font-size:10px;color:#7a9aaa;margin-bottom:5px">';
-        html+='<span>📅 Старт: <b>'+(info.startDate||"—")+'</b></span>';
-        html+='<span>🏁 До: <b>'+info.deadline+'</b></span>';
-        html+='</div>';
+        html+='<div style="display:flex;gap:12px;font-size:10.5px;color:#7a9aaa">'+
+          '<span>📅 Старт: <b style="color:#1a2a3a">'+(info.startDate||"—")+'</b></span>'+
+          '<span>🏁 До: <b style="color:#1a2a3a">'+info.deadline+'</b></span>'+
+        '</div>';
       }
-      // ── ШТРАФ блок ──
+      // Штраф: считается 2000 ₽/день просрочки, применяется вручную и разово.
       if(info.hasDeadline&&info.overdueDays>0){
-        html+='<div style="background:#e74c3c08;border:1px solid #e74c3c33;border-radius:7px;padding:8px 10px;margin-top:5px">';
-        html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px">';
-        html+='<div style="font-size:10px;font-weight:700;color:#e74c3c">⚠️ ШТРАФ '+FINE_PER_DAY.toLocaleString("ru-RU")+' ₽/день × '+info.overdueDays+' дн</div>';
-        html+='<div style="font-size:13px;font-weight:700;color:#e74c3c">−'+info.fine.toLocaleString("ru-RU")+' ₽</div>';
-        html+='</div>';
-        html+='<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;font-size:9px;margin-bottom:5px">';
-        html+='<div><span style="color:#9aabbf">Применено: </span><span style="color:#1a2a3a;font-weight:700">'+finesApplied.toLocaleString("ru-RU")+' ₽</span></div>';
-        html+='<div><span style="color:#9aabbf">К начислению: </span><span style="color:#e74c3c;font-weight:700">'+pendingFine.toLocaleString("ru-RU")+' ₽</span></div>';
-        html+='</div>';
-        if(canEdit&&pendingFine>0){
-          html+='<button data-a="fine-apply" data-cid="'+c.id+'" data-uid="'+u.id+'" data-amt="'+pendingFine+'" style="width:100%;padding:6px;background:#e74c3c;border:none;border-radius:5px;cursor:pointer;color:#fff;font-size:10px;font-weight:700">⚠️ Применить штраф −'+pendingFine.toLocaleString("ru-RU")+' ₽</button>';
-        } else if(pendingFine===0&&finesApplied>0){
-          html+='<div style="text-align:center;font-size:10px;color:#27ae60;font-weight:700;padding:4px">✓ Штраф полностью применён</div>';
-        }
-        html+='</div>';
+        html+='<div style="background:#e74c3c08;border:1px solid #e74c3c33;border-radius:8px;padding:8px 10px;margin-top:8px">'+
+          '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:5px">'+
+            '<span style="font-size:10px;font-weight:700;color:#e74c3c">⚠️ ШТРАФ '+FINE_PER_DAY.toLocaleString("ru-RU")+' ₽/день × '+info.overdueDays+' дн</span>'+
+            '<span style="font-size:13px;font-weight:700;color:#e74c3c;white-space:nowrap">−'+info.fine.toLocaleString("ru-RU")+' ₽</span>'+
+          '</div>'+
+          '<div style="display:flex;gap:14px;font-size:9.5px;margin-bottom:'+(canEdit&&pendingFine>0?'6px':'0')+'">'+
+            '<span style="color:#9aabbf">Применено: <b style="color:#1a2a3a">'+finesApplied.toLocaleString("ru-RU")+' ₽</b></span>'+
+            '<span style="color:#9aabbf">К начислению: <b style="color:#e74c3c">'+pendingFine.toLocaleString("ru-RU")+' ₽</b></span>'+
+          '</div>'+
+          (canEdit&&pendingFine>0
+            ?'<button data-a="fine-apply" data-cid="'+c.id+'" data-uid="'+u.id+'" data-amt="'+pendingFine+'" style="width:100%;padding:6px;background:#e74c3c;border:none;border-radius:6px;cursor:pointer;color:#fff;font-size:10px;font-weight:700">⚠️ Применить штраф −'+pendingFine.toLocaleString("ru-RU")+' ₽</button>'
+            :(pendingFine===0&&finesApplied>0?'<div style="text-align:center;font-size:10px;color:#27ae60;font-weight:700;padding:3px">✓ Штраф полностью применён</div>':''))+
+        '</div>';
       }
-      // ── ИСТОРИЯ изменений дедлайна ──
+      // История правок дедлайна — вложенная свёртка внутри уже раскрытой строки.
       if(history.length){
         const isOpen=window._dlHistOpen&&window._dlHistOpen[c.id+":"+u.id];
-        html+='<div style="margin-top:6px">';
-        html+='<button data-a="dl-hist-toggle" data-key="'+c.id+':'+u.id+'" style="width:100%;padding:5px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:5px;cursor:pointer;color:#7a9aaa;font-size:10px;font-weight:600;display:flex;align-items:center;justify-content:space-between">';
-        html+='<span>📜 История изменений ('+history.length+')</span><span>'+(isOpen?'▲':'▼')+'</span>';
-        html+='</button>';
+        html+='<button data-a="dl-hist-toggle" data-key="'+c.id+':'+u.id+'" style="width:100%;margin-top:7px;padding:5px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:6px;cursor:pointer;color:#7a9aaa;font-size:10px;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+          '<span>📜 История изменений ('+history.length+')</span><span>'+(isOpen?'▲':'▼')+'</span>'+
+        '</button>';
         if(isOpen){
-          html+='<div style="margin-top:5px;background:#f8fafc;border:1px solid #e5ebf2;border-radius:6px;padding:6px">';
+          html+='<div style="margin-top:5px;background:#f8fafc;border:1px solid #e5ebf2;border-radius:7px;padding:6px">';
           history.slice().reverse().forEach(function(h){
             const editor=users.find(x=>x.id===h.by);
-            html+='<div style="font-size:9px;color:#5a7a9a;padding:5px 7px;border-bottom:1px dashed #dde6f0;line-height:1.4">';
-            html+='<div style="display:flex;align-items:center;gap:5px;color:#9aabbf;margin-bottom:2px">';
-            html+='<span>'+(editor?editor.av:"👤")+'</span>';
-            html+='<span style="font-weight:700;color:#1a2a3a">'+(editor?editor.name:"—")+'</span>';
-            html+='<span>·</span>';
-            html+='<span>'+h.when+'</span>';
-            html+='</div>';
-            html+='<div style="padding-left:18px"><b>'+(h.startDate||"—")+'</b> → <b>'+(h.deadline||"—")+'</b></div>';
-            html+='</div>';
+            html+='<div style="font-size:9px;color:#5a7a9a;padding:4px 6px;border-bottom:1px dashed #dde6f0;line-height:1.4">'+
+              '<div style="display:flex;align-items:center;gap:5px;color:#9aabbf;margin-bottom:2px">'+
+                '<span>'+(editor?editor.av:"👤")+'</span>'+
+                '<span style="font-weight:700;color:#1a2a3a">'+(editor?editor.name:"—")+'</span>'+
+                '<span>·</span><span>'+h.when+'</span>'+
+              '</div>'+
+              '<div style="padding-left:18px"><b>'+(h.startDate||"—")+'</b> → <b>'+(h.deadline||"—")+'</b></div>'+
+            '</div>';
           });
           html+='</div>';
         }
-        html+='</div>';
       }
       html+='</div>';
     });
     html+='</div>';
   }
 
-  // Block 2: ЗАРПЛАТА СОПРОВОДИТЕЛЯ
-  html+=_renderSalSection({title:"🚚 ЗАРПЛАТА РОПа",color:"#9b59b6",users:escortUsers});
-
-  // Block 3: ПЛАН ДОП РАБОТ
+  // ─── ПЛАН ДОП РАБОТ ─────────────────────────────────────────────────────
+  // Было: карточка с сеткой из трёх крупных чисел, списком и всегда открытой
+  // формой добавления в пунктирной рамке. Стало: числа одной строкой, форма
+  // добавления — по кнопке (ctEwPlanAdd). Поля ew-plan-title/amount и действия
+  // ew-plan-add / ew-plan-del прежние.
   {
     const planItems=c.extraWorksPlan||[];
     const planSum=planItems.reduce(function(a,w){return a+(w.amount||0);},0);
     const paidExtra=getExtraWorksPaid(c);
     const leftExtra=Math.max(0,planSum-paidExtra);
-    html+='<div style="background:#fff;border-radius:12px;border:1px solid #16a08533;padding:12px 14px;margin-bottom:10px">';
-    html+='<div style="font-size:10px;color:#16a085;font-weight:700;letter-spacing:1px;margin-bottom:10px">🛠 ПЛАН ДОП РАБОТ ПРОИЗВОДСТВУ</div>';
-    // Totals row
-    html+='<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #f4f6f9">'+
-      '<div><div style="font-size:9px;color:#9aabbf">ПЛАН</div><div style="font-size:13px;font-weight:700;color:#1a2a3a">'+planSum.toLocaleString("ru-RU")+'</div></div>'+
-      '<div><div style="font-size:9px;color:#9aabbf">ВЫПЛАЧЕНО</div><div style="font-size:13px;font-weight:700;color:#16a085">'+paidExtra.toLocaleString("ru-RU")+'</div></div>'+
-      '<div><div style="font-size:9px;color:#9aabbf">ОСТАЛОСЬ</div><div style="font-size:13px;font-weight:700;color:'+(leftExtra>0?"#e67e22":"#27ae60")+'">'+(leftExtra>0?leftExtra.toLocaleString("ru-RU"):"✓")+'</div></div>'+
+    const addOpen=ctEwPlanAdd===c.id;
+    html+='<div style="background:#fff;border-radius:12px;border:1px solid #16a08533;padding:11px 13px;margin-bottom:9px">';
+    html+='<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'+
+      '<span style="font-size:10px;color:#16a085;font-weight:700;letter-spacing:0.5px">🛠 ПЛАН ДОП РАБОТ</span>'+
+      '<button data-a="ct-ewplan-add-toggle" data-cid="'+c.id+'" style="padding:3px 9px;background:'+(addOpen?'#f0f4f8':'#16a085')+';border:none;border-radius:7px;cursor:pointer;color:'+(addOpen?'#7a9aaa':'#fff')+';font-size:10.5px;font-weight:700;flex-shrink:0">'+(addOpen?'✕ Отмена':'＋ В план')+'</button>'+
     '</div>';
-    // List of planned items
+    // Числа одной строкой вместо сетки из трёх блоков.
+    if(planSum>0||paidExtra>0){
+      html+='<div style="display:flex;gap:14px;padding:8px 0 2px;font-size:10.5px">'+
+        '<span style="color:#9aabbf">План <b style="color:#1a2a3a;font-variant-numeric:tabular-nums">'+planSum.toLocaleString("ru-RU")+'</b></span>'+
+        '<span style="color:#9aabbf">Выплачено <b style="color:#16a085;font-variant-numeric:tabular-nums">'+paidExtra.toLocaleString("ru-RU")+'</b></span>'+
+        '<span style="color:#9aabbf">Осталось <b style="font-variant-numeric:tabular-nums;color:'+(leftExtra>0?"#e67e22":"#27ae60")+'">'+(leftExtra>0?leftExtra.toLocaleString("ru-RU"):"✓")+'</b></span>'+
+      '</div>';
+    }
+    if(addOpen){
+      html+='<div style="margin-top:8px;padding:9px 10px;background:#fafbfc;border-radius:8px;border:1px dashed #16a08544">'+
+        '<input id="ew-plan-title-'+cid+'" placeholder="Что за работа? Например: утепление крыши" style="width:100%;padding:7px 9px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;margin-bottom:6px;outline:none;box-sizing:border-box">'+
+        '<div style="display:flex;gap:6px">'+
+          '<input id="ew-plan-amount-'+cid+'" type="text" inputmode="numeric" data-money="1" placeholder="Сумма ₽" style="flex:1;min-width:0;padding:7px 9px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box">'+
+          '<button data-a="ew-plan-add" data-cid="'+cid+'" style="padding:7px 14px;background:#16a085;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:12px;font-weight:700;flex-shrink:0">Добавить</button>'+
+        '</div>'+
+      '</div>';
+    }
     if(planItems.length){
       planItems.forEach(function(it){
-        // Отметка «сделано» ставится бригадиром во вкладке «Объекты» — здесь только показываем статус
+        // Отметка «сделано» ставится бригадиром во вкладке «Объекты» — здесь только статус.
         const doneBy=it.done&&it.doneBy?users.find(function(u){return u.id===it.doneBy;}):null;
         const doneDate=it.done&&it.doneAt?String(it.doneAt).slice(0,10).split("-").reverse().join("."):"";
-        html+='<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:'+(it.done?"#27ae6008":"#16a08508")+';border-radius:8px;margin-bottom:4px;border:1px solid '+(it.done?"#27ae6044":"#16a08522")+'">'+
-          '<span style="font-size:14px">'+(it.done?"✅":"🛠")+'</span>'+
+        html+='<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f0f3f7">'+
+          '<span style="font-size:13px;flex-shrink:0">'+(it.done?"✅":"🛠")+'</span>'+
           '<div style="flex:1;min-width:0">'+
-            '<div style="font-size:11px;font-weight:700;color:'+(it.done?"#7a9aaa":"#1a2a3a")+';'+(it.done?"text-decoration:line-through":"")+'">'+esc(it.title||"Доп работа")+'</div>'+
-            (it.done?'<div style="font-size:9px;color:#27ae60;margin-top:1px">Выполнено'+(doneBy?" · "+esc(doneBy.name):"")+(doneDate?" · "+doneDate:"")+'</div>':'')+
+            '<div style="font-size:11.5px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:'+(it.done?"#7a9aaa":"#1a2a3a")+';'+(it.done?"text-decoration:line-through":"")+'">'+esc(it.title||"Доп работа")+'</div>'+
+            (it.done?'<div style="font-size:9px;color:#27ae60">Выполнено'+(doneBy?" · "+esc(doneBy.name):"")+(doneDate?" · "+doneDate:"")+'</div>':'')+
           '</div>'+
-          '<div style="font-size:12px;font-weight:700;color:#16a085;white-space:nowrap">'+(it.amount||0).toLocaleString("ru-RU")+' ₽</div>'+
-          '<button data-a="ew-plan-del" data-cid="'+cid+'" data-wid="'+it.id+'" style="width:28px;height:28px;background:#e74c3c12;border:1.5px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:13px;font-weight:700;line-height:1;flex-shrink:0">✕</button>'+
+          '<span style="font-size:11.5px;font-weight:700;color:#16a085;white-space:nowrap;font-variant-numeric:tabular-nums">'+(it.amount||0).toLocaleString("ru-RU")+'</span>'+
+          '<button data-a="ew-plan-del" data-cid="'+cid+'" data-wid="'+it.id+'" style="width:26px;height:26px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>'+
         '</div>';
       });
-    } else {
-      html+='<div style="font-size:11px;color:#9aabbf;text-align:center;padding:10px;border:1px dashed #d0dae8;border-radius:8px;margin-bottom:8px">Нет запланированных доп работ</div>';
+    } else if(!addOpen){
+      html+='<div style="font-size:10.5px;color:#9aabbf;padding:7px 0 3px">Ничего не запланировано</div>';
     }
-    // Add new plan form
-    html+='<div style="margin-top:8px;padding:10px;background:#fafbfc;border-radius:8px;border:1px dashed #16a08544">'+
-      '<div style="font-size:9px;color:#16a085;font-weight:700;letter-spacing:0.5px;margin-bottom:6px">+ ЗАПЛАНИРОВАТЬ ДОП РАБОТУ</div>'+
-      '<input id="ew-plan-title-'+cid+'" placeholder="Что за работа? (например: Утепление крыши)" style="width:100%;padding:8px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;margin-bottom:6px;outline:none;box-sizing:border-box">'+
-      '<div style="display:flex;gap:6px">'+
-        '<input id="ew-plan-amount-'+cid+'" type="text" inputmode="numeric" data-money="1" placeholder="Сумма ₽" style="flex:1;min-width:0;padding:8px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box">'+
-        '<button data-a="ew-plan-add" data-cid="'+cid+'" style="padding:8px 14px;background:#16a085;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:12px;font-weight:700;flex-shrink:0">+ Добавить</button>'+
-      '</div>'+
-    '</div>';
     html+='</div>';
   }
 
-  // Extra works block - available for ALL contracts (main can have extras too)
+  // ─── ДОП. РАБОТЫ И МАТЕРИАЛЫ ────────────────────────────────────────────
+  // Было: у каждой работы всегда развёрнут редактор — поле стоимости, список
+  // материалов с полями количества и цены, кнопка «+ Материал». На трёх работах
+  // это полтора экрана полей, которые правят раз в месяц. Стало: строка с итогом,
+  // редактор раскрывается тапом (ctEwOpen). Все id полей и data-a прежние:
+  // ct-ew-cost / ct-ewm-qty / ct-ewm-cost, ct-ew-save, ct-ewm-save, ct-ewm-del,
+  // ct-ewm-add, ct-extra-add, ct-extra-del.
   {
     const extraWorks=c.extraWorks||[];
     const totalCost=extraWorks.reduce(function(a,w){return a+(w.cost||0)+(w.mats||[]).reduce(function(b,m){return b+(m.cost||0)*(m.qty||1);},0);},0);
-
     const blockTitle=c.type==="extra"?"🔨 РАБОТЫ И МАТЕРИАЛЫ":"➕ ДОП. РАБОТЫ И МАТЕРИАЛЫ";
-    html+='<div style="background:#fff;border-radius:12px;border:1px solid #8e44ad44;padding:12px 14px;margin-bottom:10px">';
-    html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'+
-      '<div style="font-size:10px;color:#8e44ad;font-weight:700;letter-spacing:1px">'+blockTitle+'</div>'+
-      '<button data-a="ct-extra-add" data-cid="'+cid+'" style="padding:4px 10px;background:#8e44ad;border:none;border-radius:6px;cursor:pointer;font-size:11px;color:#fff;font-weight:600">+ Работа</button>'+
+    html+='<div style="background:#fff;border-radius:12px;border:1px solid #8e44ad44;padding:11px 13px;margin-bottom:9px">';
+    html+='<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'+
+      '<span style="font-size:10px;color:#8e44ad;font-weight:700;letter-spacing:0.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+blockTitle+'</span>'+
+      (totalCost>0?'<span style="font-size:11.5px;font-weight:700;color:#8e44ad;font-variant-numeric:tabular-nums;white-space:nowrap">'+fmt(totalCost)+'</span>':'')+
+      '<button data-a="ct-extra-add" data-cid="'+cid+'" style="padding:3px 9px;background:#8e44ad;border:none;border-radius:7px;cursor:pointer;font-size:10.5px;color:#fff;font-weight:700;flex-shrink:0">＋ Работа</button>'+
     '</div>';
 
-    if(obj){
-      // Show stages from object
-      html+='<div style="font-size:11px;color:#7a9aaa;margin-bottom:8px">Объект: '+obj.icon+' '+esc(obj.name)+'</div>';
-    }
-
     if(!extraWorks.length){
-      html+='<div style="font-size:12px;color:#aaa;text-align:center;padding:14px;border:1px dashed #e0e6ee;border-radius:8px">'+(c.type==="extra"?"Нет работ":"Нет дополнительных работ")+'. Нажмите + Работа</div>';
+      html+='<div style="font-size:10.5px;color:#9aabbf;padding:7px 0 3px">'+(c.type==="extra"?"Работ пока нет":"Доп. работ пока нет")+'</div>';
     } else {
       extraWorks.forEach(function(ew, ewi){
-        const matsTotal=(ew.mats||[]).reduce(function(a,m){return a+(m.cost||0)*(m.qty||1);},0);
-        const wTotal=(ew.cost||0)+matsTotal;
-
-        html+='<div style="background:#fafbfc;border-radius:10px;padding:10px 12px;margin-bottom:8px;border-left:3px solid #8e44ad">';
-        html+='<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:6px">'+
-          '<div style="flex:1;min-width:0">'+
-            '<div style="font-size:12px;font-weight:700;color:#1a2a3a">'+esc(ew.name||"Работа")+'</div>'+
-            '<div style="font-size:10px;color:#9aabbf">Этап: '+esc(ew.stage||"—")+'</div>'+
-          '</div>'+
-          '<div style="font-size:13px;font-weight:700;color:#8e44ad;white-space:nowrap">'+fmt(wTotal)+' ₽</div>'+
-          '<button data-a="ct-extra-del" data-cid="'+cid+'" data-ewi="'+ewi+'" style="padding:4px 8px;background:#e74c3c12;border:1px solid #e74c3c33;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:10px">🗑</button>'+
-        '</div>';
-
-        // Work cost
-        html+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">'+
-          '<span style="font-size:10px;color:#7a9aaa;min-width:60px">Работа ₽:</span>'+
-          '<input id="ct-ew-cost-'+cid+'-'+ewi+'" type="text" inputmode="numeric" data-money="1" value="'+fmtMoney(ew.cost||0)+'" placeholder="0" style="flex:1;padding:5px 8px;border-radius:6px;border:1px solid #d0dae8;font-size:12px;outline:none;text-align:right">'+
-          '<button data-a="ct-ew-save" data-cid="'+cid+'" data-ewi="'+ewi+'" style="padding:5px 9px;background:#8e44ad;border:none;border-radius:6px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">💾</button>'+
-        '</div>';
-
-        // Materials
         const mats=ew.mats||[];
+        const matsTotal=mats.reduce(function(a,m){return a+(m.cost||0)*(m.qty||1);},0);
+        const wTotal=(ew.cost||0)+matsTotal;
+        const open=ctEwOpen===cid+":"+ewi;
+        // Свёрнутая строка: название, этап, число материалов, итог.
+        html+='<div data-a="ct-ew-open" data-cid="'+cid+'" data-ewi="'+ewi+'" style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f0f3f7;cursor:pointer">'+
+          '<div style="flex:1;min-width:0">'+
+            '<div style="font-size:11.5px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(ew.name||"Работа")+'</div>'+
+            '<div style="font-size:9px;color:#9aabbf">'+esc(ew.stage||"без этапа")+(mats.length?' · 📦 '+mats.length:'')+'</div>'+
+          '</div>'+
+          '<span style="font-size:11.5px;font-weight:700;color:#8e44ad;white-space:nowrap;font-variant-numeric:tabular-nums">'+fmt(wTotal)+'</span>'+
+          '<span style="font-size:10px;color:#c3cedb;flex-shrink:0">'+(open?'▲':'▼')+'</span>'+
+        '</div>';
+        if(!open) return;
+        html+='<div style="padding:9px 0 10px;border-bottom:1px solid #f0f3f7">';
+        // Стоимость самой работы
+        html+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:7px">'+
+          '<span style="font-size:9px;color:#9aabbf;font-weight:700;width:58px;flex-shrink:0">РАБОТА ₽</span>'+
+          '<input id="ct-ew-cost-'+cid+'-'+ewi+'" type="text" inputmode="numeric" data-money="1" value="'+fmtMoney(ew.cost||0)+'" placeholder="0" style="flex:1;min-width:0;padding:6px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;text-align:right;box-sizing:border-box">'+
+          '<button data-a="ct-ew-save" data-cid="'+cid+'" data-ewi="'+ewi+'" style="padding:6px 10px;background:#8e44ad;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:12px;font-weight:700;flex-shrink:0">💾</button>'+
+        '</div>';
+        // Материалы
         if(mats.length){
-          html+='<div style="font-size:10px;color:#7a9aaa;margin:8px 0 4px">📦 Материалы:</div>';
+          html+='<div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.5px;margin-bottom:4px">📦 МАТЕРИАЛЫ</div>';
           mats.forEach(function(m,mi){
             const mTotal=(m.cost||0)*(m.qty||1);
-            html+='<div style="display:flex;align-items:center;gap:5px;padding:4px 6px;background:#fff;border-radius:6px;margin-bottom:3px;border:1px solid #f0f3f7">'+
+            html+='<div style="display:flex;align-items:center;gap:5px;padding:5px 7px;background:#fafbfc;border-radius:7px;margin-bottom:3px;border:1px solid #f0f3f7">'+
               '<div style="flex:1;min-width:0;font-size:11px;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(m.name)+'</div>'+
-              '<input id="ct-ewm-qty-'+cid+'-'+ewi+'-'+mi+'" type="number" value="'+(m.qty||1)+'" style="width:42px;padding:3px 5px;border-radius:5px;border:1px solid #d0dae8;font-size:11px;outline:none;text-align:center">'+
-              '<span style="font-size:10px;color:#9aabbf">×</span>'+
-              '<input id="ct-ewm-cost-'+cid+'-'+ewi+'-'+mi+'" type="text" inputmode="numeric" data-money="1" value="'+fmtMoney(m.cost||0)+'" style="width:60px;padding:3px 5px;border-radius:5px;border:1px solid #d0dae8;font-size:11px;outline:none;text-align:right">'+
-              '<span style="font-size:10px;color:#27ae60;font-weight:700;min-width:55px;text-align:right">'+fmt(mTotal)+'</span>'+
-              '<button data-a="ct-ewm-save" data-cid="'+cid+'" data-ewi="'+ewi+'" data-mi="'+mi+'" style="padding:3px 5px;background:#27ae60;border:none;border-radius:4px;cursor:pointer;color:#fff;font-size:9px">💾</button>'+
-              '<button data-a="ct-ewm-del" data-cid="'+cid+'" data-ewi="'+ewi+'" data-mi="'+mi+'" style="padding:3px 5px;background:transparent;border:none;cursor:pointer;color:#e74c3c;font-size:11px">✕</button>'+
+              '<input id="ct-ewm-qty-'+cid+'-'+ewi+'-'+mi+'" type="number" value="'+(m.qty||1)+'" style="width:42px;padding:3px 5px;border-radius:5px;border:1px solid #d0dae8;font-size:11px;outline:none;text-align:center;flex-shrink:0">'+
+              '<span style="font-size:10px;color:#9aabbf;flex-shrink:0">×</span>'+
+              '<input id="ct-ewm-cost-'+cid+'-'+ewi+'-'+mi+'" type="text" inputmode="numeric" data-money="1" value="'+fmtMoney(m.cost||0)+'" style="width:60px;padding:3px 5px;border-radius:5px;border:1px solid #d0dae8;font-size:11px;outline:none;text-align:right;flex-shrink:0">'+
+              '<span style="font-size:10px;color:#27ae60;font-weight:700;min-width:52px;text-align:right;flex-shrink:0;font-variant-numeric:tabular-nums">'+fmt(mTotal)+'</span>'+
+              '<button data-a="ct-ewm-save" data-cid="'+cid+'" data-ewi="'+ewi+'" data-mi="'+mi+'" style="padding:3px 5px;background:#27ae60;border:none;border-radius:5px;cursor:pointer;color:#fff;font-size:9px;flex-shrink:0">💾</button>'+
+              '<button data-a="ct-ewm-del" data-cid="'+cid+'" data-ewi="'+ewi+'" data-mi="'+mi+'" style="padding:3px 4px;background:transparent;border:none;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>'+
             '</div>';
             if(Array.isArray(m.breakdown)&&m.breakdown.length){
               html+='<div style="margin:0 0 4px 6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center">'+
@@ -7478,17 +7517,15 @@ function tContractDetail(cid){
             }
           });
         }
-
-        // Add material button
-        html+='<button data-a="ct-ewm-add" data-cid="'+cid+'" data-ewi="'+ewi+'" style="width:100%;padding:5px;background:#27ae6012;border:1px dashed #27ae6044;border-radius:6px;cursor:pointer;color:#27ae60;font-size:10px;font-weight:600;margin-top:4px">+ Материал из базы</button>';
-
+        html+='<div style="display:flex;gap:6px;margin-top:5px">'+
+          '<button data-a="ct-ewm-add" data-cid="'+cid+'" data-ewi="'+ewi+'" style="flex:1;padding:6px;background:#27ae6012;border:1px dashed #27ae6044;border-radius:7px;cursor:pointer;color:#27ae60;font-size:10px;font-weight:700">＋ Материал из базы</button>'+
+          '<button data-a="ct-extra-del" data-cid="'+cid+'" data-ewi="'+ewi+'" style="padding:6px 11px;background:transparent;border:1px solid #e74c3c44;border-radius:7px;cursor:pointer;color:#e74c3c;font-size:10px;font-weight:700;flex-shrink:0">🗑 Удалить работу</button>'+
+        '</div>';
         html+='</div>';
       });
-
-      // Total
-      html+='<div style="display:flex;justify-content:space-between;padding:8px 4px;margin-top:6px;border-top:1px solid #e0e6ee">'+
-        '<span style="font-size:12px;font-weight:700;color:#1a2a3a">'+(c.type==="extra"?"Итого по доп. работам:":"Сумма доп. работ:")+'</span>'+
-        '<span style="font-size:14px;font-weight:700;color:#8e44ad">'+fmt(totalCost)+' ₽</span>'+
+      html+='<div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;margin-top:2px;border-top:1px solid #e8eef5">'+
+        '<span style="font-size:10.5px;font-weight:700;color:#7a9aaa">'+(c.type==="extra"?"ИТОГО ПО РАБОТАМ":"СУММА ДОП. РАБОТ")+'</span>'+
+        '<span style="font-size:13px;font-weight:700;color:#8e44ad;font-variant-numeric:tabular-nums">'+fmt(totalCost)+'</span>'+
       '</div>';
     }
     html+='</div>';
@@ -10791,6 +10828,20 @@ let contractEditId=null; // id being edited
 // карточкой третьим блоком сверху — её трогают раз за жизнь договора, поэтому
 // теперь она раскрывается тапом по ячейке «PIN клиента» в сетке полей.
 let ctPinEdit=null;
+// Открыт ли список ответственных (cid) и у кого правят план зарплаты ("cid:uid").
+// Раньше чипы состава и поле плана висели на экране всегда, хотя их трогают редко.
+let ctRespOpen=null;
+let ctSalEdit=null;
+// У кого раскрыт редактор дедлайна ("cid:uid"). Даты, штраф и история правок
+// прячутся за строкой: в блок заходят посмотреть просрочку, а не менять даты.
+let ctDlEdit=null;
+// Какой вид файлов раскрыт ("cid:kind"). Пять видов были пятью карточками —
+// теперь строки, список файлов показывается по тапу.
+let ctFilesOpen=null;
+// Какая доп. работа раскрыта ("cid:ewi") и открыта ли форма плана доп работ (cid).
+// Редакторы стоимости и материалов правят редко — держать их развёрнутыми незачем.
+let ctEwOpen=null;
+let ctEwPlanAdd=null;
 // Несохранённые правки edit-формы договора. Поля живут в innerHTML и гибнут при любой
 // перерисовке (выбор клиента, файл, фоновый рендер) — поэтому рендерим их из черновика
 // и синкаем на каждый ввод. «Отмена» просто выбрасывает черновик, договор не тронут.
@@ -14248,7 +14299,7 @@ function bind(){
       fl();
     };}
     else if(a==="ct-open"){el.onclick=()=>{contractView=el.dataset.cid;render();};}
-    else if(a==="ct-back"){el.onclick=()=>{contractView=null;ctPinEdit=null;render();};}
+    else if(a==="ct-back"){el.onclick=()=>{contractView=null;ctPinEdit=null;ctRespOpen=null;ctSalEdit=null;ctDlEdit=null;ctFilesOpen=null;ctEwOpen=null;ctEwPlanAdd=null;render();};}
     // ─── Шаблон договора (подвкладка) ───
     else if(a==="ct-subtab"){el.onclick=()=>{ctSubTab=el.dataset.st;render();};}
     else if(a==="ct-tpl-exec"){el.onclick=()=>{ctTplGet().execKey=el.dataset.k;ctTplPersist();render();};}
@@ -14533,6 +14584,38 @@ function bind(){
         return Object.assign({},x,{extraWorks:ew});
       });
       fl();
+    };}
+    else if(a==="ct-resp-open"){el.onclick=()=>{
+      const cid=el.dataset.cid;
+      ctRespOpen=ctRespOpen===cid?null:cid;
+      rerenderTab();
+    };}
+    else if(a==="ct-ew-open"){el.onclick=()=>{
+      const key=el.dataset.cid+":"+el.dataset.ewi;
+      ctEwOpen=ctEwOpen===key?null:key;
+      rerenderTab();
+    };}
+    else if(a==="ct-ewplan-add-toggle"){el.onclick=()=>{
+      const cid=el.dataset.cid;
+      ctEwPlanAdd=ctEwPlanAdd===cid?null:cid;
+      rerenderTab();
+      if(ctEwPlanAdd){ const i=document.getElementById("ew-plan-title-"+cid); if(i){ i.focus(); } }
+    };}
+    else if(a==="ct-files-open"){el.onclick=()=>{
+      const key=el.dataset.cid+":"+el.dataset.kind;
+      ctFilesOpen=ctFilesOpen===key?null:key;
+      rerenderTab();
+    };}
+    else if(a==="ct-dl-open"){el.onclick=()=>{
+      const key=el.dataset.cid+":"+el.dataset.uid;
+      ctDlEdit=ctDlEdit===key?null:key;
+      rerenderTab();
+    };}
+    else if(a==="ct-sal-open"){el.onclick=()=>{
+      const key=el.dataset.cid+":"+el.dataset.uid;
+      ctSalEdit=ctSalEdit===key?null:key;
+      rerenderTab();
+      if(ctSalEdit){ const i=document.getElementById("ctsal-plan-"+el.dataset.cid+"-"+el.dataset.uid); if(i){ i.focus(); } }
     };}
     else if(a==="ct-pin-edit"){el.onclick=()=>{
       const cid=el.dataset.cid;
