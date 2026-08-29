@@ -4927,8 +4927,12 @@ function buildIssuesSection(obj){
     }
   }
 
+  // В свёрнутой шапке важно не только «сколько», но и «сколько ждёт самый старый»:
+  // три вопроса, один из которых висит шестой день, — это остановленная стройка.
+  const _oldest=open.reduce(function(a,t){ const n=issueAge(t); return n>a?n:a; },0);
+  const _tone=issueAgeTone(_oldest);
   const summary=open.length
-    ? '<span style="color:#c0392b">'+open.length+' открыт'+(open.length===1?"":"ых")+'</span>'
+    ? '<span style="color:'+_tone.c+'">'+open.length+' открыт'+(open.length===1?"":"ых")+(_oldest>=2?' · старший '+_oldest+' дн':'')+'</span>'
     : (list.length?'<span style="color:#27ae60">✓ все закрыты</span>':'<span style="color:#9aabbf">нет</span>');
   return objSection(obj.id,"issues","❓ ВОПРОСЫ ПО ОБЪЕКТУ","#c0392b",summary,body,open.length>0);
 }

@@ -317,16 +317,109 @@ async function runDaily(env, st, today) {
     });
   });
 
+  // Вопросы в сводке: важно не «сколько всего», а «сколько ждёт самый старый» —
+  // именно это отличает рабочий день от остановленной стройки.
+  const openIss = (st.issues || []).filter(issueOpen);
+  let issOldest = 0;
+  openIss.forEach(function (t) {
+    const f = String(t.at || "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(f)) return;
+    const a = countBusinessDaysBetween(f, today);
+    if (a > issOldest) issOldest = a;
+  });
+
   const text = "🌙 <b>Итоги дня " + today + "</b>\n"
     + "Часы за сегодня: <b>" + (Math.round(hours * 10) / 10) + " ч</b>\n"
     + "Правок в портале: <b>" + acts.length + "</b>" + (doneToday ? " (по объектам: " + doneToday + ")" : "") + "\n"
     + (top.length ? "Активнее всех: " + top.map(function (n) { return escapeHtml(n) + " (" + byUser[n] + ")"; }).join(", ") + "\n" : "")
     + "Открытых работ всего: <b>" + openTotal + "</b>\n"
+    + (openIss.length ? "❓ Вопросов без ответа: <b>" + openIss.length + "</b>"
+        + (issOldest >= 2 ? " (старший ждёт " + issOldest + " раб. дн)" : "") + "\n" : "")
     + (hot.length ? "🔴 Горит: " + hot.map(escapeHtml).join(", ") : "✅ Просрочек нет")
     + linkTo(env, "#tab=history", "Открыть историю действий");
 
   let sent = 0;
   for (const p of people) if (await sendOnce(env, p, "daily", "sum:" + today, text)) sent++;
+  return sent;
+}
+
+// ─── ВОПРОСЫ С ОБЪЕКТА: эскалация по возрасту ────────────────────────────────
+// Вопрос без ответа стареет и всплывает сам. Без этого любой список тикетов за месяц
+// превращается в свалку, где красный бейдж горит всегда и его перестают замечать.
+// Пороги: 2 рабочих дня — напоминание адресату, 5 — подъём начальнику производства.
+// Считаем РАБОЧИМИ днями в МСК, тем же countBusinessDaysBetween, что и дедлайны:
+// цифра в напоминании обязана совпадать с цифрой в панели.
+const ISSUE_NUDGE_DAYS = 2;
+const ISSUE_ESCALATE_DAYS = 5;
+const ISSUE_ADDR_NAME = {
+  supply: "снабженцу", client_mgr: "сопровождению", brigadier: "бригадиру",
+  prod_head: "начальнику производства", financier: "финансисту", admin: "администратору",
+};
+// Держать в синхроне с ISSUE_KIND в public/admin.js и KINDS в src/botissue.js.
+const ISSUE_KIND_TO = { supply: "supply", change: "client_mgr", question: "brigadier", money: "financier" };
+const issueRole = (t) => (t && t.to) || ISSUE_KIND_TO[t && t.kind] || "admin";
+const issueOpen = (t) => t && t.status !== "done" && t.status !== "rejected";
+
+async function runIssues(env, st, today) {
+  const list = (st.issues || []).filter(issueOpen);
+  if (!list.length) return 0;
+  const people = await audience(env, st.users || [], "issues");
+  if (!people.length) return 0;
+  const byUid = {};
+  people.forEach(function (p) { byUid[p.uid] = p; });
+
+  // Кто отвечает: носители роли на ЭТОМ объекте, иначе — все носители роли.
+  // Молча проглотить вопрос нельзя: он повиснет там, где ответственных не расставили.
+  const addressees = function (t) {
+    const role = issueRole(t);
+    const team = objTeam(st, t.objId);
+    const withRole = (st.users || []).filter(function (u) { return (u.roles || []).indexOf(role) >= 0; });
+    const onObj = withRole.filter(function (u) { return team.has(u.id); });
+    return (onObj.length ? onObj : withRole).map(function (u) { return u.id; });
+  };
+
+  let sent = 0;
+  for (const t of list) {
+    const from = String(t.at || "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) continue;
+    const age = countBusinessDaysBetween(from, today);
+    if (age < ISSUE_NUDGE_DAYS) continue;
+    const hot = age >= ISSUE_ESCALATE_DAYS;
+    const to = addressees(t);
+    const head = (hot ? "🔴" : "🟠") + " <b>Вопрос без ответа " + age + " раб. дн</b>\n"
+      + "«" + escapeHtml(objName(st.objects, t.objId)) + "»\n"
+      + escapeHtml(String(t.text || "").slice(0, 300)) + "\n"
+      + "<i>Задал " + escapeHtml(t.byName || "—") + " · " + escapeHtml(from) + "</i>";
+
+    // Ключ с датой: пока вопрос висит, напоминание повторяется каждый день, но не дважды.
+    const key = "iss:" + t.id + ":" + today;
+    for (const uid of to) {
+      const who = byUid[uid];
+      if (!who) continue;
+      if (await sendOnce(env, who, "issues", key, head + linkTo(env, "#tab=issues", "Ответить в портале"))) sent++;
+    }
+    if (!hot) continue;
+
+    // Подъём наверх. Начальник производства и админ могут переадресовать или
+    // передоговориться; адресат к этому моменту получил уже три напоминания.
+    const bosses = (st.users || []).filter(function (u) {
+      const r = u.roles || [];
+      return r.indexOf("prod_head") >= 0 || r.indexOf("admin") >= 0;
+    }).map(function (u) { return u.id; });
+    for (const uid of bosses) {
+      const who = byUid[uid];
+      if (!who || to.indexOf(uid) >= 0) continue;   // адресату уже ушло выше
+      if (await sendOnce(env, who, "issues", key + ":esc", head
+        + "\n\nАдресовано " + (ISSUE_ADDR_NAME[issueRole(t)] || "—") + ", ответа нет " + age + " раб. дн."
+        + linkTo(env, "#tab=issues", "Открыть вопросы"))) sent++;
+    }
+    // Автору: он вправе знать, что вопрос не забыт, а поднят наверх.
+    const author = byUid[t.by];
+    if (author && await sendOnce(env, author, "issues", key + ":auth",
+      "🔴 <b>Ваш вопрос ждёт " + age + " раб. дн</b>\n«" + escapeHtml(objName(st.objects, t.objId)) + "»\n"
+      + escapeHtml(String(t.text || "").slice(0, 200)) + "\n\nПоднял начальнику производства."
+      + linkTo(env, "#tab=issues", "Открыть вопросы"))) sent++;
+  }
   return sent;
 }
 
@@ -336,12 +429,13 @@ export async function runReminders(env, cronExpr, diag) {
   await ensureNotifyTables(env);
   DIAG.length = 0;
   const today = mskToday();
-  const st = await loadState(env, ["objects", "users", "contractDocs", "purchased", "arrived", "finTxns"]);
+  const st = await loadState(env, ["objects", "users", "contractDocs", "purchased", "arrived", "finTxns", "issues"]);
   DIAG.push("снимок: объектов " + ((st.objects || []).length) + ", сотрудников " + ((st.users || []).length) + ", договоров " + ((st.contractDocs || []).length) + ", дата " + today);
   let sent = 0;
   if (cronExpr === "0 6 * * *") {                    // 09:00 МСК — утро
     sent += await runDeadlines(env, st, today);
     sent += await runSupply(env, st, today);
+    sent += await runIssues(env, st, today);
     sent += await runFinance(env, st);
   } else if (cronExpr === "0 16 * * *") {            // 19:00 МСК — вечер
     sent += await runHours(env, st, today);

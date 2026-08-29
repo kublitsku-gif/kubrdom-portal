@@ -15,7 +15,7 @@ export const NOTIFY_KINDS = {
   deadline: { n: "Дедлайны и просрочка", d: "за 3 дня, за день, в день дедлайна и каждое утро при просрочке", roles: ["brigadier", "worker", "prod_head", "admin", "financier"] },
   hours:    { n: "Часы и отметки работ", d: "вечером, если за день по объекту не записаны часы",              roles: ["brigadier", "worker", "prod_head", "admin"] },
   supply:   { n: "Снабжение",            d: "не куплено к старту этапа; куплено, но не принято на складе",     roles: ["supply", "prod_head", "admin", "brigadier"] },
-  issues:   { n: "Вопросы с объекта",    d: "новый вопрос по вашему направлению и ответ на ваш вопрос",        roles: ["supply", "prod_head", "admin", "client_mgr", "sales_head", "brigadier"] },
+  issues:   { n: "Вопросы с объекта",    d: "новый вопрос вам; без ответа 2 раб. дня — напоминание, 5 — подъём наверх", roles: ["supply", "prod_head", "admin", "client_mgr", "sales_head", "brigadier", "financier"] },
   daily:    { n: "Сводка дня",           d: "вечером одним сообщением: что сделано, часы, что горит",          roles: ["admin", "financier", "prod_head"] },
   finance:  { n: "Финансы",              d: "долги клиентов и зарплата к выплате — когда суммы изменились",     roles: ["admin", "financier"] },
 };
