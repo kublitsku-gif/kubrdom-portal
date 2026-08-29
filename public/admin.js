@@ -529,6 +529,103 @@ async function handleObjVideoFile(file, oid, tagName){
 
 // Загрузка файла в R2 через Worker → публичная ссылка (для фото работ и планировок).
 // Перед отправкой сжимаем картинки до <= 1 МБ. Если файл уже сжат (alreadyCompressed) — пропускаем.
+// ─── ОЧЕРЕДЬ ЗАГРУЗКИ ФОТО (полевой режим) ──────────────────────────────────
+// На объекте связи может не быть вовсе. Стейт это переживает (localStorage-кэш + дожим),
+// а фото — нет: один fetch без сети выдавал «ошибка загрузки», и отчёт о работе просто
+// пропадал. Кладём файл в IndexedDB (в localStorage бинарник не положишь) и досылаем,
+// когда связь появится. Прикрепление к работе делает та же очередь: иначе фото уехало бы
+// в R2, а в объекте его бы не было.
+const UPLOAD_DB="kubr_uploads", UPLOAD_STORE="files";
+let _uploadStore=null;   // подменяется в тестах — логика очереди не зависит от браузера
+function uploadStore(){
+  if(_uploadStore)return _uploadStore;
+  const idb=(typeof indexedDB!=="undefined")?indexedDB:null;
+  const open=function(){
+    return new Promise(function(res,rej){
+      if(!idb)return rej(new Error("нет IndexedDB"));
+      const r=idb.open(UPLOAD_DB,1);
+      r.onupgradeneeded=function(){ try{ r.result.createObjectStore(UPLOAD_STORE,{keyPath:"id"}); }catch(e){} };
+      r.onsuccess=function(){ res(r.result); };
+      r.onerror=function(){ rej(r.error||new Error("IndexedDB недоступна")); };
+    });
+  };
+  const tx=function(mode,fn){
+    return open().then(function(db){
+      return new Promise(function(res,rej){
+        const t=db.transaction(UPLOAD_STORE,mode);
+        const st=t.objectStore(UPLOAD_STORE);
+        const req=fn(st);
+        t.oncomplete=function(){ res(req&&req.result); };
+        t.onerror=function(){ rej(t.error); };
+      });
+    });
+  };
+  _uploadStore={
+    list: function(){ return tx("readonly",function(st){ return st.getAll(); }).then(function(v){ return v||[]; }); },
+    put:  function(item){ return tx("readwrite",function(st){ return st.put(item); }); },
+    del:  function(id){ return tx("readwrite",function(st){ return st.delete(id); }); },
+  };
+  return _uploadStore;
+}
+let _photoQueueN=0;      // сколько ждёт отправки — для плашки в интерфейсе
+let _photoFlushing=false;
+// Положить фото в очередь. Возвращает false, если очередь недоступна: тогда честно
+// говорим человеку, что снимок не сохранён, а не делаем вид, что всё хорошо.
+async function photoQueueAdd(file, target){
+  try{
+    await uploadStore().put(Object.assign({
+      id:gid(), blob:file, name:file.name||"photo.jpg", type:file.type||"image/jpeg",
+      at:new Date().toISOString().slice(0,16).replace("T"," "),
+      by:(currentUser&&currentUser.id)||"", byName:(currentUser&&currentUser.name)||"—",
+      size:file.size||0, tries:0,
+    },target||{}));
+    _photoQueueN++;
+    return true;
+  }catch(e){ return false; }
+}
+// Прикрепить доехавшее фото к работе объекта. Отдельно от отправки: пока файл лежал в
+// очереди, работу могли переименовать или удалить — тогда фото просто некуда класть.
+function photoAttach(item, url){
+  let ok=false;
+  objects=objects.map(function(o){
+    if(o.id!==item.oid)return o;
+    return Object.assign({},o,{stages:(o.stages||[]).map(function(st){
+      if(st.id!==item.sid)return st;
+      return Object.assign({},st,{works:(st.works||[]).map(function(w){
+        if(w.id!==item.wid)return w;
+        ok=true;
+        return Object.assign({},w,{photos:(w.photos||[]).concat([{
+          id:gid(), data:url, date:item.at, uploader:item.byName||"—", uploaderId:item.by||"",
+          size:item.size||0, name:item.name||"photo.jpg",
+        }])});
+      })});
+    })});
+  });
+  return ok;
+}
+// Досылка очереди. Первая же сетевая ошибка останавливает проход: связи всё ещё нет,
+// и перебирать остальные бессмысленно — только жечь батарею.
+async function photoQueueFlush(){
+  if(_photoFlushing)return 0;
+  _photoFlushing=true;
+  let sent=0;
+  try{
+    const items=await uploadStore().list();
+    _photoQueueN=items.length;
+    for(const it of items){
+      try{
+        const url=await uploadFileR2(it.blob,true);
+        if(photoAttach(it,url))sent++;
+        await uploadStore().del(it.id);
+        _photoQueueN=Math.max(0,_photoQueueN-1);
+      }catch(e){ break; }
+    }
+  }catch(e){ /* очередь недоступна — попробуем в следующий раз */ }
+  finally{ _photoFlushing=false; }
+  if(sent){ fl(); }
+  return sent;
+}
+
 async function uploadFileR2(file, alreadyCompressed){
   if(!alreadyCompressed){ try{ file=await compressImage(file, 1024*1024); }catch(e){ /* не удалось сжать — грузим оригинал */ } }
   const r=await fetch(API_BASE+"/api/file?name="+encodeURIComponent(file.name),{
@@ -5962,6 +6059,11 @@ ${objChipsHtml(obj.id,_objSecBuf||[])}
 </div>
 ${_objEdit?`<div style="background:#fdecea;border:1px solid #f5b7b1;border-radius:10px;padding:8px 11px;margin-bottom:10px;font-size:11px;color:#c0392b;line-height:1.4">✏️ Режим правки: показаны кнопки удаления этапов и работ. Нажмите «Готово», когда закончите.</div>`:""}
 <div style="position:relative;margin-bottom:10px">
+  ${_photoQueueN>0?`<div style="display:flex;align-items:center;gap:8px;background:#fff3e0;border:1px solid #e67e2244;border-radius:10px;padding:8px 11px;margin-bottom:8px">
+    <span style="font-size:15px">📷</span>
+    <div style="flex:1;min-width:0;font-size:11.5px;color:#8a5a1f;line-height:1.4">${_photoQueueN} фото ждут связи на этом устройстве. Уйдут сами, когда появится интернет.</div>
+    <button data-a="photo-queue-flush" style="padding:5px 10px;background:#e67e22;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700;flex-shrink:0">Отправить</button>
+  </div>`:""}
   <input id="obj-work-search" data-a="obj-work-search" value="${(objWorkSearch||'').replace(/"/g,'&quot;')}" placeholder="🔍 Поиск по работам и материалам…" style="width:100%;padding:9px 32px 9px 12px;border-radius:10px;border:1.5px solid #dde6f0;font-size:13px;outline:none;box-sizing:border-box">
   ${objWorkSearch?`<button data-a="obj-work-search-clear" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:22px;height:22px;border:none;background:#eef2f7;border-radius:50%;cursor:pointer;color:#7a9aaa;font-size:12px">✕</button>`:''}
 </div>
@@ -18169,6 +18271,12 @@ function bind(){
       else openPhotoWid=wid;
       render();
     };}
+    else if(a==="photo-queue-flush"){el.onclick=async ()=>{
+      el.disabled=true; el.textContent="Отправляем…";
+      const n=await photoQueueFlush();
+      if(!n)alert("Связи всё ещё нет — фото ждут на устройстве. Их не потеряет ни перезагрузка, ни закрытие приложения.");
+      render();
+    };}
     else if(a==="obj-photo-label"){
       // The label itself wraps a hidden <input type="file">. When user taps label, browser triggers input.
       // Hook the file input's change event when block is rendered.
@@ -18183,9 +18291,11 @@ function bind(){
           if(!files.length)return;
           const newPhotos=[];
           const tgFiles=[];
+          let queuedN=0;
           for(const f of files){
+            let c=f;
             try{
-              let c=f; try{ c=await compressImage(f,1024*1024); }catch(e){}
+              try{ c=await compressImage(f,1024*1024); }catch(e){}
               const url=await uploadFileR2(c,true);
               tgFiles.push(c);
               newPhotos.push({
@@ -18197,10 +18307,18 @@ function bind(){
                 size:f.size,
                 name:f.name
               });
-            }catch(err){ alert("Ошибка загрузки фото: "+((err&&err.message)||err)); }
+            }catch(err){
+              // Нет связи — не теряем снимок: он ждёт в очереди на телефоне и уйдёт сам.
+              const queued=await photoQueueAdd(c||f,{kind:"work-photo",oid:oid,sid:sid,wid:wid});
+              if(!queued)alert("Не удалось загрузить фото и сохранить его на устройстве: "+((err&&err.message)||err));
+              else queuedN++;
+            }
           }
           inp._bound=false;
           mirrorPhotosToTelegram(oid, tgFiles);
+          if(queuedN){
+            alert("📷 "+queuedN+" фото сохранено на устройстве: связи сейчас нет.\n\nОни уйдут в портал сами, как только появится интернет — приложение можно закрыть.");
+          }
           if(!newPhotos.length){ render(); return; }
           objects=objects.map(function(o){
             if(o.id!==oid)return o;
@@ -18784,6 +18902,12 @@ function _restoreUserFromToken(decoded){
 // Фоновые циклы сотрудника (автосейв/поллинг). Идемпотентно — зовётся из boot И из обработчика входа.
 function _startLoops(){
   if(_startLoops._on) return; _startLoops._on=true;
+  // Досылка фото из очереди: как появилась связь — сразу, плюс редкий фон на случай,
+  // когда браузер события online не дал (телефон переключился с 4G на Wi-Fi).
+  photoQueueFlush().catch(function(){});
+  window.addEventListener("online", function(){ photoQueueFlush().catch(function(){}); });
+  document.addEventListener("visibilitychange", function(){ if(!document.hidden)photoQueueFlush().catch(function(){}); });
+  setInterval(function(){ if(_photoQueueN>0)photoQueueFlush().catch(function(){}); }, 60000);
   setInterval(apiSave, 2500);
   setInterval(pollOnce, POLL_MS);
   crmEnsureChats(); setInterval(crmPollBadge, 45000);   // счётчик неотвеченных CRM
