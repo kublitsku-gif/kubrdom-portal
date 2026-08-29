@@ -1920,7 +1920,12 @@ const ISSUE_KIND={
   change:  {n:"Изменение", i:"✏️", c:"#8e44ad", to:"client_mgr"},
   question:{n:"Вопрос",    i:"❓", c:"#2980b9", to:"brigadier"},
   money:   {n:"Деньги",    i:"💰", c:"#16a085", to:"financier"},
+  // Заявка на замену материала. Заводится не руками, а из снабжения (см. matChangeRequest),
+  // поэтому в форме «новый вопрос» её нет: без payload'а правки такая заявка бессмысленна.
+  matchg:  {n:"Замена",    i:"⇄", c:"#8e44ad", to:"financier", auto:true},
 };
+// Виды, которые человек выбирает сам. Автоматические из формы прячем.
+function issueKindsManual(){ return Object.keys(ISSUE_KIND).filter(function(k){return !ISSUE_KIND[k].auto;}); }
 // Кому можно адресовать. Имя короткое и в дательном падеже — оно читается как подпись
 // на карточке («Снабженцу»), а не как название роли в справочнике.
 const ISSUE_ADDR={
@@ -4855,6 +4860,44 @@ function issueToExtra(t,title,amount){
   return c.id;
 }
 
+// Детали заявки на замену внутри карточки вопроса: что на что, в каких работах и
+// почём. Позиции, которых в объекте уже нет (работу удалили, материал заменили
+// раньше), помечаем — применять их нечего, и согласующий должен это видеть.
+function matChangeCard(t){
+  const chg=t.mat||{};
+  const rows=(chg.ids||[]).map(function(id){
+    const c=supplyFindMatCtx(id);
+    if(!c)return {gone:true};
+    const q=Number((chg.qty||{})[id]);
+    return { gone:false, from:c.m.n||"—", stage:c.s.n, work:c.w.n,
+      wasQty:Number(c.m.qty)||1, wasCost:Number(c.m.cost)||0,
+      qty:(isFinite(q)&&q>0)?q:(Number(c.m.qty)||1) };
+  });
+  const alive=rows.filter(function(r){return !r.gone;});
+  const d=matChangeDelta(Object.assign({},chg,{ids:(chg.ids||[]).filter(function(id){return !!supplyFindMatCtx(id);})}));
+  const dc=d>0?"#c0392b":d<0?"#27ae60":"#7a8b99";
+  const was=alive.map(function(r){return r.from;}).filter(function(v,i,a){return a.indexOf(v)===i;}).join(" / ")||"—";
+  return '<div style="margin-top:6px;border:1px solid #8e44ad33;border-radius:9px;overflow:hidden">'+
+    '<div style="display:flex;align-items:center;gap:7px;padding:7px 9px;background:#8e44ad0d">'+
+      '<div style="flex:1;min-width:0;font-size:11.5px;color:#5a3a6a;line-height:1.35">'+
+        '<span style="color:#9aabbf;text-decoration:line-through">'+esc(was)+'</span>'+
+        ' <span style="color:#8e44ad;font-weight:800">→</span> '+
+        '<b style="color:#4a2a5a">'+esc((chg.n||"").trim()||"—")+'</b>'+
+      '</div>'+
+      '<div style="font-size:13px;font-weight:800;color:'+dc+';flex-shrink:0">'+(d>0?"+":d<0?"−":"")+Math.abs(d).toLocaleString("ru-RU")+' ₽</div>'+
+    '</div>'+
+    '<div style="padding:6px 9px 7px">'+
+      alive.map(function(r){
+        return '<div style="display:flex;align-items:baseline;gap:6px;font-size:10.5px;color:#7a9aaa;padding:1px 0">'+
+          '<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.stage)+' → '+esc(r.work)+'</span>'+
+          '<span style="flex-shrink:0;color:#5a7a9a;font-weight:700">'+numRu(r.wasQty)+'×'+r.wasCost.toLocaleString("ru-RU")+' → '+numRu(r.qty)+'×'+(Number(chg.cost)||0).toLocaleString("ru-RU")+' ₽</span>'+
+        '</div>';
+      }).join("")+
+      (rows.length>alive.length?'<div style="font-size:10px;color:#c0392b;font-weight:700;margin-top:3px">'+(rows.length-alive.length)+' поз. из заявки уже нет в объекте</div>':'')+
+      (chg.reason?'<div style="font-size:10.5px;color:#5a7a9a;margin-top:4px"><b>Причина:</b> '+esc(chg.reason)+'</div>':'')+
+    '</div>'+
+  '</div>';
+}
 function buildIssuesSection(obj){
   if(!obj)return "";
   const list=objIssues(obj.id);
@@ -4896,9 +4939,12 @@ function buildIssuesSection(obj){
         return '↪ '+esc(a.n)+' → <b style="color:#7a8b99">'+esc(b.n)+'</b> · '+esc(r.byName||"—")+' · '+esc(String(r.at||"").slice(0,10).split("-").reverse().join("."));
       }).join('<br>')+'</div>';
     if(t.linkedNote)h+='<div style="margin-top:5px;font-size:10px;font-weight:700;color:#8e44ad">→ '+esc(t.linkedNote)+'</div>';
+    // Заявка на замену материала: что на что меняют и куда это уедет. Согласующему
+    // нужен не текст вопроса, а перечень потребностей — по нему видно, что заденет правка.
+    if(t.kind==="matchg"&&t.mat)h+=matChangeCard(t);
 
     // Деньги: сумма и за чей счёт. Показываем только там, где вопрос стоит денег.
-    if(isOpen&&canApp&&(t.kind==="supply"||t.kind==="change")){
+    if(isOpen&&canApp&&(t.kind==="supply"||t.kind==="change"||t.kind==="matchg")){
       const payer=t.payer||(t.kind==="supply"?"company":"client");
       h+='<div style="margin-top:7px;padding-top:7px;border-top:1px solid #f0f3f7;display:flex;align-items:center;gap:6px;flex-wrap:wrap">'+
         '<span style="font-size:10px;color:#8497a5;font-weight:600">Сумма</span>'+
@@ -4908,10 +4954,16 @@ function buildIssuesSection(obj){
           return '<button data-a="iss-payer" data-iid="'+t.id+'" data-p="'+p+'" style="padding:5px 9px;border-radius:7px;cursor:pointer;font-size:10px;font-weight:700;border:1.5px solid '+(on?"#26456E":"#dde6f0")+';background:'+(on?"#26456E":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+'">'+(p==="company"?"за счёт компании":"за счёт клиента")+'</button>';
         }).join("")+
       '</div>';
-      h+='<div style="display:flex;gap:5px;margin-top:6px;flex-wrap:wrap">'+
-        '<button data-a="iss-to-supply" data-iid="'+t.id+'" style="flex:1;min-width:120px;padding:7px 9px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;border:none;background:#e67e22;color:#fff">📦 В докупку</button>'+
-        '<button data-a="iss-to-extra" data-iid="'+t.id+'" style="flex:1;min-width:120px;padding:7px 9px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;border:none;background:#8e44ad;color:#fff">🛠 В доп работы</button>'+
-      '</div>';
+      // У заявки на замену свой путь: не «завести докупку», а применить готовую правку
+      // к потребностям. Доп работа из неё родится сама, если разница за счёт клиента.
+      h+=t.kind==="matchg"
+        ? '<div style="display:flex;gap:5px;margin-top:6px;flex-wrap:wrap">'+
+            '<button data-a="iss-mat-apply" data-iid="'+t.id+'" style="flex:1;min-width:150px;padding:7px 9px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;border:none;background:#27ae60;color:#fff">✅ Применить замену</button>'+
+          '</div>'
+        : '<div style="display:flex;gap:5px;margin-top:6px;flex-wrap:wrap">'+
+            '<button data-a="iss-to-supply" data-iid="'+t.id+'" style="flex:1;min-width:120px;padding:7px 9px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;border:none;background:#e67e22;color:#fff">📦 В докупку</button>'+
+            '<button data-a="iss-to-extra" data-iid="'+t.id+'" style="flex:1;min-width:120px;padding:7px 9px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;border:none;background:#8e44ad;color:#fff">🛠 В доп работы</button>'+
+          '</div>';
     }
     if(isOpen&&canAns){
       // Переадресация нативным select: на телефоне это привычное колесо, а не ещё
@@ -4940,7 +4992,7 @@ function buildIssuesSection(obj){
     body+='<div style="background:#fafbfc;border:1px dashed #c0392b55;border-radius:10px;padding:10px;margin-bottom:9px">'+
       '<div style="font-size:9px;letter-spacing:0.5px;font-weight:700;color:#c0392b;margin-bottom:6px">НОВЫЙ ВОПРОС</div>'+
       '<div style="display:flex;gap:5px;margin-bottom:7px;flex-wrap:wrap">'+
-        Object.keys(ISSUE_KIND).map(function(k){
+        issueKindsManual().map(function(k){
           const on=issueNew.kind===k, kd=ISSUE_KIND[k];
           return '<button data-a="iss-kind" data-k="'+k+'" style="padding:6px 11px;border-radius:16px;cursor:pointer;font-size:11px;font-weight:700;border:1.5px solid '+(on?kd.c:"#dde6f0")+';background:'+(on?kd.c:"#fff")+';color:'+(on?"#fff":"#7a9aaa")+'">'+kd.i+' '+kd.n+'</button>';
         }).join("")+
@@ -10907,6 +10959,148 @@ function supplyRemoveMat(mid){
   return true;
 }
 
+// ─── ЗАМЕНА МАТЕРИАЛА КАК ЗАЯВКА ─────────────────────────────────────────────
+// Замена по ходу стройки — это деньги, а не правка справочника: другой товар почти
+// всегда дороже или дешевле сметы, по которой подписан договор. Поэтому снабженец
+// видит разницу ДО сохранения, а дорогая замена уходит на согласование тому, кто
+// отвечает за деньги, и уже оттуда попадает в доп работы договора.
+//
+// chg = {ids:[], n, mode, cost, store, note, pid, qty:{needId:qty}, reason, payer}
+// Одно описание правки на два входа — прямое сохранение и утверждённая заявка:
+// иначе «применено из заявки» перестало бы совпадать с «сохранено снабженцем».
+
+// Порог согласования. Мелкая правка цены не должна ходить через заявку, крупная обязана.
+function matChangeLimit(){
+  const v=Number(settings&&settings.matChangeLimit);
+  return isFinite(v)&&v>=0?v:10000;
+}
+// Разница в деньгах между тем, что стоит в потребностях сейчас, и тем, что предлагают.
+function matChangeDelta(chg){
+  let d=0;
+  ((chg&&chg.ids)||[]).forEach(function(id){
+    const m=supplyFindMat(id);
+    if(!m)return;
+    const q=Number(((chg.qty||{})[id]));
+    const nq=(isFinite(q)&&q>0)?q:(Number(m.qty)||1);
+    d+=(Number(chg.cost)||0)*nq-(Number(m.cost)||0)*(Number(m.qty)||1);
+  });
+  return Math.round(d);
+}
+// Заменяемые потребности: те, где имя реально меняется на товар каталога. Правка
+// цены или количества заменой не считается — снимать с неё отметки закупки не за что.
+function matChangeReplaced(chg){
+  const nm=((chg&&chg.n)||"").trim();
+  if(!chg||!chg.pid)return [];
+  return (chg.ids||[]).filter(function(id){ const m=supplyFindMat(id); return m&&(m.n||"")!==nm; });
+}
+function matChangeText(chg){
+  const from=(chg.ids||[]).map(function(id){ const m=supplyFindMat(id); return m?(m.n||""):""; }).filter(Boolean);
+  const was=from.length?from.filter(function(v,i){return from.indexOf(v)===i;}).join(" / "):"—";
+  const d=matChangeDelta(chg);
+  return "Замена материала: "+was+" → "+((chg.n||"").trim()||"—")+
+    " · "+(chg.ids||[]).length+" поз."+
+    (d?" · "+(d>0?"+":"−")+Math.abs(d).toLocaleString("ru-RU")+" ₽":" · без изменения суммы")+
+    (chg.reason?" · "+chg.reason:"");
+}
+// Применение правки к потребностям. Возвращает, сколько позиций тронуто и какие из
+// них сменили товар (с них сняты отметки закупки — «куплено» от предшественника
+// относилось к другому товару).
+function matChangeApply(chg){
+  const ids=((chg&&chg.ids)||[]).filter(function(id){return !!supplyFindMatCtx(id);});
+  if(!ids.length)return {applied:0, replaced:[]};
+  const nm=(chg.n||"").trim();
+  const prod=chg.pid?(expProducts||[]).find(function(x){return x.id===chg.pid;}):null;
+  const meta={};
+  if(prod)["packPer","packBase","sheetM2","lenPer","url"].forEach(function(k){ if(prod[k]!=null)meta[k]=prod[k]; });
+  const replaced=matChangeReplaced(Object.assign({},chg,{ids:ids}));
+  const qty=chg.qty||{};
+  objects=objects.map(function(o){
+    return Object.assign({},o,{stages:(o.stages||[]).map(function(st){
+      return Object.assign({},st,{works:(st.works||[]).map(function(w){
+        if(!(w.mats||[]).some(function(m){return ids.indexOf(m.id)>=0;}))return w;
+        const nw=Object.assign({},w,{mats:(w.mats||[]).map(function(m){
+          if(ids.indexOf(m.id)<0)return m;
+          const q=Number(qty[m.id]);
+          const next=Object.assign({},m,{
+            n:nm||m.n, mode:chg.mode||m.mode||"piece",
+            cost:Number(chg.cost)||0, store:chg.store||"", note:chg.note||"",
+            qty:(isFinite(q)&&q>0)?q:(Number(m.qty)||1),
+          });
+          // Меняем товар — старая фасовка/ссылка от предшественника должны уйти.
+          if(replaced.indexOf(m.id)>=0){
+            ["packPer","packBase","sheetM2","lenPer","url"].forEach(function(k){ delete next[k]; });
+            Object.keys(meta).forEach(function(k){ next[k]=meta[k]; });
+          }
+          // Ссылка на каталог: встали на товар базы — проставляем, ушли в ручное
+          // название — снимаем. Позиция без pid честнее, чем pid от предшественника.
+          if(prod)next.pid=prod.id;
+          else if((m.n||"")!==nm)delete next.pid;
+          return next;
+        })});
+        // w.cost в портале всегда равен сумме материалов (так их собирает _tplEstWork):
+        // без пересчёта смета объекта разъедется с закупкой до перезагрузки панели.
+        nw.cost=wMatTotal(nw);
+        return nw;
+      })});
+    })});
+  });
+  supplyClearMarks(replaced);
+  return {applied:ids.length, replaced:replaced};
+}
+// Заявка на замену — обычный вопрос по объекту (kind «matchg»), поэтому у неё сразу
+// есть адресат, возраст, эскалация и лента в Telegram. Payload правки лежит в t.mat:
+// согласующий жмёт «Применить», и правка уходит в потребности тем же кодом.
+function matChangeRequest(chg){
+  const ctx=supplyFindMatCtx(((chg&&chg.ids)||[])[0]);
+  if(!ctx)return null;
+  const iid=gid();
+  issues=issues.concat([{
+    id:iid, objId:ctx.o.id, wid:ctx.w.id, kind:"matchg",
+    to:(ISSUE_KIND.matchg||{}).to||"financier",
+    text:matChangeText(chg), status:"hold", src:"panel",
+    amount:Math.abs(matChangeDelta(chg)), payer:chg.payer||"company",
+    mat:chg,
+    by:(currentUser&&currentUser.id)||"", byName:(currentUser&&currentUser.name)||"",
+    at:issueStamp(),
+  }]);
+  return iid;
+}
+
+// Незакрытая заявка на замену по потребности. Без этой отметки снабженец отправит
+// вторую такую же, а бригадир не поймёт, почему материал в объекте всё ещё прежний.
+function matPendingChange(mid){
+  return (issues||[]).find(function(t){
+    return t.kind==="matchg"&&ISSUE_OPEN(t)&&(((t.mat||{}).ids)||[]).indexOf(mid)>=0;
+  })||null;
+}
+const MAT_PENDING_PILL='<span style="font-size:10px;font-weight:700;color:#8e44ad;background:#8e44ad14;border:1px solid #8e44ad33;border-radius:5px;padding:1px 7px">⏳ замена на согласовании</span>';
+
+// Правка из полей модалки снабжения. Одна функция на живой пересчёт разницы и на
+// сохранение — чтобы цифра под кнопкой и то, что реально применится, не разъезжались.
+function supplyEditForm(){
+  const ids=(supplyEditIds.length?supplyEditIds:[supplyEditMid]).filter(function(id){return !!supplyFindMatCtx(id);});
+  const g=function(id){ const e=document.getElementById(id); return e?String(e.value==null?"":e.value):""; };
+  const nm=g("sem-n").trim();
+  const prod=(typeof expProducts!=="undefined")?expProducts.find(function(x){return x.name===nm;}):null;
+  const qty={};
+  ids.forEach(function(id){
+    const e=document.getElementById("sem-q-"+id)||document.getElementById("sem-qty");
+    const q=parseFloat(String((e&&e.value)||"").replace(",","."));
+    qty[id]=(isFinite(q)&&q>0)?q:1;
+  });
+  return { ids:ids, n:nm, mode:g("sem-mode")||"piece", cost:parseInt(g("sem-cost"))||0,
+    store:g("sem-store").trim(), note:g("sem-note").trim(), reason:g("sem-reason").trim(),
+    pid:prod?prod.id:"", payer:g("sem-payer")||"company", qty:qty };
+}
+// Нужна ли заявка. Тот, кто отвечает за деньги, согласовывает сам себе — ему заявка
+// не нужна; остальным порог решает, идти правкой или через согласование.
+function supplyNeedsApproval(chg){
+  const d=matChangeDelta(chg);
+  // Нулевой порог означает «любая правка ЦЕНЫ через согласование», а не «любая правка»:
+  // иначе исправление заметки или магазина уезжало бы заявкой.
+  return !!d&&!canApproveIssue()&&Math.abs(d)>=matChangeLimit();
+}
+
 // Материал из каталога → в «Докупку» этапа. Повторное добавление той же позиции
 // увеличивает количество, а не плодит строки-дубли. Возвращает false, если цель
 // или позиция не найдены (форма тогда ничего не делает).
@@ -11300,6 +11494,7 @@ function tSupplyDetail(sel, sortBy){
           (!done&&m.url?'<a href="'+m.url+'" target="_blank" style="font-size:10px;color:#fff;background:#2980b9;border-radius:4px;padding:1px 7px;text-decoration:none;font-weight:600" onclick="event.stopPropagation()">🔗 купить</a>':'')+
           (done?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>':'')+
           _arrivedPill('data-mid="'+m.id+'"', !!arrived[m.id])+
+          (matPendingChange(m.id)?MAT_PENDING_PILL:'')+
           '<button data-a="supply-edit-mat" data-mid="'+m.id+'" style="font-size:10px;color:#7a9aaa;background:#fff;border:1px solid #d0dae8;border-radius:5px;padding:1px 7px;cursor:pointer" onclick="event.stopPropagation()">✏️ изм.</button>'+
         '</div>'+
         ((Array.isArray(m.breakdown)&&m.breakdown.length)
@@ -11348,6 +11543,7 @@ function tSupplyDetail(sel, sortBy){
           (!allDone&&g.url?'<a href="'+g.url+'" target="_blank" style="font-size:10px;color:#fff;background:#2980b9;border-radius:4px;padding:1px 7px;text-decoration:none;font-weight:600" onclick="event.stopPropagation()">🔗 купить</a>':'')+
           (allDone?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>':'')+
           _arrivedPill('data-ids="'+ids.join(',')+'"', ids.length>0&&ids.every(function(id){return !!arrived[id];}))+
+          (ids.some(function(id){return !!matPendingChange(id);})?MAT_PENDING_PILL:'')+
           // Слитая строка правится целиком: одна замена вместо обхода всех работ,
           // где эта позиция встретилась. Сколько потребностей затронет — на кнопке.
           '<button data-a="supply-edit-mat" data-mid="'+ids[0]+'" data-ids="'+ids.join(',')+'" style="font-size:10px;color:#7a9aaa;background:#fff;border:1px solid #d0dae8;border-radius:5px;padding:1px 7px;cursor:pointer" onclick="event.stopPropagation()">✏️ изм.'+(ids.length>1?' ('+ids.length+')':'')+'</button>'+
@@ -11499,17 +11695,17 @@ function tSupplyDetail(sel, sortBy){
           '</div>'+
           (multi?'<div style="background:#fff3e0;border:1px solid #e67e2233;border-radius:9px;padding:8px 10px;margin-bottom:10px;font-size:11px;color:#8a5a1f;line-height:1.45">'+
             'Правка пойдёт во <b>все '+ctxs.length+' потребности</b> этой строки — по всем работам и объектам сразу. Количество у каждой своё, задаётся ниже.</div>':'')+
-          '<input id="sem-n" list="sem-catalog" autocomplete="off" value="'+(em.n||"").replace(/"/g,"&quot;")+'" placeholder="Название — или выберите из базы" style="'+inp+';margin-bottom:2px">'+
+          '<input id="sem-n" data-a="sem-live" list="sem-catalog" autocomplete="off" value="'+(em.n||"").replace(/"/g,"&quot;")+'" placeholder="Название — или выберите из базы" style="'+inp+';margin-bottom:2px">'+
           '<datalist id="sem-catalog">'+(typeof expProducts!=="undefined"?expProducts:[]).map(function(pr){return '<option value="'+esc(pr.name).replace(/"/g,"&quot;")+'"></option>';}).join("")+'</datalist>'+
           '<div style="font-size:10px;color:#a0b4c8;margin:0 0 8px 2px">Выберите товар из базы — цена, единица и магазин подставятся сами</div>'+
           '<div style="display:flex;gap:8px;margin-bottom:8px">'+
             '<select id="sem-mode" style="'+inp+';flex:1">'+opts+'</select>'+
             (multi
               ? '<div style="flex:1;display:flex;align-items:center;justify-content:center;background:#f4f7fb;border:1px solid #e2e9f2;border-radius:8px;font-size:12px;color:#5a7a9a;font-weight:700">Σ '+numRu(qtyTotal)+'</div>'
-              : '<input id="sem-qty" type="number" step="any" value="'+(em.qty||1)+'" placeholder="Кол-во" style="'+inp+';flex:1">')+
+              : '<input id="sem-qty" data-a="sem-live" type="number" step="any" value="'+(em.qty||1)+'" placeholder="Кол-во" style="'+inp+';flex:1">')+
           '</div>'+
           '<div style="display:flex;gap:8px;margin-bottom:8px">'+
-            '<input id="sem-cost" type="number" value="'+(Number(em.cost)||0)+'" placeholder="Цена ₽/ед" style="'+inp+';flex:1">'+
+            '<input id="sem-cost" data-a="sem-live" type="number" value="'+(Number(em.cost)||0)+'" placeholder="Цена ₽/ед" style="'+inp+';flex:1">'+
             '<input id="sem-store" value="'+(em.store||"").replace(/"/g,"&quot;")+'" placeholder="Магазин" style="'+inp+';flex:1">'+
           '</div>'+
           '<input id="sem-note" value="'+(em.note||"").replace(/"/g,"&quot;")+'" placeholder="Заметка" style="'+inp+';margin-bottom:12px">'+
@@ -11530,13 +11726,47 @@ function tSupplyDetail(sel, sortBy){
                   (c.m.n&&c.m.n!==em.n?'<div style="font-size:10px;color:#b8791a;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(c.m.n)+'</div>':'')+
                   '<div style="font-size:10px;color:'+ms.c+';margin-top:2px">'+ms.i+' '+ms.t+'</div>'+
                 '</div>'+
-                '<input id="sem-q-'+c.m.id+'" type="number" step="any" value="'+(c.m.qty||1)+'" style="width:76px;padding:7px 8px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;text-align:center">'+
+                '<input id="sem-q-'+c.m.id+'" data-a="sem-live" type="number" step="any" value="'+(c.m.qty||1)+'" style="width:76px;padding:7px 8px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;text-align:center">'+
               '</div>';
             }).join("")+
             '</div>':'')+
+          // Замена по ходу стройки — это деньги: другой товар почти всегда дороже или
+          // дешевле сметы, по которой подписан договор. Разницу показываем ДО сохранения,
+          // а дорогую замену портал сам уводит на согласование (см. matChangeLimit).
+          '<div style="background:#f4f7fb;border:1px solid #e2e9f2;border-radius:11px;padding:10px 12px;margin-bottom:10px">'+
+            '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
+              '<span style="font-size:11px;color:#5a7a9a;font-weight:700">Разница со сметой</span>'+
+              '<span style="flex:1"></span>'+
+              '<span id="sem-delta" style="font-size:15px;font-weight:800;color:#5a7a9a">0 ₽</span>'+
+            '</div>'+
+            '<input id="sem-reason" data-a="sem-live" value="" placeholder="Причина: нет в наличии / изменение проекта / просьба клиента" style="'+inp+';margin-bottom:8px">'+
+            '<div style="display:flex;align-items:center;gap:8px">'+
+              '<span style="font-size:11px;color:#5a7a9a;font-weight:700;flex-shrink:0">За чей счёт</span>'+
+              '<select id="sem-payer" data-a="sem-live" style="'+inp+';flex:1">'+
+                '<option value="company">за счёт компании</option>'+
+                '<option value="client">за счёт клиента</option>'+
+              '</select>'+
+            '</div>'+
+            '<div id="sem-hint" style="font-size:10px;color:#a0b4c8;margin-top:7px;line-height:1.4">Разница от '+matChangeLimit().toLocaleString("ru-RU")+' ₽ уходит на согласование тому, кто отвечает за деньги.</div>'+
+            // Порог правит тот, кто по нему и согласовывает. Отдельного экрана настроек в
+            // панели нет, а место объяснения правила — лучшее место для самого правила.
+            (canApproveIssue()?'<div style="display:flex;align-items:center;gap:7px;margin-top:7px">'+
+              '<span style="font-size:10px;color:#a0b4c8;flex-shrink:0">Порог согласования, ₽</span>'+
+              '<input id="sem-limit" data-a="sem-limit" type="number" min="0" value="'+matChangeLimit()+'" style="width:96px;padding:5px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;text-align:right;box-sizing:border-box">'+
+            '</div>':'')+
+          '</div>'+
+          (function(){
+            // Заявка уже отправлена: показываем это в модалке, иначе вторая заявка на ту
+            // же позицию уедет согласующему как новая.
+            const pend=editIds.map(matPendingChange).filter(Boolean);
+            if(!pend.length)return '';
+            const uniq=pend.filter(function(t,i){return pend.indexOf(t)===i;});
+            return '<div style="background:#f6effa;border:1px solid #8e44ad33;border-radius:9px;padding:8px 10px;margin-bottom:10px;font-size:11px;color:#5a3a6a;line-height:1.45">'+
+              '⏳ По этой позиции уже есть заявка на согласовании: «'+esc(uniq[0].text||"")+'». Пока её не утвердят, материал в объекте прежний.</div>';
+          })()+
           (marked>0?'<div style="background:#fdecea;border:1px solid #e74c3c33;border-radius:9px;padding:8px 10px;margin-bottom:10px;font-size:11px;color:#a93226;line-height:1.45">'+
             'По '+marked+' поз. уже отмечена закупка. Если сменить товар, отметки «куплено» и «принято» с них снимутся — деньги в партиях останутся.</div>':'')+
-          '<button data-a="supply-mat-save" style="width:100%;padding:10px;background:#2980b9;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">Сохранить'+(multi?' во все '+ctxs.length:'')+'</button>'+
+          '<button id="sem-save" data-a="supply-mat-save" style="width:100%;padding:10px;background:#2980b9;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">Сохранить'+(multi?' во все '+ctxs.length:'')+'</button>'+
           // Удаление — отдельной строкой и приглушённое: рядом с «Сохранить» его
           // задевают пальцем, а материал уносит и отметки «куплено»/«на складе».
           '<button data-a="supply-mat-del" data-mid="'+em.id+'" data-ids="'+editIds.join(',')+'" style="width:100%;margin-top:8px;padding:9px;background:#fff;border:1px solid #e74c3c55;border-radius:9px;cursor:pointer;color:#e74c3c;font-size:12.5px;font-weight:700">🗑 Удалить из закупки'+(multi?' ('+ctxs.length+')':'')+'</button>'+
@@ -15231,60 +15461,50 @@ function bind(){
       render();
     };}
     else if(a==="supply-mat-close"){el.onclick=()=>{supplyEditMid=null;supplyEditIds=[];render();};}
+    // Живой пересчёт разницы: снабженец должен видеть цену своей правки до того,
+    // как нажмёт кнопку, а не узнавать о согласовании из алерта после.
+    else if(a==="sem-live"){el.oninput=el.onchange=()=>{
+      const chg=supplyEditForm();
+      const d=matChangeDelta(chg);
+      const box=document.getElementById("sem-delta");
+      if(box){
+        box.textContent=(d>0?"+":d<0?"−":"")+Math.abs(d).toLocaleString("ru-RU")+" ₽";
+        box.style.color=d>0?"#c0392b":d<0?"#27ae60":"#5a7a9a";
+      }
+      const need=supplyNeedsApproval(chg);
+      const btn=document.getElementById("sem-save");
+      if(btn){
+        btn.textContent=need?"На согласование":("Сохранить"+(chg.ids.length>1?(" во все "+chg.ids.length):""));
+        btn.style.background=need?"#8e44ad":"#2980b9";
+      }
+      const hint=document.getElementById("sem-hint");
+      if(hint)hint.textContent=need
+        ? "Разница выше порога — правка уйдёт заявкой тому, кто отвечает за деньги, и применится после утверждения."
+        : "Разница от "+matChangeLimit().toLocaleString("ru-RU")+" ₽ уходит на согласование тому, кто отвечает за деньги.";
+    };}
+    // Порог сохраняем без перерисовки: она бы стёрла уже набранные поля модалки.
+    else if(a==="sem-limit"){el.onchange=()=>{
+      const v=parseInt(el.value);
+      settings=Object.assign({},settings,{matChangeLimit:(isFinite(v)&&v>=0)?v:0});
+      scheduleSave();
+      const hint=document.getElementById("sem-hint");
+      if(hint)hint.textContent="Разница от "+matChangeLimit().toLocaleString("ru-RU")+" ₽ уходит на согласование тому, кто отвечает за деньги.";
+    };}
     else if(a==="supply-mat-save"){el.onclick=()=>{
-      const ids=(supplyEditIds.length?supplyEditIds:[supplyEditMid]).filter(function(id){return !!supplyFindMatCtx(id);});
-      if(!ids.length)return;
-      const nm=(document.getElementById("sem-n")?.value||"").trim();
-      if(!nm){ alert("Название материала не может быть пустым."); return; }
-      const patch={
-        n:nm,
-        mode:document.getElementById("sem-mode")?.value||"piece",
-        cost:parseInt(document.getElementById("sem-cost")?.value)||0,
-        store:(document.getElementById("sem-store")?.value||"").trim(),
-        note:(document.getElementById("sem-note")?.value||"").trim(),
-      };
-      // Количество у каждой потребности своё: слитые 40 листов складываются из 25 у одной
-      // работы и 15 у другой, разносить их обратно поровну нельзя. У одиночной правки поле одно.
-      const qtyById={};
-      ids.forEach(function(id){
-        const f=document.getElementById("sem-q-"+id)||document.getElementById("sem-qty");
-        const q=parseFloat(String(f&&f.value||"").replace(",","."));
-        qtyById[id]=(isFinite(q)&&q>0)?q:1;
-      });
-      // Название совпало с товаром базы — переносим и то, чего в форме нет:
-      // фасовку, ссылку. Без этого «упаковка 1.362 м²» потерялась бы при замене,
-      // и пересчёт цены за единицу поехал бы.
-      const prod=(typeof expProducts!=="undefined")?expProducts.find(function(x){return x.name===nm;}):null;
-      const meta={};
-      if(prod){ ["packPer","packBase","sheetM2","lenPer","url"].forEach(function(k){ if(prod[k]!=null)meta[k]=prod[k]; }); }
-      // Замена товара — только когда имя реально сменилось НА позицию каталога. Правка
-      // опечатки в названии заменой не считается: снимать с неё отметки закупки не за что.
-      const replacedIds=prod?ids.filter(function(id){ return (supplyFindMat(id).n||"")!==nm; }):[];
-      const markedIds=replacedIds.filter(function(id){ const st=matStatus(supplyFindMat(id)); return st.bought>0||st.got>0; });
-      if(markedIds.length&&!confirm("По "+markedIds.length+" поз. уже отмечена закупка.\n\nЗаменить на «"+nm+"»? Отметки «куплено» и «принято» будут сняты, деньги в партиях останутся."))return;
-      objects=objects.map(o=>({...o,stages:(o.stages||[]).map(s=>({...s,works:(s.works||[]).map(function(w){
-        if(!(w.mats||[]).some(function(m){return ids.indexOf(m.id)>=0;}))return w;
-        const nw=Object.assign({},w,{mats:(w.mats||[]).map(function(m){
-          if(ids.indexOf(m.id)<0)return m;
-          const next=Object.assign({},m,patch,{qty:qtyById[m.id]});
-          // Меняем товар — старая фасовка/ссылка от предшественника должны уйти.
-          if(replacedIds.indexOf(m.id)>=0){
-            ["packPer","packBase","sheetM2","lenPer","url"].forEach(function(k){ delete next[k]; });
-            Object.keys(meta).forEach(function(k){ next[k]=meta[k]; });
-          }
-          // Ссылка на каталог: встали на товар базы — проставляем, ушли в ручное
-          // название — снимаем. Позиция без pid честнее, чем pid от предшественника.
-          if(prod)next.pid=prod.id;
-          else if((m.n||"")!==nm)delete next.pid;
-          return next;
-        })});
-        // w.cost в портале всегда равен сумме материалов (так их собирает _tplEstWork):
-        // после правки цены или количества его надо пересчитать здесь, иначе смета
-        // объекта разъедется с закупкой до ближайшей перезагрузки панели.
-        nw.cost=wMatTotal(nw);
-        return nw;
-      })}))}));
-      supplyClearMarks(replacedIds);
+      const chg=supplyEditForm();
+      if(!chg.ids.length)return;
+      if(!chg.n){ alert("Название материала не может быть пустым."); return; }
+      // Дорогая замена не применяется на месте: она уходит заявкой и ждёт решения.
+      if(supplyNeedsApproval(chg)){
+        if(!chg.reason){ alert("Опишите причину замены — её увидит тот, кто согласует."); return; }
+        if(!matChangeRequest(chg)){ alert("Не удалось создать заявку: не найдены позиции."); return; }
+        supplyEditMid=null; supplyEditIds=[];
+        alert("Заявка на согласование отправлена.\n\nПравка применится после утверждения — материал в объекте пока прежний.");
+        fl(); return;
+      }
+      const marked=matChangeReplaced(chg).filter(function(id){ const st=matStatus(supplyFindMat(id)); return st.bought>0||st.got>0; });
+      if(marked.length&&!confirm("По "+marked.length+" поз. уже отмечена закупка.\n\nЗаменить на «"+chg.n+"»? Отметки «куплено» и «принято» будут сняты, деньги в партиях останутся."))return;
+      matChangeApply(chg);
       supplyEditMid=null; supplyEditIds=[]; fl();
     };}
     // Удаление материала из закупки. Помимо самой строки чистим отметки
@@ -16758,6 +16978,39 @@ function bind(){
       if(!mid){ alert("У объекта нет этапов — некуда положить докупку."); return; }
       patchIssue(t.id,{status:"done",linkedNote:"в докупку: "+String(name).trim()+" · "+cost.toLocaleString("ru-RU")+" ₽",
         answer:t.answer||"Заведено в докупку снабжения."});
+      fl();
+      issueNotifyAuthor(t.id);
+    };}
+    // Заявка на замену → правка потребностей. Применяет тот же код, что и прямое
+    // сохранение в снабжении, поэтому «согласовано» и «сделано» — это одно и то же.
+    else if(a==="iss-mat-apply"){el.onclick=()=>{
+      if(!canApproveIssue()){ alert("Согласовать замену может администратор или финансист."); return; }
+      const t=issues.find(x=>x.id===el.dataset.iid);
+      if(!t||!t.mat)return;
+      const alive=(t.mat.ids||[]).filter(function(id){return !!supplyFindMatCtx(id);});
+      if(!alive.length){
+        alert("Позиций из заявки уже нет в объекте — применять нечего.");
+        patchIssue(t.id,{status:"rejected",answer:"Позиций из заявки больше нет в объекте."});
+        fl(); return;
+      }
+      const chg=Object.assign({},t.mat,{ids:alive});
+      const d=matChangeDelta(chg);
+      if(!confirm("Применить замену?\n\n"+matChangeText(chg)))return;
+      const res=matChangeApply(chg);
+      // Разница за счёт клиента — это доп работа, а не подарок: строка уходит в план
+      // договора, иначе замена так и останется расходом компании.
+      let note="";
+      if((t.payer||"company")==="client"&&d>0){
+        const cid=issueToExtra(t,"Замена материала: "+((chg.n||"").trim()||"—"),d);
+        note=cid?"; разница в плане доп работ договора":"; договора у объекта нет — доп работу занести некуда";
+      }
+      patchIssue(t.id,{
+        status:"done", amount:Math.abs(d),
+        linkedNote:"замена применена в "+res.applied+" поз.",
+        answer:"Замена согласована и применена в "+res.applied+" поз."+note+".",
+        answerBy:(currentUser&&currentUser.id)||"", answerByName:(currentUser&&currentUser.name)||"",
+        answerAt:new Date(Date.now()+3*3600*1000).toISOString().slice(0,16).replace("T"," "),
+      });
       fl();
       issueNotifyAuthor(t.id);
     };}

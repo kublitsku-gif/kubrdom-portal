@@ -356,7 +356,7 @@ const ISSUE_ADDR_NAME = {
   prod_head: "начальнику производства", financier: "финансисту", admin: "администратору",
 };
 // Держать в синхроне с ISSUE_KIND в public/admin.js и KINDS в src/botissue.js.
-const ISSUE_KIND_TO = { supply: "supply", change: "client_mgr", question: "brigadier", money: "financier" };
+const ISSUE_KIND_TO = { supply: "supply", change: "client_mgr", question: "brigadier", money: "financier", matchg: "financier" };
 const issueRole = (t) => (t && t.to) || ISSUE_KIND_TO[t && t.kind] || "admin";
 const issueOpen = (t) => t && t.status !== "done" && t.status !== "rejected";
 
