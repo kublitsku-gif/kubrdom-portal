@@ -44,7 +44,7 @@ import { needStatus, needState, objectSupply, migrateLegacy, needQty, isSelectio
 // Сроки этапов — тот же общий модуль, что читают напоминания (см. src/stages.js).
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
-const APP_BUILD = "2026-08-29.1";
+const APP_BUILD = "2026-08-29.2";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
