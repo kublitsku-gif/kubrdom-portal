@@ -1894,11 +1894,31 @@ let arrived={};   // {matId: true} — пришло/принято на скла
 // Фото и голосовые в снимок НЕ кладём (лимит строки D1 — 2 МБ): они остаются в теме
 // объекта в Telegram, здесь только ссылка на сообщение.
 let issues=[];
+// Тип вопроса сам назначает адресата: выбирать роль из списка на телефоне никто не
+// станет, а тип всё равно нужен — по нему тикет уходит в докупку или в доп работы.
+// to — РОЛЬ, а не человек: Дима уйдёт в отпуск, а роль останется.
 const ISSUE_KIND={
-  supply:  {n:"Материал",  i:"📦", c:"#e67e22"},
-  change:  {n:"Изменение", i:"✏️", c:"#8e44ad"},
-  question:{n:"Вопрос",    i:"❓", c:"#2980b9"},
+  supply:  {n:"Материал",  i:"📦", c:"#e67e22", to:"supply"},
+  change:  {n:"Изменение", i:"✏️", c:"#8e44ad", to:"client_mgr"},
+  question:{n:"Вопрос",    i:"❓", c:"#2980b9", to:"brigadier"},
+  money:   {n:"Деньги",    i:"💰", c:"#16a085", to:"financier"},
 };
+// Кому можно адресовать. Имя короткое и в дательном падеже — оно читается как подпись
+// на карточке («Снабженцу»), а не как название роли в справочнике.
+const ISSUE_ADDR={
+  supply:    {n:"Снабженцу",         i:"📦", c:"#27ae60"},
+  client_mgr:{n:"Сопровождению",     i:"🤝", c:"#d68910"},
+  brigadier: {n:"Бригадиру",         i:"👷", c:"#e67e22"},
+  prod_head: {n:"Нач. производства", i:"🛠", c:"#d35400"},
+  financier: {n:"Финансисту",        i:"💼", c:"#16a085"},
+  admin:     {n:"Администратору",    i:"⚙️", c:"#c0392b"},
+};
+function issueTo(t){
+  const r=t&&t.to;
+  if(r&&ISSUE_ADDR[r])return r;
+  return (ISSUE_KIND[t&&t.kind]||{}).to||"admin";
+}
+function issueStamp(){ return new Date(Date.now()+3*3600*1000).toISOString().slice(0,16).replace("T"," "); }
 const ISSUE_ST={
   new:     {n:"Новый",         i:"🆕", c:"#c0392b", bg:"#fdeeec"},
   work:    {n:"В работе",      i:"👀", c:"#2980b9", bg:"#e9f1fa"},
@@ -4634,6 +4654,53 @@ function issueAuthor(t){
 function patchIssue(iid,patch){
   issues=issues.map(function(t){ return t.id!==iid?t:Object.assign({},t,patch); });
 }
+// Роль сужаем объектом: «снабженцу» на десяти объектах — это один и тот же человек,
+// которому падает всё подряд. Берём ответственных по подписанным договорам объекта;
+// если там роль не представлена — отдаём всем, кто её носит, иначе вопрос повиснет
+// в пустоте на объекте, где ответственных ещё не расставили.
+function issueAddressees(t){
+  const role=issueTo(t);
+  const resp=new Set();
+  contractDocs.filter(function(d){return d.objId===t.objId&&(d.status==="signed"||d.status==="closed");})
+    .forEach(function(d){ (d.responsible||[]).forEach(function(u){resp.add(u);}); });
+  const onObj=users.filter(function(u){return resp.has(u.id)&&(u.roles||[]).indexOf(role)>=0;});
+  return onObj.length?onObj:users.filter(function(u){return (u.roles||[]).indexOf(role)>=0;});
+}
+// Адресован ли вопрос мне: по роли, либо лично (toUid — исключение для «лично Диме»).
+function issueIsMine(t){
+  if(!currentUser)return false;
+  if(t.toUid)return t.toUid===currentUser.id;
+  return (currentUser.roles||[]).indexOf(issueTo(t))>=0;
+}
+// Возраст вопроса без ответа в РАБОЧИХ днях — та же мера, что у дедлайнов, иначе
+// цифра в напоминании не совпадёт с цифрой на экране. Закрытый вопрос не стареет.
+function issueAge(t){
+  if(!ISSUE_OPEN(t))return 0;
+  const s=String(t.at||"").slice(0,10);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(s))return 0;
+  const from=new Date(s+"T00:00:00");
+  const today=new Date(new Date(Date.now()+3*3600*1000).toISOString().slice(0,10)+"T00:00:00");
+  if(isNaN(from)||today<=from)return 0;
+  let n=0; const cur=new Date(from);
+  while(cur<today){ cur.setDate(cur.getDate()+1); const wd=cur.getDay(); if(wd!==0&&wd!==6)n++; }
+  return n;
+}
+// Пороги те же, что в эскалации: 2 рабочих дня — напоминание, 5 — подъём наверх.
+function issueAgeTone(n){
+  return n>=5?{c:"#c0392b",bg:"#fdeeec"} : n>=3?{c:"#c08a1e",bg:"#fbf3e2"} : n>=1?{c:"#2980b9",bg:"#e9f1fa"} : {c:"#7a8b99",bg:"#eef2f7"};
+}
+function issueAgeLabel(n){ return n===0?"сегодня":n+" дн"; }
+// Переадресация — СОБЫТИЕ, а не тихая правка поля: иначе вопрос перекидывают неделю,
+// и по карточке не понять, почему он старый.
+function issueReroute(iid,role){
+  const t=issues.find(function(x){return x.id===iid;});
+  if(!t||!ISSUE_ADDR[role])return;
+  const from=issueTo(t);
+  if(from===role)return;
+  patchIssue(iid,{ to:role, toUid:"", route:(t.route||[]).concat([{
+    from:from, to:role, at:issueStamp(),
+    by:(currentUser&&currentUser.id)||"", byName:(currentUser&&currentUser.name)||"" }]) });
+}
 
 // Ответ автору в Telegram. Сначала ДОЖИМАЕМ сохранение: Worker читает вопрос из D1,
 // и на дебаунсе в 800 мс он успел бы прочитать состояние без ответа — автор получил
@@ -4710,12 +4777,28 @@ function buildIssuesSection(obj){
     h+='<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">'+
       '<span style="font-size:9.5px;font-weight:700;border-radius:5px;padding:2px 7px;background:'+st.bg+';color:'+st.c+'">'+st.i+' '+st.n+'</span>'+
       '<span style="font-size:9.5px;font-weight:700;border-radius:5px;padding:2px 7px;background:'+kd.c+'14;color:'+kd.c+'">'+kd.i+' '+kd.n+'</span>'+
+      (function(){
+        // Адресат и возраст — две вещи, ради которых карточку читают в списке.
+        if(!isOpen)return "";
+        const ad=ISSUE_ADDR[issueTo(t)]||ISSUE_ADDR.admin;
+        const n=issueAge(t), tone=issueAgeTone(n);
+        const who=issueAddressees(t).map(function(u){return u.name;}).join(", ");
+        return '<span title="'+esc(who||"никто не назначен")+'" style="font-size:9.5px;font-weight:700;border-radius:5px;padding:2px 7px;background:'+ad.c+'14;color:'+ad.c+'">'+ad.i+' '+ad.n+'</span>'+
+          '<span style="font-size:9.5px;font-weight:800;border-radius:5px;padding:2px 7px;background:'+tone.bg+';color:'+tone.c+'">'+issueAgeLabel(n)+'</span>';
+      })()+
       '<span style="font-size:9.5px;color:#9aabbf">'+esc(issueAuthor(t))+' · '+issueDate(t)+(t.src==="bot"?' · из бота':'')+'</span>'+
     '</div>';
     h+='<div style="font-size:12.5px;font-weight:600;color:'+(isOpen?"#1a2a3a":"#7a9aaa")+';line-height:1.35">'+esc(t.text||"—")+'</div>';
     if(wn)h+='<div style="font-size:10px;color:#9aabbf;margin-top:2px">↳ '+esc(wn)+'</div>';
     if(t.tgLink)h+='<div style="margin-top:4px"><a href="'+esc(t.tgLink)+'" target="_blank" rel="noopener" style="font-size:10px;font-weight:700;color:#0088cc;text-decoration:none">📎 Фото и голосовое в теме объекта →</a></div>';
     if(t.answer)h+='<div style="margin-top:5px;padding:6px 8px;background:#f4f9f6;border-left:2px solid #27ae60;border-radius:0 6px 6px 0;font-size:11px;color:#2f6a4b;line-height:1.4"><b>Ответ:</b> '+esc(t.answer)+'</div>';
+    // Лента переадресаций. Видно, что вопрос не «просто висит», а его перекидывали —
+    // и кто именно это сделал.
+    if((t.route||[]).length)h+='<div style="margin-top:5px;font-size:9.5px;color:#9aabbf;line-height:1.45">'+
+      t.route.map(function(r){
+        const a=ISSUE_ADDR[r.from]||{n:r.from}, b=ISSUE_ADDR[r.to]||{n:r.to};
+        return '↪ '+esc(a.n)+' → <b style="color:#7a8b99">'+esc(b.n)+'</b> · '+esc(r.byName||"—")+' · '+esc(String(r.at||"").slice(0,10).split("-").reverse().join("."));
+      }).join('<br>')+'</div>';
     if(t.linkedNote)h+='<div style="margin-top:5px;font-size:10px;font-weight:700;color:#8e44ad">→ '+esc(t.linkedNote)+'</div>';
 
     // Деньги: сумма и за чей счёт. Показываем только там, где вопрос стоит денег.
@@ -4735,6 +4818,16 @@ function buildIssuesSection(obj){
       '</div>';
     }
     if(isOpen&&canAns){
+      // Переадресация нативным select: на телефоне это привычное колесо, а не ещё
+      // один самодельный список, который надо листать пальцем.
+      h+='<div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap">'+
+        '<span style="font-size:10px;color:#8497a5;font-weight:600">Адресовано</span>'+
+        '<select data-a="iss-route" data-iid="'+t.id+'" style="padding:5px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:11px;font-weight:700;color:#5a7080;background:#fff;outline:none;font-family:inherit">'+
+          Object.keys(ISSUE_ADDR).map(function(r){
+            return '<option value="'+r+'"'+(issueTo(t)===r?' selected':'')+'>'+ISSUE_ADDR[r].i+' '+ISSUE_ADDR[r].n+'</option>';
+          }).join("")+
+        '</select>'+
+      '</div>';
       h+='<div style="display:flex;gap:5px;margin-top:6px;flex-wrap:wrap">'+
         (t.status==="new"?'<button data-a="iss-status" data-iid="'+t.id+'" data-s="work" style="padding:6px 10px;border-radius:7px;cursor:pointer;font-size:10.5px;font-weight:700;border:1.5px solid #2980b9;background:#fff;color:#2980b9">Взять в работу</button>':'')+
         (t.status!=="hold"&&canApp?'<button data-a="iss-status" data-iid="'+t.id+'" data-s="hold" style="padding:6px 10px;border-radius:7px;cursor:pointer;font-size:10.5px;font-weight:700;border:1.5px solid #c08a1e;background:#fff;color:#c08a1e">Нужно решение</button>':'')+
@@ -16069,9 +16162,10 @@ function bind(){
       if(!text){ alert("Опишите вопрос — что именно нужно решить."); return; }
       issues=issues.concat([{
         id:gid(), objId:oid, wid:issueNew.wid||"", kind:issueNew.kind||"question",
+        to:(ISSUE_KIND[issueNew.kind||"question"]||{}).to||"admin",
         text:text, status:"new", src:"panel",
         by:(currentUser&&currentUser.id)||"", byName:(currentUser&&currentUser.name)||"",
-        at:new Date(Date.now()+3*3600*1000).toISOString().slice(0,16).replace("T"," "),
+        at:issueStamp(),
       }]);
       issueFormOid=null; issueNew={text:"",kind:"supply",wid:""};
       fl();
@@ -16087,6 +16181,10 @@ function bind(){
         return;
       }
       patchIssue(el.dataset.iid,{status:s});
+      fl();
+    };}
+    else if(a==="iss-route"){el.onchange=()=>{
+      issueReroute(el.dataset.iid,el.value);
       fl();
     };}
     else if(a==="iss-payer"){el.onclick=()=>{

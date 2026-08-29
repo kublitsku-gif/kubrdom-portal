@@ -21,11 +21,30 @@ import { ensureTopic, copyToTopic, tgBase } from "./tgapi.js";
 
 export const ISSUE_BTN = "❓ Вопрос";
 const PAGE = 8;
+// Тип назначает ОДНОГО адресата-роль — она же пишется в тикет полем `to`, и по ней
+// панель строит сводку «кто тормозит». Список ролей вместо одной означал бы, что
+// у вопроса нет ответственного: отвечают все, а значит никто.
+// Держать в синхроне с ISSUE_KIND в public/admin.js — это разные бандлы.
 const KINDS = {
-  supply:   { n: "Материал",  i: "📦", to: ["supply", "prod_head", "admin"] },
-  change:   { n: "Изменение", i: "✏️", to: ["admin", "client_mgr", "sales_head"] },
-  question: { n: "Вопрос",    i: "❓", to: ["admin", "prod_head", "brigadier"] },
+  supply:   { n: "Материал",  i: "📦", to: "supply" },
+  change:   { n: "Изменение", i: "✏️", to: "client_mgr" },
+  question: { n: "Вопрос",    i: "❓", to: "brigadier" },
+  money:    { n: "Деньги",    i: "💰", to: "financier" },
 };
+// Роль сужаем объектом: «снабженцу» на десяти объектах — один и тот же человек,
+// которому падает всё подряд. Некому на объекте — отдаём всем носителям роли,
+// иначе вопрос повиснет там, где ответственных ещё не расставили.
+function addresseeIds(role, oid, users, contracts) {
+  const resp = new Set();
+  (contracts || []).forEach(function (d) {
+    if (d.objId !== oid) return;
+    if (d.status !== "signed" && d.status !== "closed") return;
+    (d.responsible || []).forEach(function (u) { resp.add(u); });
+  });
+  const onObj = (users || []).filter(function (u) { return resp.has(u.id) && (u.roles || []).indexOf(role) >= 0; });
+  const pool = onObj.length ? onObj : (users || []).filter(function (u) { return (u.roles || []).indexOf(role) >= 0; });
+  return new Set(pool.map(function (u) { return u.id; }));
+}
 const has = (roles, list) => (roles || []).some(function (r) { return list.indexOf(r) >= 0; });
 const stamp = () => new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 16).replace("T", " ");
 
@@ -122,7 +141,8 @@ async function upsertIssue(env, uid, d, text, tgLink) {
   }
   const iid = "iss" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
   const rec = {
-    id: iid, objId: d.oid, wid: "", kind: d.kind, text: text || "(голосовое сообщение)",
+    id: iid, objId: d.oid, wid: "", kind: d.kind, to: (KINDS[d.kind] || KINDS.question).to,
+    text: text || "(голосовое сообщение)",
     status: "new", src: "bot", by: uid, byName: (me && me.name) || "", at: stamp(),
   };
   if (tgLink) rec.tgLink = tgLink;
@@ -133,10 +153,11 @@ async function upsertIssue(env, uid, d, text, tgLink) {
 // Кто узнаёт о вопросе. Адресаты — по типу: будить всех подряд на «не хватило саморезов»
 // значит добиться, что через неделю уведомления отключат все.
 async function notifyIssue(env, uid, d, iid, text) {
-  const st = await snap(env, ["objects", "users"]);
+  const st = await snap(env, ["objects", "users", "contractDocs"]);
   const o = (st.objects || []).find(function (x) { return x.id === d.oid; });
   const me = (st.users || []).find(function (x) { return x.id === uid; });
   const kd = KINDS[d.kind] || KINDS.question;
+  const to = addresseeIds(kd.to, d.oid, st.users, st.contractDocs);
   const msg = kd.i + " <b>Вопрос с объекта</b> · " + kd.n + "\n"
     + "«" + escapeHtml((o && o.name) || "Объект") + "»\n"
     + escapeHtml(text || "(голосовое сообщение)") + "\n\n"
@@ -144,8 +165,7 @@ async function notifyIssue(env, uid, d, iid, text) {
   const links = await env.DB.prepare("SELECT uid, chat_id FROM tg_links").all();
   for (const l of (links.results || [])) {
     if (l.uid === uid) continue;
-    const u = (st.users || []).find(function (x) { return x.id === l.uid; });
-    if (!u || !has(u.roles || [], kd.to)) continue;
+    if (!to.has(l.uid)) continue;
     await sendTg(env, l.chat_id, msg);
   }
   await logEvent(env, { uid: uid }, "issues", "add", ((o && o.name) || "Объект") + " › вопрос", kd.n + ": " + String(text || "голосовое").slice(0, 120));

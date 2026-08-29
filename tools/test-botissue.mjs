@@ -100,7 +100,7 @@ check("чужой объект не предложен", !objBtns.some(t => /Ч�
 
 console.log("\n── 2. Выбор объекта → выбор типа");
 await issueCallback(env, UID, CHAT, "i:o:o1", ROLES);
-check("предложены три типа", last().kb.inline_keyboard.length === 3);
+check("предложены четыре типа", last().kb.inline_keyboard.length === 4, last().kb.inline_keyboard.length);
 
 console.log("\n── 3. Чужой объект недоступен даже по прямому callback");
 await issueCallback(env, UID, CHAT, "i:o:o3", ROLES);
@@ -119,7 +119,11 @@ check("привязан к объекту", iss[0] && iss[0].objId === "o1");
 check("тип supply", iss[0] && iss[0].kind === "supply");
 check("статус new, автор Валера, src bot", iss[0] && iss[0].status === "new" && iss[0].byName === "Валера" && iss[0].src === "bot", iss[0]);
 const notified = sent.filter(m => m.chat !== CHAT).map(m => m.chat).sort();
-check("уведомлены снабженец и админ", JSON.stringify(notified) === JSON.stringify(["222", "333"]), notified);
+check("адресат записан в тикет", iss[0] && iss[0].to === "supply", iss[0] && iss[0].to);
+// Адресат ОДИН: «материал» — снабженцу. Раньше будили ещё админа и нач.производства,
+// и через неделю такие уведомления отключают все.
+check("уведомлён только снабженец", JSON.stringify(notified) === JSON.stringify(["222"]), notified);
+check("админ НЕ уведомлён (у вопроса один ответственный)", !notified.includes("333"), notified);
 check("сопровождение НЕ уведомлено (это материал)", !notified.includes("444"), notified);
 check("автор получил подтверждение", sent.some(m => m.chat === CHAT && /Записал вопрос/.test(m.text)));
 
@@ -141,8 +145,10 @@ const iss2 = store.work_states.issues;
 check("второй тикет создан", iss2.length === 2, iss2.length);
 check("текст-заглушка про голосовое", iss2[1].text === "(голосовое сообщение)", iss2[1].text);
 const n2 = sent.filter(m => m.chat !== CHAT).map(m => m.chat).sort();
-check("для «изменения» уведомлены админ и сопровождение", JSON.stringify(n2) === JSON.stringify(["333", "444"]), n2);
+check("адресат «изменения» — сопровождение", iss2[1].to === "client_mgr", iss2[1].to);
+check("уведомлено только сопровождение", JSON.stringify(n2) === JSON.stringify(["444"]), n2);
 check("снабженец НЕ уведомлён", !n2.includes("222"), n2);
+check("админ НЕ уведомлён", !n2.includes("333"), n2);
 
 console.log("\n── 8. Ответ из панели → автору в личку");
 store.work_states.issues = store.work_states.issues.map(t => t.id !== iss2[0].id ? t
@@ -173,6 +179,29 @@ console.log("\n── 10. Посторонний текст вне диалог�
 store.tg_dialog = {};
 check("возвращает false", (await issueText(env, UID, CHAT, "💰 Финансы", ROLES)) === false);
 check("медиа тоже отдаёт дальше", (await issueMedia(env, UID, CHAT, { message_id: 1, photo: [{ file_id: "p" }] }, ROLES)) === false);
+
+console.log("\n── 11. Роль сужается объектом: пишем снабженцу ЭТОГО объекта");
+// Два снабженца в компании; на объекте o1 ответственный только Дима. Второй снабженец
+// не должен получать вопросы с чужой стройки — иначе через неделю он отключит бота.
+store.work_states.users = store.work_states.users.concat([{ id: "u_petya", name: "Петя", roles: ["supply"] }]);
+store.work_states.contractDocs = store.work_states.contractDocs.map(c =>
+  c.id !== "c1" ? c : Object.assign({}, c, { responsible: ["u_valera", "u_dima"] }));
+store.tg_links = store.tg_links.concat([{ uid: "u_petya", chat_id: "555" }]);
+store.tg_dialog = {}; sent.length = 0;
+await issueCallback(env, UID, CHAT, "i:k:o1:supply", ROLES);
+await issueText(env, UID, CHAT, "Нужен ещё крепёж", ROLES);
+const n3 = sent.filter(m => m.chat !== CHAT).map(m => m.chat).sort();
+check("уведомлён снабженец объекта", n3.includes("222"), n3);
+check("чужой снабженец НЕ уведомлён", !n3.includes("555"), n3);
+
+console.log("\n── 12. Некому на объекте → отдаём всем носителям роли");
+// На o2 ответственный только Валера-бригадир, снабженца среди ответственных нет.
+// Молча проглотить вопрос нельзя — он повиснет там, где ответственных не расставили.
+store.tg_dialog = {}; sent.length = 0;
+await issueCallback(env, UID, CHAT, "i:k:o2:supply", ROLES);
+await issueText(env, UID, CHAT, "Нужна плёнка", ROLES);
+const n4 = sent.filter(m => m.chat !== CHAT).map(m => m.chat).sort();
+check("оба снабженца получили", n4.includes("222") && n4.includes("555"), n4);
 
 console.log("\n" + (fails ? "❌ ПРОВАЛЕНО: " + fails : "✅ Все проверки пройдены"));
 process.exit(fails ? 1 : 0);
