@@ -42,7 +42,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // одинаково считаться в панели и в Telegram, иначе бригадир и снабженец увидят разное.
 import { needStatus, needState, objectSupply, migrateLegacy, needQty } from "../src/supply.js";
 
-const APP_BUILD = "2026-08-26.18";
+const APP_BUILD = "2026-08-29.1";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
