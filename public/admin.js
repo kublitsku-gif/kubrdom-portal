@@ -262,6 +262,7 @@ function serializeState(){
     { work_id: "expProducts",     data: expProducts     },
     { work_id: "dbPlans",         data: dbPlans         },
     { work_id: "purchases",       data: purchases       },
+    { work_id: "stock",           data: stock           },
     { work_id: "purchased",       data: purchased       },
     { work_id: "arrived",         data: arrived         },
     { work_id: "finTxns",         data: finTxns         },
@@ -308,6 +309,7 @@ function applyState(items){
   issues          = arr("issues",          issues);
   rolePermissions = obj("rolePermissions", rolePermissions);
   purchases       = arr("purchases",       purchases);
+  stock           = arr("stock",           stock);
   purchased       = obj("purchased",       purchased);
   arrived         = obj("arrived",         arrived);
   finSalaries     = obj("finSalaries",     finSalaries);
@@ -1948,6 +1950,13 @@ let expProducts=[
 // Партии закупки (новая модель): что купили, почём, по какому чеку и сколько доехало.
 // purchased/arrived остаются как легаси-слой: пока партий нет, статусы считаются по ним.
 let purchases=[];
+// ─── ОСТАТКИ МАТЕРИАЛОВ ──────────────────────────────────────────────────────
+// Понятия склада в портале не было: закупка привязана к объекту, и излишки закрытого
+// объекта (недорезанная пачка, лишний лист ОСП) просто выпадали из учёта — их покупали
+// заново. Остаток — запись о том, что физически лежит и ждёт следующей стройки.
+//   stock = [{id, pid, n, mode, cost, store, qty, packBase/packPer/sheetM2/lenPer,
+//             srcObjId, srcObjName, at, by, note}]
+let stock=[];
 let purchased={}; // {matId: true} — отмечено снабженцем как куплено
 let arrived={};   // {matId: true} — пришло/принято на склад (отмечает бригадир/мастер); снабженец видит наличие
 // ─── ВОПРОСЫ ПО ОБЪЕКТУ ──────────────────────────────────────────────────────
@@ -10827,7 +10836,10 @@ function tBatches(){
 
   const tot=purchases.reduce((a,p)=>a+batchSum(p),0);
   const pos=purchases.reduce((a,p)=>a+(p.items||[]).length,0);
-  const notPosted=purchases.filter(p=>!batchTxn(p));
+  // Партия со склада остатков в кассу не проводится: деньги за этот материал ушли раньше,
+  // на прошлом объекте, и второй расход был бы двойным счётом. Из «не проведено» её тоже
+  // убираем, иначе финансист вечно видит долг, который закрывать нечем.
+  const notPosted=purchases.filter(p=>!batchTxn(p)&&!p.fromStock);
   if(notPosted.length){
     h+='<div style="background:#fff;border:1px solid #e67e2244;border-radius:11px;padding:10px 12px;margin-bottom:10px">'
       +'<div style="font-size:11.5px;color:#8a5a1f;line-height:1.4">Не проведено по кассе: <b>'+notPosted.length+'</b> парт. на <b>'+fmt(Math.round(notPosted.reduce((a,p)=>a+batchSum(p),0)))+'</b>. '
@@ -10856,7 +10868,9 @@ function tBatches(){
         +'<div style="flex:1;min-width:0">'
           +'<div style="font-size:13px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(o?o.name:"Объект")+(p.store?" · "+esc(p.store):"")+'</div>'
           +'<div style="font-size:11px;color:#9aabbf">'+esc(String(p.date||"").slice(0,10))+' · '+items.length+' поз. · принято '+got+'/'+items.length
-            +(batchTxn(p)?' · <span style="color:#16a085;font-weight:700">проведено</span>':' · <span style="color:#e67e22;font-weight:700">не проведено</span>')+'</div>'
+            +(p.fromStock?' · <span style="color:#16a085;font-weight:700">со склада</span>'
+              :batchTxn(p)?' · <span style="color:#16a085;font-weight:700">проведено</span>'
+              :' · <span style="color:#e67e22;font-weight:700">не проведено</span>')+'</div>'
         +'</div>'
         +'<div style="font-size:13px;font-weight:800;color:#16a085;white-space:nowrap">'+fmt(Math.round(batchSum(p)))+'</div>'
       +'</div>';
@@ -10874,7 +10888,10 @@ function tBatches(){
           +'<button data-a="batch-recv" data-pid="'+esc(p.id)+'" data-iid="'+esc(it.id)+'" style="padding:6px 11px;background:'+(full?"#fff":"#27ae60")+';border:1px solid '+(full?"#27ae6055":"#27ae60")+';border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;color:'+(full?"#27ae60":"#fff")+';white-space:nowrap">'+(full?"✓ принято":"Принять")+'</button>'
         +'</div>';
       });
-      if(canPostBatch()){
+      if(p.fromStock){
+        h+='<div style="margin-top:8px;padding:9px 11px;background:#f4f7fb;border:1px solid #d6e0ec;border-radius:9px;font-size:11.5px;color:#5a7a9a;line-height:1.4">'
+          +'📦 Со склада остатков — по кассе не проводится: деньги за этот материал потрачены на прошлом объекте.</div>';
+      } else if(canPostBatch()){
         const t=batchTxn(p);
         h+=t
           ? '<div style="display:flex;align-items:center;gap:8px;margin-top:8px;padding:9px 11px;background:#eafaf6;border:1px solid #16a08544;border-radius:9px">'
@@ -11175,6 +11192,7 @@ function tSupplySelect(sel){
   return html+'</div>';
 }
 
+let supplyStockOpen=false; // раскрыт ли блок «Склад остатков» в снабжении
 let supplyEditMid=null;   // id материала, открытого на редактирование в снабжении
 // Объединённая строка закупки правится ЦЕЛИКОМ: здесь id всех потребностей, слитых
 // в неё _mergeMats. Пустой массив — правится одна позиция (supplyEditMid). Раньше на
@@ -11385,6 +11403,116 @@ function supplyNeedsApproval(chg){
   // Нулевой порог означает «любая правка ЦЕНЫ через согласование», а не «любая правка»:
   // иначе исправление заметки или магазина уезжало бы заявкой.
   return !!d&&!canApproveIssue()&&Math.abs(d)>=matChangeLimit();
+}
+
+// ─── СКЛАД ОСТАТКОВ ──────────────────────────────────────────────────────────
+// Сопоставляем остаток с потребностью по ССЫЛКЕ на каталог, а имя — только запасной путь
+// для позиций без pid (см. ensureMatPids). Имена правят и дублируют, и «ОСП 30 м²» против
+// «ОСП 18 м²» — разные фасовки, которые нельзя молча считать одним товаром.
+function stockMatches(entry, m){
+  if(!entry||!m)return false;
+  if(entry.pid&&m.pid)return entry.pid===m.pid;
+  return normMatName(entry)===normMatName(m)&&(entry.mode||"piece")===(m.mode||"piece");
+}
+// Сколько такого материала лежит на складе.
+function stockQtyFor(m){
+  return (stock||[]).reduce(function(a,e){ return a+(stockMatches(e,m)?(Number(e.qty)||0):0); },0);
+}
+function stockEntriesFor(m){ return (stock||[]).filter(function(e){ return stockMatches(e,m)&&(Number(e.qty)||0)>0; }); }
+
+// Перекуп по потребности: купили больше, чем было нужно. Это и есть кандидат в остаток —
+// единственная величина, которую портал знает точно (расход по факту никто не считает).
+function needOverBought(m){
+  const st=matStatus(m);
+  const over=(Number(st.bought)||0)-(Number(st.want)||0);
+  return over>0?over:0;
+}
+// Что можно оприходовать с объекта: позиции, купленные с запасом.
+function objStockCandidates(obj){
+  const out=[];
+  ((obj&&obj.stages)||[]).forEach(function(s){(s.works||[]).forEach(function(w){
+    (w.mats||[]).forEach(function(m){
+      const over=needOverBought(m);
+      if(over>0)out.push({m:m, qty:over, work:w.n, stage:s.n});
+    });
+  });});
+  return out;
+}
+// Положить остаток на склад. Одинаковые позиции складываем в одну строку: десять записей
+// «ОСП, 2 листа» вместо одной на двадцать — это не склад, а лента событий.
+function stockAdd(m, qty, obj){
+  const q=Number(qty)||0;
+  if(!m||q<=0)return null;
+  const ex=(stock||[]).find(function(e){ return stockMatches(e,m)&&(e.store||"")===(m.store||"")&&(Number(e.cost)||0)===(Number(m.cost)||0); });
+  if(ex){
+    stock=stock.map(function(e){ return e!==ex?e:Object.assign({},e,{qty:(Number(e.qty)||0)+q}); });
+    return ex.id;
+  }
+  const id=gid();
+  const entry={ id:id, pid:m.pid||"", n:m.n||"", mode:m.mode||"piece", cost:Number(m.cost)||0,
+    store:m.store||"", qty:q, at:todayISO(), by:(currentUser&&currentUser.id)||"",
+    srcObjId:(obj&&obj.id)||"", srcObjName:(obj&&obj.name)||"" };
+  ["packPer","packBase","sheetM2","lenPer","url"].forEach(function(k){ if(m[k]!=null)entry[k]=m[k]; });
+  stock=(stock||[]).concat([entry]);
+  return id;
+}
+// Взять со склада под потребность. Деньги за этот материал ПОТРАЧЕНЫ РАНЬШЕ, на прошлом
+// объекте, поэтому партия помечается fromStock и в кассу не проводится — иначе расход
+// удвоится. Приёмку не ставим: материал ещё надо довезти, это делает мастер как обычно.
+function stockTake(m, qty, obj){
+  const want=Number(qty)||0;
+  if(!m||want<=0)return 0;
+  let left=want, taken=0, price=0;
+  const next=[];
+  (stock||[]).forEach(function(e){
+    if(left<=0||!stockMatches(e,m)||(Number(e.qty)||0)<=0){ next.push(e); return; }
+    const use=Math.min(left,Number(e.qty)||0);
+    left-=use; taken+=use; if(!price)price=Number(e.cost)||0;
+    const rest=(Number(e.qty)||0)-use;
+    if(rest>0)next.push(Object.assign({},e,{qty:rest}));   // пустую строку не держим
+  });
+  if(!taken)return 0;
+  stock=next;
+  const day=new Date(Date.now()+3*3600*1000).toISOString().slice(0,10);
+  const bid="pur_stock_"+((obj&&obj.id)||"x")+"_"+day;
+  const item={ id:"pi_st_"+m.id+"_"+day, needId:m.id, name:m.n||"", qty:taken,
+    price:price||Number(m.cost)||0, gotQty:0, gotAt:null };
+  const ex=(purchases||[]).find(function(p){ return p.id===bid; });
+  purchases=ex
+    ? purchases.map(function(p){ return p.id!==bid?p:Object.assign({},p,{items:(p.items||[]).concat([item])}); })
+    : (purchases||[]).concat([{ id:bid, date:day, store:"Склад остатков", objId:(obj&&obj.id)||"",
+        by:(currentUser&&currentUser.id)||"", note:"со склада остатков", fromStock:true, items:[item] }]);
+  return taken;
+}
+
+// Погасить потребности остатками — по каждой ровно столько, сколько не хватает: взять
+// «сколько есть» значило бы вывезти на объект лишнее и снова получить там остаток.
+function stockCoverNeeds(ids){
+  let total=0;
+  (ids||[]).forEach(function(id){
+    const c=supplyFindMatCtx(id);
+    if(!c)return;
+    const st=matStatus(c.m);
+    const need=(Number(st.want)||0)-(Number(st.bought)||0);
+    if(need<=0)return;
+    const have=stockQtyFor(c.m);
+    if(have<=0)return;
+    total+=stockTake(c.m, Math.min(need,have), c.o);
+  });
+  return total;
+}
+// Сколько остатков можно пустить в дело по этим потребностям — для плашки «на складе N».
+function stockAvailableFor(ids){
+  let out=0;
+  (ids||[]).forEach(function(id){
+    const c=supplyFindMatCtx(id);
+    if(!c)return;
+    const st=matStatus(c.m);
+    const need=(Number(st.want)||0)-(Number(st.bought)||0);
+    if(need<=0)return;
+    out+=Math.min(need,stockQtyFor(c.m));
+  });
+  return out;
 }
 
 // Материал из каталога → в «Докупку» этапа. Повторное добавление той же позиции
@@ -11781,6 +11909,7 @@ function tSupplyDetail(sel, sortBy){
           (done?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>':'')+
           _arrivedPill('data-mid="'+m.id+'"', !!arrived[m.id])+
           (matPendingChange(m.id)?MAT_PENDING_PILL:'')+
+          _stockPill([m.id])+
           '<button data-a="supply-edit-mat" data-mid="'+m.id+'" style="font-size:10px;color:#7a9aaa;background:#fff;border:1px solid #d0dae8;border-radius:5px;padding:1px 7px;cursor:pointer" onclick="event.stopPropagation()">✏️ изм.</button>'+
         '</div>'+
         ((Array.isArray(m.breakdown)&&m.breakdown.length)
@@ -11796,6 +11925,16 @@ function tSupplyDetail(sel, sortBy){
     '</div>';
   }
 
+  // «На складе есть» — с кнопкой взять. Показываем только когда остаток реально закроет
+  // нехватку: плашка «есть 3» на закупленной позиции была бы шумом.
+  function _stockPill(ids){
+    const avail=stockAvailableFor(ids);
+    if(avail<=0)return "";
+    return '<span style="display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;color:#16a085;background:#16a08514;border:1px solid #16a08533;border-radius:5px;padding:1px 4px 1px 7px">'+
+      '📦 на складе '+numRu(avail)+
+      '<button data-a="supply-stock-take" data-ids="'+ids.join(',')+'" onclick="event.stopPropagation()" style="font-size:10px;font-weight:700;color:#fff;background:#16a085;border:none;border-radius:4px;padding:2px 7px;cursor:pointer">Взять</button>'+
+    '</span>';
+  }
   // Понятный для закупки блок хлыстов по длинам: «2,2 м × 4 шт + 1,5 м × 6 шт».
   function hlystBlock(rows){
     if(!rows||!rows.length)return "";
@@ -11830,6 +11969,7 @@ function tSupplyDetail(sel, sortBy){
           (allDone?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>':'')+
           _arrivedPill('data-ids="'+ids.join(',')+'"', ids.length>0&&ids.every(function(id){return !!arrived[id];}))+
           (ids.some(function(id){return !!matPendingChange(id);})?MAT_PENDING_PILL:'')+
+          _stockPill(ids)+
           // Слитая строка правится целиком: одна замена вместо обхода всех работ,
           // где эта позиция встретилась. Сколько потребностей затронет — на кнопке.
           '<button data-a="supply-edit-mat" data-mid="'+ids[0]+'" data-ids="'+ids.join(',')+'" style="font-size:10px;color:#7a9aaa;background:#fff;border:1px solid #d0dae8;border-radius:5px;padding:1px 7px;cursor:pointer" onclick="event.stopPropagation()">✏️ изм.'+(ids.length>1?' ('+ids.length+')':'')+'</button>'+
@@ -11956,6 +12096,50 @@ function tSupplyDetail(sel, sortBy){
         (open?'<div style="padding:8px 12px">'+rows.map(mergeRow).join("")+'</div>':'')+
       '</div>';
     });
+  }
+
+  // ─── СКЛАД ОСТАТКОВ ────────────────────────────────────────────────────────
+  // Отдельным блоком внизу: это не то, что снабженец делает каждый день, но и прятать
+  // нельзя — иначе остатки существуют только в голове у того, кто их складывал.
+  {
+    const cand=targetObjs.reduce(function(a,o){ return a.concat(objStockCandidates(o).map(function(x){ x.obj=o; return x; })); },[]);
+    const candSum=cand.reduce(function(a,x){ return a+(Number(x.m.cost)||0)*x.qty; },0);
+    const stockSum=(stock||[]).reduce(function(a,e){ return a+(Number(e.cost)||0)*(Number(e.qty)||0); },0);
+    const open=!!supplyStockOpen;
+    html+='<div style="background:#fff;border-radius:14px;border:1px solid #16a08544;margin-top:14px;overflow:hidden">'+
+      '<div data-a="supply-stock-toggle" style="display:flex;align-items:center;gap:8px;padding:11px 14px;cursor:pointer;user-select:none;background:#16a08510">'+
+        '<span style="font-size:10px;color:#9aabbf;flex-shrink:0;display:inline-block;transform:rotate('+(open?"90":"0")+'deg)">▶</span>'+
+        '<span style="font-size:13px;font-weight:700;color:#0e7a67;flex:1">📦 Склад остатков</span>'+
+        '<span style="font-size:11px;color:#16a085;font-weight:700;white-space:nowrap">'+(stock||[]).length+' поз. · '+Math.round(stockSum).toLocaleString("ru-RU")+' ₽</span>'+
+      '</div>';
+    if(open){
+      html+='<div style="padding:10px 12px">';
+      if((stock||[]).length){
+        html+=(stock||[]).slice().sort(function(a,b){return (a.n||"").localeCompare(b.n||"","ru");}).map(function(e){
+          const mo=EXP_MODES.find(function(x){return x.k===(e.mode||"piece");})||EXP_MODES[0];
+          return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #e6ecf3;border-radius:9px;margin-bottom:6px;background:#fafbfc">'+
+            '<div style="flex:1;min-width:0">'+
+              '<div style="font-size:12.5px;font-weight:700;color:#1a2a3a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(e.n||"Материал")+'</div>'+
+              '<div style="font-size:10px;color:#7a9aaa;margin-top:2px">'+(e.store?esc(e.store)+' · ':'')+(Number(e.cost)||0).toLocaleString("ru-RU")+' ₽/'+mo.unit+
+                (e.srcObjName?' · с объекта «'+esc(e.srcObjName)+'»':'')+'</div>'+
+            '</div>'+
+            '<input data-a="supply-stock-qty" data-sid="'+esc(e.id)+'" type="number" step="any" value="'+(Number(e.qty)||0)+'" style="width:74px;padding:6px 8px;border:1px solid #d0dae8;border-radius:7px;font-size:13px;text-align:center;outline:none;box-sizing:border-box">'+
+            '<span style="font-size:10px;color:#7a9aaa;width:34px">'+mo.unit+'</span>'+
+            '<button data-a="supply-stock-del" data-sid="'+esc(e.id)+'" style="width:28px;height:28px;background:#e74c3c12;border:1.5px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:13px;line-height:1;flex-shrink:0">✕</button>'+
+          '</div>';
+        }).join("");
+      } else {
+        html+='<div style="font-size:11.5px;color:#9aabbf;text-align:center;padding:12px;border:1px dashed #d0dae8;border-radius:9px;line-height:1.45">Склад пуст. Сюда попадает то, что купили с запасом: на следующем объекте портал предложит взять это вместо покупки.</div>';
+      }
+      if(cand.length){
+        html+='<div style="margin-top:10px;padding:10px 12px;background:#fff8e6;border:1px solid #f0d9a0;border-radius:9px">'+
+          '<div style="font-size:11.5px;color:#8a6d1f;line-height:1.45;margin-bottom:8px">По выбранным объектам куплено с запасом: <b>'+cand.length+' поз.</b> на <b>'+Math.round(candSum).toLocaleString("ru-RU")+' ₽</b>. Оприходовать излишки на склад?</div>'+
+          '<button data-a="supply-stock-collect" style="width:100%;padding:9px;background:#e67e22;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">📥 Оприходовать остатки</button>'+
+        '</div>';
+      }
+      html+='</div>';
+    }
+    html+='</div>';
   }
 
   // Модалка редактирования материала (запись обратно в исходные работы объектов).
@@ -15806,6 +15990,46 @@ function bind(){
       ids.forEach(function(id){ if(supplyRemoveMat(id))ok=true; });
       if(!ok)return;
       supplyEditMid=null; supplyEditIds=[]; fl();
+    };}
+    // ─── Склад остатков ────────────────────────────────────────────────────
+    else if(a==="supply-stock-toggle"){el.onclick=()=>{ supplyStockOpen=!supplyStockOpen; render(); };}
+    else if(a==="supply-stock-take"){el.onclick=(ev)=>{
+      ev&&ev.stopPropagation();
+      const ids=(el.dataset.ids||"").split(",").filter(Boolean);
+      const n=stockCoverNeeds(ids);
+      if(!n){ alert("Со склада брать нечего: остаток кончился или потребность уже закрыта."); return; }
+      alert("Взято со склада: "+numRu(n)+".\n\nПозиция помечена купленной; приёмку на объекте мастер отметит как обычно. По кассе партия не проводится — деньги потрачены раньше.");
+      fl();
+    };}
+    else if(a==="supply-stock-qty"){el.onchange=()=>{
+      const sid=el.dataset.sid;
+      const q=parseFloat(String(el.value||"").replace(",","."));
+      const qty=(isFinite(q)&&q>=0)?q:0;
+      // Ноль — это «кончилось»: строку убираем, чтобы склад не зарастал нулями.
+      stock=qty>0?stock.map(function(e){return e.id!==sid?e:Object.assign({},e,{qty:qty});})
+                 :stock.filter(function(e){return e.id!==sid;});
+      fl();
+    };}
+    else if(a==="supply-stock-del"){el.onclick=()=>{
+      const sid=el.dataset.sid;
+      const e=(stock||[]).find(function(x){return x.id===sid;});
+      if(!e)return;
+      if(!confirm("Убрать «"+(e.n||"позицию")+"» со склада остатков?"))return;
+      stock=stock.filter(function(x){return x.id!==sid;});
+      fl();
+    };}
+    // Оприходование излишков: берём ПЕРЕКУП (куплено больше, чем нужно) — единственную
+    // величину, которую портал знает точно. Фактический расход на объекте никто не считает.
+    else if(a==="supply-stock-collect"){el.onclick=()=>{
+      const sel=window._supplySelected||{};
+      const objs=objects.filter(function(o){return !!sel[o.id];});
+      const cand=objs.reduce(function(a,o){ return a.concat(objStockCandidates(o).map(function(x){ x.obj=o; return x; })); },[]);
+      if(!cand.length){ alert("Излишков не нашлось: по выбранным объектам нигде не куплено больше, чем нужно."); return; }
+      const preview=cand.slice(0,5).map(function(x){ return "• "+(x.m.n||"")+" — "+numRu(x.qty); }).join("\n");
+      if(!confirm("Оприходовать на склад "+cand.length+" поз.?\n\n"+preview+(cand.length>5?"\n… и ещё "+(cand.length-5):"")+"\n\nЭто излишек закупки: куплено больше, чем требовала смета."))return;
+      cand.forEach(function(x){ stockAdd(x.m, x.qty, x.obj); });
+      supplyStockOpen=true;
+      fl();
     };}
     else if(a==="supply-add-open"){el.onclick=()=>{supplyAddOpen=true;supplyAddSearch="";supplyAddDone=[];render();};}
     else if(a==="supply-add-close"){el.onclick=()=>{supplyAddOpen=false;supplyAddSearch="";supplyAddDone=[];render();};}
