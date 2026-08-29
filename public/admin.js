@@ -312,6 +312,7 @@ function applyState(items){
   // Старый общий "yandex" → Pro (теперь раздельные Lite/Pro).
   if (settings && settings.aiProvider === "yandex") settings = Object.assign({}, settings, { aiProvider: "yandexpro" });
   try{ normalizeWorkCosts(); }catch(e){}   // стоимость работ = сумма материалов
+  try{ ensureMatPids(); }catch(e){}        // ссылка материала на карточку каталога (по имени, разово)
   try{ backfillWorkRooms(); }catch(e){}    // комнаты работ из сметы по estId (шаблон → объект)
   // Имя клиента договора из привязанного CRM-клиента, если поле пустое.
   try{ (contractDocs||[]).forEach(function(c){ if((!c.client||!String(c.client).trim())&&c.crmClientId){ var cl=crmClients.find(function(x){return x.id===c.crmClientId;}); if(cl&&cl.name)c.client=cl.name; } }); }catch(e){}
@@ -993,8 +994,13 @@ function matSoldByPack(m){return !!(m&&m.packM2!=null&&!isNaN(m.packM2)&&Number(
 // а количество, заметка и разбивка по хлыстам — это потребность работы, она не
 // зависит от того, каким товаром её закрыли. id сохраняется — на нём висят отметки
 // закупки и ссылка из партии (needId).
+// Материал работы, собранный из товара каталога. pid — ССЫЛКА на карточку базы:
+// имя, цена и магазин остаются копией (объект живёт своей сметой и не переписывается
+// задним числом), но по pid всегда видно, из какой позиции каталога это выросло —
+// на этом держатся «где используется» и замена товара во всех работах разом.
+// Совпадение по имени как признак «тот же товар» ненадёжно: имена правят и дублируют.
 function matFromProduct(m, prod){
-  const next={ id:m.id, n:prod.name, cost:Number(prod.unitCost)||0,
+  const next={ id:m.id, pid:prod.id, n:prod.name, cost:Number(prod.unitCost)||0,
     qty:m.qty||1, store:prod.store||"", note:m.note||"" };
   if(m.breakdown)next.breakdown=m.breakdown;
   ["mode","packPer","packBase","sheetM2","lenPer","url"].forEach(function(k){ if(prod[k])next[k]=prod[k]; });
@@ -6251,7 +6257,7 @@ ${groups.map(g=>{
           const _effLt=Math.round((Number(m.cost)||0)*_effQty);
           return`<div style="padding:6px 0;border-top:1px solid #f0f4f8">
             <div style="display:flex;align-items:center;gap:6px">
-            <div style="flex:1;min-width:0"><div data-a="tpl-mat-open" data-name="${esc(m.n).replace(/"/g,"&quot;")}" style="font-size:12px;color:#2980b9;font-weight:600;line-height:1.2;cursor:pointer;display:inline-flex;align-items:center;gap:4px;border-bottom:1px dashed #2980b955">${esc(m.n)}<span style="font-size:9px">✏️</span></div>
+            <div style="flex:1;min-width:0"><div data-a="tpl-mat-open" data-pid="${esc(m.pid||"")}" data-name="${esc(m.n).replace(/"/g,"&quot;")}" style="font-size:12px;color:#2980b9;font-weight:600;line-height:1.2;cursor:pointer;display:inline-flex;align-items:center;gap:4px;border-bottom:1px dashed #2980b955">${esc(m.n)}<span style="font-size:9px">✏️</span></div>
             <div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:2px">
               ${m.store?`<span style="font-size:9px;font-weight:700;background:${SC[m.store]||'#666'};color:#fff;border-radius:4px;padding:1px 6px">${esc(m.store)}</span>`:''}
               <span style="font-size:10px;color:#9aabbf">${(Number(m.cost)||0).toLocaleString('ru-RU')} ₽/${mo.unit}</span>
@@ -6607,7 +6613,9 @@ function estTotal(e){return (e.lines||[]).reduce(function(a,l){return a+estLineT
 // работы — её добавляют отдельной строкой-«материалом» (как «Аренда», «Контейнер»).
 function wMatTotal(w){ return (w&&w.mats||[]).reduce(function(a,m){return a+(Number(m.cost)||0)*(m.qty||0);},0); }
 function _tplEstWork(e){
-  var mats=(e.lines||[]).map(function(l){var p=estProd(l.pid)||{};return {id:gid(), n:p.name||"", store:p.store||"", url:p.url||"", note:"", cost:Number(p.unitCost)||0, qty:Number(l.qty)||1, mode:p.mode||"piece", unitCost:Number(p.unitCost)||0, packBase:p.packBase, packPer:p.packPer, lenPer:p.lenPer, sheetM2:p.sheetM2};});
+  // pid из строки сметы едет дальше в шаблон и в объект: смета ссылалась на каталог,
+  // а работа до этого получала только снимок по имени — связь рвалась ровно здесь.
+  var mats=(e.lines||[]).map(function(l){var p=estProd(l.pid)||{};return {id:gid(), pid:l.pid||"", n:p.name||"", store:p.store||"", url:p.url||"", note:"", cost:Number(p.unitCost)||0, qty:Number(l.qty)||1, mode:p.mode||"piece", unitCost:Number(p.unitCost)||0, packBase:p.packBase, packPer:p.packPer, lenPer:p.lenPer, sheetM2:p.sheetM2};});
   var matSum=mats.reduce(function(a,m){return a+(Number(m.cost)||0)*(m.qty||0);},0);
   return {id:gid(), estId:e.id, n:e.name, room:(e.room||""), cost:matSum, labor:0, note:"", mats:mats};
 }
@@ -6621,6 +6629,57 @@ function backfillWorkRooms(){
   fix(templates); fix(objects);
 }
 // Миграция: стоимость каждой работы = сумма материалов (убираем устаревший скрытый ФОТ).
+// ─── МАТЕРИАЛ → КАРТОЧКА КАТАЛОГА ───────────────────────────────────────────
+// Разовая доводка исторических данных: у материалов, заведённых до появления pid,
+// связь с базой есть только по имени. Ставим ссылку там, где имя совпало ТОЧНО и
+// в каталоге ровно один такой товар — угадывать при дублях нельзя, лучше остаться
+// без ссылки, чем привязать позицию к чужой карточке и потом менять не тот товар.
+function ensureMatPids(){
+  if(!Array.isArray(expProducts)||!expProducts.length)return 0;
+  const byName={};
+  expProducts.forEach(function(p){
+    const n=(p.name||"").trim();
+    if(!n)return;
+    byName[n]=byName[n]===undefined?p.id:null;   // null = имя неуникально, не трогаем
+  });
+  let n=0;
+  [templates,objects].forEach(function(list){
+    (list||[]).forEach(function(o){(o.stages||[]).forEach(function(s){(s.works||[]).forEach(function(w){
+      (w.mats||[]).forEach(function(m){
+        if(m.pid)return;
+        const hit=byName[(m.n||"").trim()];
+        if(hit){ m.pid=hit; n++; }
+      });
+    });});});
+  });
+  return n;
+}
+// Где используется товар каталога: работы шаблонов и объектов, ссылающиеся на него.
+// Ссылку ищем по pid; исторические позиции без ссылки добираем по точному имени,
+// иначе на карточке старого материала «где используется» пустовало бы.
+function matUses(pid){
+  const prod=(expProducts||[]).find(function(x){return x.id===pid;});
+  const nm=prod?(prod.name||"").trim():"";
+  const hit=function(m){ return m.pid?m.pid===pid:(!!nm&&(m.n||"").trim()===nm); };
+  const out={templates:[], objects:[], mats:0, qty:0, priceOff:0};
+  const scan=function(list,kind){
+    (list||[]).forEach(function(o){
+      const rows=[];
+      (o.stages||[]).forEach(function(s){(s.works||[]).forEach(function(w){
+        (w.mats||[]).forEach(function(m){
+          if(!hit(m))return;
+          rows.push({stage:s.n, work:w.n, qty:Number(m.qty)||1, cost:Number(m.cost)||0, mid:m.id});
+          out.mats++; out.qty+=Number(m.qty)||1;
+          if(prod&&(Number(m.cost)||0)!==(Number(prod.unitCost)||0))out.priceOff++;
+        });
+      });});
+      if(rows.length)out[kind].push({id:o.id, name:o.name, icon:o.icon, rows:rows});
+    });
+  };
+  scan(templates,"templates");
+  scan(objects,"objects");
+  return out;
+}
 function normalizeWorkCosts(){
   function fix(list){ (list||[]).forEach(function(o){ (o.stages||[]).forEach(function(s){ (s.works||[]).forEach(function(w){ var t=wMatTotal(w); if((Number(w.cost)||0)!==t||w.labor){ w.cost=t; w.labor=0; } }); }); }); }
   fix(templates); fix(objects);
@@ -7117,6 +7176,77 @@ function _expRecalc(){
   const bd=document.getElementById("exp-breakdown");
   if(bd)bd.textContent=qty+" "+saleUnit+" × "+uc.toLocaleString("ru-RU")+" ₽"+(conv?" · "+conv.altTotal(qty):"");
 }
+// Цена в объекте — это ПЛАН стройки, а не витрина каталога: переписывать её при каждой
+// правке базы нельзя (уедут бюджет и себестоимость подписанного договора), поэтому
+// синхронизация только руками и с выбором области — шаблоны или объекты.
+function matApplyCatalogPrice(pid, scope){
+  const prod=(expProducts||[]).find(function(x){return x.id===pid;});
+  if(!prod)return 0;
+  const nm=(prod.name||"").trim();
+  const hit=function(m){ return m.pid?m.pid===pid:(!!nm&&(m.n||"").trim()===nm); };
+  const uc=Number(prod.unitCost)||0;
+  let n=0;
+  ((scope==="templates"?templates:objects)||[]).forEach(function(o){(o.stages||[]).forEach(function(s){(s.works||[]).forEach(function(w){
+    let touched=false;
+    (w.mats||[]).forEach(function(m){
+      if(!hit(m)||(Number(m.cost)||0)===uc)return;
+      m.cost=uc; m.unitCost=uc; if(!m.pid)m.pid=pid;
+      n++; touched=true;
+    });
+    if(touched)w.cost=wMatTotal(w);   // w.cost в портале всегда равен сумме материалов
+  });});});
+  return n;
+}
+// «Где используется» на карточке товара: в какие шаблоны и объекты он входит и в какие
+// именно работы. Отвечает на вопрос «что заденет замена» — без этого связь материала
+// со стройками была видна только обходом всех объектов руками.
+function expUsesHtml(p){
+  const u=matUses(p.id);
+  if(!u.mats){
+    return '<div style="margin:0 16px 14px;padding:12px 14px;background:#f8fafc;border:1px dashed #dde6f0;border-radius:12px;font-size:11.5px;color:#9aabbf;text-align:center">Товар пока никуда не входит. Он появится здесь, как только попадёт в смету, шаблон или объект.</div>';
+  }
+  const uc=Number(p.unitCost)||0;
+  const offOf=function(list){ return list.reduce(function(a,g){ return a+g.rows.filter(function(r){return r.cost!==uc;}).length; },0); };
+  const offT=offOf(u.templates), offO=offOf(u.objects);
+  const group=function(g,kind,color){
+    const sum=g.rows.reduce(function(a,r){return a+r.cost*r.qty;},0);
+    return '<div style="border:1px solid #e6ecf3;border-radius:11px;margin-bottom:7px;overflow:hidden">'+
+      '<div data-mat-goto="'+kind+':'+g.id+'" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:'+color+'0d;cursor:pointer">'+
+        '<span style="font-size:15px;flex-shrink:0">'+(g.icon||"📦")+'</span>'+
+        '<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:700;color:#1a2a3a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(g.name)+'</div>'+
+          '<div style="font-size:10px;color:#7a9aaa;margin-top:1px">'+g.rows.length+' поз. · '+sum.toLocaleString("ru-RU")+' ₽</div></div>'+
+        '<span style="font-size:11px;color:'+color+';font-weight:700;flex-shrink:0">→</span>'+
+      '</div>'+
+      '<div style="padding:6px 10px 8px">'+g.rows.map(function(r){
+        const off=r.cost!==uc;
+        return '<div style="display:flex;align-items:baseline;gap:6px;font-size:10.5px;color:#7a9aaa;padding:2px 0">'+
+          '<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.stage)+' → '+esc(r.work)+'</span>'+
+          '<span style="flex-shrink:0;color:#5a7a9a;font-weight:700">'+numRu(r.qty)+' × '+r.cost.toLocaleString("ru-RU")+' ₽</span>'+
+          (off?'<span title="цена отличается от базы" style="flex-shrink:0;color:#e67e22;font-weight:800">≠</span>':'')+
+        '</div>';
+      }).join("")+'</div>'+
+    '</div>';
+  };
+  const btn=function(id,label,color){ return '<button id="'+id+'" style="flex:1;padding:8px;background:'+color+';border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:11.5px;font-weight:700">'+label+'</button>'; };
+  return '<div style="margin:0 16px 14px">'+
+    '<div style="display:flex;align-items:center;gap:6px;margin-bottom:7px">'+
+      '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.6px">ГДЕ ИСПОЛЬЗУЕТСЯ</div>'+
+      '<div style="flex:1"></div>'+
+      '<div style="font-size:10.5px;color:#5a7a9a;font-weight:700">'+u.mats+' поз. · Σ '+numRu(u.qty)+'</div>'+
+    '</div>'+
+    (u.templates.length?'<div style="font-size:10px;color:#9b59b6;font-weight:700;margin:0 0 5px 2px">ШАБЛОНЫ</div>'+u.templates.map(function(g){return group(g,"tpl","#9b59b6");}).join(""):'')+
+    (u.objects.length?'<div style="font-size:10px;color:#2980b9;font-weight:700;margin:6px 0 5px 2px">ОБЪЕКТЫ</div>'+u.objects.map(function(g){return group(g,"obj","#2980b9");}).join(""):'')+
+    // Расхождение цены не правим молча: в объектах это уже согласованный бюджет,
+    // и когда обновлять — решает человек, а не факт правки карточки.
+    ((offT+offO)?'<div style="margin-top:8px;padding:10px 12px;background:#fff3e0;border:1px solid #e67e2233;border-radius:11px">'+
+      '<div style="font-size:11.5px;color:#8a5a1f;line-height:1.45;margin-bottom:8px">Цена в базе — <b>'+uc.toLocaleString("ru-RU")+' ₽</b>, но в '+(offT+offO)+' поз. стоит другая. Объекты живут своей сметой, поэтому обновляем вручную.</div>'+
+      '<div style="display:flex;gap:6px">'+
+        (offT?btn("exp-uses-sync-tpl","Обновить в шаблонах ("+offT+")","#9b59b6"):'')+
+        (offO?btn("exp-uses-sync-obj","Обновить в объектах ("+offO+")","#2980b9"):'')+
+      '</div>'+
+    '</div>':'')+
+  '</div>';
+}
 function expEditorHtml(p){
   const mode=EXP_MODES.find(function(x){return x.k===p.mode;})||EXP_MODES[0];
   const saleUnit=mode.unit;
@@ -7187,6 +7317,7 @@ function expEditorHtml(p){
       </div>
       <div id="exp-breakdown" style="font-size:11px;color:#7e96b0;margin-top:4px">${qty} ${saleUnit} × ${uc.toLocaleString("ru-RU")} ₽${conv?` · ${conv.altTotal(qty)}`:``}</div>
     </div>
+    ${expUsesHtml(p)}
     <div style="padding:0 16px 16px">
       <button id="exp-done" style="width:100%;padding:11px;background:#16a085;border:none;border-radius:11px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">Готово</button>
     </div>
@@ -7210,6 +7341,25 @@ function bindExpEditor(p){
   bindText("exp-per","packPer",true);
   bindText("exp-sheetm2","sheetM2",true);
   bindText("exp-lenper","lenPer",true);
+  // «Где используется»: переход к шаблону/объекту и ручная синхронизация цены.
+  el.querySelectorAll("[data-mat-goto]").forEach(function(b){b.onclick=function(){
+    const v=String(b.dataset.matGoto||"").split(":"), id=v.slice(1).join(":");
+    tab="assign";
+    if(v[0]==="tpl"){ openTemplate=id; openObject=null; } else { openObject=id; openTemplate=null; }
+    expOpenId=null; render(); window.scrollTo(0,0);
+  };});
+  const sync=function(id,scope,what){
+    const b=document.getElementById(id);
+    if(!b)return;
+    b.onclick=function(){
+      const n=matApplyCatalogPrice(p.id,scope);
+      if(!n)return;
+      alert("Цена обновлена в "+n+" поз. ("+what+").");
+      renderExpCard(); scheduleSave();
+    };
+  };
+  sync("exp-uses-sync-tpl","templates","шаблоны");
+  sync("exp-uses-sync-obj","objects","объекты");
   const ph=document.getElementById("exp-photo");
   if(ph)ph.onchange=async function(e){
     const f=e.target.files&&e.target.files[0];if(!f)return;
@@ -10772,11 +10922,13 @@ function supplyAddFromCatalog(oid,sid,pid){
       const i=works.findIndex(function(w){return w.n===SUPPLY_WORK_NAME;});
       const work=i>=0?works[i]:{id:gid(),estId:"",n:SUPPLY_WORK_NAME,cost:0,labor:0,note:"",mats:[],timeLogs:[]};
       const mats=work.mats||[];
-      const ex=mats.find(function(m){return m.n===p.name;});
+      // Дубль ищем сперва по ссылке на каталог и только потом по имени: переименованный
+      // в базе товар иначе лёг бы второй строкой рядом со своей же прошлой закупкой.
+      const ex=mats.find(function(m){return m.pid?m.pid===p.id:m.n===p.name;});
       const nextMats=ex
         ? mats.map(function(m){return m===ex?Object.assign({},m,{qty:(Number(m.qty)||0)+1}):m;})
         : mats.concat([{
-            id:gid(), n:p.name, store:p.store||"", url:p.url||"", note:"",
+            id:gid(), pid:p.id, n:p.name, store:p.store||"", url:p.url||"", note:"",
             cost:Number(p.unitCost)||0, qty:1, mode:p.mode||"piece",
             unitCost:Number(p.unitCost)||0, packBase:p.packBase, packPer:p.packPer,
             lenPer:p.lenPer, sheetM2:p.sheetM2,
@@ -14918,7 +15070,9 @@ function bind(){
       tplMatExpand=Object.assign({},tplMatExpand,{[eid]:true});   // раскрыть, чтобы видеть результат
       fl();
     };}
-    else if(a==="tpl-mat-open"){el.onclick=function(ev){ if(ev)ev.stopPropagation(); const nm=el.dataset.name; const prod=expProducts.find(function(x){return x.name===nm;}); if(!prod){ alert("Материал «"+nm+"» не найден в базе (возможно переименован или удалён)."); return; } tab="works"; dbSection="mats"; expOpenId=prod.id; render(); window.scrollTo(0,0); };}
+    // Сначала по ссылке на карточку, и только потом по имени: переименованный в базе
+    // товар раньше давал «не найден», хотя карточка на месте.
+    else if(a==="tpl-mat-open"){el.onclick=function(ev){ if(ev)ev.stopPropagation(); const nm=el.dataset.name, pid=el.dataset.pid; const prod=(pid&&expProducts.find(function(x){return x.id===pid;}))||expProducts.find(function(x){return x.name===nm;}); if(!prod){ alert("Материал «"+nm+"» не найден в базе (возможно удалён)."); return; } tab="works"; dbSection="mats"; expOpenId=prod.id; render(); window.scrollTo(0,0); };}
     else if(a==="tpl-est-del"){el.onclick=function(ev){
       if(ev)ev.stopPropagation();
       const eid=el.dataset.eid;
@@ -15118,6 +15272,10 @@ function bind(){
             ["packPer","packBase","sheetM2","lenPer","url"].forEach(function(k){ delete next[k]; });
             Object.keys(meta).forEach(function(k){ next[k]=meta[k]; });
           }
+          // Ссылка на каталог: встали на товар базы — проставляем, ушли в ручное
+          // название — снимаем. Позиция без pid честнее, чем pid от предшественника.
+          if(prod)next.pid=prod.id;
+          else if((m.n||"")!==nm)delete next.pid;
           return next;
         })});
         // w.cost в портале всегда равен сумме материалов (так их собирает _tplEstWork):
@@ -17475,6 +17633,7 @@ function bind(){
       const cost=(costInput!==""&&costInput!=null)?(parseInt(costInput)||0):(prod?(Number(prod.unitCost)||0):0);
       const mat={id:gid(), n, cost, qty, store:store||(prod&&prod.store||"")};
       if(prod){
+        mat.pid=prod.id;                       // ссылка на карточку базы — см. matFromProduct
         if(prod.mode)mat.mode=prod.mode;
         if(prod.packPer)mat.packPer=prod.packPer;
         if(prod.packBase)mat.packBase=prod.packBase;
