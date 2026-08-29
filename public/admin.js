@@ -40,7 +40,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // версия на устройстве. По этой подписи это видно сразу.
 // Логика закупок — общая с ботом и Worker'ом (src/supply.js): статус материала должен
 // одинаково считаться в панели и в Telegram, иначе бригадир и снабженец увидят разное.
-import { needStatus, needState, objectSupply, migrateLegacy, needQty } from "../src/supply.js";
+import { needStatus, needState, objectSupply, migrateLegacy, needQty, isSelection, pendingSelections } from "../src/supply.js";
 // Сроки этапов — тот же общий модуль, что читают напоминания (см. src/stages.js).
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
@@ -3514,6 +3514,28 @@ function clientProjectContent(c, activeTab){
           }).join("")+
         '</div>';
       }
+    })();
+    // Что ждёт выбора клиента. Показываем бюджет: это не «доплатите», а «в эту сумму
+    // укладывается без доплат» — иначе выбор превращается в спор постфактум.
+    (function(){
+      const pend=objSelPending(obj);
+      if(!pend.length)return;
+      html+='<div style="font-size:11px;color:#8e44ad;font-weight:700;letter-spacing:1px;margin:4px 0 8px">🎨 ЖДЁМ ВАШЕГО ВЫБОРА</div>'+
+        '<div style="background:#fff;border:1px solid #8e44ad33;border-radius:12px;padding:10px 12px;margin-bottom:12px">'+
+        pend.map(function(x){
+          const od=matSelOverdue(x.mat);
+          return '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f4f6f9">'+
+            '<div style="flex:1;min-width:0">'+
+              '<div style="font-size:12.5px;font-weight:700;color:#1a2a3a">'+esc(x.mat.n||"Материал")+'</div>'+
+              '<div style="font-size:10.5px;color:'+(od?"#c0392b":"#7a9aaa")+';margin-top:2px">'+esc(x.work.n||"")+
+                (x.mat.selDue?(od?' · срок вышел '+ruDate(x.mat.selDue):' · выбрать до '+ruDate(x.mat.selDue)):'')+'</div>'+
+            '</div>'+
+            '<div style="text-align:right;flex-shrink:0"><div style="font-size:12.5px;font-weight:800;color:#8e44ad">'+matSelBudget(x.mat).toLocaleString("ru-RU")+' ₽</div>'+
+              '<div style="font-size:9.5px;color:#9aabbf">заложено</div></div>'+
+          '</div>';
+        }).join("")+
+        '<div style="font-size:10.5px;color:#7a9aaa;line-height:1.45;padding-top:8px">В эту сумму выбор укладывается без доплат. Дороже — сопровождение согласует с вами разницу до заказа.</div>'+
+      '</div>';
     })();
     html+='<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin:4px 0 8px">📐 ВАШИ ПЛАНИРОВКИ И ПРОЕКТ</div>';
     const planFiles=(c.files||[]).filter(function(f){return f.kind==="plan";});
@@ -11449,6 +11471,23 @@ function supplyRemoveMat(mid){
 // Одно описание правки на два входа — прямое сохранение и утверждённая заявка:
 // иначе «применено из заявки» перестало бы совпадать с «сохранено снабженцем».
 
+// ─── ПОЗИЦИИ «ВЫБОР КЛИЕНТА» ─────────────────────────────────────────────────
+// Плитку, печь, двери и сантехнику клиент почти всегда меняет по ходу стройки, и сейчас
+// каждая такая замена шла как исключение. Помечаем такие позиции заранее: сумма в смете
+// становится БЮДЖЕТОМ выбора. Уложился — меняем без бумаг; вышел за него — это уже деньги
+// клиента, и правка идёт согласованием, каким бы ни был общий порог.
+function matIsSel(m){ return isSelection(m); }
+function matSelBudget(m){ return (Number(m&&m.cost)||0)*(Number(m&&m.qty)||1); }
+// Просрочен ли выбор: дата прошла, а позицию так и не тронули.
+function matSelOverdue(m){
+  if(!matIsSel(m)||!m.selDue)return 0;
+  const today=todayISO();
+  return today>m.selDue?countBusinessDaysBetween(m.selDue,today):0;
+}
+// Позиции с невыбранным материалом по объекту — их ждёт стройка.
+function objSelPending(obj){ return pendingSelections([obj], todayISO()); }
+function selPendingAll(){ return pendingSelections(objects, todayISO()); }
+
 // Порог согласования. Мелкая правка цены не должна ходить через заявку, крупная обязана.
 function matChangeLimit(){
   const v=Number(settings&&settings.matChangeLimit);
@@ -11506,6 +11545,11 @@ function matChangeApply(chg){
             cost:Number(chg.cost)||0, store:chg.store||"", note:chg.note||"",
             qty:(isFinite(q)&&q>0)?q:(Number(m.qty)||1),
           });
+          // Пометка «выбор клиента» и срок выбора — часть правки, если форма их прислала.
+          if(chg.sel!==undefined){
+            if(chg.sel){ next.sel=true; if(chg.selDue)next.selDue=chg.selDue; else delete next.selDue; }
+            else { delete next.sel; delete next.selDue; delete next.selDone; }
+          }
           // Меняем товар — старая фасовка/ссылка от предшественника должны уйти.
           if(replaced.indexOf(m.id)>=0){
             ["packPer","packBase","sheetM2","lenPer","url"].forEach(function(k){ delete next[k]; });
@@ -11515,6 +11559,9 @@ function matChangeApply(chg){
           // название — снимаем. Позиция без pid честнее, чем pid от предшественника.
           if(prod)next.pid=prod.id;
           else if((m.n||"")!==nm)delete next.pid;
+          // Позиция выбора закрыта: клиент определился, ждать больше нечего. Саму метку
+          // не снимаем — по ней видно, что это была его позиция, и сколько закладывали.
+          if(matIsSel(m)&&replaced.indexOf(m.id)>=0)next.selDone=todayISO();
           return next;
         })});
         // w.cost в портале всегда равен сумме материалов (так их собирает _tplEstWork):
@@ -11533,6 +11580,8 @@ function matChangeApply(chg){
 function matChangeRequest(chg){
   const ctx=supplyFindMatCtx(((chg&&chg.ids)||[])[0]);
   if(!ctx)return null;
+  // За чей счёт — берём из формы: у позиции выбора клиента там уже выбрано «клиент»
+  // (см. модалку), и подменять это на отправке значило бы спорить с человеком.
   const iid=gid();
   issues=issues.concat([{
     id:iid, objId:ctx.o.id, wid:ctx.w.id, kind:"matchg",
@@ -11568,17 +11617,23 @@ function supplyEditForm(){
     const q=parseFloat(String((e&&e.value)||"").replace(",","."));
     qty[id]=(isFinite(q)&&q>0)?q:1;
   });
+  const selBox=document.getElementById("sem-sel");
   return { ids:ids, n:nm, mode:g("sem-mode")||"piece", cost:parseInt(g("sem-cost"))||0,
     store:g("sem-store").trim(), note:g("sem-note").trim(), reason:g("sem-reason").trim(),
-    pid:prod?prod.id:"", payer:g("sem-payer")||"company", qty:qty };
+    pid:prod?prod.id:"", payer:g("sem-payer")||"company", qty:qty,
+    sel:selBox?!!selBox.checked:undefined, selDue:g("sem-sel-due").slice(0,10) };
 }
 // Нужна ли заявка. Тот, кто отвечает за деньги, согласовывает сам себе — ему заявка
 // не нужна; остальным порог решает, идти правкой или через согласование.
 function supplyNeedsApproval(chg){
   const d=matChangeDelta(chg);
+  if(!d)return false;
+  // Выход за БЮДЖЕТ ВЫБОРА клиента согласуется всегда, даже если сумма меньше порога:
+  // это уже не наша экономия, а счёт клиенту, и решать за него снабженец не может.
+  if(d>0&&((chg&&chg.ids)||[]).some(function(id){ return matIsSel(supplyFindMat(id)); }))return !canApproveIssue();
   // Нулевой порог означает «любая правка ЦЕНЫ через согласование», а не «любая правка»:
   // иначе исправление заметки или магазина уезжало бы заявкой.
-  return !!d&&!canApproveIssue()&&Math.abs(d)>=matChangeLimit();
+  return !canApproveIssue()&&Math.abs(d)>=matChangeLimit();
 }
 
 // ─── СКЛАД ОСТАТКОВ ──────────────────────────────────────────────────────────
@@ -12086,6 +12141,7 @@ function tSupplyDetail(sel, sortBy){
           _arrivedPill('data-mid="'+m.id+'"', !!arrived[m.id])+
           (matPendingChange(m.id)?MAT_PENDING_PILL:'')+
           _stockPill([m.id])+
+          _selPill(m)+
           '<button data-a="supply-edit-mat" data-mid="'+m.id+'" style="font-size:10px;color:#7a9aaa;background:#fff;border:1px solid #d0dae8;border-radius:5px;padding:1px 7px;cursor:pointer" onclick="event.stopPropagation()">✏️ изм.</button>'+
         '</div>'+
         ((Array.isArray(m.breakdown)&&m.breakdown.length)
@@ -12101,6 +12157,16 @@ function tSupplyDetail(sel, sortBy){
     '</div>';
   }
 
+  // «Выбор клиента» с бюджетом и сроком. Просроченный выбор — красным: он держит этап,
+  // и это не наша нерасторопность, а незакрытое решение на стороне клиента.
+  function _selPill(m){
+    if(!matIsSel(m)||m.selDone)return "";
+    const od=matSelOverdue(m);
+    const c=od?"#c0392b":"#8e44ad", bg=od?"#fdeeec":"#8e44ad14";
+    return '<span style="font-size:10px;font-weight:700;color:'+c+';background:'+bg+';border:1px solid '+c+'33;border-radius:5px;padding:1px 7px">🎨 выбор клиента'+
+      (m.selDue?(od?' · просрочен на '+od+' дн':' · до '+ruDate(m.selDue)):'')+
+      ' · бюджет '+matSelBudget(m).toLocaleString("ru-RU")+' ₽</span>';
+  }
   // «На складе есть» — с кнопкой взять. Показываем только когда остаток реально закроет
   // нехватку: плашка «есть 3» на закупленной позиции была бы шумом.
   function _stockPill(ids){
@@ -12388,11 +12454,20 @@ function tSupplyDetail(sel, sortBy){
             '<input id="sem-reason" data-a="sem-live" value="" placeholder="Причина: нет в наличии / изменение проекта / просьба клиента" style="'+inp+';margin-bottom:8px">'+
             '<div style="display:flex;align-items:center;gap:8px">'+
               '<span style="font-size:11px;color:#5a7a9a;font-weight:700;flex-shrink:0">За чей счёт</span>'+
+              // У позиции выбора клиента по умолчанию платит клиент: он сам выбрал дороже
+              // заложенного бюджета. Это видимый выбор в форме, а не подмена при отправке.
               '<select id="sem-payer" data-a="sem-live" style="'+inp+';flex:1">'+
-                '<option value="company">за счёт компании</option>'+
-                '<option value="client">за счёт клиента</option>'+
+                '<option value="company"'+(matIsSel(em)?'':' selected')+'>за счёт компании</option>'+
+                '<option value="client"'+(matIsSel(em)?' selected':'')+'>за счёт клиента</option>'+
               '</select>'+
             '</div>'+
+            // Позиция выбора клиента: сумма в смете становится БЮДЖЕТОМ выбора.
+            '<div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap">'+
+              '<label style="display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#5a7a9a;font-weight:700;cursor:pointer">'+
+                '<input id="sem-sel" type="checkbox"'+(matIsSel(em)?' checked':'')+' style="width:15px;height:15px">🎨 Выбор клиента</label>'+
+              '<input id="sem-sel-due" type="date" value="'+(em.selDue||"")+'" title="До какого числа клиент должен выбрать" style="'+inp+';flex:1;min-width:130px">'+
+            '</div>'+
+            '<div style="font-size:10px;color:#a0b4c8;margin-top:5px;line-height:1.4">Дешевле или вровень с бюджетом — меняем без бумаг; дороже — уходит на согласование как деньги клиента.</div>'+
             '<div id="sem-hint" style="font-size:10px;color:#a0b4c8;margin-top:7px;line-height:1.4">Разница от '+matChangeLimit().toLocaleString("ru-RU")+' ₽ уходит на согласование тому, кто отвечает за деньги.</div>'+
             // Порог правит тот, кто по нему и согласовывает. Отдельного экрана настроек в
             // панели нет, а место объяснения правила — лучшее место для самого правила.

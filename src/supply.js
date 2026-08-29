@@ -106,3 +106,31 @@ export function migrateLegacy(objects, legacyPurchased, legacyArrived, stamp) {
   });
   return purchases;
 }
+
+// ─── ПОЗИЦИИ «ВЫБОР КЛИЕНТА» ─────────────────────────────────────────────────
+// m.sel — материал, который выбирает клиент (плитка, печь, двери, сантехника), а сумма
+// в смете служит бюджетом выбора. m.selDue — до какого числа выбрать, m.selDone — дата,
+// когда выбор состоялся. Общий предикат: панель рисует по нему плашки, крон — напоминания,
+// и «просрочен» на экране совпадает с «просрочен» в чате.
+export function isSelection(m) { return !!(m && m.sel); }
+export function selectionPending(m) { return isSelection(m) && !m.selDone; }
+export function pendingSelections(objects, today) {
+  const out = [];
+  (objects || []).forEach(function (o) {
+    ((o && o.stages) || []).forEach(function (s) {
+      ((s.works) || []).forEach(function (w) {
+        ((w.mats) || []).forEach(function (m) {
+          if (!selectionPending(m)) return;
+          const due = m.selDue || "";
+          out.push({ obj: o, stage: s, work: w, mat: m, due: due, overdue: !!(due && today > due) });
+        });
+      });
+    });
+  });
+  // Сначала просроченные, потом по сроку: список читают сверху и до первого «ну это потом».
+  out.sort(function (a, b) {
+    if (a.overdue !== b.overdue) return a.overdue ? -1 : 1;
+    return String(a.due || "9999").localeCompare(String(b.due || "9999"));
+  });
+  return out;
+}

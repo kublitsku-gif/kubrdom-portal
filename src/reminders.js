@@ -7,6 +7,7 @@
 
 import { ensureNotifyTables, sendTg, defaultPrefs, escapeHtml } from "./notify.js";
 import { stagesNeedingAttention } from "./stages.js";
+import { pendingSelections } from "./supply.js";
 
 const MSK_OFFSET_MS = 3 * 3600 * 1000;
 const FINE_PER_DAY = 2000;
@@ -194,6 +195,35 @@ async function runStages(env, st, today) {
     for (const p of boss) {
       if (await sendOnce(env, p, "deadline", "stages:digest:" + today, digest)) sent++;
     }
+  }
+  return sent;
+}
+
+// ─── 1в. Выбор клиента не сделан ─────────────────────────────────────────────
+// Плитку и печь клиент выбирает сам, и пока он не выбрал — этап стоит. Молчать нельзя:
+// это единственный простой, который производство не может расшить своими силами.
+async function runSelections(env, st, today) {
+  const pend = pendingSelections(st.objects || [], today).filter(function (x) { return x.overdue || x.due; });
+  if (!pend.length) return 0;
+  const people = await audience(env, st.users || [], "deadline");
+  if (!people.length) return 0;
+  let sent = 0;
+  // Пишем сопровождению: разговаривать с клиентом — их работа, а не бригадира.
+  const escort = people.filter(function (p) {
+    const r = (p.user && p.user.roles) || [];
+    return r.indexOf("client_mgr") >= 0 || r.indexOf("admin") >= 0 || r.indexOf("prod_head") >= 0;
+  });
+  if (!escort.length) return 0;
+  const late = pend.filter(function (x) { return x.overdue; });
+  const lines = pend.slice(0, 10).map(function (x) {
+    return (x.overdue ? "🔴 " : "🟡 ") + escapeHtml(x.obj.name || "объект") + " · " + escapeHtml(x.mat.n || "позиция")
+      + (x.due ? (x.overdue ? " — срок вышел " + x.due : " — выбрать до " + x.due) : "");
+  });
+  const text = "🎨 <b>Клиент ещё не выбрал</b>" + (late.length ? " · просрочено: " + late.length : "") + "\n"
+    + lines.join("\n") + (pend.length > 10 ? "\n… и ещё " + (pend.length - 10) : "")
+    + linkTo(env, "#tab=supply", "Открыть снабжение");
+  for (const p of escort) {
+    if (await sendOnce(env, p, "deadline", "sel:" + today + ":" + pend.length + ":" + late.length, text)) sent++;
   }
   return sent;
 }
@@ -476,6 +506,7 @@ export async function runReminders(env, cronExpr, diag) {
   if (cronExpr === "0 6 * * *") {                    // 09:00 МСК — утро
     sent += await runDeadlines(env, st, today);
     sent += await runStages(env, st, today);
+    sent += await runSelections(env, st, today);
     sent += await runSupply(env, st, today);
     sent += await runIssues(env, st, today);
     sent += await runFinance(env, st);

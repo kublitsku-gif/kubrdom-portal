@@ -71,7 +71,11 @@ function makeDoc(base) {
   }
   return {
     doc,
-    field: (id, value) => fields.set(id, { id, value: String(value), dataset: {}, style: {} }),
+    // checked выводим из значения: код читает у чекбоксов именно его, а не value.
+    field: (id, value) => fields.set(id, {
+      id, value: String(value), checked: value === true || value === 'on' || value === 'checked',
+      dataset: {}, style: {},
+    }),
     node: (dataset, id) => {
       const el = { id, dataset, style: {}, onclick: null, onchange: null, oninput: null,
         querySelectorAll: (sel) => nodes.filter((x) => match(sel, x)) }
