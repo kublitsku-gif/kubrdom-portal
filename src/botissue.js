@@ -211,10 +211,16 @@ export async function issueMedia(env, uid, chat, msg, roles) {
 
   // Голосовое расшифровываем в текст: иначе вопрос не найти поиском и не показать
   // в сводке. Подпись к сообщению, если она есть, важнее — её человек написал сам.
-  let voiceText = "", voiceWhy = "";
+  let voiceText = "", voiceWhy = "", voiceParts = 0;
   if (msg.voice && !capText) {
+    // Длинную запись режем и распознаём кусками — это заметно дольше одного запроса,
+    // поэтому предупреждаем, иначе человек решит, что бот завис.
+    if (msg.voice.duration && msg.voice.duration > 45) {
+      await sendTg(env, chat, "🎤 Записываю текст с голосового, это займёт несколько секунд…");
+    }
     const tr = await transcribeVoice(env, msg.voice.file_id, msg.voice.duration);
-    if (tr.ok) voiceText = tr.text; else voiceWhy = tr.reason || "";
+    if (tr.ok) { voiceText = tr.text; voiceParts = tr.chunks || 0; }
+    else voiceWhy = tr.reason || "";
   }
 
   const isNew = !d.iid;
@@ -228,7 +234,7 @@ export async function issueMedia(env, uid, chat, msg, roles) {
     await confirmToAuthor(env, chat, d, iid, st);
     // Показываем автору, что именно записали с его слов: расшифровка бывает кривой,
     // и поправить её проще сразу, пока он ещё в диалоге.
-    if (voiceText) await sendTg(env, chat, "🎤 Расшифровал: «" + escapeHtml(voiceText) + "»\n\n<i>Не то? Напишите текстом — допишется к вопросу.</i>");
+    if (voiceText) await sendTg(env, chat, "🎤 Расшифровал" + (voiceParts > 1 ? " (запись длинная, склеил из " + voiceParts + " частей)" : "") + ": «" + escapeHtml(voiceText) + "»\n\n<i>Не то? Напишите текстом — допишется к вопросу.</i>");
     else if (msg.voice && voiceWhy) await sendTg(env, chat, "🎤 Голосовое приложено, но текстом не записал: " + escapeHtml(voiceWhy) + ".\n\n<i>Опишите словами, если нужно, чтобы вопрос читался в портале.</i>");
   } else {
     if (msg.voice && voiceText) {

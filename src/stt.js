@@ -14,10 +14,15 @@
 // Что длиннее — не режем и не теряем: оставляем ссылку на аудио и пишем причину.
 
 import { fetchTgFile } from "./tgapi.js";
+import { splitOpus } from "./ogg.js";
 
 const STT_URL = "https://stt.api.cloud.yandex.net/speech/v1/stt:recognize";
 export const STT_MAX_SEC = 30;
 export const STT_MAX_BYTES = 1024 * 1024;
+// Длинное голосовое режем на куски по 30 с и склеиваем расшифровки. Потолок в кусках,
+// а не в секундах: каждый кусок — отдельный запрос, и на десятиминутной записи мы бы
+// упёрлись во время ответа вебхука Telegram и получили повторную доставку.
+export const STT_MAX_CHUNKS = 10;   // ~5 минут записи
 
 // Причина словами — она попадёт в тикет вместо текста, чтобы человек понимал,
 // почему расшифровки нет, и не считал это поломкой.
@@ -27,21 +32,50 @@ export async function transcribeVoice(env, fileId, durationSec) {
   const key = env.YANDEX_API_KEY;
   const folder = env.YANDEX_FOLDER_ID;
   if (!key || !folder) return why("расшифровка не настроена");
-  if (durationSec && durationSec > STT_MAX_SEC) {
-    return why("голосовое длиннее " + STT_MAX_SEC + " с — распознаётся только короткое");
-  }
-
   const f = await fetchTgFile(env, fileId);
   if (!f || !f.buf) return why("не удалось скачать аудио из Telegram");
-  if (f.buf.byteLength > STT_MAX_BYTES) return why("файл больше 1 МБ");
 
-  const qs = new URLSearchParams({ folderId: folder, lang: "ru-RU", format: "oggopus" });
+  // Влезает целиком — один запрос, как было.
+  if (f.buf.byteLength <= STT_MAX_BYTES && (!durationSec || durationSec <= STT_MAX_SEC)) {
+    return await recognizeOne(env, f.buf);
+  }
+
+  // Не влезает — режем сами. Асинхронное API SpeechKit тут не помощник: оно берёт
+  // аудио ТОЛЬКО из Yandex Object Storage, а это отдельный бакет, сервисный аккаунт
+  // и новые ключи. Резка по страницам Ogg не требует ни того, ни другого.
+  const chunks = splitOpus(f.buf, STT_MAX_SEC, STT_MAX_CHUNKS);
+  if (!chunks.length) {
+    const mins = Math.round((durationSec || 0) / 60);
+    return why(durationSec && durationSec > STT_MAX_SEC * STT_MAX_CHUNKS
+      ? "запись длиннее " + Math.floor(STT_MAX_SEC * STT_MAX_CHUNKS / 60) + " минут"
+      : "не удалось разобрать аудио" + (mins ? " (" + mins + " мин)" : ""));
+  }
+
+  const parts = [];
+  for (const c of chunks) {
+    if (c.byteLength > STT_MAX_BYTES) return why("кусок записи больше 1 МБ");
+    const one = await recognizeOne(env, c);
+    // Один глухой кусок (пауза, шум) не должен рушить всю расшифровку —
+    // пропускаем его, а на ошибке сервиса останавливаемся честно.
+    if (!one.ok) {
+      if (/не распознана/.test(one.reason || "")) continue;
+      return parts.length ? { ok: true, text: parts.join(" "), partial: true } : one;
+    }
+    parts.push(one.text);
+  }
+  if (!parts.length) return why("речь не распознана");
+  return { ok: true, text: parts.join(" "), chunks: chunks.length };
+}
+
+// Один вызов синхронного распознавания.
+async function recognizeOne(env, audio) {
+  const qs = new URLSearchParams({ folderId: env.YANDEX_FOLDER_ID, lang: "ru-RU", format: "oggopus" });
   let r;
   try {
     r = await fetch(STT_URL + "?" + qs.toString(), {
       method: "POST",
-      headers: { "Authorization": "Api-Key " + key },
-      body: f.buf,
+      headers: { "Authorization": "Api-Key " + env.YANDEX_API_KEY },
+      body: audio,
     });
   } catch (e) { return why("сервис распознавания недоступен"); }
 
