@@ -1287,6 +1287,7 @@ const TAB_DEFS=[
   {k:"marketing", n:"📣 Маркетинг"},
   {k:"kp",        n:"📋 КП"},
   {k:"voiceai",   n:"🎙 Голосовой ИИ"},
+  {k:"issues",    n:"❓ Вопросы"},
   {k:"history",   n:"🕘 История"},
 ];
 // rolePermissions[roleId] = массив ключей вкладок, которые открывает роль.
@@ -3902,7 +3903,7 @@ function rerenderTab(){
 }
 // Один источник HTML активной вкладки — используется и в page(), и в rerenderTab().
 function tabContentHtml(){
-  return tab==="assign"?tObjects():tab==="myday"?tMyDay():tab==="sheetlist"?tSheetList():tab==="wizard"?tWizardTab():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tab==="kp"?tKP():tab==="voiceai"?tVoiceAi():tab==="history"?tHistory():tCRM();
+  return tab==="assign"?tObjects():tab==="myday"?tMyDay():tab==="sheetlist"?tSheetList():tab==="wizard"?tWizardTab():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tab==="kp"?tKP():tab==="voiceai"?tVoiceAi():tab==="issues"?tIssues():tab==="history"?tHistory():tCRM();
 }
 
 function render(){
@@ -4129,6 +4130,11 @@ function page(){
       const _ai=TABS.findIndex(function(t){return t[0]==="assign";});
       if(_ai>=0) TABS.splice(_ai+1,0,_sup); else TABS.unshift(_sup);
     }
+    // «Вопросы» видит каждый, независимо от сохранённых прав: адресатом вопроса
+    // может стать любая роль, и невидимая вкладка означала бы потерянный вопрос.
+    if(!TABS.some(function(t){return t[0]==="issues";})){
+      TABS.push(ALL_TABS.find(function(t){return t[0]==="issues";})||["issues","❓ Вопросы"]);
+    }
     if(!TABS.length) TABS=[["assign","🏗️ Объекты"]];
   }
   // iOS-style нижний таб-бар — быстрый доступ к 4 главным разделам.
@@ -4139,6 +4145,7 @@ function page(){
     ["finance","Финансы","💰"],
     ["contracts","Договора","📄"],
     ["supply","Снабжение","📦"],
+    ["issues","Вопросы","❓"],
   ];
   const _accessible=new Set(TABS.map(function(t){return t[0];}));
   const _bottomItems=BOTTOM_NAV.filter(function(x){return _accessible.has(x[0]);});
@@ -4148,7 +4155,9 @@ function page(){
   ${_bottomItems.map(function(it){
     const k=it[0],label=it[1],icon=it[2],on=tab===k;
     return '<button data-a="tab" data-k="'+k+'" style="flex:1;border:none;background:transparent;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 2px;-webkit-tap-highlight-color:transparent">'
-      +'<span style="font-size:22px;line-height:1;transition:transform 0.12s;transform:scale('+(on?"1.06":"1")+');filter:'+(on?"none":"grayscale(45%) opacity(0.7)")+'">'+icon+'</span>'
+      +'<span style="position:relative;font-size:22px;line-height:1;transition:transform 0.12s;transform:scale('+(on?"1.06":"1")+');filter:'+(on?"none":"grayscale(45%) opacity(0.7)")+'">'+icon
+        +(k==="issues"&&issuesMineOpen().length?'<span style="position:absolute;top:-3px;left:14px;background:#c0392b;color:#fff;border-radius:9px;padding:0 5px;font-size:10px;font-weight:800;line-height:1.5">'+issuesMineOpen().length+'</span>':'')
+        +'</span>'
       +'<span style="font-size:10px;font-weight:'+(on?700:500)+';color:'+(on?"#2980b9":"#8a97a6")+';letter-spacing:0.1px;white-space:nowrap">'+label+'</span>'
       +'</button>';
   }).join("")}
@@ -4185,7 +4194,11 @@ ${showPinChange?`<div style="background:#fff;border-bottom:1px solid #eef2f7;pad
   ${TABS.map(([k,n],i)=>{
     const active=tab===k;
     const _crmBadge=(k==="crm"&&crmUnansweredCount()>0)?`<span style="margin-left:6px;background:#e74c3c;color:#fff;border-radius:9px;padding:1px 6px;font-size:10px;font-weight:800">${crmUnansweredCount()}</span>`:"";
-    const tabBtn=`<button data-a="tab" data-k="${k}" style="flex-shrink:0;padding:9px 14px;border:none;border-radius:10px;background:${active?"#2980b9":"#f0f4f8"};cursor:pointer;font-size:12.5px;font-weight:${active?700:600};color:${active?"#fff":"#5a7080"};white-space:nowrap;box-shadow:${active?"0 2px 8px rgba(41,128,185,0.3)":"none"};transition:all 0.15s;letter-spacing:0.2px">${n}${_crmBadge}</button>`;
+    // Бейдж считает ТОЛЬКО адресованное мне и незакрытое: если он горит всегда,
+    // его перестают замечать за неделю.
+    const _issN=(k==="issues")?issuesMineOpen().length:0;
+    const _issBadge=_issN?`<span style="margin-left:6px;background:#c0392b;color:#fff;border-radius:9px;padding:1px 6px;font-size:10px;font-weight:800">${_issN}</span>`:"";
+    const tabBtn=`<button data-a="tab" data-k="${k}" style="flex-shrink:0;padding:9px 14px;border:none;border-radius:10px;background:${active?"#2980b9":"#f0f4f8"};cursor:pointer;font-size:12.5px;font-weight:${active?700:600};color:${active?"#fff":"#5a7080"};white-space:nowrap;box-shadow:${active?"0 2px 8px rgba(41,128,185,0.3)":"none"};transition:all 0.15s;letter-spacing:0.2px">${n}${_crmBadge}${_issBadge}</button>`;
     return isAdmin
       ? `<div draggable="true" data-a="tab-drag" data-k="${k}" data-i="${i}" style="flex-shrink:0;cursor:grab">${tabBtn}</div>`
       : tabBtn;
@@ -4635,6 +4648,7 @@ function buildTeamRow(oid, isAdmin){
 let issueFormOid=null;          // у какого объекта раскрыта форма «задать вопрос»
 let issueNew={text:"",kind:"supply",wid:""};
 let issueShowDone={};           // {oid:true} — показывать закрытые
+let issueTabDone=false;         // показывать закрытые во вкладке «Вопросы»
 
 function issueWorkName(t){
   const o=objects.find(function(x){return x.id===t.objId;});
@@ -4690,6 +4704,49 @@ function issueAgeTone(n){
   return n>=5?{c:"#c0392b",bg:"#fdeeec"} : n>=3?{c:"#c08a1e",bg:"#fbf3e2"} : n>=1?{c:"#2980b9",bg:"#e9f1fa"} : {c:"#7a8b99",bg:"#eef2f7"};
 }
 function issueAgeLabel(n){ return n===0?"сегодня":n+" дн"; }
+// Что человек вправе видеть: тот, кто отвечает за производство и деньги, — всё;
+// остальные — адресованное им и заданное ими. Чужие вопросы по чужим объектам
+// сотруднику не нужны, а список от этого становится читаемым.
+function issuesVisible(){
+  if(!currentUser)return [];
+  const all=currentUser.roles.some(function(r){return r==="admin"||r==="financier"||r==="prod_head";});
+  if(all)return issues;
+  return issues.filter(function(t){ return issueIsMine(t)||t.by===currentUser.id; });
+}
+function issuesMineOpen(){ return issues.filter(function(t){ return ISSUE_OPEN(t)&&issueIsMine(t); }); }
+
+// Сводка — четыре разреза одного массива. Считаем ВОЗРАСТ, а не количество: двенадцать
+// свежих вопросов — обычный рабочий день, а три, из которых один висит восьмой, —
+// остановленный объект. Счётчик «всего» прячет ровно это.
+function issueSummary(list){
+  const open=list.filter(ISSUE_OPEN);
+  const age={fresh:0,d12:0,d35:0,old:0};
+  const byAddr={}, byObj={};
+  const money={client:0,company:0,nClient:0,nCompany:0};
+  let oldest=0;
+  open.forEach(function(t){
+    const n=issueAge(t);
+    if(n>oldest)oldest=n;
+    if(n>=5)age.old++; else if(n>=3)age.d35++; else if(n>=1)age.d12++; else age.fresh++;
+    const bump=function(m,k){ m[k]=m[k]||{n:0,max:0}; m[k].n++; if(n>m[k].max)m[k].max=n; };
+    bump(byAddr,issueTo(t));
+    bump(byObj,t.objId||"—");
+    // В деньгах считаем только то, что реально ждёт решения по сумме: вопрос без
+    // цифры — это ещё не заявка, и складывать его не с чем.
+    const amt=Number(t.amount)||0;
+    if(t.status==="hold"&&amt>0){
+      const payer=t.payer||(t.kind==="supply"?"company":"client");
+      if(payer==="client"){ money.client+=amt; money.nClient++; }
+      else { money.company+=amt; money.nCompany++; }
+    }
+  });
+  return {open:open,total:list.length,age:age,byAddr:byAddr,byObj:byObj,money:money,oldest:oldest};
+}
+// Сортировка по возрасту: сверху то, что горит, а не то, что новое.
+function issuesByAge(list){
+  return list.slice().sort(function(a,b){ return issueAge(b)-issueAge(a); });
+}
+
 // Переадресация — СОБЫТИЕ, а не тихая правка поля: иначе вопрос перекидывают неделю,
 // и по карточке не понять, почему он старый.
 function issueReroute(iid,role){
@@ -4874,6 +4931,143 @@ function buildIssuesSection(obj){
     ? '<span style="color:#c0392b">'+open.length+' открыт'+(open.length===1?"":"ых")+'</span>'
     : (list.length?'<span style="color:#27ae60">✓ все закрыты</span>':'<span style="color:#9aabbf">нет</span>');
   return objSection(obj.id,"issues","❓ ВОПРОСЫ ПО ОБЪЕКТУ","#c0392b",summary,body,open.length>0);
+}
+
+// Личная плашка. Единственное, что заставляет открыть раздел: цифра «вам N» и цена
+// бездействия рядом — сколько ждёт самый старый. Без неё сводка мертва, в неё
+// никто не пойдёт по своей воле.
+function issueMineBanner(){
+  const mine=issuesMineOpen();
+  if(!mine.length)return "";
+  const oldest=mine.reduce(function(a,t){ const n=issueAge(t); return n>a?n:a; },0);
+  const worst=mine.find(function(t){ return issueAge(t)===oldest; });
+  const o=worst&&objects.find(function(x){return x.id===worst.objId;});
+  const tone=issueAgeTone(oldest);
+  return '<div data-a="tab" data-k="issues" style="display:flex;align-items:center;gap:10px;background:'+tone.bg+';border:1px solid '+tone.c+'44;border-radius:12px;padding:11px 12px;margin-bottom:12px;cursor:pointer">'+
+    '<div style="font-size:23px;line-height:1">📬</div>'+
+    '<div style="flex:1;min-width:0">'+
+      '<div style="font-size:13px;font-weight:700;color:'+tone.c+'">Вам '+mine.length+' вопрос'+(mine.length===1?"":(mine.length<5?"а":"ов"))+'</div>'+
+      '<div style="font-size:10.5px;color:#7a8b99;margin-top:1px">'+
+        (oldest>0?'Самый старый ждёт <b>'+oldest+' раб. дн'+(o?'</b> — '+esc(o.name):'</b>'):'Все заданы сегодня')+
+      '</div>'+
+    '</div>'+
+    '<div style="font-size:13px;color:'+tone.c+'">→</div>'+
+  '</div>';
+}
+
+// ── ВКЛАДКА «❓ ВОПРОСЫ» ─────────────────────────────────────────────────────
+function tIssues(){
+  const list=issuesVisible();
+  const s=issueSummary(list);
+  const canMoney=canSeeClientMoney();
+  let h='<div>';
+  h+=issueMineBanner();
+
+  if(!list.length){
+    return h+'<div style="text-align:center;padding:34px 16px;color:#9aabbf;font-size:13px;border:1px dashed #d0dae8;border-radius:14px;line-height:1.5">'+
+      '<div style="font-size:32px;margin-bottom:8px">🙂</div>'+
+      '<div style="font-size:14px;font-weight:700;color:#1a2a3a">Вопросов нет</div>'+
+      'Их задают из карточки объекта или из Telegram-бота кнопкой «❓ Вопрос».</div></div>';
+  }
+
+  // ── Блок 1: возраст. Полоса показывает РАСПРЕДЕЛЕНИЕ, а не среднее: «в среднем
+  // два дня» прячет вопрос, висящий восьмой.
+  const A=[["fresh","сегодня","#27ae60"],["d12","1–2 дня","#2980b9"],["d35","3–5 дней","#c08a1e"],["old","больше 5","#c0392b"]];
+  const tot=s.open.length;
+  h+='<div style="background:linear-gradient(135deg,#1a2a3a,#2a4a6a);border-radius:16px;padding:16px;margin-bottom:12px;box-shadow:0 6px 18px rgba(26,42,58,0.18)">'+
+    '<div style="font-size:10px;color:rgba(255,255,255,0.5);font-weight:700;letter-spacing:1px">ЖДУТ ОТВЕТА</div>'+
+    '<div style="font-size:30px;font-weight:800;line-height:1.15;margin-top:2px;color:'+(s.age.old>0?"#f59e0b":tot?"#fff":"#2ecc71")+'">'+(tot?tot+' вопрос'+(tot===1?"":(tot<5?"а":"ов")):"✓ все закрыты")+'</div>'+
+    (tot?'<div style="font-size:10.5px;color:rgba(255,255,255,0.55);margin-top:3px">'+
+      (s.age.old?'из них <b style="color:#f59e0b">'+s.age.old+' дольше пяти дней</b> · ':'')+'всего за всё время '+s.total+'</div>'+
+    '<div style="display:flex;gap:3px;margin-top:12px;height:9px;border-radius:5px;overflow:hidden">'+
+      A.map(function(a){ const v=s.age[a[0]]; return v?'<div style="flex:'+v+';background:'+a[2]+'"></div>':""; }).join("")+
+    '</div>'+
+    '<div style="display:flex;flex-wrap:wrap;gap:9px;margin-top:8px">'+
+      A.map(function(a){ const v=s.age[a[0]]; return v?'<span style="display:flex;align-items:center;gap:4px;font-size:9.5px;color:rgba(255,255,255,0.62)"><span style="width:7px;height:7px;border-radius:2px;background:'+a[2]+'"></span>'+a[1]+' '+v+'</span>':""; }).join("")+
+    '</div>':'')+
+  '</div>';
+
+  // ── Блок 2: кто тормозит. Руководитель спрашивает не «сколько всего»,
+  // а «кого дёргать».
+  const addrKeys=Object.keys(s.byAddr).sort(function(a,b){return s.byAddr[b].n-s.byAddr[a].n;});
+  if(addrKeys.length){
+    const maxN=s.byAddr[addrKeys[0]].n;
+    h+='<div style="font-size:9px;letter-spacing:1px;font-weight:700;color:#8497a5;margin:0 2px 5px">КТО ТОРМОЗИТ</div>'+
+      '<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:10px;margin-bottom:12px">'+
+      addrKeys.map(function(r,i){
+        const ad=ISSUE_ADDR[r]||{n:r,i:"•",c:"#7a8b99"}, v=s.byAddr[r], tone=issueAgeTone(v.max);
+        return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0'+(i<addrKeys.length-1?';border-bottom:1px solid #eef2f7':'')+'">'+
+          '<span style="flex:1;min-width:0;font-size:11.5px;font-weight:600">'+ad.i+' '+esc(ad.n)+'</span>'+
+          (v.max>0?'<span style="font-size:9.5px;font-weight:800;border-radius:4px;padding:2px 6px;background:'+tone.bg+';color:'+tone.c+'">'+issueAgeLabel(v.max)+'</span>':"")+
+          '<div style="height:6px;border-radius:3px;background:#eef2f7;overflow:hidden;width:62px;flex-shrink:0"><div style="height:100%;border-radius:3px;width:'+Math.round(v.n/maxN*100)+'%;background:'+tone.c+'"></div></div>'+
+          '<span style="font-size:13px;font-weight:800;color:'+tone.c+';min-width:16px;text-align:right">'+v.n+'</span>'+
+        '</div>';
+      }).join("")+
+    '</div>';
+  }
+
+  // ── Блок 3: деньги. Счёт клиента и счёт компании — разные разговоры:
+  // первое надо продать, второе списать в расход.
+  if(canMoney&&(s.money.nClient||s.money.nCompany)){
+    h+='<div style="font-size:9px;letter-spacing:1px;font-weight:700;color:#8497a5;margin:0 2px 5px">ДЕНЬГИ НА СОГЛАСОВАНИИ</div>'+
+      '<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:11px;margin-bottom:12px;display:flex;gap:16px">'+
+      '<div><div style="font-size:9.5px;color:#9aabbf">За счёт клиента</div>'+
+        '<div style="font-size:17px;font-weight:800;color:#26456E">+'+s.money.client.toLocaleString("ru-RU")+' ₽</div>'+
+        '<div style="font-size:9.5px;color:#9aabbf">'+s.money.nClient+' вопр.</div></div>'+
+      '<div><div style="font-size:9.5px;color:#9aabbf">За счёт компании</div>'+
+        '<div style="font-size:17px;font-weight:800;color:#c0392b">−'+s.money.company.toLocaleString("ru-RU")+' ₽</div>'+
+        '<div style="font-size:9.5px;color:#9aabbf">'+s.money.nCompany+' вопр.</div></div>'+
+    '</div>';
+  }
+
+  // ── Блок 4: объекты. Где именно стоит стройка.
+  const objKeys=Object.keys(s.byObj).sort(function(a,b){return s.byObj[b].max-s.byObj[a].max;});
+  if(objKeys.length){
+    h+='<div style="font-size:9px;letter-spacing:1px;font-weight:700;color:#8497a5;margin:0 2px 5px">ПО ОБЪЕКТАМ</div>'+
+      '<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:10px;margin-bottom:14px">'+
+      objKeys.map(function(oid,i){
+        const o=objects.find(function(x){return x.id===oid;});
+        const v=s.byObj[oid], tone=issueAgeTone(v.max);
+        return '<div data-a="iss-goto-obj" data-oid="'+oid+'" style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer'+(i<objKeys.length-1?';border-bottom:1px solid #eef2f7':'')+'">'+
+          '<span style="flex:1;min-width:0;font-size:11.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+((o&&o.icon)||"🏗")+' '+esc((o&&o.name)||"Без объекта")+'</span>'+
+          '<span style="font-size:9.5px;font-weight:800;border-radius:4px;padding:2px 6px;background:'+tone.bg+';color:'+tone.c+'">'+issueAgeLabel(v.max)+'</span>'+
+          '<span style="font-size:13px;font-weight:800;color:'+tone.c+'">'+v.n+'</span>'+
+        '</div>';
+      }).join("")+
+    '</div>';
+  }
+
+  // ── Список: самое старое сверху.
+  h+='<div style="font-size:9px;letter-spacing:1px;font-weight:700;color:#8497a5;margin:0 2px 5px">СНАЧАЛА САМЫЕ СТАРЫЕ</div>';
+  h+=issuesByAge(s.open).map(issueRowCompact).join("");
+  const closed=list.filter(function(t){return !ISSUE_OPEN(t);});
+  if(closed.length){
+    h+='<button data-a="iss-tab-done" style="width:100%;margin-top:8px;padding:8px;border-radius:9px;cursor:pointer;font-size:11.5px;font-weight:700;border:1px solid #e3eaf2;background:#f8fafc;color:#7a9aaa">'+(issueTabDone?"▲ Скрыть закрытые":"▼ Закрытые · "+closed.length)+'</button>';
+    if(issueTabDone)h+='<div style="margin-top:7px">'+issuesByAge(closed).map(issueRowCompact).join("")+'</div>';
+  }
+  return h+'<div style="height:16px"></div></div>';
+}
+
+// Строка вопроса в сводке: возраст, адресат, объект. Тап уводит в карточку объекта,
+// где вопрос можно взять в работу и ответить — второй копии тех же кнопок не заводим.
+function issueRowCompact(t){
+  const st=ISSUE_ST[t.status]||ISSUE_ST.new;
+  const kd=ISSUE_KIND[t.kind]||ISSUE_KIND.question;
+  const ad=ISSUE_ADDR[issueTo(t)]||ISSUE_ADDR.admin;
+  const o=objects.find(function(x){return x.id===t.objId;});
+  const isOpen=ISSUE_OPEN(t);
+  const n=issueAge(t), tone=issueAgeTone(n);
+  return '<div data-a="iss-goto-obj" data-oid="'+esc(t.objId||"")+'" style="background:#fff;border:1px solid #e3eaf2;border-left:4px solid '+(isOpen?tone.c:st.c)+';border-radius:10px;padding:9px 11px;margin-bottom:6px;cursor:pointer">'+
+    '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">'+
+      (isOpen?'<span style="font-size:9.5px;font-weight:800;border-radius:5px;padding:2px 7px;background:'+tone.bg+';color:'+tone.c+'">'+issueAgeLabel(n)+'</span>'
+             :'<span style="font-size:9.5px;font-weight:700;border-radius:5px;padding:2px 7px;background:'+st.bg+';color:'+st.c+'">'+st.i+' '+st.n+'</span>')+
+      '<span style="font-size:9.5px;font-weight:700;border-radius:5px;padding:2px 7px;background:'+kd.c+'14;color:'+kd.c+'">'+kd.i+' '+kd.n+'</span>'+
+      (isOpen?'<span style="font-size:9.5px;font-weight:700;border-radius:5px;padding:2px 7px;background:'+ad.c+'14;color:'+ad.c+'">'+ad.i+' '+ad.n+'</span>':"")+
+    '</div>'+
+    '<div style="font-size:12.5px;font-weight:600;color:'+(isOpen?"#1a2a3a":"#7a9aaa")+';line-height:1.35">'+esc(t.text||"—")+'</div>'+
+    '<div style="font-size:9.5px;color:#9aabbf;margin-top:3px">'+((o&&o.icon)||"🏗")+' '+esc((o&&o.name)||"без объекта")+' · '+esc(issueAuthor(t))+' · '+issueDate(t)+
+      (Number(t.amount)>0?' · <b style="color:#26456E">'+Number(t.amount).toLocaleString("ru-RU")+' ₽</b>':'')+'</div>'+
+  '</div>';
 }
 
 // ── СВОДКА: сделанные работы + затраченное время по объекту ──
@@ -5884,6 +6078,10 @@ ${showNObj?`<div style="background:#fff;border-radius:14px;border:2px solid #c03
     <button data-a="cancel-nobj" style="padding:10px 16px;background:transparent;border:1px solid #d0dae8;border-radius:10px;cursor:pointer;font-size:13px;color:#7a9aaa">Отмена</button>
   </div>
 </div>`:""}
+
+<!-- Адресованные мне вопросы: показываем там, куда человек заходит и так,
+     иначе про вкладку «Вопросы» он вспомнит только когда его спросят -->
+${issueMineBanner()}
 
 <!-- Объекты — карточки -->
 ${_vo.length===0?`<div style="background:#fff;border-radius:14px;border:2px dashed #d0dae8;padding:32px;text-align:center;margin-bottom:14px">
@@ -16182,6 +16380,16 @@ function bind(){
       }
       patchIssue(el.dataset.iid,{status:s});
       fl();
+    };}
+    else if(a==="iss-tab-done"){el.onclick=()=>{ issueTabDone=!issueTabDone; rerenderTab(); };}
+    // Из сводки уводим в карточку объекта: кнопки «взять в работу» и «ответить» живут
+    // там, и второй их копии заводить не надо — разъедутся при первой же правке.
+    else if(a==="iss-goto-obj"){el.onclick=()=>{
+      const oid=el.dataset.oid;
+      if(!oid)return;
+      tab="assign"; openObject=oid;
+      objSecOpen[oid+"|issues"]=true;   // иначе человек попадёт в свёрнутую секцию и решит, что вопрос потерялся
+      render();
     };}
     else if(a==="iss-route"){el.onchange=()=>{
       issueReroute(el.dataset.iid,el.value);
