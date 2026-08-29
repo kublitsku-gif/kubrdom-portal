@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "harness": "node tools/render-harness.js",
-    "test:bot": "node tools/test-botissue.mjs"
+    "test:bot": "node tools/test-botissue.mjs",
+    "test:supply": "node tools/test-supply-group.mjs"
   },
   "dependencies": {
     "react": "^19.2.6",

@@ -10688,6 +10688,11 @@ function tSupplySelect(sel){
 }
 
 let supplyEditMid=null;   // id материала, открытого на редактирование в снабжении
+// Объединённая строка закупки правится ЦЕЛИКОМ: здесь id всех потребностей, слитых
+// в неё _mergeMats. Пустой массив — правится одна позиция (supplyEditMid). Раньше на
+// слитой строке кнопку «изм.» просто не показывали, и самый частый случай (один
+// материал в пяти работах) правился только поштучно через карточку объекта.
+let supplyEditIds=[];
 let supplyAddOpen=false;  // открыта ли форма добавления материала в снабжении
 let supplyAddTarget="";   // "objId|stageId" — этап, в который падает материал
 let supplyAddSearch="";   // поиск по базе материалов в форме добавления
@@ -10703,12 +10708,33 @@ let supplyAddDone=[];     // что добавлено за текущее от�
 const SUPPLY_WORK_NAME="📦 Докупка (снабжение)";
 
 // Материал живёт в objects[].stages[].works[].mats — ищем по всему дереву.
-function supplyFindMat(mid){
+// Вместе с материалом отдаём и место: объект, этап, работа. Групповой правке это нужно,
+// чтобы показать «входит в: Этап 2 → Обрешётка», а пересчёту w.cost — чтобы знать работу.
+function supplyFindMatCtx(mid){
   let found=null;
   objects.forEach(function(o){(o.stages||[]).forEach(function(s){(s.works||[]).forEach(function(w){
-    (w.mats||[]).forEach(function(m){ if(m.id===mid)found=m; });
+    (w.mats||[]).forEach(function(m){ if(m.id===mid)found={m:m,o:o,s:s,w:w}; });
   });});});
   return found;
+}
+function supplyFindMat(mid){ const c=supplyFindMatCtx(mid); return c?c.m:null; }
+
+// Снять отметки закупки с потребностей. Обязательно при ЗАМЕНЕ товара: «куплено» от
+// предшественника — это уже другой товар, и оставить отметку значит соврать мастеру.
+// Позицию партии при этом не удаляем, а ОТВЯЗЫВАЕМ (needId=null): деньги по ней реально
+// потрачены и должны остаться в сумме партии; удаление стёрло бы расход из отчёта.
+function supplyClearMarks(ids){
+  const set=(ids||[]).filter(Boolean);
+  if(!set.length)return;
+  const p=Object.assign({},purchased), a=Object.assign({},arrived);
+  set.forEach(function(id){ delete p[id]; delete a[id]; });
+  purchased=p; arrived=a;
+  purchases=purchases.map(function(b){
+    if(!(b.items||[]).some(function(it){return set.indexOf(it.needId)>=0;}))return b;
+    return Object.assign({},b,{items:b.items.map(function(it){
+      return set.indexOf(it.needId)<0?it:Object.assign({},it,{needId:null});
+    })});
+  });
 }
 
 // Удалить материал из закупки. Кроме самой строки чистим отметки «куплено» и
@@ -10727,8 +10753,7 @@ function supplyRemoveMat(mid){
       })});
     })});
   });
-  if(purchased[mid]){const p=Object.assign({},purchased);delete p[mid];purchased=p;}
-  if(arrived[mid]){const a=Object.assign({},arrived);delete a[mid];arrived=a;}
+  supplyClearMarks([mid]);
   return true;
 }
 
@@ -11171,7 +11196,9 @@ function tSupplyDetail(sel, sortBy){
           (!allDone&&g.url?'<a href="'+g.url+'" target="_blank" style="font-size:10px;color:#fff;background:#2980b9;border-radius:4px;padding:1px 7px;text-decoration:none;font-weight:600" onclick="event.stopPropagation()">🔗 купить</a>':'')+
           (allDone?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>':'')+
           _arrivedPill('data-ids="'+ids.join(',')+'"', ids.length>0&&ids.every(function(id){return !!arrived[id];}))+
-          (ids.length===1?'<button data-a="supply-edit-mat" data-mid="'+ids[0]+'" style="font-size:10px;color:#7a9aaa;background:#fff;border:1px solid #d0dae8;border-radius:5px;padding:1px 7px;cursor:pointer" onclick="event.stopPropagation()">✏️ изм.</button>':'')+
+          // Слитая строка правится целиком: одна замена вместо обхода всех работ,
+          // где эта позиция встретилась. Сколько потребностей затронет — на кнопке.
+          '<button data-a="supply-edit-mat" data-mid="'+ids[0]+'" data-ids="'+ids.join(',')+'" style="font-size:10px;color:#7a9aaa;background:#fff;border:1px solid #d0dae8;border-radius:5px;padding:1px 7px;cursor:pointer" onclick="event.stopPropagation()">✏️ изм.'+(ids.length>1?' ('+ids.length+')':'')+'</button>'+
         '</div>'+
         (function(){var rows=bdRowsOf(g.bd); if(rows.length)return hlystBlock(rows); return conv?'<div style="margin-top:5px"><span style="font-size:10px;font-weight:700;color:#e67e22;background:#fff3e0;border-radius:6px;padding:2px 8px">🛒 Купить: '+conv.altTotal(qty)+'</span></div>':'';})()+
       '</div>'+
@@ -11297,34 +11324,70 @@ function tSupplyDetail(sel, sortBy){
     });
   }
 
-  // Модалка редактирования материала (запись обратно в исходную работу объекта)
+  // Модалка редактирования материала (запись обратно в исходные работы объектов).
+  // Правится либо одна позиция, либо вся объединённая строка закупки сразу: название,
+  // цена, магазин и заметка идут на все потребности, количество — у каждой своё.
   if(supplyEditMid){
-    let em=null; objects.forEach(function(o){(o.stages||[]).forEach(function(s){(s.works||[]).forEach(function(w){(w.mats||[]).forEach(function(m){if(m.id===supplyEditMid)em=m;});});});});
+    const editIds=(supplyEditIds.length?supplyEditIds:[supplyEditMid]).filter(function(id){return !!supplyFindMatCtx(id);});
+    const ctxs=editIds.map(supplyFindMatCtx);
+    const em=ctxs.length?ctxs[0].m:null;
+    const multi=ctxs.length>1;
     if(em){
       const opts=EXP_MODES.map(function(o){return '<option value="'+o.k+'"'+(o.k===(em.mode||"piece")?' selected':'')+'>'+o.icon+' '+o.label+'</option>';}).join("");
       const inp="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box";
+      const qtyTotal=ctxs.reduce(function(a,c){return a+(Number(c.m.qty)||1);},0);
+      // Отмеченные закупки: замена товара их снимет, и снабженец должен узнать об этом
+      // ДО того, как нажмёт «Сохранить», а не из алерта после.
+      const marked=ctxs.filter(function(c){ const st=matStatus(c.m); return st.bought>0||st.got>0; }).length;
       html+='<div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:flex-start;justify-content:center;padding:50px 16px;z-index:300">'+
-        '<div style="background:#fff;border-radius:16px;width:100%;max-width:420px;padding:20px">'+
+        '<div style="background:#fff;border-radius:16px;width:100%;max-width:420px;max-height:82vh;overflow:auto;padding:20px">'+
           '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">'+
-            '<div style="font-size:15px;font-weight:700;color:#0d1b2e">✏️ Материал</div>'+
+            '<div style="font-size:15px;font-weight:700;color:#0d1b2e">✏️ Материал'+(multi?' · '+ctxs.length+' позиций':'')+'</div>'+
             '<button data-a="supply-mat-close" style="width:30px;height:30px;border-radius:50%;background:#f0f4f8;border:none;cursor:pointer;font-size:16px">✕</button>'+
           '</div>'+
+          (multi?'<div style="background:#fff3e0;border:1px solid #e67e2233;border-radius:9px;padding:8px 10px;margin-bottom:10px;font-size:11px;color:#8a5a1f;line-height:1.45">'+
+            'Правка пойдёт во <b>все '+ctxs.length+' потребности</b> этой строки — по всем работам и объектам сразу. Количество у каждой своё, задаётся ниже.</div>':'')+
           '<input id="sem-n" list="sem-catalog" autocomplete="off" value="'+(em.n||"").replace(/"/g,"&quot;")+'" placeholder="Название — или выберите из базы" style="'+inp+';margin-bottom:2px">'+
           '<datalist id="sem-catalog">'+(typeof expProducts!=="undefined"?expProducts:[]).map(function(pr){return '<option value="'+esc(pr.name).replace(/"/g,"&quot;")+'"></option>';}).join("")+'</datalist>'+
           '<div style="font-size:10px;color:#a0b4c8;margin:0 0 8px 2px">Выберите товар из базы — цена, единица и магазин подставятся сами</div>'+
           '<div style="display:flex;gap:8px;margin-bottom:8px">'+
             '<select id="sem-mode" style="'+inp+';flex:1">'+opts+'</select>'+
-            '<input id="sem-qty" type="number" step="any" value="'+(em.qty||1)+'" placeholder="Кол-во" style="'+inp+';flex:1">'+
+            (multi
+              ? '<div style="flex:1;display:flex;align-items:center;justify-content:center;background:#f4f7fb;border:1px solid #e2e9f2;border-radius:8px;font-size:12px;color:#5a7a9a;font-weight:700">Σ '+numRu(qtyTotal)+'</div>'
+              : '<input id="sem-qty" type="number" step="any" value="'+(em.qty||1)+'" placeholder="Кол-во" style="'+inp+';flex:1">')+
           '</div>'+
           '<div style="display:flex;gap:8px;margin-bottom:8px">'+
             '<input id="sem-cost" type="number" value="'+(Number(em.cost)||0)+'" placeholder="Цена ₽/ед" style="'+inp+';flex:1">'+
             '<input id="sem-store" value="'+(em.store||"").replace(/"/g,"&quot;")+'" placeholder="Магазин" style="'+inp+';flex:1">'+
           '</div>'+
           '<input id="sem-note" value="'+(em.note||"").replace(/"/g,"&quot;")+'" placeholder="Заметка" style="'+inp+';margin-bottom:12px">'+
-          '<button data-a="supply-mat-save" style="width:100%;padding:10px;background:#2980b9;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">Сохранить</button>'+
+          // «Где используется» — ответ на вопрос, куда именно уедет правка. У каждой
+          // строки своё количество: слитая позиция на 40 листов складывается из 25 у
+          // одной работы и 15 у другой, и разносить их обратно поровну нельзя.
+          (multi?'<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:0.5px;margin-bottom:5px">ГДЕ ИСПОЛЬЗУЕТСЯ</div>'+
+            '<div style="max-height:34vh;overflow:auto;margin-bottom:12px">'+
+            ctxs.map(function(c){
+              const st=matStatus(c.m), ms=MAT_STATE[needState(st)]||MAT_STATE.none;
+              return '<div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid #e6ecf3;border-radius:9px;margin-bottom:6px;background:#fafbfc">'+
+                '<div style="flex:1;min-width:0">'+
+                  '<div style="font-size:12px;font-weight:700;color:#1a2a3a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(c.o.icon||"")+' '+esc(c.o.name)+'</div>'+
+                  '<div style="font-size:10px;color:#7a9aaa;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(c.s.n)+' → '+esc(c.w.n)+'</div>'+
+                  // Строка слепляет позиции по УСЕЧЁННОМУ имени («ОСП 30 м²» и «ОСП 18 м²»
+                  // это одна «ОСП»), поэтому собственное имя показываем, когда оно другое:
+                  // иначе замена молча переименует обе фасовки в одну.
+                  (c.m.n&&c.m.n!==em.n?'<div style="font-size:10px;color:#b8791a;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(c.m.n)+'</div>':'')+
+                  '<div style="font-size:10px;color:'+ms.c+';margin-top:2px">'+ms.i+' '+ms.t+'</div>'+
+                '</div>'+
+                '<input id="sem-q-'+c.m.id+'" type="number" step="any" value="'+(c.m.qty||1)+'" style="width:76px;padding:7px 8px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;text-align:center">'+
+              '</div>';
+            }).join("")+
+            '</div>':'')+
+          (marked>0?'<div style="background:#fdecea;border:1px solid #e74c3c33;border-radius:9px;padding:8px 10px;margin-bottom:10px;font-size:11px;color:#a93226;line-height:1.45">'+
+            'По '+marked+' поз. уже отмечена закупка. Если сменить товар, отметки «куплено» и «принято» с них снимутся — деньги в партиях останутся.</div>':'')+
+          '<button data-a="supply-mat-save" style="width:100%;padding:10px;background:#2980b9;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">Сохранить'+(multi?' во все '+ctxs.length:'')+'</button>'+
           // Удаление — отдельной строкой и приглушённое: рядом с «Сохранить» его
           // задевают пальцем, а материал уносит и отметки «куплено»/«на складе».
-          '<button data-a="supply-mat-del" data-mid="'+em.id+'" style="width:100%;margin-top:8px;padding:9px;background:#fff;border:1px solid #e74c3c55;border-radius:9px;cursor:pointer;color:#e74c3c;font-size:12.5px;font-weight:700">🗑 Удалить из закупки</button>'+
+          '<button data-a="supply-mat-del" data-mid="'+em.id+'" data-ids="'+editIds.join(',')+'" style="width:100%;margin-top:8px;padding:9px;background:#fff;border:1px solid #e74c3c55;border-radius:9px;cursor:pointer;color:#e74c3c;font-size:12.5px;font-weight:700">🗑 Удалить из закупки'+(multi?' ('+ctxs.length+')':'')+'</button>'+
           '<div style="font-size:10px;color:#a0b4c8;text-align:center;margin-top:6px">Материал исчезнет из объекта и из приёмки у мастера</div>'+
         '</div>'+
       '</div>';
@@ -15005,46 +15068,80 @@ function bind(){
     else if(a==="supply-sort"){el.onclick=()=>{window._supplySort=el.dataset.s;render();};}
     else if(a==="supply-tz"){el.onclick=(ev)=>{ ev&&ev.stopPropagation(); buildSupplyTZ(el.dataset.store); };}
     else if(a==="supply-list"){el.onclick=(ev)=>{ ev&&ev.stopPropagation(); buildSupplyList(); };}
-    else if(a==="supply-edit-mat"){el.onclick=(ev)=>{ev&&ev.stopPropagation();supplyEditMid=el.dataset.mid;render();};}
-    else if(a==="supply-mat-close"){el.onclick=()=>{supplyEditMid=null;render();};}
+    else if(a==="supply-edit-mat"){el.onclick=(ev)=>{
+      ev&&ev.stopPropagation();
+      // Слитая строка отдаёт все свои id — тогда правка идёт во все потребности разом.
+      const ids=(el.dataset.ids||"").split(",").filter(Boolean);
+      supplyEditIds=ids.length>1?ids:[];
+      supplyEditMid=el.dataset.mid||ids[0]||null;
+      render();
+    };}
+    else if(a==="supply-mat-close"){el.onclick=()=>{supplyEditMid=null;supplyEditIds=[];render();};}
     else if(a==="supply-mat-save"){el.onclick=()=>{
-      const mid=supplyEditMid; if(!mid)return;
+      const ids=(supplyEditIds.length?supplyEditIds:[supplyEditMid]).filter(function(id){return !!supplyFindMatCtx(id);});
+      if(!ids.length)return;
       const nm=(document.getElementById("sem-n")?.value||"").trim();
+      if(!nm){ alert("Название материала не может быть пустым."); return; }
       const patch={
         n:nm,
         mode:document.getElementById("sem-mode")?.value||"piece",
-        qty:parseFloat(document.getElementById("sem-qty")?.value)||0,
         cost:parseInt(document.getElementById("sem-cost")?.value)||0,
         store:(document.getElementById("sem-store")?.value||"").trim(),
         note:(document.getElementById("sem-note")?.value||"").trim(),
       };
+      // Количество у каждой потребности своё: слитые 40 листов складываются из 25 у одной
+      // работы и 15 у другой, разносить их обратно поровну нельзя. У одиночной правки поле одно.
+      const qtyById={};
+      ids.forEach(function(id){
+        const f=document.getElementById("sem-q-"+id)||document.getElementById("sem-qty");
+        const q=parseFloat(String(f&&f.value||"").replace(",","."));
+        qtyById[id]=(isFinite(q)&&q>0)?q:1;
+      });
       // Название совпало с товаром базы — переносим и то, чего в форме нет:
       // фасовку, ссылку. Без этого «упаковка 1.362 м²» потерялась бы при замене,
       // и пересчёт цены за единицу поехал бы.
       const prod=(typeof expProducts!=="undefined")?expProducts.find(function(x){return x.name===nm;}):null;
       const meta={};
-      if(prod){
-        ["packPer","packBase","sheetM2","lenPer","url"].forEach(function(k){ meta[k]=prod[k]!=null?prod[k]:undefined; });
-      }
-      objects=objects.map(o=>({...o,stages:(o.stages||[]).map(s=>({...s,works:(s.works||[]).map(w=>({...w,mats:(w.mats||[]).map(function(m){
-        if(m.id!==mid)return m;
-        const next=Object.assign({},m,patch);
-        // Меняем товар — старая фасовка/ссылка от предшественника должны уйти.
-        if(prod){ ["packPer","packBase","sheetM2","lenPer","url"].forEach(function(k){ delete next[k]; });
-                  Object.keys(meta).forEach(function(k){ if(meta[k]!==undefined)next[k]=meta[k]; }); }
-        return next;
-      })}))}))}));
-      supplyEditMid=null; render();
+      if(prod){ ["packPer","packBase","sheetM2","lenPer","url"].forEach(function(k){ if(prod[k]!=null)meta[k]=prod[k]; }); }
+      // Замена товара — только когда имя реально сменилось НА позицию каталога. Правка
+      // опечатки в названии заменой не считается: снимать с неё отметки закупки не за что.
+      const replacedIds=prod?ids.filter(function(id){ return (supplyFindMat(id).n||"")!==nm; }):[];
+      const markedIds=replacedIds.filter(function(id){ const st=matStatus(supplyFindMat(id)); return st.bought>0||st.got>0; });
+      if(markedIds.length&&!confirm("По "+markedIds.length+" поз. уже отмечена закупка.\n\nЗаменить на «"+nm+"»? Отметки «куплено» и «принято» будут сняты, деньги в партиях останутся."))return;
+      objects=objects.map(o=>({...o,stages:(o.stages||[]).map(s=>({...s,works:(s.works||[]).map(function(w){
+        if(!(w.mats||[]).some(function(m){return ids.indexOf(m.id)>=0;}))return w;
+        const nw=Object.assign({},w,{mats:(w.mats||[]).map(function(m){
+          if(ids.indexOf(m.id)<0)return m;
+          const next=Object.assign({},m,patch,{qty:qtyById[m.id]});
+          // Меняем товар — старая фасовка/ссылка от предшественника должны уйти.
+          if(replacedIds.indexOf(m.id)>=0){
+            ["packPer","packBase","sheetM2","lenPer","url"].forEach(function(k){ delete next[k]; });
+            Object.keys(meta).forEach(function(k){ next[k]=meta[k]; });
+          }
+          return next;
+        })});
+        // w.cost в портале всегда равен сумме материалов (так их собирает _tplEstWork):
+        // после правки цены или количества его надо пересчитать здесь, иначе смета
+        // объекта разъедется с закупкой до ближайшей перезагрузки панели.
+        nw.cost=wMatTotal(nw);
+        return nw;
+      })}))}));
+      supplyClearMarks(replacedIds);
+      supplyEditMid=null; supplyEditIds=[]; fl();
     };}
     // Удаление материала из закупки. Помимо самой строки чистим отметки
     // «куплено» и «принято на склад» — иначе в purchased/arrived копятся ключи
     // несуществующих материалов, и они попадают в счётчики при совпадении id.
     else if(a==="supply-mat-del"){el.onclick=()=>{
-      const mid=el.dataset.mid; if(!mid)return;
-      const mat=supplyFindMat(mid); if(!mat)return;
-      if(!confirm("Удалить «"+(mat.n||"материал")+"» из закупки?\n\nОн исчезнет из объекта и из приёмки у мастера. Это действие необратимо."))return;
-      if(!supplyRemoveMat(mid))return;
-      supplyEditMid=null; fl();
+      const ids=(el.dataset.ids||el.dataset.mid||"").split(",").filter(function(id){return !!supplyFindMat(id);});
+      if(!ids.length)return;
+      const nm=(supplyFindMat(ids[0])||{}).n||"материал";
+      const what=ids.length>1?("«"+nm+"» из закупки ("+ids.length+" поз.)"):("«"+nm+"» из закупки");
+      if(!confirm("Удалить "+what+"?\n\nМатериал исчезнет из объекта и из приёмки у мастера. Это действие необратимо."))return;
+      let ok=false;
+      ids.forEach(function(id){ if(supplyRemoveMat(id))ok=true; });
+      if(!ok)return;
+      supplyEditMid=null; supplyEditIds=[]; fl();
     };}
     else if(a==="supply-add-open"){el.onclick=()=>{supplyAddOpen=true;supplyAddSearch="";supplyAddDone=[];render();};}
     else if(a==="supply-add-close"){el.onclick=()=>{supplyAddOpen=false;supplyAddSearch="";supplyAddDone=[];render();};}
