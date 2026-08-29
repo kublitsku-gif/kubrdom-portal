@@ -989,6 +989,17 @@ function matUnitSelect(cls,sel){
 // Материал продаётся упаковками? (задан коэффициент м² в упаковке)
 function matSoldByPack(m){return !!(m&&m.packM2!=null&&!isNaN(m.packM2)&&Number(m.packM2)>0);}
 // Переключатель единиц для материала базы (адаптер к expConv): цена за единицу = m.cost
+// Материал работы из товара каталога: цена, единица и магазин берутся из базы,
+// а количество, заметка и разбивка по хлыстам — это потребность работы, она не
+// зависит от того, каким товаром её закрыли. id сохраняется — на нём висят отметки
+// закупки и ссылка из партии (needId).
+function matFromProduct(m, prod){
+  const next={ id:m.id, n:prod.name, cost:Number(prod.unitCost)||0,
+    qty:m.qty||1, store:prod.store||"", note:m.note||"" };
+  if(m.breakdown)next.breakdown=m.breakdown;
+  ["mode","packPer","packBase","sheetM2","lenPer","url"].forEach(function(k){ if(prod[k])next[k]=prod[k]; });
+  return next;
+}
 function matConv(m){
   return expConv({mode:m&&m.mode,unitCost:Number(m&&m.cost)||0,packBase:m&&m.packBase,packPer:m&&m.packPer,sheetM2:m&&m.sheetM2,lenPer:m&&m.lenPer});
 }
@@ -1947,6 +1958,9 @@ let supplyGroupOpen={}; // снабжение: {"stage|Имя"|"store|Имя": b
 let supplyStoreFilter=''; // фильтр по магазину
 let supplyHideDone=false; // показывать только не купленное
 let supplyArchOpen=false; // список выбора: раскрыта ли свёртка «Архив» (завершённые объекты)
+// Структура затрат свёрнута по умолчанию: снабженцу в первую очередь нужен список
+// закупки, а разбивка по магазинам и этапам — справка, за которой лезут осознанно.
+let supplyCostOpen=false;
 let templatesOpen=false;  // раскрыта ли секция «Шаблоны объектов» под списком объектов
 let dbEditWork=null,dbEditMat=null,dbDragWork=null,dbDragMat=null; // "works" | "mats"
 let showNDBWork=false,showNDBMat=null; // showNDBMat = work id
@@ -1966,6 +1980,8 @@ let newDBWork={n:"",cost:""};
 let newDBMat={n:"",cost:"",store:""};
 let showNObjStageTid="",newObjStage={n:"",c:"#e67e22"};
 let showNObjWorkSid="",objMatModal=null;
+// id материала, для которого раскрыт выбор замены из базы (null = никакой)
+let objMatReplaceId=null;
 let objVideoUploading=null;   // id объекта, для которого сейчас грузится видео в Telegram
 const TG_CHAT_LINK="3606281018"; // chat_id -1003606281018 без префикса -100 (для ссылок t.me/c/)
 let nu={name:"",av:"👷",c:"#e67e22",roles:[],objs:[]};
@@ -5988,8 +6004,22 @@ ${objMatModal?`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);di
             ${m.cost>0?`<span style="font-size:11px;color:#7a9aaa">= <b style="color:#0d1b2e">${fmt((Number(m.cost)||0)*qty)}</b></span>`:""}
           </div>
         </div>
+        <button data-a="obj-mat-replace-open" data-mid="${m.id}" title="Заменить материал из базы" style="width:24px;height:24px;background:${objMatReplaceId===m.id?"#2980b9":"transparent"};border:1px solid #2980b955;border-radius:5px;cursor:pointer;color:${objMatReplaceId===m.id?"#fff":"#2980b9"};font-size:11px;flex-shrink:0">⇄</button>
         <button data-a="obj-del-mat" data-oid="${objMatModal.oid}" data-wid="${objMatModal.wid}" data-mid="${m.id}" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>
       </div>
+      ${objMatReplaceId===m.id?(()=>{
+        // Заменяем на товар из каталога: цена, единица, магазин и ссылка подтянутся сами —
+        // ровно как при добавлении, чтобы не перебивать характеристики руками.
+        const st=matStatus(m), touched=st.bought>0||st.got>0;
+        return `<div style="margin-top:7px;background:#eaf1f8;border:1px solid #2980b944;border-radius:9px;padding:9px 10px">
+          <div style="font-size:9px;font-weight:800;color:#2980b9;letter-spacing:0.3px;margin-bottom:5px">⇄ ЗАМЕНИТЬ НА МАТЕРИАЛ ИЗ БАЗЫ</div>
+          ${touched?`<div style="font-size:10px;color:#b8791a;background:#fdf3e3;border:1px solid #e0a32e55;border-radius:6px;padding:5px 7px;margin-bottom:6px;line-height:1.35">⚠ По этой позиции уже есть закупка (${st.bought>0?"куплено "+numRu(st.bought):""}${st.got>0?(st.bought>0?", ":"")+"принято "+numRu(st.got):""}). При замене отметки закупки сбросятся — это другой товар.</div>`:""}
+          <input id="omr-n-${m.id}" list="opm-catalog" autocomplete="off" placeholder="Начните вводить название из базы…" style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;margin-bottom:6px;outline:none;box-sizing:border-box">
+          <div style="display:flex;gap:6px">
+            <button data-a="obj-mat-replace-do" data-oid="${objMatModal.oid}" data-wid="${objMatModal.wid}" data-mid="${m.id}" style="flex:1;padding:8px;background:#2980b9;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Заменить</button>
+            <button data-a="obj-mat-replace-open" data-mid="" style="padding:8px 14px;background:#fff;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;color:#7a9aaa;font-size:12px">Отмена</button>
+          </div>
+        </div>`;})():""}
       ${conv?`<div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap">
         <div style="display:inline-flex;background:#e9eef4;border-radius:20px;padding:2px">
           <button data-a="objmat-view" data-mid="${m.id}" data-v="0" style="border:none;cursor:pointer;font-size:10px;font-weight:700;padding:3px 9px;border-radius:18px;${idx===0?on:off}">${conv.views[0].unit}</button>
@@ -11025,13 +11055,17 @@ function tSupplyDetail(sel, sortBy){
     function(m){return m.sn||"Без этапа";},
     function(m){return m.sc||"#7f8c8d";});
   if(_byStore.length>1||_byStage.length>1){
-    html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:14px">'+
-      '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px">'+
-        '<span style="font-size:12px;font-weight:700;color:#1a2a3a">📊 Структура затрат</span>'+
-        '<span style="font-size:14px;font-weight:800;color:#0d1b2e">'+Math.round(totalCost).toLocaleString("ru-RU")+' ₽</span>'+
+    const _co=supplyCostOpen;
+    html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:'+(_co?'12px 14px':'10px 14px')+';margin-bottom:14px">'+
+      '<div data-a="supply-cost-toggle" style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none'+(_co?';margin-bottom:10px':'')+'">'+
+        '<span style="font-size:12px;font-weight:700;color:#1a2a3a;flex:1;min-width:0">📊 Структура затрат</span>'+
+        '<span style="font-size:14px;font-weight:800;color:#0d1b2e;white-space:nowrap">'+Math.round(totalCost).toLocaleString("ru-RU")+' ₽</span>'+
+        '<span style="font-size:10px;color:#c4cdd8;flex-shrink:0;display:inline-block;transition:transform 0.15s;transform:rotate('+(_co?"90":"0")+'deg)">▶</span>'+
       '</div>'+
-      supplyCostSection("🏪 ПО МАГАЗИНАМ · тап — фильтр списка",_byStore,totalCost,true)+
-      (_byStage.length>1?'<div style="height:12px"></div>'+supplyCostSection("📋 ПО ЭТАПАМ",_byStage,totalCost,false):'')+
+      (_co?
+        supplyCostSection("🏪 ПО МАГАЗИНАМ · тап — фильтр списка",_byStore,totalCost,true)+
+        (_byStage.length>1?'<div style="height:12px"></div>'+supplyCostSection("📋 ПО ЭТАПАМ",_byStage,totalCost,false):'')
+      :'')+
     '</div>';
   }
 
@@ -14851,6 +14885,7 @@ function bind(){
     else if(a==="obj-sec-toggle"){el.onclick=()=>{objSecOpen[el.dataset.k]=el.dataset.open!=="1";render();};}
     // data-open несёт фактическое состояние: свёртка могла раскрыться сама (выбран архивный объект)
     else if(a==="supply-arch-toggle"){el.onclick=()=>{supplyArchOpen=el.dataset.open!=="1";render();};}
+    else if(a==="supply-cost-toggle"){el.onclick=()=>{supplyCostOpen=!supplyCostOpen;rerenderTab();};}
     else if(a==="obj-arch-toggle"){el.onclick=()=>{objArchOpen=el.dataset.open!=="1";render();};}
     else if(a==="receive-filter"){el.onclick=()=>{receiveOnlyLeft=el.dataset.v==="left";render();};}
     else if(a==="supply-view"){el.onclick=()=>{window._supplyViewing=true;render();};}
@@ -17255,6 +17290,45 @@ function bind(){
       const qty=(isFinite(q)&&q>0)?q:1;
       objects=objects.map(o=>o.id===oid?{...o,stages:o.stages.map(s=>({...s,works:s.works.map(w=>w.id===wid?{...w,mats:(w.mats||[]).map(m=>m.id===mid?{...m,qty:qty}:m)}:w)}))}:o);
       render();
+    };}
+    else if(a==="obj-mat-replace-open"){el.onclick=()=>{
+      const mid=el.dataset.mid||"";
+      objMatReplaceId=(objMatReplaceId===mid||!mid)?null:mid;
+      render();
+    };}
+    // Замена материала на товар из каталога. id позиции СОХРАНЯЕМ: на него завязаны
+    // отметки закупки и ссылка из партии (needId). Но сами отметки сбрасываем —
+    // это уже другой товар, и «куплено» от предшественника было бы враньём.
+    else if(a==="obj-mat-replace-do"){el.onclick=()=>{
+      const {oid,wid,mid}=el.dataset;
+      const inp=document.getElementById("omr-n-"+mid);
+      const n=(inp&&inp.value||"").trim();
+      if(!n){ alert("Выберите материал из базы."); return; }
+      const prod=(typeof expProducts!=="undefined")?expProducts.find(p=>p.name===n):null;
+      if(!prod){ alert("«"+n+"» нет в базе материалов.\n\nВыберите товар из списка — тогда подтянутся цена, единица и магазин. Если товара ещё нет, заведите его в «База данных → Материалы»."); return; }
+      const o0=objects.find(x=>x.id===oid);
+      const w0=o0&&o0.stages.flatMap(s=>s.works).find(w=>w.id===wid);
+      const m0=w0&&(w0.mats||[]).find(m=>m.id===mid);
+      if(!m0)return;
+      const st=matStatus(m0);
+      if((st.bought>0||st.got>0)&&!confirm("По позиции «"+(m0.n||"")+"» уже отмечена закупка.\n\nЗаменить на «"+prod.name+"»? Отметки «куплено» и «принято» будут сняты."))return;
+      objects=objects.map(function(o){
+        if(o.id!==oid)return o;
+        return Object.assign({},o,{stages:o.stages.map(function(s){
+          return Object.assign({},s,{works:s.works.map(function(w){
+            if(w.id!==wid)return w;
+            return Object.assign({},w,{mats:(w.mats||[]).map(function(m){
+              if(m.id!==mid)return m;
+              return matFromProduct(m,prod);
+            })});
+          })});
+        })});
+      });
+      // Сбрасываем легаси-отметки: новый товар не может быть куплен задним числом.
+      if(purchased[mid]){ purchased=Object.assign({},purchased); delete purchased[mid]; }
+      if(arrived[mid]){ arrived=Object.assign({},arrived); delete arrived[mid]; }
+      objMatReplaceId=null;
+      fl();
     };}
     else if(a==="obj-add-mat"){el.onclick=()=>{
       if(!objMatModal)return;
