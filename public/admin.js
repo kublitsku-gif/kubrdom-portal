@@ -4086,6 +4086,23 @@ function render(){
   // Always rebind client pickers after any render
   if(window._ctBindPickers)setTimeout(window._ctBindPickers,0);
   if(window._bindMoneyInputs)window._bindMoneyInputs();
+  // Выбор товара из базы в редакторе материала (Снабжение): как только название
+  // совпало с каталогом — подставляем цену, единицу и магазин, не дожидаясь
+  // «Сохранить». Правки после подстановки не трогаем: человек мог поправить цену.
+  const _semN=document.getElementById("sem-n");
+  if(_semN&&!_semN._catBound){
+    _semN._catBound=true;
+    const _fill=function(){
+      const nm=(_semN.value||"").trim();
+      const pr=(typeof expProducts!=="undefined")?expProducts.find(function(x){return x.name===nm;}):null;
+      if(!pr)return;
+      const c=document.getElementById("sem-cost"); if(c)c.value=Number(pr.unitCost)||0;
+      const st=document.getElementById("sem-store"); if(st)st.value=pr.store||"";
+      const md=document.getElementById("sem-mode"); if(md&&pr.mode)md.value=pr.mode;
+    };
+    _semN.addEventListener("input",_fill);
+    _semN.addEventListener("change",_fill);
+  }
   // Поиск материала в сборщике шаблона: держим фокус, чтобы не закрывалась клавиатура
   const _tps=document.getElementById("tpl-pick-search");
   if(_tps){ _tps.oninput=function(){tplPickSearch=this.value;render();}; _tps.focus(); const _L=_tps.value.length; try{_tps.setSelectionRange(_L,_L);}catch(e){} }
@@ -11292,7 +11309,9 @@ function tSupplyDetail(sel, sortBy){
             '<div style="font-size:15px;font-weight:700;color:#0d1b2e">✏️ Материал</div>'+
             '<button data-a="supply-mat-close" style="width:30px;height:30px;border-radius:50%;background:#f0f4f8;border:none;cursor:pointer;font-size:16px">✕</button>'+
           '</div>'+
-          '<input id="sem-n" value="'+(em.n||"").replace(/"/g,"&quot;")+'" placeholder="Название" style="'+inp+';margin-bottom:8px">'+
+          '<input id="sem-n" list="sem-catalog" autocomplete="off" value="'+(em.n||"").replace(/"/g,"&quot;")+'" placeholder="Название — или выберите из базы" style="'+inp+';margin-bottom:2px">'+
+          '<datalist id="sem-catalog">'+(typeof expProducts!=="undefined"?expProducts:[]).map(function(pr){return '<option value="'+esc(pr.name).replace(/"/g,"&quot;")+'"></option>';}).join("")+'</datalist>'+
+          '<div style="font-size:10px;color:#a0b4c8;margin:0 0 8px 2px">Выберите товар из базы — цена, единица и магазин подставятся сами</div>'+
           '<div style="display:flex;gap:8px;margin-bottom:8px">'+
             '<select id="sem-mode" style="'+inp+';flex:1">'+opts+'</select>'+
             '<input id="sem-qty" type="number" step="any" value="'+(em.qty||1)+'" placeholder="Кол-во" style="'+inp+';flex:1">'+
@@ -14990,15 +15009,31 @@ function bind(){
     else if(a==="supply-mat-close"){el.onclick=()=>{supplyEditMid=null;render();};}
     else if(a==="supply-mat-save"){el.onclick=()=>{
       const mid=supplyEditMid; if(!mid)return;
+      const nm=(document.getElementById("sem-n")?.value||"").trim();
       const patch={
-        n:(document.getElementById("sem-n")?.value||"").trim(),
+        n:nm,
         mode:document.getElementById("sem-mode")?.value||"piece",
         qty:parseFloat(document.getElementById("sem-qty")?.value)||0,
         cost:parseInt(document.getElementById("sem-cost")?.value)||0,
         store:(document.getElementById("sem-store")?.value||"").trim(),
         note:(document.getElementById("sem-note")?.value||"").trim(),
       };
-      objects=objects.map(o=>({...o,stages:(o.stages||[]).map(s=>({...s,works:(s.works||[]).map(w=>({...w,mats:(w.mats||[]).map(m=>m.id===mid?{...m,...patch}:m)}))}))}));
+      // Название совпало с товаром базы — переносим и то, чего в форме нет:
+      // фасовку, ссылку. Без этого «упаковка 1.362 м²» потерялась бы при замене,
+      // и пересчёт цены за единицу поехал бы.
+      const prod=(typeof expProducts!=="undefined")?expProducts.find(function(x){return x.name===nm;}):null;
+      const meta={};
+      if(prod){
+        ["packPer","packBase","sheetM2","lenPer","url"].forEach(function(k){ meta[k]=prod[k]!=null?prod[k]:undefined; });
+      }
+      objects=objects.map(o=>({...o,stages:(o.stages||[]).map(s=>({...s,works:(s.works||[]).map(w=>({...w,mats:(w.mats||[]).map(function(m){
+        if(m.id!==mid)return m;
+        const next=Object.assign({},m,patch);
+        // Меняем товар — старая фасовка/ссылка от предшественника должны уйти.
+        if(prod){ ["packPer","packBase","sheetM2","lenPer","url"].forEach(function(k){ delete next[k]; });
+                  Object.keys(meta).forEach(function(k){ if(meta[k]!==undefined)next[k]=meta[k]; }); }
+        return next;
+      })}))}))}));
       supplyEditMid=null; render();
     };}
     // Удаление материала из закупки. Помимо самой строки чистим отметки
