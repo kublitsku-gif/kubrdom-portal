@@ -5,8 +5,25 @@ on:
     branches: [main]
 
 jobs:
+  # Ворота деплоя: смоук-наборы портала (tools/test-*.mjs) идут пару секунд, а пуш в main
+  # выкатывает ПРОД с живыми деньгами и бригадами на объектах. Оба деплой-job'а ждут этот,
+  # поэтому упавший тест останавливает выкат целиком, а не одну его половину.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - run: npm install
+      - run: npm test
+
   # Фронтенд: Vite-сборка → Cloudflare Pages (проект kubrdom-portal)
   deploy-pages:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +47,7 @@ jobs:
   # Pages + Workers Scripts + R2 + D1. Секрет TG_BOT_TOKEN задан вручную и
   # сохраняется между деплоями (CI его не трогает).
   deploy-worker:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

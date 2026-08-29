@@ -14,7 +14,7 @@
     "test:supply": "node tools/test-supply-group.mjs",
     "test:mats": "node tools/test-material-link.mjs",
     "test:change": "node tools/test-mat-change.mjs",
-    "test": "npm run test:supply && npm run test:mats && npm run test:change"
+    "test": "node tools/run-tests.mjs"
   },
   "dependencies": {
     "react": "^19.2.6",

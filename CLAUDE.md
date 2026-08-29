@@ -54,7 +54,12 @@
 
 ## Тесты
 
-`npm test` — три смоук-набора поверх `tools/harness/panel-vm.js` (admin.js исполняется в `node:vm` с поддельным DOM, стейт синтетический): `test:supply` — групповая правка закупки, `test:mats` — связь с каталогом, `test:change` — заявка на замену. В CI пока не подключены (деплой их не ждёт) — гонять руками перед пушем в `main`.
+`npm test` (`tools/run-tests.mjs`) прогоняет ВСЕ наборы `tools/test-*.mjs` — каждый отдельным процессом, потому что панельные наборы держат общий стейт в `node:vm`. Новый файл `tools/test-*.mjs` подхватывается сам, правок в package.json и CI не нужно.
+
+- Панель (`tools/harness/panel-vm.js` — admin.js в `node:vm` с поддельным DOM, стейт синтетический): `test-supply-group` — групповая правка закупки, `test-material-link` — связь с каталогом, `test-mat-change` — заявка на замену.
+- Worker/бот (моки D1 и fetch): `test-botissue`, `test-issue-escalation`, `test-stt`, `test-ogg`.
+
+**CI гоняет их перед выкатом:** в `deploy.yml` есть job `test`, оба деплой-job'а стоят на `needs: test` — упавший тест останавливает выкат целиком. Всё равно гоняйте локально перед пушем в `main`: прогон ~2.5 с.
 
 ## История действий (вкладка «🕘 История»)
 
