@@ -41,6 +41,8 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Логика закупок — общая с ботом и Worker'ом (src/supply.js): статус материала должен
 // одинаково считаться в панели и в Telegram, иначе бригадир и снабженец увидят разное.
 import { needStatus, needState, objectSupply, migrateLegacy, needQty } from "../src/supply.js";
+// Сроки этапов — тот же общий модуль, что читают напоминания (см. src/stages.js).
+import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
 const APP_BUILD = "2026-08-29.1";
 
@@ -4414,6 +4416,43 @@ function stagePay(s){
   return (s&&s.works||[]).reduce((a,w)=>a+workPay(w),0);
 }
 function objPayFund(obj){ return (obj.stages||[]).reduce((a,s)=>a+stagePay(s),0); }
+
+// ─── СРОКИ ПО ЭТАПАМ ─────────────────────────────────────────────────────────
+// Дедлайн до этого жил только на договоре и на ответственном, поэтому «мы отстаём?»
+// портал отвечал в день, когда общий срок уже сорван. Этап — то, чем стройка меряется
+// на площадке, и план держим на нём: s.planStart / s.planEnd.
+//
+// Сама логика — в src/stages.js, общая с напоминаниями (как src/supply.js для закупок):
+// иначе панель и Telegram считали бы просрочку по-разному. Здесь только показ.
+function stageFact(s){ return _stageFact(s); }
+function stageSchedule(s){ return _stageSchedule(s, todayISO()); }
+function objWorstStage(obj){ return _objWorstStage(obj, todayISO()); }
+const STAGE_SCHED={
+  overdue:   {i:"⚠️", c:"#c0392b", bg:"#fdeeec"},
+  notStarted:{i:"⏳", c:"#c0392b", bg:"#fdeeec"},
+  soon:      {i:"🗓", c:"#c08a1e", bg:"#fbf3e2"},
+  go:        {i:"🗓", c:"#2980b9", bg:"#e9f1fa"},
+  lateDone:  {i:"✅", c:"#c08a1e", bg:"#fbf3e2"},
+  done:      {i:"✅", c:"#27ae60", bg:"#eafaf0"},
+};
+function ruDate(iso){ return iso?String(iso).slice(0,10).split("-").reverse().slice(0,2).join("."):""; }
+function stageSchedText(sc){
+  const d=function(n){ return n+" дн"; };
+  if(sc.state==="overdue")   return "просрочен на "+d(sc.days)+" · план до "+ruDate(sc.plan.end);
+  if(sc.state==="notStarted")return "не начат, а план с "+ruDate(sc.plan.start);
+  if(sc.state==="soon")      return sc.left>0?("осталось "+d(sc.left)+" · до "+ruDate(sc.plan.end)):("последний день · "+ruDate(sc.plan.end));
+  if(sc.state==="go")        return ruDate(sc.plan.start)+" → "+ruDate(sc.plan.end)+" · осталось "+d(sc.left);
+  if(sc.state==="lateDone")  return "закрыт с опозданием на "+d(sc.late);
+  if(sc.state==="done")      return sc.plan.end?("закрыт в срок · "+ruDate(sc.plan.end)):"закрыт";
+  return "";
+}
+// Плашка срока для шапки этапа. Пустая строка, если плана нет и показывать нечего.
+function stageSchedChip(s){
+  const sc=stageSchedule(s);
+  if(sc.state==="none")return "";
+  const st=STAGE_SCHED[sc.state]||STAGE_SCHED.go;
+  return '<span title="'+esc(stageSchedText(sc))+'" style="font-size:10px;font-weight:700;color:'+st.c+';background:'+st.bg+';border-radius:6px;padding:2px 8px;margin-right:6px;white-space:nowrap">'+st.i+' '+esc(stageSchedText(sc))+'</span>';
+}
 // Что из денег показывать человеку: цена клиента — только тем, кто ведёт финансы.
 // Рабочему она вредна: 31 000 ₽ в карточке работы читается как «мой заработок», хотя
 // в неё зашиты материалы и маржа, а бригаде причитается впятеро меньше.
@@ -4634,6 +4673,15 @@ function renderObjCard(obj, isAdmin){
         (calOverdue>0?'<span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;color:#e74c3c;background:#e74c3c15;border-radius:6px;padding:2px 8px">⚠️ Штраф: '+calFine.toLocaleString("ru-RU")+' ₽ ('+FINE_PER_DAY.toLocaleString("ru-RU")+' ₽/день)</span>':'')+
       '</div>';
     }
+  })();
+  // Худший по срокам этап — одной строкой. Дедлайн договора говорит про сдачу целиком,
+  // а стройка встаёт этапами, и «этап 2 просрочен на 4 дня» видно за месяц до срыва сдачи.
+  (function(){
+    const w=objWorstStage(obj);
+    if(!w)return;
+    const st=STAGE_SCHED[w.sc.state]||STAGE_SCHED.go;
+    html+='<div style="margin-top:5px"><span style="display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;color:'+st.c+';background:'+st.bg+';border-radius:6px;padding:2px 8px">'+
+      st.i+' '+esc(w.stage.n||"Этап")+': '+esc(stageSchedText(w.sc))+'</span></div>';
   })();
   html+='</div>';
   html+='<button data-a="open-obj" data-oid="'+obj.id+'" style="padding:7px 14px;background:#e8f0fa;border:1px solid #4a7ac844;border-radius:8px;cursor:pointer;font-size:12px;color:#2a5298;font-weight:600;flex-shrink:0;white-space:nowrap">✏️ Открыть</button>';
@@ -5846,6 +5894,7 @@ ${obj.stages.map(s=>{
   <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:linear-gradient(135deg,${s.c}15,${s.c}03),#fff;border-bottom:1px solid ${s.c}22;border-radius:11px 11px 0 0;position:sticky;top:var(--stagetop,110px);z-index:5">
     <div style="width:8px;height:8px;border-radius:50%;background:${s.c}"></div>
     <span style="font-size:13px;font-weight:700;color:#1a2a3a;flex:1">${esc(s.n)}</span>
+    ${stageSchedChip(s)}
     ${(()=>{const sm=s.works.flatMap(w=>w.mats||[]);const st=getMatStatus(sm);return st?`<span style="font-size:10px;font-weight:700;color:${st.color};background:${st.bg};border-radius:6px;padding:2px 8px;margin-right:6px">${st.label} ${st.done}/${st.total}</span>`:"";})()}
     ${(()=>{
       const cnt=_q?(_vw.length+" из "+s.works.length):s.works.length;
@@ -5860,6 +5909,13 @@ ${obj.stages.map(s=>{
     ${isAdmin&&_objEdit&&objWorkView==="money"?`<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#8e44ad;font-weight:700;margin-right:8px">👷<input data-a="obj-stage-pay" data-oid="${obj.id}" data-sid="${s.id}" value="${stagePay(s)||""}" inputmode="numeric" placeholder="0" style="width:82px;padding:3px 6px;border:1px solid #8e44ad55;border-radius:6px;font-size:11px;font-weight:700;color:#8e44ad;outline:none;text-align:right">₽</span>`:""}
     ${isAdmin&&_objEdit?`<button data-a="obj-del-stage" data-oid="${obj.id}" data-sid="${s.id}" style="padding:2px 7px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;font-size:10px;color:#e74c3c">✕</button>`:""}
   </div>
+  ${isAdmin&&_objEdit?`<div style="display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid ${s.c}22;background:#fbfcfe;flex-wrap:wrap">
+    <span style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.4px">ПЛАН ЭТАПА</span>
+    <input data-a="obj-stage-plan" data-oid="${obj.id}" data-sid="${s.id}" data-f="start" type="date" value="${s.planStart||""}" style="padding:5px 8px;border:1px solid #d0dae8;border-radius:7px;font-size:12px;outline:none;color:#5a7a9a">
+    <span style="font-size:11px;color:#9aabbf">→</span>
+    <input data-a="obj-stage-plan" data-oid="${obj.id}" data-sid="${s.id}" data-f="end" type="date" value="${s.planEnd||""}" style="padding:5px 8px;border:1px solid #d0dae8;border-radius:7px;font-size:12px;outline:none;color:#5a7a9a">
+    ${(()=>{const f=stageFact(s);return f.start?`<span style="font-size:10.5px;color:#7a9aaa">факт: ${ruDate(f.start)}${f.end?" → "+ruDate(f.end):" → идёт"}</span>`:`<span style="font-size:10.5px;color:#9aabbf">факта пока нет</span>`;})()}
+  </div>`:""}
   <div style="padding:8px 12px">
     ${(()=>{const _ri=(w)=>{
       const logs=w.timeLogs||[];
@@ -17088,6 +17144,23 @@ function bind(){
       rerenderTab();
     };}
     // Удаление этапа уносит ВСЕ работы внутри — показываем в подтверждении, что именно теряем.
+    // План этапа. Пишем по change (не по каждому нажатию): нативный date-инпут отдаёт
+    // input на каждую цифру года, и перерисовка выбивала бы календарь из-под пальца.
+    else if(a==="obj-stage-plan"){el.onchange=()=>{
+      const {oid,sid,f}=el.dataset;
+      const v=String(el.value||"").slice(0,10);
+      const field=f==="start"?"planStart":"planEnd";
+      objects=objects.map(function(o){
+        if(o.id!==oid)return o;
+        return Object.assign({},o,{stages:(o.stages||[]).map(function(st){
+          if(st.id!==sid)return st;
+          const ns=Object.assign({},st);
+          if(v)ns[field]=v; else delete ns[field];
+          return ns;
+        })});
+      });
+      fl();
+    };}
     else if(a==="obj-del-stage"){el.onclick=()=>{
       if(!currentUser||!currentUser.roles.includes("admin"))return;
       const oid=el.dataset.oid,sid=el.dataset.sid;

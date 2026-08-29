@@ -6,6 +6,7 @@
 // напоминании должна совпадать с тем, что человек видит в карточке объекта.
 
 import { ensureNotifyTables, sendTg, defaultPrefs, escapeHtml } from "./notify.js";
+import { stagesNeedingAttention } from "./stages.js";
 
 const MSK_OFFSET_MS = 3 * 3600 * 1000;
 const FINE_PER_DAY = 2000;
@@ -152,6 +153,46 @@ async function runDeadlines(env, st, today) {
     for (const p of boss) {
       const digest = "📋 <b>Дедлайны производства</b>\n" + lines.join("\n") + linkTo(env, "#tab=assign", "Открыть объекты");
       if (await sendOnce(env, p, "deadline", "digest:" + today, digest)) sent++;
+    }
+  }
+  return sent;
+}
+
+// ─── 1б. Сроки этапов ────────────────────────────────────────────────────────
+// Дедлайн договора говорит про сдачу целиком и загорается, когда всё уже сорвано.
+// Этап — то, чем стройка меряется на площадке: «этап 2 просрочен на 4 дня» видно
+// за месяц до срыва сдачи. Состояние считает общий модуль (src/stages.js) — тот же,
+// что рисует плашку в панели, иначе чат и экран разошлись бы.
+async function runStages(env, st, today) {
+  const hot = stagesNeedingAttention(st.objects || [], today);
+  if (!hot.length) return 0;
+  const people = await audience(env, st.users || [], "deadline");
+  if (!people.length) return 0;
+  let sent = 0;
+
+  const line = function (x) {
+    const nm = escapeHtml(x.obj.name || "объект") + " · " + escapeHtml(x.stage.n || "этап");
+    if (x.sc.state === "overdue") return "🔴 " + nm + " — просрочен на " + x.sc.days + " раб. дн (план до " + x.sc.plan.end + ")";
+    if (x.sc.state === "notStarted") return "🟠 " + nm + " — не начат, план с " + x.sc.plan.start;
+    return "🟡 " + nm + " — осталось " + x.sc.left + " раб. дн (до " + x.sc.plan.end + ")";
+  };
+
+  // Тем, кто ведёт объект, — про их объекты; руководству — сводка по всем.
+  for (const x of hot) {
+    const team = objTeam(st, x.obj.id);
+    for (const p of people) {
+      if (!team.has(p.uid)) continue;
+      const text = "🗓 <b>Срок этапа</b>\n" + line(x) + linkTo(env, "#obj=" + x.obj.id, "Открыть объект");
+      if (await sendOnce(env, p, "deadline", "stage:" + x.stage.id + ":" + x.sc.state + ":" + today, text)) sent++;
+    }
+  }
+  const boss = people.filter(function (p) { return !isProd(p.user) || (p.user.roles || []).indexOf("prod_head") >= 0; });
+  if (boss.length) {
+    const digest = "🗓 <b>Этапы по срокам</b>\n" + hot.slice(0, 10).map(line).join("\n")
+      + (hot.length > 10 ? "\n… и ещё " + (hot.length - 10) : "")
+      + linkTo(env, "#tab=assign", "Открыть объекты");
+    for (const p of boss) {
+      if (await sendOnce(env, p, "deadline", "stages:digest:" + today, digest)) sent++;
     }
   }
   return sent;
@@ -434,6 +475,7 @@ export async function runReminders(env, cronExpr, diag) {
   let sent = 0;
   if (cronExpr === "0 6 * * *") {                    // 09:00 МСК — утро
     sent += await runDeadlines(env, st, today);
+    sent += await runStages(env, st, today);
     sent += await runSupply(env, st, today);
     sent += await runIssues(env, st, today);
     sent += await runFinance(env, st);
