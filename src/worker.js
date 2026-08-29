@@ -93,24 +93,114 @@ async function resolveAuth(env, request) {
 }
 // POST /api/login { userId?|phone?, pin } → персональный токен с зашитыми правами. Без токена (сотрудник его и получает).
 // Вход по телефону: клиент шлёт телефон+PIN, сервер сам находит сотрудника — публичный список не нужен.
+// ─── ЗАЩИТА ВХОДА ОТ ПЕРЕБОРА ────────────────────────────────────────────────
+// PIN — четыре цифры, а /api/login и /api/client-login открыты без авторизации: без
+// счётчика попыток перебор это минуты скриптом, а на выходе договор, суммы и планировки
+// клиента. Считаем по ДВУМ ключам: личность (телефон/договор) защищает конкретный вход,
+// адрес гасит веерный перебор по многим личностям с одной машины. Порог по адресу выше:
+// бригада на объекте сидит за общим мобильным NAT, и опечатки коллег не должны закрывать
+// вход всем сразу.
+const LOGIN_MAX_ID = 5;                       // неудач по личности → блок
+const LOGIN_MAX_IP = 25;                      // неудач по адресу → блок
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;       // окно, за которое они копятся
+const LOGIN_BLOCK_MS = 15 * 60 * 1000;        // на сколько закрываем вход
+const LOGIN_FAIL_DELAY_MS = 400;              // пауза на КАЖДУЮ неудачу: ниже порога тоже тормозит
+
+async function ensureLoginGuard(env) {
+  await env.DB.prepare(
+    "CREATE TABLE IF NOT EXISTS login_guard (k TEXT PRIMARY KEY, fails INTEGER NOT NULL,"
+    + " first_ts INTEGER NOT NULL, until INTEGER NOT NULL DEFAULT 0)"
+  ).run();
+}
+// Ключи попытки: личность и адрес. Личность нормализуем так же, как при поиске сотрудника
+// (последние 10 цифр), иначе «+7 926…» и «8926…» считались бы разными попытками.
+function loginKeys(request, ident) {
+  const ip = request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "";
+  const keys = [];
+  if (ident) keys.push({ k: "id:" + ident, max: LOGIN_MAX_ID });
+  if (ip) keys.push({ k: "ip:" + ip.split(",")[0].trim(), max: LOGIN_MAX_IP });
+  return keys;
+}
+// Открыт ли вход. Возвращает секунды до разблокировки или 0.
+// Ошибка базы = ПРОПУСКАЕМ (fail-open): сбой D1 не должен запирать всю компанию снаружи
+// портала. Риск осознанный — перебор требует ещё и одновременной поломки базы.
+async function loginBlockedFor(env, keys) {
+  if (!keys.length) return 0;
+  try {
+    await ensureLoginGuard(env);
+    const rows = await env.DB.prepare(
+      "SELECT k, until FROM login_guard WHERE k IN (" + keys.map(function () { return "?"; }).join(",") + ")"
+    ).bind(...keys.map(function (x) { return x.k; })).all();
+    const now = Date.now();
+    let until = 0;
+    for (const r of (rows.results || [])) if (Number(r.until) > until) until = Number(r.until);
+    return until > now ? Math.ceil((until - now) / 1000) : 0;
+  } catch (e) { return 0; }
+}
+// Неудачная попытка. Счётчик и окно двигаются одним UPSERT'ом на ключ: между чтением и
+// записью иначе оставалось бы окно, в которое параллельные попытки не считаются.
+async function loginNoteFail(env, keys) {
+  if (!keys.length) return;
+  try {
+    await ensureLoginGuard(env);
+    const now = Date.now(), from = now - LOGIN_WINDOW_MS, until = now + LOGIN_BLOCK_MS;
+    const stmt = env.DB.prepare(
+      "INSERT INTO login_guard (k, fails, first_ts, until) VALUES (?, 1, ?, 0)"
+      + " ON CONFLICT(k) DO UPDATE SET"
+      + "   fails = CASE WHEN login_guard.first_ts < ?2 THEN 1 ELSE login_guard.fails + 1 END,"
+      + "   first_ts = CASE WHEN login_guard.first_ts < ?2 THEN ?3 ELSE login_guard.first_ts END,"
+      + "   until = CASE WHEN (CASE WHEN login_guard.first_ts < ?2 THEN 1 ELSE login_guard.fails + 1 END) >= ?4"
+      + "           THEN ?5 ELSE login_guard.until END"
+    );
+    await env.DB.batch(keys.map(function (x) { return stmt.bind(x.k, from, now, x.max, until, now); }));
+  } catch (e) { /* см. loginBlockedFor: сбой базы не запирает вход */ }
+}
+// Успешный вход обнуляет счётчики: человек вспомнил PIN, и следующая опечатка не должна
+// попадать в хвост старой серии.
+async function loginNoteOk(env, keys) {
+  if (!keys.length) return;
+  try {
+    await env.DB.prepare(
+      "DELETE FROM login_guard WHERE k IN (" + keys.map(function () { return "?"; }).join(",") + ")"
+    ).bind(...keys.map(function (x) { return x.k; })).run();
+  } catch (e) {}
+}
+function loginBlockedJson(secs) {
+  const mins = Math.max(1, Math.ceil(secs / 60));
+  return json({ success: false, error: "Слишком много попыток входа. Попробуйте через " + mins + " мин." }, 429);
+}
+// Пауза на неудачу — тормозит перебор ещё до порога и почти не заметна человеку.
+function loginPause() { return new Promise(function (r) { setTimeout(r, LOGIN_FAIL_DELAY_MS); }); }
+
 async function loginUser(env, request) {
   let body; try { body = await request.json(); } catch { return json({ success: false, error: "bad json" }, 400); }
   const userId = String((body && body.userId) || "");
   const phone = String((body && body.phone) || "");
   const pin = String((body && body.pin) || "");
   if ((!userId && !phone) || !pin) return json({ success: false, error: "need userId/phone + pin" }, 400);
+  const norm = function (s) { return String(s || "").replace(/\D/g, "").slice(-10); };
+  const keys = loginKeys(request, userId || norm(phone));
+  const blocked = await loginBlockedFor(env, keys);
+  if (blocked) return loginBlockedJson(blocked);
   const rows = await env.DB.prepare("SELECT work_id, data FROM work_states WHERE storage_key='admin_panel' AND work_id IN ('users','rolePermissions')").all();
   let users = [], rolePerms = {};
   for (const r of rows.results) {
     try { const d = JSON.parse(r.data); if (r.work_id === "users") users = d || []; else rolePerms = d || {}; } catch {}
   }
-  const norm = function (s) { return String(s || "").replace(/\D/g, "").slice(-10); };
   const u = userId
     ? users.find(function (x) { return x && x.id === userId; })
     : users.find(function (x) { return x && x.phone && norm(x.phone) === norm(phone) && norm(phone).length >= 10; });
-  if (!u) return json({ success: false, error: "Сотрудник не найден" }, 401);
+  // Единый текст на «нет такого телефона» и «PIN не тот»: раздельные ответы позволяли
+  // ПЕРЕБИРАТЬ ТЕЛЕФОНЫ, не зная ни одного PIN, — узнать, кто вообще работает в компании.
+  const bad = async function () {
+    await loginNoteFail(env, keys);
+    await loginPause();
+    return json({ success: false, error: "Неверный телефон или PIN" }, 401);
+  };
+  if (!u) return await bad();
   const realPin = String(u.pin || "1111");
-  if (!safeEqual(pin, realPin)) return json({ success: false, error: "Неверный PIN" }, 401);
+  if (!safeEqual(pin, realPin)) return await bad();
+  await loginNoteOk(env, keys);
   const roles = u.roles || [];
   const adm = roles.indexOf("admin") >= 0;
   const fin = adm || roles.some(function (r) { return (rolePerms[r] || []).indexOf("finance") >= 0; });
@@ -194,6 +284,16 @@ async function clientLogin(env, request) {
   const query = String((body && body.query) || "").trim().toLowerCase();
   const pin = String((body && body.pin) || "").trim();
   if (!query || !pin) return json({ success: false, error: "need query+pin" }, 400);
+  const keys = loginKeys(request, "c:" + query);
+  const blocked = await loginBlockedFor(env, keys);
+  if (blocked) return loginBlockedJson(blocked);
+  // Единый текст: раздельные «договор не найден» / «неверный PIN» позволяли перебором
+  // имён выяснить, кто у компании в клиентах, вообще не зная ни одного PIN.
+  const bad = async function () {
+    await loginNoteFail(env, keys);
+    await loginPause();
+    return json({ success: false, error: "Договор не найден или неверный PIN" }, 401);
+  };
   const s = await readSnapshot(env, ["contractDocs", "crmClients"]);
   const contracts = s.contractDocs || [], crm = s.crmClients || [];
   const qd = query.replace(/\D/g, "");
@@ -203,12 +303,15 @@ async function clientLogin(env, request) {
     const ph = ((cm && cm.phone) ? cm.phone : "").replace(/\D/g, "");
     return nm.indexOf(query) >= 0 || cl.indexOf(query) >= 0 || (qd.length >= 4 && ph.indexOf(qd) >= 0);
   });
-  if (!c) return json({ success: false, error: "Договор не найден" }, 401);
+  if (!c) return await bad();
   const cm = crm.find(function (y) { return y.id === c.crmClientId; });
   const phoneLast4 = ((cm && cm.phone) ? cm.phone : "").replace(/\D/g, "").slice(-4);
   const realPin = (c.clientPin && c.clientPin.trim()) ? c.clientPin.trim() : phoneLast4;
+  // «PIN не задан» — не перебор, а незаконченная настройка: человеку нужно сказать, к кому
+  // идти, и в счётчик попыток это не пишем.
   if (!realPin) return json({ success: false, error: "PIN не задан. Обратитесь к менеджеру по сопровождению." }, 401);
-  if (!safeEqual(pin, realPin)) return json({ success: false, error: "Неверный PIN" }, 401);
+  if (!safeEqual(pin, realPin)) return await bad();
+  await loginNoteOk(env, keys);
   const token = await makeUserToken(env, { typ: "client", cid: c.id, exp: Date.now() + 30 * 24 * 3600 * 1000 });
   const slice = await buildClientSlice(env, c.id);
   return json({ success: true, token: token, cid: c.id, items: slice });
