@@ -18,6 +18,7 @@ import { sendTg, escapeHtml, MAIN_BTNS } from "./notify.js";
 import { objTeam } from "./reminders.js";
 import { logEvent } from "./audit.js";
 import { ensureTopic, copyToTopic, tgBase } from "./tgapi.js";
+import { transcribeVoice } from "./stt.js";
 
 export const ISSUE_BTN = "❓ Вопрос";
 const PAGE = 8;
@@ -207,15 +208,35 @@ export async function issueMedia(env, uid, chat, msg, roles) {
 
   const link = "https://t.me/c/" + String(env.TG_CHAT_ID || "").replace(/^-100/, "") + "/" + t.topicId + "/" + mid;
   const capText = typeof msg.caption === "string" ? msg.caption.trim() : "";
+
+  // Голосовое расшифровываем в текст: иначе вопрос не найти поиском и не показать
+  // в сводке. Подпись к сообщению, если она есть, важнее — её человек написал сам.
+  let voiceText = "", voiceWhy = "";
+  if (msg.voice && !capText) {
+    const tr = await transcribeVoice(env, msg.voice.file_id, msg.voice.duration);
+    if (tr.ok) voiceText = tr.text; else voiceWhy = tr.reason || "";
+  }
+
   const isNew = !d.iid;
-  const iid = await upsertIssue(env, uid, d, capText, link);
+  const iid = await upsertIssue(env, uid, d, capText || voiceText, link);
   await dlgSet(env, uid, Object.assign({}, d, { iid: iid }));
 
   if (isNew) {
-    await notifyIssue(env, uid, d, iid, capText || (msg.voice ? "(голосовое сообщение)" : "(фото)"));
+    const shown = capText || voiceText
+      || (msg.voice ? "(голосовое" + (voiceWhy ? ": " + voiceWhy : "") + ")" : "(фото)");
+    await notifyIssue(env, uid, d, iid, shown);
     await confirmToAuthor(env, chat, d, iid, st);
+    // Показываем автору, что именно записали с его слов: расшифровка бывает кривой,
+    // и поправить её проще сразу, пока он ещё в диалоге.
+    if (voiceText) await sendTg(env, chat, "🎤 Расшифровал: «" + escapeHtml(voiceText) + "»\n\n<i>Не то? Напишите текстом — допишется к вопросу.</i>");
+    else if (msg.voice && voiceWhy) await sendTg(env, chat, "🎤 Голосовое приложено, но текстом не записал: " + escapeHtml(voiceWhy) + ".\n\n<i>Опишите словами, если нужно, чтобы вопрос читался в портале.</i>");
   } else {
-    await sendTg(env, chat, (msg.voice ? "🎤 Голосовое" : "📎 Файл") + " добавлен к вопросу.");
+    if (msg.voice && voiceText) {
+      await sendTg(env, chat, "🎤 Расшифровал и добавил: «" + escapeHtml(voiceText) + "»");
+    } else {
+      await sendTg(env, chat, (msg.voice ? "🎤 Голосовое" : "📎 Файл") + " добавлен к вопросу"
+        + (voiceWhy ? " (текстом не записал: " + escapeHtml(voiceWhy) + ")" : "") + ".");
+    }
   }
   return true;
 }

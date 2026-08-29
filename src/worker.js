@@ -1492,6 +1492,14 @@ export default {
           if (!auth.adm) return json({ success: false, error: "Только администратор" }, 403);
           return json(await tgSetupWebhook(env, new URL(request.url).origin));
         }
+        // Проверка, что ключу Яндекса выданы права на SpeechKit. Нужна, чтобы не
+        // выяснять это на живом голосовом с объекта: ответ говорит прямо, рабочий
+        // ключ или не хватает роли. Только админу — ответ раскрывает настройку сервиса.
+        if (url.pathname === "/api/stt/selftest" && request.method === "GET") {
+          if (!auth.adm) return json({ success: false, error: "Только администратор" }, 403);
+          const { sttSelfTest } = await import("./stt.js");
+          return json(await sttSelfTest(env));
+        }
         // Ответ на вопрос ушёл в снимок — теперь сообщаем автору в личку. Отдельный вызов,
         // а не разбор снимка: панель точно знает, какой тикет она закрыла, а сравнивать
         // снимки ради одного уведомления значит гонять весь objects на каждое сохранение.
