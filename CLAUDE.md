@@ -10,6 +10,7 @@
 - **Worker** `kubrdom-portal-api` (`src/worker.js`) + **D1** `banya-db` + **R2** `kubrdom-files` (фото/документы) + Telegram-зеркало фото/видео (бот, супергруппа с темами по объектам).
 - `functions/api/[[path]].js` (Pages Function) проксирует `/api/*` → Worker на стороне edge — это обход блокировки workers.dev в РФ, НЕ ломать. Клиент ходит same-origin (`API_BASE=""`), файловые URL относительные (`/api/file/<key>`).
 - Панель синхронизируется снимком всего стейта в D1 (`storage_key=admin_panel`), автосейв + live-опрос; авторизация заголовком `X-Admin-Token` (секрет `ADMIN_TOKEN` на Worker, fail-closed).
+- **Опрос чужих правок спрашивает только версию** — `GET /api/state/:key/version` отдаёт `max(updated_at)`, и полный снимок (~1 МБ) тянется лишь когда версия выросла. Не возвращать опрос к «каждые 15 с тянем всё»: это мегабайт четыре раза в минуту на телефон бригадира. Если версия не пришла (старый Worker в окне деплоя отдаёт 404) — клиент сам падает на полный опрос.
 
 ## Деплой
 
@@ -65,7 +66,7 @@
 `npm test` (`tools/run-tests.mjs`) прогоняет ВСЕ наборы `tools/test-*.mjs` — каждый отдельным процессом, потому что панельные наборы держат общий стейт в `node:vm`. Новый файл `tools/test-*.mjs` подхватывается сам, правок в package.json и CI не нужно.
 
 - Панель (`tools/harness/panel-vm.js` — admin.js в `node:vm` с поддельным DOM, стейт синтетический): `test-supply-group` — групповая правка закупки, `test-material-link` — связь с каталогом, `test-mat-change` — заявка на замену.
-- Worker/бот (моки D1 и fetch): `test-login-guard` — вход и перебор PIN (гоняет настоящий `worker.fetch`), `test-botissue`, `test-issue-escalation`, `test-stt`, `test-ogg`.
+- Worker/бот (моки D1 и fetch, гоняют настоящий `worker.fetch`): `test-login-guard` — вход и перебор PIN, `test-state-api` — версия снимка и скоуп оптимистичной блокировки, `test-botissue`, `test-issue-escalation`, `test-stt`, `test-ogg`.
 
 **CI гоняет их перед выкатом:** в `deploy.yml` есть job `test`, оба деплой-job'а стоят на `needs: test` — упавший тест останавливает выкат целиком. Всё равно гоняйте локально перед пушем в `main`: прогон ~3 с.
 

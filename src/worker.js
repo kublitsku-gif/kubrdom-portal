@@ -349,6 +349,21 @@ async function getState(env, storageKey, auth) {
   return json({ success: true, storage_key: storageKey, items: await readStateItems(env, storageKey, auth) });
 }
 
+// GET /api/state/:storageKey/version — только версия снимка, без данных.
+// Опрос живых правок (pollOnce каждые 15 с) раньше тянул ВЕСЬ снимок, чтобы сравнить
+// одно число: около мегабайта на клиента четыре раза в минуту, и это на телефоне
+// бригадира в поле. Здесь тот же max(updated_at), что панель считает по items.
+//
+// Скоуп прав НЕ применяем намеренно: версия — это отметка времени, по ней нельзя узнать
+// ни одной цифры из финансов, а фильтрация по правам сделала бы «сверху ничего не менялось»
+// неверным для тех, от кого раздел скрыт, и они перестали бы видеть чужие правки вовсе.
+async function getStateVersion(env, storageKey) {
+  const row = await env.DB
+    .prepare("SELECT MAX(updated_at) AS v FROM work_states WHERE storage_key = ?")
+    .bind(storageKey).first();
+  return json({ success: true, storage_key: storageKey, version: Number((row && row.v) || 0) });
+}
+
 // POST /api/state/:storageKey
 //
 // ─── РЕШЕНИЕ, КОТОРОЕ ТЕБЕ НУЖНО СДЕЛАТЬ ─────────────────────────────────────
@@ -1624,6 +1639,13 @@ export default {
       if (!auth.adm) url.searchParams.set("uid", auth.uid || "?");
       try { return json(await readAudit(env, url)); }
       catch (e) { return json({ success: false, error: String((e && e.message) || e) }, 500); }
+    }
+
+    // Версия снимка — до общего маршрута состояния: тот матчит только один сегмент.
+    const verMatch = url.pathname.match(/^\/api\/state\/([^\/]+)\/version\/?$/);
+    if (verMatch && request.method === "GET") {
+      try { return await getStateVersion(env, decodeURIComponent(verMatch[1])); }
+      catch (err) { return json({ success: false, error: String((err && err.message) || err) }, 500); }
     }
 
     const match = url.pathname.match(/^\/api\/state\/([^\/]+)\/?$/);

@@ -799,8 +799,22 @@ function maxUpdatedAt(items){
 
 async function pollOnce(){
   if (!_hydrated || _pollPaused || document.hidden) return;
+  const base = API_BASE + "/api/state/" + encodeURIComponent(STORAGE_KEY);
+  // Сначала спрашиваем ТОЛЬКО версию. Снимок весит около мегабайта, а меняется редко:
+  // тянуть его четыре раза в минуту ради сравнения одного числа — это трафик и батарея
+  // телефона бригадира в поле. Версия не даёт ни одной цифры из данных.
+  try {
+    const rv = await fetchT(base + "/version", { headers: authHeaders() }, 9000);
+    if (rv.status === 401) { clearToken(); location.reload(); return; }
+    if (rv.ok) {
+      const jv = await rv.json();
+      // Ничего не менялось — выходим, полный снимок не нужен. Если версия непонятна
+      // (старый Worker в окне деплоя отдаст 404), проваливаемся на полный опрос, как раньше.
+      if (jv && jv.success && typeof jv.version === "number" && jv.version <= _lastSeen) return;
+    }
+  } catch { return; }                                 // сеть/таймаут — тихо, попробуем позже
   let r;
-  try { r = await fetchT(API_BASE + "/api/state/" + encodeURIComponent(STORAGE_KEY), { headers: authHeaders() }, 9000); }
+  try { r = await fetchT(base, { headers: authHeaders() }, 9000); }
   catch { return; }                                   // сеть/таймаут — тихо, попробуем позже
   if (r.status === 401) { clearToken(); location.reload(); return; }
   if (!r.ok) return;
