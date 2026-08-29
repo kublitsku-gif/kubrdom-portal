@@ -3476,6 +3476,36 @@ function clientProjectContent(c, activeTab){
       '</div>'+
       progressHtml+
     '</div>';
+    // Приёмка этапа. Единственное действие клиента в кабинете, поэтому оно наверху и
+    // объясняет последствие: после приёмки выставляется счёт по графику.
+    (function(){
+      const waiting=((obj&&obj.stages)||[]).filter(stageAwaitingClient);
+      const accepted=((obj&&obj.stages)||[]).filter(stageAccepted);
+      if(waiting.length){
+        html+='<div style="font-size:11px;color:#c08a1e;font-weight:700;letter-spacing:1px;margin:4px 0 8px">📩 ЖДЁТ ВАШЕЙ ПРИЁМКИ</div>';
+        waiting.forEach(function(stg){
+          const tr=ctTranches(c).find(function(t){return t.stageId===stg.id;});
+          const f=stageFact(stg);
+          html+='<div style="background:#fff;border:1.5px solid #c08a1e55;border-radius:12px;padding:14px;margin-bottom:10px">'+
+            '<div style="font-size:14px;font-weight:700;color:#0d1b2e">'+esc(stg.n||"Этап")+'</div>'+
+            '<div style="font-size:11.5px;color:#7a9aaa;margin-top:4px;line-height:1.45">Работы этапа выполнены ('+f.done+' из '+f.total+'). Осмотрите результат и подтвердите приёмку.'+
+              (tr?' После приёмки будет выставлен счёт на <b style="color:#0d1b2e">'+(Number(tr.amount)||0).toLocaleString("ru-RU")+' ₽</b> по графику платежей.':'')+'</div>'+
+            '<button data-a="client-accept-stage" data-oid="'+esc(obj.id)+'" data-sid="'+esc(stg.id)+'" style="width:100%;margin-top:10px;padding:11px;background:#27ae60;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">✅ Принять этап</button>'+
+            '<div style="font-size:10px;color:#a0b4c8;text-align:center;margin-top:6px">Есть замечания? Не принимайте — свяжитесь с сопровождением, телефон выше.</div>'+
+          '</div>';
+        });
+      }
+      if(accepted.length){
+        html+='<div style="font-size:11px;color:#27ae60;font-weight:700;letter-spacing:1px;margin:4px 0 8px">✅ ПРИНЯТЫЕ ЭТАПЫ</div>'+
+          '<div style="background:#fff;border:1px solid #27ae6033;border-radius:12px;padding:10px 12px;margin-bottom:12px">'+
+          accepted.map(function(stg){
+            const a=stageAcc(stg)||{};
+            return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px;color:#1a2a3a"><span>✅</span><span style="flex:1;min-width:0">'+esc(stg.n||"Этап")+'</span>'+
+              '<span style="font-size:10.5px;color:#7a9aaa;white-space:nowrap">'+esc(String(a.acceptedAt||"").slice(0,10).split("-").reverse().join("."))+'</span></div>';
+          }).join("")+
+        '</div>';
+      }
+    })();
     html+='<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin:4px 0 8px">📐 ВАШИ ПЛАНИРОВКИ И ПРОЕКТ</div>';
     const planFiles=(c.files||[]).filter(function(f){return f.kind==="plan";});
     if(plans.length||planFiles.length){
@@ -3997,6 +4027,26 @@ function render(){
     a.querySelectorAll("[data-a='client-tab']").forEach(function(b){
       b.onclick=function(){ clientTab=b.dataset.t; render(); };
     });
+    // Приёмку этапа пишет СЕРВЕР: снимок клиенту недоступен на запись (postState для
+    // клиента read-only), поэтому здесь только вызов ручки и перечитывание своего среза.
+    a.querySelectorAll("[data-a='client-accept-stage']").forEach(function(b){
+      b.onclick=async function(){
+        const {oid,sid}=b.dataset;
+        if(!confirm("Подтвердить приёмку этапа?\n\nПосле этого будет выставлен счёт по графику платежей. Если есть замечания — не принимайте, свяжитесь с сопровождением."))return;
+        b.disabled=true; b.textContent="Отправляем…";
+        try{
+          const r=await fetch(API_BASE+"/api/client/accept-stage",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({objId:oid,stageId:sid})});
+          const j=await r.json();
+          if(!j||!j.success){ alert((j&&j.error)||"Не удалось отправить приёмку. Попробуйте ещё раз."); b.disabled=false; b.textContent="✅ Принять этап"; return; }
+          const items=await apiLoad();
+          if(items)applyState(items);
+          render();
+        }catch(e){
+          alert("Нет связи с сервером. Проверьте интернет и попробуйте ещё раз.");
+          b.disabled=false; b.textContent="✅ Принять этап";
+        }
+      };
+    });
     return;
   }
   if(!currentUser){ a.innerHTML=loginPage(); bindLogin(); return; }
@@ -4416,6 +4466,52 @@ function stagePay(s){
   return (s&&s.works||[]).reduce((a,w)=>a+workPay(w),0);
 }
 function objPayFund(obj){ return (obj.stages||[]).reduce((a,s)=>a+stagePay(s),0); }
+
+// ─── ГРАФИК ПЛАТЕЖЕЙ И ПРИЁМКА ЭТАПОВ ───────────────────────────────────────
+// Деньги от клиента приходили произвольными строками в кассу: сколько всего пришло —
+// видно, а «за что и когда ждём следующий» — нет. Транш привязывается к ЭТАПУ, и клиент,
+// принимая этап в своём кабинете, переводит сумму в «к оплате». Это единственное место,
+// где «сделано» встречается с «оплачено», — раньше они жили в разных разделах.
+function ctTranches(c){ return Array.isArray(c&&c.tranches)?c.tranches:[]; }
+function ctTranchesSum(c){ return ctTranches(c).reduce(function(a,t){return a+(Number(t.amount)||0);},0); }
+function stageOf(obj,sid){ return (((obj&&obj.stages)||[]).find(function(s){return s.id===sid;}))||null; }
+function stageAcc(s){ return (s&&s.acceptance)||null; }
+function stageAccepted(s){ const a=stageAcc(s); return !!(a&&a.acceptedAt); }
+function stageAwaitingClient(s){ const a=stageAcc(s); return !!(a&&a.askedAt&&!a.acceptedAt); }
+// Просить приёмку можно, когда закрыты все работы этапа и приёмку ещё не запрашивали.
+// Пустой этап не в счёт: «принять ничего» — не приёмка.
+function stageCanAskAccept(s){ const f=stageFact(s); return f.allDone&&f.total>0&&!stageAcc(s); }
+// Состояние транша:
+//   paid   — деньги пришли (отмечает тот, кто ведёт кассу);
+//   due    — этап принят клиентом, счёт можно выставлять;
+//   asked  — приёмка запрошена, ждём клиента;
+//   wait   — этап ещё в работе (или транш ни к какому этапу не привязан).
+function trancheState(tr,obj){
+  if(tr&&tr.paidAt)return "paid";
+  const s=(tr&&tr.stageId)?stageOf(obj,tr.stageId):null;
+  if(!s)return "wait";
+  if(stageAccepted(s))return "due";
+  if(stageAwaitingClient(s))return "asked";
+  return "wait";
+}
+const TRANCHE_ST={
+  paid: {n:"оплачен",     i:"✅", c:"#27ae60", bg:"#eafaf0"},
+  due:  {n:"к оплате",    i:"💳", c:"#c0392b", bg:"#fdeeec"},
+  asked:{n:"на приёмке",  i:"⏳", c:"#c08a1e", bg:"#fbf3e2"},
+  wait: {n:"этап в работе",i:"🛠", c:"#7a8b99", bg:"#eef2f7"},
+};
+// Ожидаемые поступления по всем договорам: то, что уже принято клиентом и не оплачено.
+function tranchesDue(){
+  const out=[];
+  (contractDocs||[]).forEach(function(c){
+    if(c.status!=="signed")return;
+    const obj=objects.find(function(o){return o.id===c.objId;});
+    ctTranches(c).forEach(function(tr){
+      if(trancheState(tr,obj)==="due")out.push({c:c,tr:tr,obj:obj});
+    });
+  });
+  return out;
+}
 
 // ─── СРОКИ ПО ЭТАПАМ ─────────────────────────────────────────────────────────
 // Дедлайн до этого жил только на договоре и на ответственном, поэтому «мы отстаём?»
@@ -5895,6 +5991,18 @@ ${obj.stages.map(s=>{
     <div style="width:8px;height:8px;border-radius:50%;background:${s.c}"></div>
     <span style="font-size:13px;font-weight:700;color:#1a2a3a;flex:1">${esc(s.n)}</span>
     ${stageSchedChip(s)}
+    ${(()=>{
+      // Приёмка этапа клиентом. Пока все работы не закрыты — не предлагаем: «принять
+      // недоделанное» не приёмка, а способ потерять право на переделку.
+      if(stageAccepted(s)){
+        const a=stageAcc(s);
+        return `<span title="Принято клиентом ${esc(String(a.acceptedAt||""))}" style="font-size:10px;font-weight:700;color:#27ae60;background:#eafaf0;border-radius:6px;padding:2px 8px;margin-right:6px;white-space:nowrap">✅ Принят клиентом</span>`;
+      }
+      if(stageAwaitingClient(s))return `<span style="font-size:10px;font-weight:700;color:#c08a1e;background:#fbf3e2;border-radius:6px;padding:2px 8px;margin-right:6px;white-space:nowrap">⏳ Ждём приёмки клиентом</span>`;
+      const canAsk=currentUser&&currentUser.roles.some(r=>["admin","brigadier","prod_head","client_mgr"].indexOf(r)>=0);
+      if(canAsk&&stageCanAskAccept(s))return `<button data-a="obj-stage-ask-accept" data-oid="${obj.id}" data-sid="${s.id}" style="font-size:10px;font-weight:700;color:#fff;background:#27ae60;border:none;border-radius:6px;padding:3px 9px;margin-right:6px;cursor:pointer;white-space:nowrap">📩 Запросить приёмку</button>`;
+      return "";
+    })()}
     ${(()=>{const sm=s.works.flatMap(w=>w.mats||[]);const st=getMatStatus(sm);return st?`<span style="font-size:10px;font-weight:700;color:${st.color};background:${st.bg};border-radius:6px;padding:2px 8px;margin-right:6px">${st.label} ${st.done}/${st.total}</span>`:"";})()}
     ${(()=>{
       const cnt=_q?(_vw.length+" из "+s.works.length):s.works.length;
@@ -8499,6 +8607,59 @@ function tContractDetail(cid){
   // Block 2: ЗАРПЛАТА СОПРОВОДИТЕЛЯ
   html+=_renderSalSection({title:"🚚 ЗАРПЛАТА РОПа",color:"#9b59b6",users:escortUsers});
 
+  // Block 2б: ГРАФИК ПЛАТЕЖЕЙ КЛИЕНТА
+  {
+    const obj2=objects.find(function(o){return o.id===c.objId;});
+    const trs=ctTranches(c);
+    const trSum=ctTranchesSum(c);
+    const grand=(c.amount||0)+(c.extraWorks||[]).reduce(function(a,w){return a+(w.cost||0)+(w.mats||[]).reduce(function(b,m){return b+(m.cost||0)*(m.qty||1);},0);},0);
+    const paidPlan=trs.filter(function(t){return t.paidAt;}).reduce(function(a,t){return a+(Number(t.amount)||0);},0);
+    const left=grand-trSum;
+    html+='<div style="background:#fff;border-radius:12px;border:1px solid #2980b933;padding:12px 14px;margin-bottom:10px">';
+    html+='<div style="font-size:10px;color:#2980b9;font-weight:700;letter-spacing:1px;margin-bottom:10px">💳 ГРАФИК ПЛАТЕЖЕЙ</div>';
+    html+='<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #f4f6f9">'+
+      '<div><div style="font-size:9px;color:#9aabbf">РАСПИСАНО</div><div style="font-size:13px;font-weight:700;color:#1a2a3a">'+trSum.toLocaleString("ru-RU")+'</div></div>'+
+      '<div><div style="font-size:9px;color:#9aabbf">ОПЛАЧЕНО</div><div style="font-size:13px;font-weight:700;color:#27ae60">'+paidPlan.toLocaleString("ru-RU")+'</div></div>'+
+      '<div><div style="font-size:9px;color:#9aabbf">'+(left>0?"НЕ РАСПИСАНО":left<0?"ПЕРЕБОР":"ВСЁ РАСПИСАНО")+'</div><div style="font-size:13px;font-weight:700;color:'+(left>0?"#e67e22":left<0?"#c0392b":"#27ae60")+'">'+(left===0?"✓":Math.abs(left).toLocaleString("ru-RU"))+'</div></div>'+
+    '</div>';
+    if(trs.length){
+      trs.forEach(function(tr){
+        const st=TRANCHE_ST[trancheState(tr,obj2)]||TRANCHE_ST.wait;
+        const stg=tr.stageId?stageOf(obj2,tr.stageId):null;
+        html+='<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:'+st.bg+';border:1px solid '+st.c+'33;border-radius:8px;margin-bottom:4px">'+
+          '<span style="font-size:14px">'+st.i+'</span>'+
+          '<div style="flex:1;min-width:0">'+
+            '<div style="font-size:11.5px;font-weight:700;color:#1a2a3a">'+esc(tr.title||"Транш")+'</div>'+
+            '<div style="font-size:9.5px;color:'+st.c+';margin-top:1px">'+st.n+
+              (stg?' · '+esc(stg.n):(tr.stageId?' · этап удалён':' · без этапа'))+
+              (tr.paidAt?' · '+esc(String(tr.paidAt).slice(0,10).split("-").reverse().join(".")):'')+'</div>'+
+          '</div>'+
+          '<div style="font-size:12px;font-weight:700;color:#2980b9;white-space:nowrap">'+(Number(tr.amount)||0).toLocaleString("ru-RU")+' ₽</div>'+
+          (tr.paidAt
+            ? '<button data-a="ct-tranche-unpay" data-cid="'+cid+'" data-tid="'+tr.id+'" title="Снять отметку оплаты" style="width:28px;height:28px;background:#fff;border:1px solid #d0dae8;border-radius:6px;cursor:pointer;color:#7a9aaa;font-size:12px;flex-shrink:0">↩</button>'
+            : '<button data-a="ct-tranche-pay" data-cid="'+cid+'" data-tid="'+tr.id+'" title="Отметить оплаченным" style="width:28px;height:28px;background:#27ae6012;border:1.5px solid #27ae6044;border-radius:6px;cursor:pointer;color:#27ae60;font-size:13px;flex-shrink:0">₽</button>')+
+          '<button data-a="ct-tranche-del" data-cid="'+cid+'" data-tid="'+tr.id+'" style="width:28px;height:28px;background:#e74c3c12;border:1.5px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:13px;line-height:1;flex-shrink:0">✕</button>'+
+        '</div>';
+      });
+    } else {
+      html+='<div style="font-size:11px;color:#9aabbf;text-align:center;padding:10px;border:1px dashed #d0dae8;border-radius:8px;margin-bottom:8px">Графика нет — оплата идёт как придётся. Привяжите транши к этапам, и портал сам скажет, когда выставлять счёт.</div>';
+    }
+    html+='<div style="margin-top:8px;padding:10px;background:#fafbfc;border-radius:8px;border:1px dashed #2980b944">'+
+      '<div style="font-size:9px;color:#2980b9;font-weight:700;letter-spacing:0.5px;margin-bottom:6px">+ ТРАНШ</div>'+
+      '<input id="tr-title-'+cid+'" placeholder="За что платёж (например: Аванс / После этапа 2)" style="width:100%;padding:8px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;margin-bottom:6px;outline:none;box-sizing:border-box">'+
+      '<div style="display:flex;gap:6px;flex-wrap:wrap">'+
+        '<select id="tr-stage-'+cid+'" style="flex:1;min-width:140px;padding:8px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box">'+
+          '<option value="">— без этапа (аванс) —</option>'+
+          (((obj2&&obj2.stages)||[]).map(function(st2){return '<option value="'+st2.id+'">'+esc(st2.n)+'</option>';}).join(""))+
+        '</select>'+
+        '<input id="tr-amount-'+cid+'" type="text" inputmode="numeric" data-money="1" placeholder="Сумма ₽" style="flex:1;min-width:100px;padding:8px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box">'+
+        '<button data-a="ct-tranche-add" data-cid="'+cid+'" style="padding:8px 14px;background:#2980b9;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:12px;font-weight:700;flex-shrink:0">+ Добавить</button>'+
+      '</div>'+
+      (obj2?'':'<div style="font-size:10px;color:#e67e22;margin-top:6px">У договора не выбран объект — привязать транш к этапу пока нельзя.</div>')+
+    '</div>';
+    html+='</div>';
+  }
+
   // Block 3: ПЛАН ДОП РАБОТ
   {
     const planItems=c.extraWorksPlan||[];
@@ -9039,6 +9200,30 @@ function tFinanceExperiment(){
     '<b>✏️ Эксперимент.</b> Два разных отчёта. <b>P&L</b> — прибыль: выручка по договору минус себестоимость (материалы + работа); показывает, заработаем ли. '+
     '<b>БДДС</b> — живые деньги: сколько поступило и оплачено сейчас. Можно иметь прибыль на бумаге и при этом кассовый разрыв.'+
   '</div>';
+  // 💳 Принятые клиентом этапы, по которым ещё не выставлен счёт. Это ближайшие деньги
+  // компании, и они не видны ни в приходах (ещё не пришли), ни в прибыли (она про план).
+  html+=(function(){
+    const due=tranchesDue();
+    if(!due.length)return "";
+    const sum=due.reduce(function(a,x){return a+(Number(x.tr.amount)||0);},0);
+    return '<div style="background:#fff;border:1.5px solid #c0392b44;border-radius:12px;padding:12px 14px;margin-bottom:14px">'+
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:9px">'+
+        '<span style="font-size:10px;color:#c0392b;font-weight:700;letter-spacing:1px;flex:1">💳 К ОПЛАТЕ: ЭТАПЫ ПРИНЯТЫ КЛИЕНТОМ</span>'+
+        '<span style="font-size:15px;font-weight:800;color:#c0392b">'+sum.toLocaleString("ru-RU")+' ₽</span>'+
+      '</div>'+
+      due.map(function(x){
+        const stg=x.tr.stageId?stageOf(x.obj,x.tr.stageId):null;
+        return '<div data-a="fin-open" data-cid="'+esc(x.c.id)+'" data-oid="'+esc(x.c.objId||"")+'" style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:#fdeeec;border-radius:8px;margin-bottom:4px;cursor:pointer">'+
+          '<div style="flex:1;min-width:0">'+
+            '<div style="font-size:12px;font-weight:700;color:#1a2a3a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(x.c.client||x.c.name||"Договор")+' · '+esc(x.tr.title||"Транш")+'</div>'+
+            '<div style="font-size:10px;color:#7a9aaa;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+((x.obj&&x.obj.icon)||"🏗")+' '+esc((x.obj&&x.obj.name)||"объект")+(stg?' · '+esc(stg.n):'')+'</div>'+
+          '</div>'+
+          '<div style="font-size:13px;font-weight:800;color:#c0392b;white-space:nowrap">'+(Number(x.tr.amount)||0).toLocaleString("ru-RU")+' ₽</div>'+
+        '</div>';
+      }).join("")+
+      '<div style="font-size:10px;color:#a0b4c8;margin-top:5px">Отметить оплату — в карточке договора, блок «График платежей».</div>'+
+    '</div>';
+  })();
   // 🧾 Чеки рабочих — подотчёт (долг за материалы, купленные рабочими за свои деньги)
   html+=adminReceiptsBlock();
   // P&L карта
@@ -15743,6 +15928,45 @@ function bind(){
     else if(a==="va-test-clear"){el.onclick=()=>{ voiceTestHistory=[]; render(); };}
     else if(a==="va-test-input"){el.onkeydown=(ev)=>{ if(ev&&ev.key==="Enter"){ ev.preventDefault(); voiceTestSend(); } };}
     else if(a==="va-test-send"){el.onclick=()=>{ voiceTestSend(); };}
+    // ─── График платежей ───────────────────────────────────────────────────
+    else if(a==="ct-tranche-add"){el.onclick=function(){
+      const cid=el.dataset.cid;
+      const title=((document.getElementById("tr-title-"+cid)||{}).value||"").trim();
+      const amount=unfmtMoney((document.getElementById("tr-amount-"+cid)||{}).value||"");
+      const stageId=((document.getElementById("tr-stage-"+cid)||{}).value||"");
+      if(!title){alert("Укажите, за что платёж.");return;}
+      if(!amount){alert("Укажите сумму транша.");return;}
+      contractDocs=contractDocs.map(function(c){
+        if(c.id!==cid)return c;
+        return Object.assign({},c,{tranches:ctTranches(c).concat([{id:gid(),title:title,amount:amount,stageId:stageId}])});
+      });
+      fl();
+    };}
+    else if(a==="ct-tranche-del"){el.onclick=function(){
+      const {cid,tid}=el.dataset;
+      contractDocs=contractDocs.map(function(c){
+        return c.id!==cid?c:Object.assign({},c,{tranches:ctTranches(c).filter(function(t){return t.id!==tid;})});
+      });
+      fl();
+    };}
+    // Отметку об оплате ставит тот, кто ведёт кассу. Автоматически по приходам не
+    // угадываем: один платёж закрывает то один транш, то половину другого, и ошибочная
+    // догадка тут — это неверный счёт клиенту.
+    else if(a==="ct-tranche-pay"||a==="ct-tranche-unpay"){el.onclick=function(){
+      if(!canApproveIssue()){ alert("Отмечать оплату может администратор или финансист."); return; }
+      const {cid,tid}=el.dataset, on=(a==="ct-tranche-pay");
+      contractDocs=contractDocs.map(function(c){
+        if(c.id!==cid)return c;
+        return Object.assign({},c,{tranches:ctTranches(c).map(function(t){
+          if(t.id!==tid)return t;
+          const nt=Object.assign({},t);
+          if(on){ nt.paidAt=todayISO(); nt.paidBy=(currentUser&&currentUser.id)||""; }
+          else { delete nt.paidAt; delete nt.paidBy; }
+          return nt;
+        })});
+      });
+      fl();
+    };}
     else if(a==="ew-plan-add"){el.onclick=function(){
       const cid=el.dataset.cid;
       const ti=document.getElementById("ew-plan-title-"+cid);
@@ -17144,6 +17368,26 @@ function bind(){
       rerenderTab();
     };}
     // Удаление этапа уносит ВСЕ работы внутри — показываем в подтверждении, что именно теряем.
+    // Запрос приёмки этапа у клиента. Отдельное действие, а не автоматика по «все работы
+    // закрыты»: производство само решает, когда этап показывать, — иногда нужно сперва
+    // убрать за собой, а иногда закрытая галочка стоит раньше фактической готовности.
+    else if(a==="obj-stage-ask-accept"){el.onclick=()=>{
+      const {oid,sid}=el.dataset;
+      const o=objects.find(function(x){return x.id===oid;});
+      const st=o&&stageOf(o,sid);
+      if(!st)return;
+      const cts=contractDocs.filter(function(d){return d.objId===oid&&d.status==="signed";});
+      if(!cts.length&&!confirm("У объекта нет подписанного договора — клиент не увидит запрос в кабинете.\n\nВсё равно отметить, что этап предъявлен?"))return;
+      if(!confirm("Запросить у клиента приёмку этапа «"+(st.n||"")+"»?\n\nОн увидит кнопку в своём кабинете. После приёмки транш по этапу станет «к оплате»."))return;
+      objects=objects.map(function(o2){
+        if(o2.id!==oid)return o2;
+        return Object.assign({},o2,{stages:(o2.stages||[]).map(function(x){
+          if(x.id!==sid)return x;
+          return Object.assign({},x,{acceptance:{askedAt:new Date().toISOString().slice(0,16).replace("T"," "),askedBy:(currentUser&&currentUser.id)||""}});
+        })});
+      });
+      fl();
+    };}
     // План этапа. Пишем по change (не по каждому нажатию): нативный date-инпут отдаёт
     // input на каждую цифру года, и перерисовка выбивала бы календарь из-под пальца.
     else if(a==="obj-stage-plan"){el.onchange=()=>{

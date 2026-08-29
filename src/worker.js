@@ -255,6 +255,79 @@ async function readSnapshot(env, keys) {
   return out;
 }
 
+// ─── ПРИЁМКА ЭТАПА КЛИЕНТОМ ──────────────────────────────────────────────────
+// Подтвердить приёмку может только клиент, но писать снимок ему нельзя: postState для
+// клиента read-only, иначе его частичный срез затёр бы всю базу. Поэтому отметку ставит
+// СЕРВЕР и ровно в один этап того объекта, который принадлежит договору из его токена.
+//
+// Записываем с проверкой updated_at той же строки: между чтением и записью панель могла
+// сохранить объекты, и слепая перезапись потеряла бы чужую правку. Не сошлось — читаем
+// заново и пробуем ещё раз; второй промах отдаём клиенту как «повторите».
+async function writeSection(env, workId, mutate, tries = 3) {
+  for (let i = 0; i < tries; i++) {
+    const row = await env.DB.prepare("SELECT data, updated_at FROM work_states WHERE storage_key='admin_panel' AND work_id=?").bind(workId).first();
+    if (!row) return { ok: false, error: "Раздел «" + workId + "» ещё не создан" };
+    let data; try { data = JSON.parse(row.data); } catch { return { ok: false, error: "Раздел «" + workId + "» повреждён" }; }
+    const res = mutate(data);
+    if (!res || res.error) return { ok: false, error: (res && res.error) || "Нечего менять" };
+    const upd = await env.DB
+      .prepare("UPDATE work_states SET data=?, updated_at=? WHERE storage_key='admin_panel' AND work_id=? AND updated_at=?")
+      .bind(JSON.stringify(data), Date.now(), workId, row.updated_at).run();
+    if (upd && upd.meta && upd.meta.changes > 0) return { ok: true, value: res.value };
+  }
+  return { ok: false, error: "Данные изменились, повторите" };
+}
+
+// POST /api/client/accept-stage { objId, stageId }
+async function clientAcceptStage(env, request, auth) {
+  if (!auth || !auth.client) return json({ success: false, error: "Доступно только из кабинета клиента" }, 403);
+  let body; try { body = await request.json(); } catch { return json({ success: false, error: "bad json" }, 400); }
+  const objId = String((body && body.objId) || ""), stageId = String((body && body.stageId) || "");
+  if (!objId || !stageId) return json({ success: false, error: "need objId + stageId" }, 400);
+
+  const snap = await readSnapshot(env, ["contractDocs"]);
+  const c = (snap.contractDocs || []).find(function (x) { return x && x.id === auth.cid; });
+  // Чужой объект недоступен даже по прямому запросу: договор в токене — единственный
+  // источник того, что клиенту принадлежит.
+  if (!c || c.objId !== objId) return json({ success: false, error: "Объект не найден" }, 404);
+
+  let accepted = null;
+  const w = await writeSection(env, "objects", function (objects) {
+    const o = (objects || []).find(function (x) { return x && x.id === objId; });
+    if (!o) return { error: "Объект не найден" };
+    const st = (o.stages || []).find(function (x) { return x && x.id === stageId; });
+    if (!st) return { error: "Этап не найден" };
+    const acc = st.acceptance || {};
+    if (!acc.askedAt) return { error: "Приёмка по этому этапу ещё не запрошена" };
+    if (acc.acceptedAt) return { error: "Этап уже принят" };
+    acc.acceptedAt = new Date().toISOString().slice(0, 16).replace("T", " ");
+    st.acceptance = acc;
+    accepted = { obj: o.name || "объект", stage: st.n || "этап", at: acc.acceptedAt };
+    return { value: accepted };
+  });
+  if (!w.ok) return json({ success: false, error: w.error }, 409);
+
+  // Приёмка — это деньги: транш по этапу становится «к оплате». Заводим обычный вопрос
+  // по объекту (kind money), чтобы у него сразу были адресат, возраст, эскалация и Telegram.
+  const tr = ((c.tranches || []).find(function (t) { return t && t.stageId === stageId; })) || null;
+  await writeSection(env, "issues", function (issues) {
+    if (!Array.isArray(issues)) return { error: "Раздел вопросов повреждён" };
+    const id = "iss_acc_" + stageId;
+    if (issues.some(function (t) { return t && t.id === id; })) return { value: null };   // повтор не плодим
+    issues.push({
+      id: id, objId: objId, wid: "", kind: "money", to: "financier", status: "new", src: "client",
+      text: "Клиент принял этап «" + (accepted ? accepted.stage : "") + "»"
+        + (tr ? ". По графику платежей к оплате " + (Number(tr.amount) || 0).toLocaleString("ru-RU") + " ₽ — выставить счёт." : ". Транш по этапу в графике не задан."),
+      amount: tr ? (Number(tr.amount) || 0) : 0, payer: "client",
+      by: "", byName: (c.client || "Клиент"),
+      at: new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 16).replace("T", " "),
+    });
+    return { value: id };
+  }).catch(function () { /* вопрос — следствие, из-за него приёмку не откатываем */ });
+
+  return json({ success: true, accepted: accepted });
+}
+
 // Срез данных для кабинета клиента: только ЕГО договор, объект, crmClient, планировки и доходные платежи.
 // Больше клиент не получает НИЧЕГО (ни других клиентов/договоров, ни зарплат, ни пользователей).
 async function buildClientSlice(env, cid) {
@@ -1487,6 +1560,12 @@ export default {
     const auth = await resolveAuth(env, request);
     if (!auth) {
       return unauthorized();
+    }
+
+    // Приёмка этапа клиентом: пишет сервер, потому что снимок клиенту недоступен на запись.
+    if (url.pathname === "/api/client/accept-stage" && request.method === "POST") {
+      try { return await clientAcceptStage(env, request, auth); }
+      catch (err) { return json({ success: false, error: String((err && err.message) || err) }, 500); }
     }
 
     // Смена своего PIN (с токеном сотрудника).
