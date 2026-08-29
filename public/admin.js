@@ -5096,6 +5096,48 @@ function matChangeCard(t){
     '</div>'+
   '</div>';
 }
+// «В шаблоне изменилось»: секция объекта с разбором правок шаблона. Показываем только
+// админу и тем, кто отвечает за производство: принимать правки шаблона в идущую стройку —
+// решение по деньгам и объёму, а не косметика.
+function buildTplDiffSection(obj){
+  if(!currentUser||!currentUser.roles.some(function(r){return ["admin","prod_head","client_mgr"].indexOf(r)>=0;}))return "";
+  const d=objTplDiff(obj);
+  if(!d)return "";
+  if(d.noBase){
+    // Объекты, созданные до появления слепка, сравнивать не с чем. Не молчим: иначе
+    // человек ждёт уведомлений, которых механизм физически не может дать.
+    return objSection(obj.id,"tpldiff","🧬 СВЯЗЬ С ШАБЛОНОМ","#8e44ad",'<span style="color:#9aabbf">не настроена</span>',
+      '<div style="font-size:11.5px;color:#7a9aaa;line-height:1.5;margin-bottom:9px">Объект создан до того, как портал начал запоминать состояние шаблона, поэтому сравнивать не с чем. Отметьте текущий шаблон как принятый — дальше портал будет показывать, что в нём изменилось.</div>'+
+      '<button data-a="obj-tpl-accept" data-oid="'+obj.id+'" style="width:100%;padding:9px;background:#8e44ad;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Считать текущий шаблон принятым</button>', false);
+  }
+  if(!d.items.length)return "";
+  const KIND={added:{i:"➕",n:"добавлена в шаблон",c:"#27ae60"},removed:{i:"➖",n:"удалена из шаблона",c:"#c0392b"},changed:{i:"✏️",n:"изменена в шаблоне",c:"#2980b9"}};
+  const body='<div style="font-size:11.5px;color:#7a9aaa;line-height:1.5;margin-bottom:9px">Шаблон «'+esc(d.tpl.name||"")+'» поменялся с тех пор, как из него сделали этот объект. Принять — значит перенести правку в стройку; часы, фото и отметки «выполнено» при этом сохраняются.</div>'+
+    d.items.map(function(it){
+      const k=KIND[it.kind]||KIND.changed;
+      const nm=(it.tpl&&it.tpl.w&&it.tpl.w.n)||(it.obj&&it.obj.w&&it.obj.w.n)||"Работа";
+      const oldCost=it.obj?(Number(it.obj.w.cost)||0):0;
+      const newCost=it.tpl?(Number(it.tpl.w.cost)||0):0;
+      return '<div style="display:flex;align-items:center;gap:9px;padding:8px 10px;border:1px solid '+k.c+'33;background:'+k.c+'08;border-radius:9px;margin-bottom:6px">'+
+        '<span style="font-size:14px">'+k.i+'</span>'+
+        '<div style="flex:1;min-width:0">'+
+          '<div style="font-size:12.5px;font-weight:700;color:#1a2a3a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(nm)+'</div>'+
+          '<div style="font-size:10px;color:'+k.c+';margin-top:2px">'+k.n+
+            (it.kind==="changed"&&oldCost!==newCost?' · '+oldCost.toLocaleString("ru-RU")+' → '+newCost.toLocaleString("ru-RU")+' ₽':'')+
+            (it.safe?'':' · <b>в объекте её тоже правили</b>')+'</div>'+
+        '</div>'+
+        '<button data-a="obj-tpl-apply" data-oid="'+obj.id+'" data-key="'+esc(it.key)+'" style="padding:6px 11px;background:'+(it.safe?k.c:"#fff")+';border:1.5px solid '+k.c+';border-radius:7px;cursor:pointer;font-size:11px;font-weight:700;color:'+(it.safe?"#fff":k.c)+';white-space:nowrap">Принять</button>'+
+      '</div>';
+    }).join("")+
+    '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">'+
+      (d.safe?'<button data-a="obj-tpl-apply-safe" data-oid="'+obj.id+'" style="flex:1;min-width:150px;padding:9px;background:#8e44ad;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Принять безопасные ('+d.safe+')</button>':'')+
+      '<button data-a="obj-tpl-accept" data-oid="'+obj.id+'" style="flex:1;min-width:150px;padding:9px;background:#fff;border:1px solid #d0dae8;border-radius:9px;cursor:pointer;color:#7a9aaa;font-size:12px;font-weight:700">Ничего не принимать</button>'+
+    '</div>'+
+    '<div style="font-size:10px;color:#a0b4c8;text-align:center;margin-top:6px">«Ничего не принимать» просто запомнит текущий шаблон как просмотренный.</div>';
+  return objSection(obj.id,"tpldiff","🧬 ШАБЛОН ОБНОВИЛСЯ","#8e44ad",
+    '<span style="color:#8e44ad">'+d.items.length+' поз.'+(d.safe<d.items.length?' · '+(d.items.length-d.safe)+' спорных':'')+'</span>', body, true);
+}
+
 function buildIssuesSection(obj){
   if(!obj)return "";
   const list=objIssues(obj.id);
@@ -5855,6 +5897,8 @@ ${(()=>{
 })()}
 
 <!-- Вопросы по объекту: обращения с площадки и от клиента -->
+${buildTplDiffSection(obj)}
+
 ${buildIssuesSection(obj)}
 
 <!-- Сводка: сделанные работы + затраченное время (видна всем) -->
@@ -6889,6 +6933,138 @@ function _tplEstWork(e){
   var matSum=mats.reduce(function(a,m){return a+(Number(m.cost)||0)*(m.qty||0);},0);
   return {id:gid(), estId:e.id, n:e.name, room:(e.room||""), cost:matSum, labor:0, note:"", mats:mats};
 }
+// ─── РЕВИЗИИ ШАБЛОНА: «в шаблоне изменилось» ─────────────────────────────────
+// Объект — глубокая копия шаблона (reidStages), и связь односторонняя: правку шаблона
+// объекты не видели никогда. Поднимать её «по факту различий» нельзя — объект и должен
+// отличаться, он живёт своей сметой. Значит нужен третий участник: слепок шаблона на
+// момент создания объекта. Дальше это обычное трёхстороннее сравнение, как при слиянии
+// снимков: менял только шаблон → можно принять; менял и объект → решает человек.
+//
+// Храним не содержимое, а короткие подписи работ: слепок сорока работ с материалами
+// весил бы десятки килобайт в КАЖДОМ объекте, а раздел objects и так ближе всех к
+// лимиту строки D1 (2 МБ).
+function _fnv(str){
+  let h=0x811c9dc5;
+  for(let i=0;i<str.length;i++){ h^=str.charCodeAt(i); h=(h+((h<<1)+(h<<4)+(h<<7)+(h<<8)+(h<<24)))>>>0; }
+  return h.toString(16);
+}
+// Подпись работы: то, что имеет смысл переносить из шаблона, — состав и цены.
+// Часы, фото и отметки «выполнено» в неё не входят: они про стройку, а не про план.
+function workSig(w){
+  const mats=((w&&w.mats)||[]).map(function(m){
+    return [m.pid||"", normMatName(m), m.mode||"piece", Number(m.cost)||0, Number(m.qty)||0].join("~");
+  }).sort();
+  return _fnv([(w&&w.n)||"", Number(w&&w.cost)||0, mats.join("|")].join("::"));
+}
+// Ключ работы между копиями — estId: reidStages выдаёт новые id, а estId переживает
+// копирование. Работы без estId (докупка снабженца, ручные) не сопоставляются вовсе.
+function workKey(w){ return (w&&w.estId)||""; }
+function tplSigMap(t){
+  const out={};
+  ((t&&t.stages)||[]).forEach(function(s){(s.works||[]).forEach(function(w){
+    const k=workKey(w); if(k)out[k]=workSig(w);
+  });});
+  return out;
+}
+// Слепок шаблона для объекта: пишем при создании объекта и после принятия правок.
+function tplBaseline(t){ return {at:todayISO(), sig:tplSigMap(t)}; }
+
+// Что изменилось в ШАБЛОНЕ с тех пор, как из него сделали этот объект.
+//   added   — работа появилась в шаблоне (в объекте её нет)
+//   removed — работа из шаблона исчезла (в объекте осталась)
+//   changed — состав/цены работы изменились
+// safe=true, если объект свою копию не трогал: тогда принять правку можно молча.
+function objTplDiff(obj){
+  const t=templates.find(function(x){return x.id===(obj&&obj.templateId);});
+  if(!t)return null;
+  const base=obj&&obj.tplBase&&obj.tplBase.sig;
+  if(!base)return {noBase:true, tpl:t, items:[]};
+  const now=tplSigMap(t);
+  const objWorks={};
+  ((obj.stages)||[]).forEach(function(s){(s.works||[]).forEach(function(w){
+    const k=workKey(w); if(k)objWorks[k]={w:w, s:s};
+  });});
+  const tplWorks={};
+  ((t.stages)||[]).forEach(function(s){(s.works||[]).forEach(function(w){
+    const k=workKey(w); if(k)tplWorks[k]={w:w, s:s};
+  });});
+  const items=[];
+  Object.keys(now).forEach(function(k){
+    const inObj=objWorks[k];
+    if(base[k]===undefined){
+      if(!inObj)items.push({kind:"added", key:k, tpl:tplWorks[k], safe:true});
+      return;
+    }
+    if(now[k]===base[k])return;                       // шаблон не менял эту работу
+    if(!inObj)return;                                 // работу удалили из объекта — не воскрешаем
+    items.push({kind:"changed", key:k, tpl:tplWorks[k], obj:inObj, safe:workSig(inObj.w)===base[k]});
+  });
+  Object.keys(base).forEach(function(k){
+    if(now[k]!==undefined)return;
+    const inObj=objWorks[k];
+    if(!inObj)return;
+    items.push({kind:"removed", key:k, obj:inObj, safe:workSig(inObj.w)===base[k]});
+  });
+  return {tpl:t, items:items, safe:items.filter(function(x){return x.safe;}).length, total:items.length};
+}
+// Принять одну правку шаблона в объект. Содержимое берём из шаблона, а стройку не трогаем:
+// id работы, часы, фото и отметку «выполнено» сохраняем — иначе принятая правка обнулила
+// бы бригаде день работы.
+function objTplApply(obj, item){
+  if(!obj||!item)return false;
+  const key=item.key;
+  if(item.kind==="removed"){
+    objects=objects.map(function(o){
+      if(o.id!==obj.id)return o;
+      return Object.assign({},o,{stages:(o.stages||[]).map(function(s){
+        if(!(s.works||[]).some(function(w){return workKey(w)===key;}))return s;
+        return Object.assign({},s,{works:s.works.filter(function(w){return workKey(w)!==key;})});
+      })});
+    });
+    return true;
+  }
+  const src=item.tpl&&item.tpl.w;
+  if(!src)return false;
+  if(item.kind==="changed"){
+    objects=objects.map(function(o){
+      if(o.id!==obj.id)return o;
+      return Object.assign({},o,{stages:(o.stages||[]).map(function(s){
+        if(!(s.works||[]).some(function(w){return workKey(w)===key;}))return s;
+        return Object.assign({},s,{works:s.works.map(function(w){
+          if(workKey(w)!==key)return w;
+          return Object.assign({},w,{
+            n:src.n, cost:Number(src.cost)||0, room:src.room||w.room,
+            mats:deepCopy(src.mats||[]).map(function(m){ return Object.assign({},m,{id:gid()}); }),
+          });
+        })});
+      })});
+    });
+    return true;
+  }
+  // added — кладём в этап с тем же названием, иначе в последний: у объекта этапы уже свои.
+  const nw=Object.assign({},deepCopy(src),{id:gid(), mats:deepCopy(src.mats||[]).map(function(m){return Object.assign({},m,{id:gid()});})});
+  delete nw.timeLogs; delete nw.done; delete nw.doneAt; delete nw.doneBy; delete nw.photos;
+  const stName=item.tpl&&item.tpl.s&&item.tpl.s.n;
+  objects=objects.map(function(o){
+    if(o.id!==obj.id)return o;
+    const stages=(o.stages||[]).slice();
+    if(!stages.length)return o;
+    let idx=stages.findIndex(function(s){return s.n===stName;});
+    if(idx<0)idx=stages.length-1;
+    stages[idx]=Object.assign({},stages[idx],{works:(stages[idx].works||[]).concat([nw])});
+    return Object.assign({},o,{stages:stages});
+  });
+  return true;
+}
+// Слепок принимаем целиком: «я посмотрел, дальше сравнивай отсюда». Иначе отклонённая
+// правка всплывала бы в каждом рендере и баннер стал бы фоном, который не читают.
+function objTplAccept(obj){
+  const t=templates.find(function(x){return x.id===(obj&&obj.templateId);});
+  if(!t)return false;
+  objects=objects.map(function(o){ return o.id!==obj.id?o:Object.assign({},o,{tplBase:tplBaseline(t)}); });
+  return true;
+}
+
 // Восстановить комнату работ (templates+objects) из сметы по estId — чтобы группировка
 // по помещениям в объекте совпадала с шаблоном (шаблон — источник правды).
 function backfillWorkRooms(){
@@ -15598,7 +15774,8 @@ function bind(){
       if(!name){ alert("Введите название объекта."); return; }
       if(!tmpl){ alert("Выберите шаблон."); return; }
       const newId=gid();
-      objects=objects.concat([{id:newId,name,icon,templateId:nobj.templateId,stages:reidStages(tmpl.stages),specs:deepCopy(tmpl.specs||{rooms:[],openings:[]})}]);
+      // Слепок шаблона на момент создания — база сравнения для «в шаблоне изменилось».
+      objects=objects.concat([{id:newId,name,icon,templateId:nobj.templateId,stages:reidStages(tmpl.stages),specs:deepCopy(tmpl.specs||{rooms:[],openings:[]}),tplBase:tplBaseline(tmpl)}]);
       // Сотрудники не назначаются здесь — только через ответственных по договору (вкладка «Договора»).
       showNObj=false;fl();
     };}
@@ -17595,6 +17772,38 @@ function bind(){
     // Запрос приёмки этапа у клиента. Отдельное действие, а не автоматика по «все работы
     // закрыты»: производство само решает, когда этап показывать, — иногда нужно сперва
     // убрать за собой, а иногда закрытая галочка стоит раньше фактической готовности.
+    // ─── Правки шаблона в объект ───────────────────────────────────────────
+    else if(a==="obj-tpl-apply"){el.onclick=()=>{
+      const {oid,key}=el.dataset;
+      const obj=objects.find(function(o){return o.id===oid;});
+      const d=obj&&objTplDiff(obj);
+      const it=d&&d.items.find(function(x){return x.key===key;});
+      if(!it)return;
+      if(!it.safe&&!confirm("Эту работу правили и в объекте.\n\nПринять версию из шаблона? Правка объекта будет заменена."))return;
+      objTplApply(obj,it);
+      // Слепок не двигаем: остальные позиции ещё ждут решения. Он обновится, когда
+      // человек нажмёт «принять безопасные» или «ничего не принимать».
+      normalizeWorkCosts(); fl();
+    };}
+    else if(a==="obj-tpl-apply-safe"){el.onclick=()=>{
+      const oid=el.dataset.oid;
+      const obj=objects.find(function(o){return o.id===oid;});
+      const d=obj&&objTplDiff(obj);
+      if(!d||!d.items.length)return;
+      const safe=d.items.filter(function(x){return x.safe;});
+      if(!safe.length)return;
+      if(!confirm("Принять "+safe.length+" правк"+(safe.length===1?"у":"и")+" шаблона?\n\nЭто те позиции, которые в объекте не трогали. Спорные останутся на ваше решение."))return;
+      safe.forEach(function(it){ objTplApply(objects.find(function(o){return o.id===oid;}),it); });
+      const rest=objTplDiff(objects.find(function(o){return o.id===oid;}));
+      // База сдвигается, только когда спорных не осталось: иначе они пропали бы из виду.
+      if(rest&&!rest.items.length)objTplAccept(objects.find(function(o){return o.id===oid;}));
+      normalizeWorkCosts(); fl();
+    };}
+    else if(a==="obj-tpl-accept"){el.onclick=()=>{
+      const obj=objects.find(function(o){return o.id===el.dataset.oid;});
+      if(!obj)return;
+      objTplAccept(obj); fl();
+    };}
     else if(a==="obj-stage-ask-accept"){el.onclick=()=>{
       const {oid,sid}=el.dataset;
       const o=objects.find(function(x){return x.id===oid;});
