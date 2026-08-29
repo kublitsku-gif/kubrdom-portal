@@ -224,16 +224,21 @@ const GUARDED_KEYS=["objects","templates","contractDocs","crmClients","dbWorks",
 // стейл-вкладка «сверялась» сама с собой — страж всегда проходил. Эталон — только сервер.
 let _serverVerified=false;
 let _serverIds=null;         // Set id-шников гардируемых коллекций по последнему ответу сервера
-function updateServerCounts(items){
-  _serverCounts={}; _serverIds={};
+// Эталон стража: сколько записей в каждом разделе на СЕРВЕРЕ.
+// onlyKeys задан → обновляем только эти разделы. После сохранения по разделам сервер
+// подтвердил лишь присланные; по остальным наш локальный счёт может быть устаревшим,
+// и записать его эталоном значит обезоружить стража ровно там, где он и нужен.
+function updateServerCounts(items, onlyKeys){
+  if(!onlyKeys){ _serverCounts={}; _serverIds={}; }
   const byId={};
   (items||[]).forEach(function(it){ byId[it.work_id]=it.data; });
-  GUARDED_KEYS.forEach(function(k){
+  const keys=onlyKeys?GUARDED_KEYS.filter(function(k){return onlyKeys.indexOf(k)>=0;}):GUARDED_KEYS;
+  keys.forEach(function(k){
     const v=byId[k];
     _serverCounts[k]=Array.isArray(v)?v.length:null;
     _serverIds[k]=new Set(Array.isArray(v)?v.map(function(x){return x&&x.id;}):[]);
   });
-  _serverVerified=true;
+  if(!onlyKeys)_serverVerified=true;
 }
 // Демо-id из сида: если на сервере их уже НЕТ (пользователь удалял), а вкладка их шлёт —
 // вкладка живёт на старом состоянии, её сейв затёр бы реальные данные демкой.
@@ -606,6 +611,22 @@ function deletePlanFromTelegram(msgId){
 
 let _lastSavedJson = null;                 // снимок последнего успешного сохранения
 let _saving = false;                       // защита от параллельных сохранений
+// ─── ШЛЁМ ТОЛЬКО ИЗМЕНИВШИЕСЯ РАЗДЕЛЫ ───────────────────────────────────────
+// Раньше на любую правку уходил ВЕСЬ снимок (24 раздела, ~1 МБ). Дело не только в
+// трафике: сторож base на сервере проверяет ровно те work_id, которые пишутся, поэтому
+// «пишем всё» означало, что правка ЛЮБОГО сотрудника отклоняет сохранение всем остальным
+// 409-м. Теперь снабженец и финансист не пересекаются вовсе.
+// Базы сравнения нет (первый сейв, ретрай после слияния) → изменившимся считаем всё:
+// лишний полный сейв безопасен, пропущенный раздел — потеря правки.
+function dirtySections(items){
+  const prev = {};
+  let parsed = null;
+  try { parsed = _lastSavedJson ? JSON.parse(_lastSavedJson) : null; } catch (e) { parsed = null; }
+  if (!Array.isArray(parsed)) return items.slice();
+  parsed.forEach(function(it){ prev[it.work_id] = JSON.stringify(it.data); });
+  return items.filter(function(it){ return prev[it.work_id] !== JSON.stringify(it.data); });
+}
+
 async function apiSave(opts){
   if (_saving) return { success: true, busy: true };
   // Сохраняет только залогиненный СОТРУДНИК. На экране входа (нет currentUser) или в кабинете
@@ -662,6 +683,10 @@ async function apiSave(opts){
   }
   const forced = !!window._forceSaveOnce;  // «Сохранить как есть» — осознанная перезапись облака
   window._forceSaveOnce = false;           // форс-сохранение одноразовое
+  // Форс шлём целиком: кнопка обещает перезаписать облако, а не его часть.
+  const sendItems = forced ? items : dirtySections(items);
+  if (!sendItems.length) { _lastSavedJson = snap; return { success: true, skipped: true }; }
+  const sentKeys = sendItems.map(function(it){ return it.work_id; });
   _saving = true;
   writeCache(items);                       // optimistic: локально всегда свежо
   _setPendingSave();                       // …но сервером ещё не подтверждено — маркер до успеха
@@ -673,7 +698,7 @@ async function apiSave(opts){
     const init = {
       method:  "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
-      body:    JSON.stringify(forced ? { items: items } : { items: items, base: _lastSeen || 0 }),
+      body:    JSON.stringify(forced ? { items: sendItems } : { items: sendItems, base: _lastSeen || 0 }),
     };
     // keepalive-режим (дожим при уходе со страницы): такой запрос браузер доотправляет даже
     // после закрытия вкладки. Без fetchT: abort-таймер после смерти страницы бессмыслен.
@@ -698,11 +723,12 @@ async function apiSave(opts){
     if (j && j.updated_at) _lastSeen = Math.max(_lastSeen, j.updated_at);   // свой save — не чужая правка
     _lastSavedJson = snap;                             // запомнили, что отправили
     _clearPendingSave();                               // облако подтвердило снимок — дожим не нужен
-    updateServerCounts(items);                         // сервер теперь равен локальному — обновляем эталон стража
+    // Эталон стража двигаем только по подтверждённым разделам (при форсе — по всем).
+    updateServerCounts(items, forced ? null : sentKeys);
     clearSaveError();                                  // успех — убираем баннер ошибки, если был
     return j;
   } catch (err) {
-    showSaveError(String((err && err.message) || err), snap.length);  // НЕ глотаем: показываем пользователю
+    showSaveError(String((err && err.message) || err), JSON.stringify(sendItems).length);  // НЕ глотаем: показываем пользователю
     return { success: false, error: String((err && err.message) || err), fallback: "localStorage" };
   } finally {
     _saving = false;
@@ -777,7 +803,10 @@ function flushSaveOnLeave(){
     _setPendingSave();
     if (_saving) return;                          // штатный POST уже в полёте; умрёт со страницей — дожмёт boot
     if (flushSaveOnLeave._sent === snap) return;  // pagehide сразу после visibilitychange — не шлём дважды
-    if (new Blob([snap]).size > FLUSH_KEEPALIVE_MAX) return;   // не влезет в keepalive — остаётся (1)
+    // Меряем ОТПРАВЛЯЕМОЕ, а не весь снимок: с сейвом по разделам правка обычно уходит
+    // парой килобайт и в квоту keepalive влезает, тогда как целый снимок не влезал никогда
+    // — и дожим при закрытии вкладки фактически не работал, всё ждало следующей загрузки.
+    if (new Blob([JSON.stringify(dirtySections(items))]).size > FLUSH_KEEPALIVE_MAX) return;   // не влезет — остаётся (1)
     flushSaveOnLeave._sent = snap;
     apiSave({ keepalive: true }).catch(function(){});   // стражи и учёт _lastSavedJson — внутри apiSave
   }catch(e){}
@@ -964,7 +993,9 @@ function _handleSaveConflict(serverItems){
     clearSaveError();
     return { success: true, merged: true };
   }
-  _lastSavedJson = null;                           // иначе apiSave решит «нечего сохранять»
+  // null — не только «есть что сохранять»: без базы сравнения apiSave отправит ВСЕ разделы.
+  // После слияния это и нужно — слитыми могли оказаться несколько разделов сразу.
+  _lastSavedJson = null;
   clearSaveError();
   scheduleSave();                                  // ретрай уйдёт уже с новым base
   return { success: false, retry: true, merged: true };

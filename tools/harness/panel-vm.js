@@ -35,11 +35,39 @@ function makeDoc(base) {
     const key = m[1].replace(/^data-/, '').replace(/-([a-z])/g, (_, c) => c.toUpperCase())
     return m[2] === undefined ? el.dataset[key] !== undefined : el.dataset[key] === m[2]
   }
+  // Элементы, которые код создаёт САМ (баннеры сохранения и обновления): регистрируем
+  // их по id, иначе следом за appendChild код зовёт getElementById и падает на null —
+  // тест ронял бы не проверяемая логика, а отсутствие настоящего DOM.
+  const register = (el) => {
+    if (el && el.id) fields.set(el.id, el)
+    const html = (el && el.innerHTML) || ''
+    const re = /id="([^"]+)"/g
+    let m
+    while ((m = re.exec(html))) if (!fields.has(m[1])) fields.set(m[1], { id: m[1], value: '', dataset: {}, style: {} })
+  }
+  const element = () => {
+    const el = { id: '', value: '', textContent: '', dataset: {}, style: { cssText: '' },
+      appendChild: (c) => { register(c); return c }, removeChild() {}, remove() {}, setAttribute() {},
+      addEventListener() {}, focus() {}, onclick: null, parentNode: null,
+      querySelectorAll: (sel) => nodes.filter((x) => match(sel, x)) }
+    // innerHTML присваивают ПОСЛЕ appendChild, а следом сразу берут getElementById по
+    // id из этой разметки. Поэтому регистрируем на присваивании, а не только на вставке.
+    let html = ''
+    Object.defineProperty(el, 'innerHTML', {
+      get: () => html,
+      set: (v) => { html = String(v); register(el) },
+      enumerable: true,
+    })
+    el.parentNode = { removeChild() {} }
+    return el
+  }
   const doc = {
     ...base,
     getElementById: (id) => fields.get(id) || null,
     querySelectorAll: (sel) => nodes.filter((el) => match(sel, el)),
     querySelector: (sel) => nodes.find((el) => match(sel, el)) || null,
+    createElement: () => element(),
+    body: { appendChild: (c) => { register(c); return c }, removeChild() {}, style: {} },
   }
   return {
     doc,
@@ -56,19 +84,31 @@ function makeDoc(base) {
 
 // Готовый контекст панели. render/scheduleSave глушим: тестам нужен стейт, не HTML,
 // а рендер целиком потянул бы за собой весь DOM.
-export function boot({ confirm = true } = {}) {
+// net — подменённый fetch: тестам синхронизации нужен управляемый сервер, остальным
+// хватает заглушки из browser-stubs (обещание, которое никогда не разрешается).
+export function boot({ confirm = true, net = null } = {}) {
   const base = createBrowserContext()
   const dom = makeDoc(base.document)
   base.document = dom.doc
   base.confirm = () => confirm
   base.alert = () => {}
+  // localStorage в заглушках всегда пуст; синхронизации нужен настоящий: в нём живут
+  // токен и кэш снимка, а без токена apiSave просто ничего не отправляет.
+  const store = new Map()
+  base.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => { store.set(k, String(v)) },
+    removeItem: (k) => { store.delete(k) },
+    clear: () => store.clear(),
+  }
+  if (net) base.fetch = net
   const ctx = vm.createContext(base)
   ctx.window = ctx; ctx.globalThis = ctx; ctx.self = ctx
   vm.runInContext(bundled(), ctx, { filename: 'admin.js' })
   vm.runInContext('render=function(){};scheduleSave=function(){};renderExpCard=function(){};', ctx)
   const q = (expr) => JSON.parse(vm.runInContext(`JSON.stringify(${expr})`, ctx) ?? 'null')
   return {
-    ctx, dom, q,
+    ctx, dom, q, storage: store,
     run: (code) => vm.runInContext(code, ctx),
     set: (state) => {
       Object.entries(state).forEach(([k, v]) => vm.runInContext(`${k}=${JSON.stringify(v)};`, ctx))
