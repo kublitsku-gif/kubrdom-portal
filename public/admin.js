@@ -46,7 +46,7 @@ import { sheetPositions, sheetTotals, sheetIssues, optionGroups, roomArea,
   SPEC_POINTS, pointMeta, pointTotals, roomPoints } from "../src/spec.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
-const APP_BUILD = "2026-08-30.4";
+const APP_BUILD = "2026-08-30.5";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -9435,23 +9435,36 @@ function kpStages(t){ // [{name,color,cost,price,works}]
 function specSheet(id){ return (specSheets||[]).find(function(x){return x.id===id;})||null; }
 // Планировки того же вида: у планировок две категории (дом / баня), у смет три вида.
 function specPlanCat(kind){ return kind==="house"?"house":"banya"; }
-// Список планировок для селекта. Показываем ВСЕ, а не только «свою» категорию: видов смет
-// в портале уже шесть (апартаменты, глэмпинг…), а категорий у планировок две, и жёсткий
-// фильтр оставлял продавца с пустым списком. Своя категория идёт первой группой.
-function specPlanOptions(kind, sel){
+// Плитки планировок с миниатюрами. Селект показывал только имя, а имя у планировки
+// часто дежурное («Планировка», «Дом + спальня» дважды) — свою только что загруженную
+// в таком списке не узнать. Чертёж узнают по картинке.
+function specPlanTiles(kind, sel, action){
   const own=specPlanCat(kind);
-  const grp=function(cat,label){
-    const list=dbPlans.filter(function(p){return (p.cat||"house")===cat;});
-    if(!list.length)return "";
-    return '<optgroup label="'+label+'">'+list.map(function(p){
-      const n=((p.specs||{}).rooms||[]).length;
-      return '<option value="'+p.id+'"'+(sel===p.id?" selected":"")+'>'+esc(p.name||"Планировка")+
-        (n?" · "+n+" помещ.":" · размеры не заданы")+'</option>';
-    }).join("")+'</optgroup>';
+  const list=dbPlans.slice().sort(function(a,b){
+    const ca=((a.cat||"house")===own)?0:1, cb=((b.cat||"house")===own)?0:1;
+    return ca-cb;   // свои сверху, внутри — порядок базы: новые в конце добавления
+  });
+  const tile=function(inner,on,attrs){
+    return '<div '+attrs+' style="flex:0 0 116px;width:116px;border:2px solid '+(on?"#16a085":"#e2e8f0")+';background:#fff;border-radius:11px;padding:6px;cursor:pointer;'+(on?"box-shadow:0 2px 10px #16a08533":"")+'">'+inner+'</div>';
   };
-  const house=grp("house","🏠 Дома"), banya=grp("banya","🛁 Бани");
-  return own==="house"?(house+banya):(banya+house);
+  let h='<div style="display:flex;gap:7px;overflow-x:auto;padding:2px 2px 6px;scrollbar-width:none;-webkit-overflow-scrolling:touch">';
+  h+=tile(
+    '<div style="height:72px;display:flex;align-items:center;justify-content:center;background:#f6f8fa;border-radius:7px;color:#c3cedb;font-size:22px">✕</div>'+
+    '<div style="font-size:10.5px;color:#7a9aaa;font-weight:700;margin-top:5px;text-align:center">Без планировки</div>',
+    !sel, 'data-a="'+action+'" data-id=""');
+  list.forEach(function(p){
+    const on=sel===p.id, n=((p.specs||{}).rooms||[]).length;
+    h+=tile(
+      (p.img
+        ? '<img src="'+esc(p.img)+'" alt="" style="width:100%;height:72px;object-fit:cover;border-radius:7px;background:#f6f8fa;display:block">'
+        : '<div style="height:72px;display:flex;align-items:center;justify-content:center;background:#f6f8fa;border-radius:7px;color:#c3cedb;font-size:22px">📐</div>')+
+      '<div style="font-size:10.5px;font-weight:700;color:#0d1b2e;margin-top:5px;line-height:1.25;max-height:26px;overflow:hidden">'+esc(p.name||"Планировка")+'</div>'+
+      '<div style="font-size:9.5px;color:'+(n?"#16a085":"#c0ccd8")+';margin-top:2px">'+(n?n+" помещ.":"размеры не заданы")+'</div>',
+      on, 'data-a="'+action+'" data-id="'+p.id+'"');
+  });
+  return h+'</div>';
 }
+
 function specTot(sh){ return sheetTotals(sh, estimates, expProducts); }
 const SPEC_SURFACE={floor:"пол", wall:"стены", ceil:"потолок"};
 // Что физически входит в позицию. Одна формулировка на экран продавца и на печать
@@ -9638,10 +9651,9 @@ function tSpec(){
         const on=specNew.kind===kd.k;
         return '<button data-a="spec-n-kind" data-k="'+kd.k+'" style="border:1.5px solid '+(on?"#16a085":"#dde6f0")+';background:'+(on?"#16a085":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:7px 11px;font-size:11.5px;font-weight:700;cursor:pointer">'+kd.emoji+' '+esc(kd.n)+'</button>';
       }).join("")+'</div>'+
-      '<select id="spec-n-plan" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:8px">'+
-        '<option value="">— планировка (можно выбрать позже) —</option>'+
-        specPlanOptions(specNew.kind, specNew.planId)+
-      '</select>'+
+      '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:5px">ПЛАНИРОВКА '+(dbPlans.length?'':'· в базе пока пусто')+'</div>'+
+      specPlanTiles(specNew.kind, specNew.planId, "spec-n-plan-pick")+
+      '<div style="font-size:10px;color:#a0b4c8;margin:2px 0 8px;line-height:1.4">Можно выбрать позже или загрузить чертёж клиента прямо в спецификацию.</div>'+
       '<select id="spec-n-client" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:10px">'+
         '<option value="">— клиент из CRM (необязательно) —</option>'+
         crmClients.map(function(c){return '<option value="'+c.id+'">'+esc(c.name||"")+'</option>';}).join("")+
@@ -9700,11 +9712,8 @@ function tSpecCard(sh){
   // Шапка: имя, планировка, клиент
   h+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:14px;padding:13px 14px;margin-bottom:10px">'+
     '<input id="spec-name" data-a="spec-name" value="'+esc(sh.name||"")+'" placeholder="Название спецификации" style="width:100%;border:none;outline:none;font-size:17px;font-weight:800;color:#0d1b2e;background:transparent;margin-bottom:8px">'+
-    '<div style="display:flex;gap:7px;flex-wrap:wrap">'+
-      '<select data-a="spec-plan" style="flex:1;min-width:170px;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12.5px;outline:none;box-sizing:border-box">'+
-        '<option value="">— планировка не выбрана —</option>'+
-        specPlanOptions(sh.kind, sh.planId)+
-      '</select>'+
+    specPlanTiles(sh.kind, sh.planId, "spec-plan-pick")+
+    '<div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:6px">'+
       '<select data-a="spec-client" style="flex:1;min-width:150px;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12.5px;outline:none;box-sizing:border-box">'+
         '<option value="">— клиент —</option>'+
         crmClients.map(function(c){return '<option value="'+c.id+'"'+(sh.clientId===c.id?" selected":"")+'>'+esc(c.name||"")+'</option>';}).join("")+
@@ -17339,7 +17348,7 @@ function bind(){
     };}
     else if(a==="spec-create"){el.onclick=()=>{
       const name=((document.getElementById("spec-n-name")||{}).value||"").trim();
-      const planId=(document.getElementById("spec-n-plan")||{}).value||"";
+      const planId=specNew.planId||"";
       const clientId=(document.getElementById("spec-n-client")||{}).value||"";
       if(!name){ alert("Назовите спецификацию — по этому имени её будут искать."); return; }
       const id=gid();
@@ -17365,6 +17374,22 @@ function bind(){
       fl();
     };}
     else if(a==="spec-client"){el.onchange=()=>{ const sh=specSheet(specOpenId); if(!sh)return; sh.clientId=el.value||""; fl(); };}
+    else if(a==="spec-n-plan-pick"){el.onclick=()=>{
+      specNew.name=(document.getElementById("spec-n-name")||{}).value||specNew.name;
+      specNew.planId=el.dataset.id||"";
+      render();
+    };}
+    else if(a==="spec-plan-pick"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh)return;
+      const pid=el.dataset.id||"";
+      if(pid===(sh.planId||""))return;
+      if(!pid){ sh.planId=""; fl(); return; }
+      const hadPicks=Object.keys(sh.rooms||{}).length>0;
+      if(hadPicks&&!confirm("Сменить планировку?\n\nПомещения станут другими, и выбранная по ним отделка сбросится."))
+        { render(); return; }
+      specApplyPlan(sh, pid);
+      fl();
+    };}
     else if(a==="spec-plan"){el.onchange=()=>{
       const sh=specSheet(specOpenId); if(!sh)return;
       const pid=el.value||"";

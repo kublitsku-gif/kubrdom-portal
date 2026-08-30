@@ -57,8 +57,10 @@ function panel(opts) {
 // Создать спецификацию так, как это делает продавец: форма → «Создать».
 function create(p, planId = 'pl1') {
   p.dom.field('spec-n-name', 'Баня Иванова')
-  p.dom.field('spec-n-plan', planId)
   p.dom.field('spec-n-client', 'c1')
+  const tile = p.dom.node({ a: 'spec-n-plan-pick', id: planId })
+  p.run('bind();')
+  tile.onclick()
   const btn = p.dom.node({ a: 'spec-create' })
   p.run('bind();')
   btn.onclick()
@@ -138,10 +140,9 @@ function assembled(p) {
   t.section('Смена планировки')
   const p = panel()
   const id = assembled(p)
-  const sel = p.dom.node({ a: 'spec-plan' })
-  sel.value = 'pl2'
+  const tile = p.dom.node({ a: 'spec-plan-pick', id: 'pl2' })
   p.run('bind();')
-  sel.onchange()
+  tile.onclick()
   const sh = p.q('specSheets')[0]
   t.ok('помещения стали другими', sh.specs.rooms.length === 1 && sh.specs.rooms[0].id === 'q1')
   t.ok('отделка по старым комнатам сброшена', Object.keys(sh.rooms || {}).length === 0,
@@ -287,10 +288,11 @@ function assembled(p) {
   t.section('Планировка клиента')
   const p = panel()
   // Планировок «своей» категории может не быть вовсе — как у вида «Дом» на проде.
-  const opts = p.run('specPlanOptions("house","")')
-  t.ok('в списке видны планировки обеих категорий', /pl1/.test(opts) && /pl2/.test(opts),
-    'жёсткий фильтр по категории оставлял продавца с пустым списком: ' + opts)
-  t.ok('своя категория идёт первой группой', opts.indexOf('Дома') < opts.indexOf('Бани'), opts)
+  const tiles = p.run('specPlanTiles("house","","spec-n-plan-pick")')
+  t.ok('в выборе есть планировки обеих категорий', /pl1/.test(tiles) && /pl2/.test(tiles),
+    'жёсткий фильтр по категории оставлял продавца с пустым списком')
+  t.ok('своя категория идёт первой', tiles.indexOf('pl2') < tiles.indexOf('pl1'), tiles)
+  t.ok('и есть плитка «без планировки»', /data-id=""/.test(tiles))
 
   // Дом собирается и без планировки в базе: помещения заводятся руками по чертежу клиента.
   const id = create(p, '').id
