@@ -92,18 +92,18 @@ const SHEET = () => ({
 {
   console.log('Состав спецификации')
   const s = SHEET()
-  s.rooms = { r1: { wall: 'e_gkl', floor: 'e_tile' }, r2: { wall: 'e_mdf', floor: 'e_lam' } }
+  s.rooms = { r1: { 'Стены': 'e_gkl', 'Пол': 'e_tile' }, r2: { 'Стены': 'e_mdf', 'Пол': 'e_lam' } }
   s.global = { 'Утепление': 'e_ppu8' }
   const pos = sheetPositions(s, EST, PRODUCTS)
   ok('позиций: обязательная + 4 по комнатам + общедомовая', pos.length === 6, String(pos.length))
 
-  const parWall = pos.find((p) => p.key === 'room:r1:wall')
+  const parWall = pos.find((p) => p.key === 'room:r1:Стены')
   ok('стены парной посчитаны от её площади', parWall.area === 25, String(parWall.area))
   ok('ГКЛ пересчитан в листы', parWall.mats.find((m) => m.pid === 'p_gkl').qty === 8.34)
   ok('саморезы в той же работе остались штучными', parWall.mats.find((m) => m.pid === 'p_screw').qty === 1,
     'от площади считается только то, что ею меряется')
 
-  const koFloor = pos.find((p) => p.key === 'room:r2:floor')
+  const koFloor = pos.find((p) => p.key === 'room:r2:Пол')
   ok('пол комнаты отдыха — 12 м² ламината', koFloor.area === 12 && koFloor.mats[0].qty === 12)
   ok('и стоит 12 × 800', koFloor.cost === 9600, String(koFloor.cost))
 
@@ -119,7 +119,7 @@ const SHEET = () => ({
 {
   console.log('Смена варианта')
   const s = SHEET()
-  s.rooms = { r1: { wall: 'e_gkl' }, r2: { wall: 'e_gkl' } }
+  s.rooms = { r1: { 'Стены': 'e_gkl' }, r2: { 'Стены': 'e_gkl' } }
   s.global = { 'Утепление': 'e_ppu3' }
   const cheap = sheetTotals(s, EST, PRODUCTS)
 
@@ -128,7 +128,7 @@ const SHEET = () => ({
   ok('ППУ 8 см дороже ППУ 3 см ровно на разницу', dear.cost - cheap.cost === 60 * (1100 - 500),
     String(dear.cost - cheap.cost))
 
-  s.rooms = { r1: { wall: 'e_mdf' }, r2: { wall: 'e_mdf' } }
+  s.rooms = { r1: { 'Стены': 'e_mdf' }, r2: { 'Стены': 'e_mdf' } }
   const mdf = sheetTotals(s, EST, PRODUCTS)
   ok('смена стен на МДФ тоже меняет итог', mdf.cost !== dear.cost)
   ok('наценка применяется к итогу', mdf.price === Math.round(mdf.cost * 1.4), String(mdf.price) + ' vs ' + mdf.cost)
@@ -139,9 +139,9 @@ const SHEET = () => ({
 {
   console.log('Ручная правка')
   const s = SHEET()
-  s.rooms = { r1: { floor: 'e_tile' } }
+  s.rooms = { r1: { 'Пол': 'e_tile' } }
   const before = sheetTotals(s, EST, PRODUCTS).cost
-  s.qty = { 'room:r1:floor': 2 }
+  s.qty = { 'room:r1:Пол': 2 }
   const after = sheetTotals(s, EST, PRODUCTS).cost
   // Удваивается ИМЕННО правленая позиция (пол 6 м² × 1200), а не весь итог: обязательные
   // позиции к ней отношения не имеют.
@@ -157,7 +157,7 @@ const SHEET = () => ({
   ok('и что выбор не сделан', empty.some((x) => /Утепление/.test(x)), JSON.stringify(empty))
 
   const s = SHEET()
-  s.rooms = { r1: { wall: 'e_gkl', floor: 'e_tile' }, r2: { wall: 'e_mdf', floor: 'e_lam' } }
+  s.rooms = { r1: { 'Стены': 'e_gkl', 'Пол': 'e_tile' }, r2: { 'Стены': 'e_mdf', 'Пол': 'e_lam' } }
   s.global = { 'Утепление': 'e_ppu8' }
   ok('собранная спецификация замечаний не даёт', sheetIssues(s, EST, PRODUCTS).length === 0,
     JSON.stringify(sheetIssues(s, EST, PRODUCTS)))

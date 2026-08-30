@@ -105,15 +105,18 @@ export function sheetPositions(sheet, estimates, products) {
     out.push(position(e, { key: "base:" + e.id, area: 0 }, prodById, qty["base:" + e.id]));
   });
 
+  // Выбор по комнате хранится ПО ГРУППЕ, а не по трём поверхностям: «Стены черновые» и
+  // «Стены чистовые» — разные решения об одной стене, и в трёх ячейках они бы столкнулись.
+  // Площадь берётся из самой сметы (optSurface), поэтому группа сама знает, чем меряется.
   ((specs.rooms) || []).forEach(function (r) {
     const picks = ((sheet.rooms || {})[r.id]) || {};
-    ["floor", "wall", "ceil"].forEach(function (surface) {
-      const estId = picks[surface];
-      const e = estId && byId[estId];
+    Object.keys(picks).forEach(function (group) {
+      const e = picks[group] && byId[picks[group]];
       if (!e) return;
-      const key = "room:" + r.id + ":" + surface;
+      const key = "room:" + r.id + ":" + group;
       out.push(position(e, {
-        key: key, area: roomArea(r, H, surface), roomId: r.id, roomName: r.name || "", surface: surface,
+        key: key, area: e.optSurface ? roomArea(r, H, e.optSurface) : 0,
+        roomId: r.id, roomName: r.name || "", surface: e.optSurface || "",
       }, prodById, qty[key]));
     });
   });
@@ -159,9 +162,15 @@ export function sheetIssues(sheet, estimates, products) {
   rooms.forEach(function (r) {
     if (!roomArea(r, specs.height, "floor")) out.push("«" + (r.name || "помещение") + "»: не заданы размеры");
   });
-  const groups = optionGroups(estimates, (sheet && sheet.kind) || "banya", "global");
-  groups.forEach(function (g) {
+  optionGroups(estimates, (sheet && sheet.kind) || "banya", "global").forEach(function (g) {
     if (!((sheet.global || {})[g.group])) out.push("Не выбран вариант: " + g.group);
+  });
+  const roomGroups = optionGroups(estimates, (sheet && sheet.kind) || "banya", "room");
+  rooms.forEach(function (r) {
+    const picks = ((sheet.rooms || {})[r.id]) || {};
+    roomGroups.forEach(function (g) {
+      if (!picks[g.group]) out.push("«" + (r.name || "помещение") + "»: не выбрано — " + g.group);
+    });
   });
   const t = sheetTotals(sheet, estimates, products);
   if (!t.cost) out.push("Себестоимость нулевая — ничего не выбрано или у материалов нет цены");
