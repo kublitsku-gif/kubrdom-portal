@@ -4138,6 +4138,71 @@ function rerenderTab(){
   window.scrollTo(0,_y);                          // страховка от клампа высоты
 }
 // Один источник HTML активной вкладки — используется и в page(), и в rerenderTab().
+// Короткие подписи для нижней панели. Модульная область видимости, а не внутри
+// render(): её читает bottomTabsOf, который живёт снаружи.
+const BOTTOM_NAV=[
+  ["assign","Объекты","🏗️"],
+  ["works","База данных","🗄️"],
+  ["finance","Финансы","💰"],
+  ["contracts","Договора","📄"],
+  ["supply","Снабжение","📦"],
+  ["issues","Вопросы","❓"],
+];
+// ─── НИЖНЯЯ ПАНЕЛЬ: НАСТРАИВАЕМЫЕ СЛОТЫ ─────────────────────────────────────
+// У сотрудника с пятью ролями вкладок восемь, и нужный раздел уезжает за край
+// карусели — до «Клиентов» приходится листать. Нижняя панель даёт три раздела под
+// большой палец, а «Ещё» открывает сетку всех: недоступным не остаётся ничего.
+//
+// Выбор слотов — В LOCALSTORAGE, а не в снимке: раздел users пишет только админ
+// (как и в напоминаниях), да и это настройка устройства, а не данные портала.
+// Синхронизировать её между телефоном и ноутбуком незачем.
+const BOTTOM_SLOTS=3;
+let moreOpen=false;         // раскрыта шторка «Ещё»
+let moreEdit=false;         // в шторке включён режим настройки панели
+function bottomTabsRead(){
+  try{ const v=JSON.parse(localStorage.getItem("kubr_bottomTabs")||"[]"); return Array.isArray(v)?v.filter(function(x){return typeof x==="string";}):[]; }
+  catch(e){ return []; }
+}
+function bottomTabsWrite(list){
+  try{ localStorage.setItem("kubr_bottomTabs",JSON.stringify(list.slice(0,BOTTOM_SLOTS))); }catch(e){}
+}
+// Что показать в панели: выбор человека, очищенный от недоступного, добитый
+// умолчанием по ролям. Пустая панель хуже карусели, поэтому пустой не бывает.
+function bottomTabsOf(accessible){
+  const picked=bottomTabsRead().filter(function(k){return accessible.has(k);});
+  if(picked.length>=BOTTOM_SLOTS)return picked.slice(0,BOTTOM_SLOTS);
+  const out=picked.slice();
+  BOTTOM_NAV.forEach(function(d){ if(out.length<BOTTOM_SLOTS&&accessible.has(d[0])&&out.indexOf(d[0])<0)out.push(d[0]); });
+  return out;
+}
+// Шторка «Ещё»: все доступные разделы плиткой + режим настройки панели.
+function moreSheet(allTabs,accessible,picked){
+  if(!moreOpen)return "";
+  const items=allTabs.filter(function(t){return accessible.has(t[0]);});
+  const cell=function(t){
+    const k=t[0],n=String(t[1]);
+    const on=picked.indexOf(k)>=0;
+    const cur=tab===k;
+    const act=moreEdit?'data-a="more-pick" data-k="'+k+'"':'data-a="more-go" data-k="'+k+'"';
+    return '<button '+act+' style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:12px 6px;border-radius:13px;cursor:pointer;border:1.5px solid '+(moreEdit&&on?"#2980b9":cur&&!moreEdit?"#2980b9":"#e3eaf2")+';background:'+(moreEdit&&on?"#eaf2fb":"#fff")+';min-height:78px">'+
+      '<span style="font-size:22px;line-height:1">'+n.split(" ")[0]+'</span>'+
+      '<span style="font-size:10.5px;font-weight:'+(cur?700:600)+';color:'+(cur&&!moreEdit?"#2980b9":"#5a7080")+';text-align:center;line-height:1.25">'+esc(n.split(" ").slice(1).join(" ")||n)+'</span>'+
+      (moreEdit?'<span style="font-size:9px;font-weight:700;color:'+(on?"#2980b9":"#c4cdd8")+'">'+(on?"● в панели":"○")+'</span>':"")+
+    '</button>';
+  };
+  return '<div data-a="more-close" style="position:fixed;inset:0;background:rgba(13,27,46,0.45);z-index:70"></div>'+
+    '<div style="position:fixed;left:0;right:0;bottom:0;z-index:71;max-width:480px;margin:0 auto;background:#fff;border-radius:20px 20px 0 0;padding:10px 14px calc(16px + env(safe-area-inset-bottom,0px));box-shadow:0 -10px 40px rgba(10,25,40,0.26)">'+
+      '<div style="width:40px;height:5px;border-radius:3px;background:#d5dde5;margin:2px auto 12px"></div>'+
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">'+
+        '<div style="flex:1;font-size:14px;font-weight:800;color:#0d1b2e">'+(moreEdit?"Что держать в панели":"Все разделы")+'</div>'+
+        '<button data-a="more-edit" style="padding:6px 11px;border-radius:9px;cursor:pointer;font-size:11px;font-weight:700;border:1.5px solid '+(moreEdit?"#2980b9":"#dde6f0")+';background:'+(moreEdit?"#2980b9":"#fff")+';color:'+(moreEdit?"#fff":"#7a9aaa")+'">'+(moreEdit?"✓ Готово":"⚙ Настроить")+'</button>'+
+        '<button data-a="more-close" style="width:30px;height:30px;border-radius:9px;border:none;background:#f0f4f8;cursor:pointer;font-size:13px;color:#7a9aaa">✕</button>'+
+      '</div>'+
+      (moreEdit?'<div style="font-size:11px;color:#7a9aaa;line-height:1.4;margin-bottom:9px">Выберите до '+BOTTOM_SLOTS+' разделов — они встанут внизу под палец. Остальные останутся здесь и в ленте сверху.</div>':"")+
+      '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;max-height:52vh;overflow-y:auto">'+items.map(cell).join("")+'</div>'+
+    '</div>';
+}
+
 function tabContentHtml(){
   return tab==="assign"?tObjects():tab==="myday"?tMyDay():tab==="sheetlist"?tSheetList():tab==="wizard"?tWizardTab():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tab==="kp"?tKP():tab==="voiceai"?tVoiceAi():tab==="issues"?tIssues():tab==="history"?tHistory():tCRM();
 }
@@ -4194,6 +4259,19 @@ function render(){
   a.innerHTML=page();
   // Восстанавливаем прокрутку ленты вкладок, чтобы экран не «дёргался».
   if(_tabsScrollPrev!=null){const e=document.getElementById("tabs-scroll");if(e)e.scrollLeft=_tabsScrollPrev;}
+  // Довести ленту до активной вкладки. Раньше положение только СОХРАНЯЛОСЬ между
+  // перерисовками, и раздел за краем так и оставался за краем: человек с восемью
+  // вкладками не видел, где находится.
+  try{
+    const _ts=document.getElementById("tabs-scroll");
+    const _at=_ts&&_ts.querySelector('[data-a="tab"][data-k="'+tab+'"]');
+    if(_at){
+      const l=_at.offsetLeft, r=l+_at.offsetWidth;
+      if(l<_ts.scrollLeft||r>_ts.scrollLeft+_ts.clientWidth){
+        _ts.scrollTo({left:Math.max(0,l-16),behavior:_tabsScrollPrev==null?"auto":"smooth"});
+      }
+    }
+  }catch(e){}
   // Возвращаем фокус и курсор в поле, где печатал пользователь: перерисовка на каждую букву
   // (поиски клиента/CRM и т.п.) иначе «съедает» все символы после первого — клавиатура
   // печатает в никуда, пока поле без фокуса.
@@ -4412,32 +4490,39 @@ function page(){
   }
   // iOS-style нижний таб-бар — быстрый доступ к 4 главным разделам.
   // Пункты фильтруются по доступным вкладкам (TABS), чтобы не показать недоступный роли раздел.
-  const BOTTOM_NAV=[
-    ["assign","Объекты","🏗️"],
-    ["works","База данных","🗄️"],
-    ["finance","Финансы","💰"],
-    ["contracts","Договора","📄"],
-    ["supply","Снабжение","📦"],
-    ["issues","Вопросы","❓"],
-  ];
   const _accessible=new Set(TABS.map(function(t){return t[0];}));
-  const _bottomItems=BOTTOM_NAV.filter(function(x){return _accessible.has(x[0]);});
-  // Нижний таб-бар — только для админа.
-  const bottomBar=(isAdmin&&_bottomItems.length>1)?`<div style="position:fixed;left:0;right:0;bottom:0;z-index:60;pointer-events:none;-webkit-transform:translateZ(0);transform:translateZ(0)">
+  // Нижний бар — ВСЕМ, а не только админу: у сотрудника с пятью ролями вкладок восемь,
+  // и нужный раздел уезжает за край карусели. Три слота человек выбирает сам, четвёртый —
+  // «Ещё» с сеткой всех разделов, чтобы недоступного не осталось вовсе.
+  const _bottomPicked=bottomTabsOf(_accessible);
+  const _bottomItems=_bottomPicked.map(function(k){
+    const d=BOTTOM_NAV.find(function(x){return x[0]===k;});
+    if(d)return d;
+    // Раздела нет в коротком списке — берём имя из общей ленты и режем до пары слов.
+    const t=ALL_TABS.find(function(x){return x[0]===k;});
+    const nm=t?String(t[1]):k;
+    const m=nm.match(/^(\S+)\s+(.*)$/);
+    return [k, (m?m[2]:nm).split(" ")[0], m?m[1]:"•"];
+  });
+  const bottomBar=(_bottomItems.length)?`<div style="position:fixed;left:0;right:0;bottom:0;z-index:60;pointer-events:none;-webkit-transform:translateZ(0);transform:translateZ(0)">
   <div style="max-width:480px;margin:0 auto;background:#ffffff;border-top:1px solid #e2e8f0;display:flex;padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px));pointer-events:auto;box-shadow:0 -1px 10px rgba(13,27,46,0.06)">
   ${_bottomItems.map(function(it){
     const k=it[0],label=it[1],icon=it[2],on=tab===k;
-    return '<button data-a="tab" data-k="'+k+'" style="flex:1;border:none;background:transparent;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 2px;-webkit-tap-highlight-color:transparent">'
+    return '<button data-a="tab" data-k="'+k+'" style="flex:1;min-width:0;border:none;background:transparent;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 2px;-webkit-tap-highlight-color:transparent">'
       +'<span style="position:relative;font-size:22px;line-height:1;transition:transform 0.12s;transform:scale('+(on?"1.06":"1")+');filter:'+(on?"none":"grayscale(45%) opacity(0.7)")+'">'+icon
         +(k==="issues"&&issuesMineOpen().length?'<span style="position:absolute;top:-3px;left:14px;background:#c0392b;color:#fff;border-radius:9px;padding:0 5px;font-size:10px;font-weight:800;line-height:1.5">'+issuesMineOpen().length+'</span>':'')
         +'</span>'
-      +'<span style="font-size:10px;font-weight:'+(on?700:500)+';color:'+(on?"#2980b9":"#8a97a6")+';letter-spacing:0.1px;white-space:nowrap">'+label+'</span>'
+      +'<span style="font-size:10px;font-weight:'+(on?700:500)+';color:'+(on?"#2980b9":"#8a97a6")+';letter-spacing:0.1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">'+esc(label)+'</span>'
       +'</button>';
   }).join("")}
+  <button data-a="more-open" style="flex:1;min-width:0;border:none;background:transparent;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 2px;-webkit-tap-highlight-color:transparent">
+    <span style="font-size:22px;line-height:1;filter:${moreOpen?"none":"grayscale(45%) opacity(0.7)"}">☰</span>
+    <span style="font-size:10px;font-weight:${moreOpen?700:500};color:${moreOpen?"#2980b9":"#8a97a6"};letter-spacing:0.1px">Ещё</span>
+  </button>
   </div>
-</div>`:"";
+</div>`+moreSheet(ALL_TABS,_accessible,_bottomPicked):"";
   const SC={"Озон":"#005bff","Белка":"#d68910","pechki.su":"#c0392b","Егорьевск":"#8e44ad","Лемана":"#e30613","Авито":"#00aaff","Нижний Новгород":"#27ae60"};
-  return`<div style="max-width:480px;margin:0 auto;min-height:100vh;background:#f6f8fa;padding-bottom:${isAdmin?"calc(76px + env(safe-area-inset-bottom,0px))":"80px"};box-sizing:border-box">
+  return`<div style="max-width:480px;margin:0 auto;min-height:100vh;background:#f6f8fa;padding-bottom:calc(76px + env(safe-area-inset-bottom,0px));box-sizing:border-box">
 <div style="background:#fff;border-bottom:1px solid #eef2f7;padding:10px 14px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:50">
   <div style="width:32px;height:32px;border-radius:8px;background:${currentUser.c};display:flex;align-items:center;justify-content:center;font-size:16px">${currentUser.av}</div>
   <div style="flex:1;min-width:0">
@@ -17938,6 +18023,22 @@ function bind(){
         answer:t.answer||"Согласовано, внесено в план доп работ."});
       fl();
       issueNotifyAuthor(t.id);
+    };}
+    else if(a==="more-open"){el.onclick=()=>{ moreOpen=true; moreEdit=false; render(); };}
+    else if(a==="more-close"){el.onclick=()=>{ moreOpen=false; moreEdit=false; render(); };}
+    else if(a==="more-edit"){el.onclick=()=>{ moreEdit=!moreEdit; render(); };}
+    else if(a==="more-go"){el.onclick=()=>{ tab=el.dataset.k; moreOpen=false; openObject=null; openTemplate=null; render(); };}
+    // Выбор слотов панели: тап переключает раздел. Больше лимита не даём — молча
+    // выкидывать чужой выбор хуже, чем сказать, что мест нет.
+    else if(a==="more-pick"){el.onclick=()=>{
+      const k=el.dataset.k;
+      const cur=bottomTabsRead();
+      const i=cur.indexOf(k);
+      if(i>=0)cur.splice(i,1);
+      else if(cur.length>=BOTTOM_SLOTS){ alert("В панели "+BOTTOM_SLOTS+" места. Снимите лишний раздел, чтобы поставить этот."); return; }
+      else cur.push(k);
+      bottomTabsWrite(cur);
+      render();
     };}
     else if(a==="obj-ready-filter"){el.onclick=()=>{
       objReadyFilter=el.dataset.v||"stages";
