@@ -396,6 +396,32 @@ function assembled(p) {
   t.ok('с итогом по каждой точке', /Всего/.test(html) && html.indexOf('Розетка') > 0)
 }
 
+// ── 9б2. Модель предлагается сразу при создании ──────────────────────────────
+{
+  t.section('Модель из формы создания')
+  const p = panel()
+  p.dom.field('spec-n-name', 'Дом 12 м')
+  p.dom.field('spec-n-client', '')
+  const box = p.dom.node({ a: 'spec-n-model', k: '40hc' })
+  p.run('bind();')
+  box.onclick()
+  const btn = p.dom.node({ a: 'spec-create' })
+  p.run('bind();')
+  btn.onclick()
+  const sh = p.q('specSheets')[0]
+  t.ok('спецификация создана сразу с моделью', !!sh.model && sh.model.type === '40hc',
+    'иначе про модель узнают, только открыв карточку')
+  t.ok('и характеристики уже посчитаны', sh.specs.rooms.length === 1 && sh.specs.height === 2.7,
+    JSON.stringify(sh.specs.rooms))
+
+  p.run('specOpenId=null;')
+  const list = p.run('tSpec()')
+  t.ok('в списке видно, что она собрана моделью', list.indexOf('модель') > 0)
+
+  const form = p.run('specShowNew=true;specNew={name:"",kind:"house",clientId:"",planId:"",model:""};tSpec()')
+  t.ok('в форме создания есть выбор контейнера', form.indexOf('spec-n-model') > 0 && form.indexOf('40 футов HC') > 0)
+}
+
 // ── 9в. Модель контейнера в панели ───────────────────────────────────────────
 // Смысл модели один: подвинул перегородку — поехала смета. Это и сторожим.
 {

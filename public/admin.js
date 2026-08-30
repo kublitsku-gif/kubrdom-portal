@@ -50,7 +50,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   modelToSpecs, modelTotals, modelIssues } from "../src/model.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
-const APP_BUILD = "2026-08-30.7";
+const APP_BUILD = "2026-08-30.8";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -2084,7 +2084,7 @@ let modelOpDrag=null;      // проём под пальцем
 let modelStageTab=0;       // 0 = все этапы
 let specSheets=[];
 let specOpenId=null;      // открытая спецификация (null = список)
-let specNew={name:"",kind:"banya",clientId:"",planId:""};
+let specNew={name:"",kind:"banya",clientId:"",planId:"",model:""};
 let specShowNew=false;
 let specBaseOpen=false;   // раскрыт ли список «входит всегда» в карточке спецификации
 let purchased={}; // {matId: true} — отмечено снабженцем как куплено
@@ -10003,6 +10003,18 @@ function tSpec(){
       '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:5px">ПЛАНИРОВКА '+(dbPlans.length?'':'· в базе пока пусто')+'</div>'+
       specPlanTiles(specNew.kind, specNew.planId, "spec-n-plan-pick")+
       '<div style="font-size:10px;color:#a0b4c8;margin:2px 0 8px;line-height:1.4">Можно выбрать позже или загрузить чертёж клиента прямо в спецификацию.</div>'+
+      // Дом из контейнера собирается моделью, а не планировкой: коробка известна,
+      // и дальше это перегородки и проёмы. Предлагаем здесь же, иначе про модель
+      // узнают, только открыв карточку.
+      '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:5px">ИЛИ СОБРАТЬ МОДЕЛЬЮ КОНТЕЙНЕРА</div>'+
+      '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:4px">'+
+        CONTAINERS.map(function(c){
+          const on=specNew.model===c.k;
+          return '<button data-a="spec-n-model" data-k="'+c.k+'" style="border:1.5px solid '+(on?"#8e44ad":"#dde6f0")+';background:'+(on?"#8e44ad":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">📦 '+esc(c.n)+'</button>';
+        }).join("")+
+      '</div>'+
+      '<div style="font-size:10px;color:#a0b4c8;margin:2px 0 9px;line-height:1.4">'+
+        (specNew.model?'Перегородки и проёмы расставите в карточке — площади и смета пересчитаются сами.':'Коробка нужного типоразмера, перегородки двигаются, окна и двери ставятся в стены.')+'</div>'+
       '<select id="spec-n-client" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:10px">'+
         '<option value="">— клиент из CRM (необязательно) —</option>'+
         crmClients.map(function(c){return '<option value="'+c.id+'">'+esc(c.name||"")+'</option>';}).join("")+
@@ -10029,7 +10041,9 @@ function tSpec(){
         '<span style="font-size:22px">'+kd.emoji+'</span>'+
         '<div style="flex:1;min-width:0">'+
           '<div style="font-size:14px;font-weight:700;color:#0d1b2e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(sh.name||"Спецификация")+'</div>'+
-          '<div style="font-size:11px;color:#7a9aaa;margin-top:2px">'+(cl?esc(cl.name)+' · ':'')+rooms+' помещ. · '+t.count+' поз.</div>'+
+          '<div style="font-size:11px;color:#7a9aaa;margin-top:2px">'+(cl?esc(cl.name)+' · ':'')+
+            (sh.model?'<span style="color:#8e44ad;font-weight:700">🧱 модель</span> · ':'')+
+            rooms+' помещ. · '+t.count+' поз.</div>'+
         '</div>'+
         '<div style="text-align:right;flex-shrink:0">'+
           '<div style="font-size:15px;font-weight:800;color:#16a085">'+RUk(t.price)+'</div>'+
@@ -17693,7 +17707,7 @@ function bind(){
     else if(a==="fin-clear-selection"){el.onclick=()=>{finSelectedContractIds=[];render();};}
     else if(a==="fin-select-all"){el.onclick=()=>{finSelectedContractIds=contractDocs.map(function(c){return c.id;});render();};}
     // ─── Спецификация ──────────────────────────────────────────────────────
-    else if(a==="spec-new"){el.onclick=()=>{ specShowNew=!specShowNew; specNew={name:"",kind:estKind||"banya",clientId:"",planId:""}; render(); };}
+    else if(a==="spec-new"){el.onclick=()=>{ specShowNew=!specShowNew; specNew={name:"",kind:estKind||"banya",clientId:"",planId:"",model:""}; render(); };}
     else if(a==="spec-new-cancel"){el.onclick=()=>{ specShowNew=false; render(); };}
     else if(a==="spec-n-kind"){el.onclick=()=>{
       specNew.name=(document.getElementById("spec-n-name")||{}).value||specNew.name;
@@ -17713,6 +17727,9 @@ function bind(){
       // Размеры копируем из планировки, а не ссылаемся: планировку в базе поправят, а
       // проданная спецификация обязана остаться такой, какой её продали.
       if(planId)specApplyPlan(sh, planId);
+      // Модель важнее планировки: она сама задаёт помещения, а планировка остаётся
+      // чертежом клиента рядом.
+      if(specNew.model){ sh.model=emptyModel(specNew.model); sh.model.rooms[0].id=gid(); modelSync(sh); }
       specSheets=specSheets.concat([sh]);
       specShowNew=false; specOpenId=id; fl();
     };}
@@ -17728,6 +17745,11 @@ function bind(){
       fl();
     };}
     else if(a==="spec-client"){el.onchange=()=>{ const sh=specSheet(specOpenId); if(!sh)return; sh.clientId=el.value||""; fl(); };}
+    else if(a==="spec-n-model"){el.onclick=()=>{
+      specNew.name=(document.getElementById("spec-n-name")||{}).value||specNew.name;
+      specNew.model=(specNew.model===el.dataset.k)?"":el.dataset.k;
+      render();
+    };}
     else if(a==="spec-n-plan-pick"){el.onclick=()=>{
       specNew.name=(document.getElementById("spec-n-name")||{}).value||specNew.name;
       specNew.planId=el.dataset.id||"";
