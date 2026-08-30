@@ -9235,7 +9235,12 @@ function buildSpecPrint(sh){
   if(!sh){ alert("Спецификация не найдена."); return; }
   const t=specTot(sh);
   const RUk=function(n){return Math.round(n).toLocaleString("ru-RU")+" ₽";};
-  const K=(t.cost>0)?(t.price/t.cost):1;   // наценку размазываем по позициям, чтобы суммы сошлись
+  // Наценку размазываем по позициям, но показанные рубли обязаны сойтись с итогом:
+  // считаем нарастающим итогом и берём разницу округлений. Округление каждой строки
+  // по отдельности расходилось с «ИТОГО» на рубль — в глазах клиента это ошибка в счёте.
+  const K=(t.cost>0)?(t.price/t.cost):1;
+  const shown={}; let _acc=0, _prev=0;
+  t.positions.forEach(function(p){ _acc+=p.cost*K; const r=Math.round(_acc); shown[p.key]=r-_prev; _prev=r; });
   const cl=crmClients.find(function(c){return c.id===sh.clientId;});
   const specs=sh.specs||{rooms:[]};
   const d=new Date();
@@ -9244,12 +9249,12 @@ function buildSpecPrint(sh){
   const roomRows=(specs.rooms||[]).map(function(r){
     const pos=t.positions.filter(function(p){return p.roomId===r.id;});
     if(!pos.length)return "";
-    const sum=pos.reduce(function(a,p){return a+p.cost*K;},0);
+    const sum=pos.reduce(function(a,p){return a+shown[p.key];},0);
     return '<tr><td class="sh" colspan="3">'+esc(r.name||"Помещение")+' · пол '+numRu(roomArea(r,specs.height,"floor"))+' м² · стены '+numRu(roomArea(r,specs.height,"wall"))+' м²</td></tr>'+
       pos.map(function(p){
         return '<tr><td>'+esc(p.name)+(p.label?' <span class="v">'+esc(p.label)+'</span>':'')+'</td>'+
           '<td class="c">'+(p.area?numRu(p.area)+' м²':'—')+'</td>'+
-          '<td class="r">'+RUk(p.cost*K)+'</td></tr>';
+          '<td class="r">'+RUk(shown[p.key])+'</td></tr>';
       }).join("")+
       '<tr class="subr"><td class="sub" colspan="2">Итого по помещению</td><td class="r sub">'+RUk(sum)+'</td></tr>';
   }).join("");
@@ -9258,7 +9263,7 @@ function buildSpecPrint(sh){
   const otherRows=other.length
     ? '<tr><td class="sh" colspan="3">ОБЩЕЕ ПО ДОМУ</td></tr>'+other.map(function(p){
         return '<tr><td>'+esc(p.name)+(p.label?' <span class="v">'+esc(p.label)+'</span>':'')+'</td>'+
-          '<td class="c">'+(p.area?numRu(p.area)+' м²':'—')+'</td><td class="r">'+RUk(p.cost*K)+'</td></tr>';
+          '<td class="c">'+(p.area?numRu(p.area)+' м²':'—')+'</td><td class="r">'+RUk(shown[p.key])+'</td></tr>';
       }).join("")
     : "";
 
