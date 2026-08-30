@@ -4213,6 +4213,55 @@ function bottomTabsOf(accessible){
   BOTTOM_NAV.forEach(function(d){ if(out.length<3&&accessible.has(d[0])&&out.indexOf(d[0])<0)out.push(d[0]); });
   return out;
 }
+// Порядок разделов — СВОЙ на устройстве. Раньше он жил в window._adminTabs: общий на
+// всех, только для админа и терялся при перезагрузке. Здесь тот же принцип, что у
+// нижней панели: это настройка экрана, а не данные портала.
+function tabOrderRead(){
+  try{
+    const v=JSON.parse(localStorage.getItem("kubr_tabOrder")||"null");
+    return Array.isArray(v)?v.filter(function(x){return typeof x==="string";}):null;
+  }catch(e){ return null; }
+}
+function tabOrderWrite(list){
+  try{ localStorage.setItem("kubr_tabOrder",JSON.stringify(list)); }catch(e){}
+}
+// Разложить вкладки по сохранённому порядку. Неизвестные ключи (новый раздел появился
+// после настройки) уходят в конец в их исходном порядке, а не пропадают.
+function applyTabOrder(tabs){
+  const ord=tabOrderRead();
+  if(!ord||!ord.length)return tabs;
+  const byKey={}; tabs.forEach(function(t){ byKey[t[0]]=t; });
+  const out=[];
+  ord.forEach(function(k){ if(byKey[k]){ out.push(byKey[k]); delete byKey[k]; } });
+  tabs.forEach(function(t){ if(byKey[t[0]])out.push(t); });
+  return out;
+}
+
+// Перенос раздела перетаскиванием: внутри своей зоны — смена порядка, между зонами —
+// переезд. Чистая функция над двумя списками, чтобы её можно было проверить отдельно
+// от возни с касаниями. Возвращает null, если перенос недопустим.
+function navMove(order,bottom,key,targetKey,targetZone,maxBottom){
+  if(!key||key===targetKey)return null;
+  const ord=order.slice(), bot=bottom.slice();
+  const fromBottom=bot.indexOf(key)>=0;
+  const toBottom=targetZone==="bottom";
+  if(!fromBottom&&toBottom&&bot.length>=maxBottom)return {full:true};
+
+  if(fromBottom)bot.splice(bot.indexOf(key),1);
+  if(toBottom){
+    const at=targetKey?bot.indexOf(targetKey):-1;
+    if(at>=0)bot.splice(at,0,key); else bot.push(key);
+  }else{
+    // Наверх — встаём на место цели в общем порядке, чтобы раздел оказался там,
+    // куда его положили, а не в конце ленты.
+    const cur=ord.indexOf(key);
+    if(cur>=0)ord.splice(cur,1);
+    const at=targetKey?ord.indexOf(targetKey):-1;
+    if(at>=0)ord.splice(at,0,key); else ord.push(key);
+  }
+  return {order:ord,bottom:bot};
+}
+
 // Короткая подпись и значок раздела для панели и плиток.
 function navMeta(k,allTabs){
   const d=BOTTOM_NAV.find(function(x){return x[0]===k;});
@@ -4241,7 +4290,7 @@ function moreSheet(allTabs,accessible,picked){
     const m=navMeta(k,allTabs);
     const cur=tab===k;
     const badge=tabBadgeCount(k);
-    const act=moreEdit?'data-a="more-pick" data-k="'+k+'"':'data-a="more-go" data-k="'+k+'"';
+    const act=moreEdit?'data-a="more-pick" data-k="'+k+'" data-navcell="1" data-zone="'+mode+'"':'data-a="more-go" data-k="'+k+'"';
     const bd=moreEdit?(mode==="bottom"?"#2980b9":"#e3eaf2"):(cur?"#2980b9":"#e3eaf2");
     const bg=moreEdit&&mode==="bottom"?"#eaf2fb":"#fff";
     return '<button '+act+' style="position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:12px 6px;border-radius:13px;cursor:'+(moreEdit?"grab":"pointer")+';border:1.5px solid '+bd+';background:'+bg+';min-height:76px;width:100%">'+
@@ -4535,7 +4584,9 @@ function page(){
     TAB_DEFS.forEach(function(t){
       if(!window._adminTabs.some(function(x){return x[0]===t.k;})) window._adminTabs.push([t.k,t.n]);
     });
-    const ALL_TABS=window._adminTabs;
+    // Свой порядок устройства поверх общего: перетаскивание в настройке меняет
+    // именно его, не задевая других.
+    const ALL_TABS=applyTabOrder(window._adminTabs);
   // Build tabs based on ALL roles the user has
   let TABS;
   if(isAdmin){
@@ -16224,7 +16275,79 @@ function updateStageStickyTop(){
   }catch(e){}
 }
 
+// ─── ПЕРЕТАСКИВАНИЕ ПЛИТОК В НАСТРОЙКЕ НАВИГАЦИИ ────────────────────────────
+// На pointer-событиях, а не на HTML5 drag-and-drop: последний на телефоне не работает
+// вовсе, а панель настраивают именно с телефона.
+//
+// Перед захватом ждём долгое нажатие: шторка прокручивается, и если хватать плитку
+// сразу по касанию, обычная прокрутка списка превращалась бы в перенос.
+const NAV_HOLD_MS=220;
+let navDragKey=null, navDragMoved=false;
+function bindNavDrag(){
+  document.querySelectorAll('[data-navcell="1"]').forEach(function(el){
+    if(el._navBound)return;
+    el._navBound=true;
+    let timer=null, sx=0, sy=0, held=false;
+
+    const clear=function(){
+      if(timer){ clearTimeout(timer); timer=null; }
+      document.querySelectorAll('[data-navcell="1"]').forEach(function(c){ c.style.outline=""; });
+      if(held){ el.style.transform=""; el.style.opacity=""; el.style.zIndex=""; }
+      held=false; navDragKey=null;
+    };
+
+    el.addEventListener("pointerdown",function(e){
+      if(e.button&&e.button!==0)return;
+      sx=e.clientX; sy=e.clientY; navDragMoved=false;
+      timer=setTimeout(function(){
+        held=true; navDragKey=el.dataset.k;
+        try{ el.setPointerCapture(e.pointerId); }catch(_e){}
+        el.style.transform="scale(1.06)"; el.style.opacity="0.85"; el.style.zIndex="5";
+        try{ if(navigator.vibrate)navigator.vibrate(10); }catch(_e){}
+      },NAV_HOLD_MS);
+    });
+
+    el.addEventListener("pointermove",function(e){
+      // Сдвинулся до захвата — это прокрутка, а не перенос: отпускаем плитку.
+      if(!held){
+        if(Math.abs(e.clientX-sx)>8||Math.abs(e.clientY-sy)>8){ if(timer){clearTimeout(timer);timer=null;} }
+        return;
+      }
+      e.preventDefault();
+      navDragMoved=true;
+      const t=document.elementFromPoint(e.clientX,e.clientY);
+      const cell=t&&t.closest?t.closest('[data-navcell="1"]'):null;
+      document.querySelectorAll('[data-navcell="1"]').forEach(function(c){
+        c.style.outline=(cell&&c===cell&&c!==el)?"2px solid #2980b9":"";
+      });
+    });
+
+    const finish=function(e){
+      if(!held){ clear(); return; }
+      const t=document.elementFromPoint(e.clientX,e.clientY);
+      const cell=t&&t.closest?t.closest('[data-navcell="1"]'):null;
+      const key=el.dataset.k;
+      clear();
+      if(!cell||cell===el)return;
+      const order=applyTabOrder(window._adminTabs||[]).map(function(x){return x[0];});
+      const bottom=(window._navBottom||[]).slice();
+      const r=navMove(order,bottom,key,cell.dataset.k,cell.dataset.zone,BOTTOM_MAX);
+      if(!r)return;
+      if(r.full){ alert("Внизу помещается "+BOTTOM_MAX+" разделов. Верните один наверх, чтобы опустить этот."); return; }
+      tabOrderWrite(r.order); bottomTabsWrite(r.bottom);
+      render();
+    };
+    el.addEventListener("pointerup",finish);
+    el.addEventListener("pointercancel",clear);
+    // Тап после переноса не должен ещё раз перекладывать раздел обработчиком more-pick.
+    el.addEventListener("click",function(e){
+      if(navDragMoved){ e.preventDefault(); e.stopPropagation(); navDragMoved=false; }
+    },true);
+  });
+}
+
 function bind(){
+  bindNavDrag();
   updateStageStickyTop();
   // Defensive: also bind real click listener to all _crmMove buttons (iOS Safari sometimes ignores onclick)
   document.querySelectorAll('[onclick*="_crmMove"]').forEach(function(b){
