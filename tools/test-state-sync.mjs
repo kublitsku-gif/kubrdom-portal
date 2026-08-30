@@ -22,6 +22,15 @@ function server({ reply = null } = {}) {
   return { fetch, calls, saves: () => calls.filter((c) => c.method === 'POST') }
 }
 
+// Сервер, у которого версия выросла и есть готовый снимок для баннера.
+function server_({ version, items }) {
+  return server({ reply: (url) => (/\/version$/.test(url)
+    ? { status: 200, json: { success: true, version: version } }
+    : /\/api\/state\/admin_panel$/.test(url)
+      ? { status: 200, json: { success: true, items: items } }
+      : null) })
+}
+
 function panel(net) {
   const p = boot({ net: net.fetch })
   p.set({
@@ -134,6 +143,26 @@ function panel(net) {
   await p2.ctx.pollOnce()
   t.ok('версия выросла — тянем снимок', net2.calls.some((c) => /\/api\/state\/admin_panel$/.test(c.url)),
     net2.calls.map((c) => c.url).join(' '))
+}
+
+// ── 8. Принятая чужая правка не уезжает обратно ──────────────────────────────
+{
+  t.section('После применения чужой правки')
+  const server = [{ work_id: 'objects', data: [{ id: 'o1', name: 'Переименовали в другой вкладке', stages: [] }], updated_at: 9999 }]
+  const net = server_({ version: 9999, items: server })
+  const p = panel(net)
+  p.run('document.hidden=false;')
+  await p.ctx.pollOnce()
+  const apply = p.ctx.document.getElementById('live-apply')
+  t.ok('баннер предложил обновиться', !!apply && typeof apply.onclick === 'function')
+  apply.onclick()
+  t.ok('данные применились', p.q('objects[0].name') === 'Переименовали в другой вкладке')
+
+  net.calls.length = 0
+  const r = await p.ctx.apiSave()
+  t.ok('обратно на сервер ничего не ушло', net.saves().length === 0 && r.skipped === true,
+    JSON.stringify(net.saves().map((c) => c.body.items.map((i) => i.work_id))) +
+    ' — иначе вкладка переписывает только что принятое и отбивает 409 остальным')
 }
 
 t.done()

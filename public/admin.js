@@ -972,6 +972,10 @@ function showUpdateBanner(items, version){
   document.getElementById("live-apply").onclick = function(){
     applyState(items); _lastSeen = version;
     writeCache(items); _clearPendingSave();   // кэш = принятый сервер; локальный дожим больше не актуален
+    // База сравнения — принятый снимок: без этого сейв по разделам считал бы изменившимся
+    // всё, что только что пришло с сервера, и переписывал бы его теми же значениями,
+    // отбивая 409 остальным вкладкам на ровном месте.
+    _lastSavedJson = JSON.stringify(serializeState());
     b.remove(); _pollPaused = false; render();
   };
   document.getElementById("live-dismiss").onclick = function(){
