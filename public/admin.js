@@ -2339,7 +2339,19 @@ function specCopyModal(){
   m+='</div></div></div>';
   return m;
 }
-function specsEditorHtml(o){
+// Владелец характеристик помещений. Раньше редактор знал только шаблоны и объекты;
+// теперь те же комнаты нужны планировке (размеры для расчёта площадей) и спецификации
+// (её собственная копия, которая не меняется от правки планировки задним числом).
+function specOwner(id){
+  return templates.find(function(x){return x.id===id;})
+      || objects.find(function(x){return x.id===id;})
+      || (typeof dbPlans!=="undefined"&&dbPlans.find(function(x){return x.id===id;}))
+      || (typeof specSheets!=="undefined"&&specSheets.find(function(x){return x.id===id;}))
+      || null;
+}
+// title — редактор один на четыре сущности (шаблон, объект, планировка, спецификация),
+// и подпись у них разная: у планировки это не «характеристики объекта», а её размеры.
+function specsEditorHtml(o, title){
   const specs=ensureSpecs(o);
   const H=Number(specs.height)||0;
   const T=specTotals(specs);
@@ -2353,7 +2365,7 @@ function specsEditorHtml(o){
   const _collapsed=specsCollapsed[o.id]!==false; // по умолчанию свёрнут (развернуть = клик)
   let h='<div style="background:#fff;border-radius:12px;border:1px solid #16a08544;padding:12px 14px;margin-bottom:14px">';
   h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:'+(_collapsed?'0':'10px')+'">'+
-       '<div data-a="specs-collapse" data-oid="'+o.id+'" style="font-size:11px;font-weight:700;color:#16a085;letter-spacing:0.5px;cursor:pointer;display:flex;align-items:center;gap:6px;flex:1">'+(_collapsed?'▸':'▾')+' 📐 ХАРАКТЕРИСТИКИ ОБЪЕКТА</div>'+
+       '<div data-a="specs-collapse" data-oid="'+o.id+'" style="font-size:11px;font-weight:700;color:#16a085;letter-spacing:0.5px;cursor:pointer;display:flex;align-items:center;gap:6px;flex:1">'+(_collapsed?'▸':'▾')+' '+(title||"📐 ХАРАКТЕРИСТИКИ ОБЪЕКТА")+'</div>'+
        (_collapsed?'':'<div style="display:flex;gap:5px">'+
          (templates.some(function(x){return x.id!==o.id&&x.specs&&(x.specs.rooms||[]).length;})?'<button data-a="spec-copy-open" data-oid="'+o.id+'" style="padding:4px 10px;background:#fff;border:1px solid #16a08555;border-radius:7px;cursor:pointer;color:#16a085;font-size:11px;font-weight:700">📋 Из шаблона</button>':'')+
          '<button data-a="spec-room-add" data-oid="'+o.id+'" style="padding:4px 11px;background:#16a085;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">+ Помещение</button>'+
@@ -6912,7 +6924,16 @@ ${(function(){
            <div style="flex:1;min-width:0;font-size:13px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name||"Без названия")}</div>
            ${plansOnly?"":`<button data-a="db-del-plan" data-pid="${p.id}" style="width:28px;height:28px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:12px;flex-shrink:0">✕</button>`}
          </div>`;
-    return `<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;overflow:hidden">${preview}${titleRow}</div>`;
+    // Размеры комнат живут на планировке: из них считаются площади в спецификации,
+    // а рисовать их в каждой спеке заново значило бы вводить одно и то же на каждой продаже.
+    const dims = plansOnly ? "" : `<div style="padding:0 12px 12px">${specsEditorHtml(p, "📐 РАЗМЕРЫ ПОМЕЩЕНИЙ")}</div>`;
+    const dimsLine = (function(){
+      const rooms=((p.specs||{}).rooms)||[];
+      if(!rooms.length)return `<div style="padding:0 12px 10px;font-size:10.5px;color:#c0392b">Размеры не заданы — спецификация не сможет посчитать площади.</div>`;
+      const T=specTotals(ensureSpecs(p));
+      return `<div style="padding:0 12px 10px;font-size:10.5px;color:#16a085;font-weight:700">${rooms.length} помещ. · пол ${numRu(T.floor)} м² · стены ${numRu(T.wall)} м²</div>`;
+    })();
+    return `<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;overflow:hidden">${preview}${titleRow}${dimsLine}${dims}</div>`;
   }
   const items=dbPlans.filter(function(p){return (p.cat||"house")===dbPlanTab;});
   if(!items.length){
@@ -7366,6 +7387,32 @@ function renderEstimates(){
           '<button id="est-room-add" title="Добавить комнату" style="border:1.5px dashed #16a085;background:#fff;color:#16a085;border-radius:9px;padding:6px 11px;font-size:11px;font-weight:700;cursor:pointer">＋</button>'+
           '<button id="est-room-del-mode" title="Удалить комнату" style="border:1.5px '+(estRoomDel?"solid #e74c3c":"dashed #c3cedb")+';background:'+(estRoomDel?"#e74c3c":"#fff")+';color:'+(estRoomDel?"#fff":"#8a97a6")+';border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">'+(estRoomDel?"Готово":"🗑")+'</button>'+
         '</div></div>'+
+        // ── КОНФИГУРАТОР: как эта смета попадает в спецификацию ──────────────
+        // Обязательная позиция входит в дом всегда; вариант — один из выбора, и
+        // варианты одной группы показываются продавцу переключателем.
+        '<div style="padding:0 16px 10px">'+
+          '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:6px">В СПЕЦИФИКАЦИИ</div>'+
+          '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:7px">'+
+            [["","Входит всегда","#7a8b99"],["room","Выбор по комнате","#8e44ad"],["global","Выбор на дом","#2980b9"]].map(function(sc){
+              var on=(e.optScope||"")===sc[0];
+              return '<button class="est-scope" data-sc="'+sc[0]+'" style="border:1.5px solid '+(on?sc[2]:"#dde6f0")+';background:'+(on?sc[2]:"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">'+sc[1]+'</button>';
+            }).join("")+
+          '</div>'+
+          (e.optScope?
+            '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+
+              '<input id="est-optgroup" value="'+(e.optGroup||"").replace(/"/g,"&quot;")+'" placeholder="Группа выбора (напр. Стены)" style="flex:1;min-width:150px;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box">'+
+              '<input id="est-optlabel" value="'+(e.optLabel||"").replace(/"/g,"&quot;")+'" placeholder="Вариант (напр. ГКЛ)" style="flex:1;min-width:130px;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box">'+
+            '</div>'+
+            '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin:9px 0 5px">СЧИТАТЬ КОЛИЧЕСТВО ОТ ПЛОЩАДИ</div>'+
+            '<div style="display:flex;gap:5px;flex-wrap:wrap">'+
+              [["","не считать"],["floor","пол"],["wall","стены"],["ceil","потолок"]].map(function(sf){
+                var on=(e.optSurface||"")===sf[0];
+                return '<button class="est-surface" data-sf="'+sf[0]+'" style="border:1.5px solid '+(on?"#16a085":"#dde6f0")+';background:'+(on?"#16a085":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">'+sf[1]+'</button>';
+              }).join("")+
+            '</div>'+
+            '<div style="font-size:10px;color:#a0b4c8;margin-top:6px;line-height:1.4">Количество материалов пересчитается от площади помещения: м² подставятся как есть, листы и пачки — через фасовку.</div>'
+          :'')+
+        '</div>'+
         '<div style="padding:0 12px">'+
           (e.lines.length?e.lines.map(function(l,i){var p=estProd(l.pid);if(!p)return '';var mo=EXP_MODES.find(function(x){return x.k===(p.mode||"piece");})||EXP_MODES[0];var conv=expConv(p);
             return '<div style="display:flex;align-items:center;gap:7px;padding:9px 4px;border-bottom:1px solid #f0f4f8">'+
@@ -7430,6 +7477,20 @@ function renderEstimates(){
     var rmd=document.getElementById("est-room-del-mode"); if(rmd)rmd.onclick=function(){estRoomDel=!estRoomDel;renderEstimates();};
     var du=document.getElementById("est-dup"); if(du)du.onclick=function(){var c=JSON.parse(JSON.stringify(e)); c.id=gid(); c.name=(e.name||"Смета")+" (копия)"; estimates.unshift(c); estOpenId=c.id; renderEstimates();};
     el.querySelectorAll(".est-stage").forEach(function(b){b.onclick=function(){e.stage=+b.dataset.st;renderEstimates();};});
+    // Конфигуратор спецификации: область выбора, группа/вариант и площадь-основание.
+    el.querySelectorAll(".est-scope").forEach(function(b){b.onclick=function(){
+      var sc=b.dataset.sc||"";
+      if(sc)e.optScope=sc; else { delete e.optScope; delete e.optGroup; delete e.optLabel; delete e.optSurface; }
+      renderEstimates();
+    };});
+    el.querySelectorAll(".est-surface").forEach(function(b){b.onclick=function(){
+      var sf=b.dataset.sf||"";
+      if(sf)e.optSurface=sf; else delete e.optSurface;
+      renderEstimates();
+    };});
+    // Текстовые поля пишем без перерисовки — иначе клавиатура закрывается на каждой букве.
+    var og=document.getElementById("est-optgroup"); if(og)og.oninput=function(){e.optGroup=this.value;scheduleSave();};
+    var ol=document.getElementById("est-optlabel"); if(ol)ol.oninput=function(){e.optLabel=this.value;scheduleSave();};
     el.querySelectorAll(".est-q").forEach(function(inp){inp.oninput=function(){
       var i=+inp.dataset.i; e.lines[i].qty=parseFloat(String(this.value).replace(",","."))||0;
       scheduleSave(); // правка без перерисовки (фокус в поле) — сохраняем явно
@@ -15973,12 +16034,12 @@ function bind(){
     else if(a==="cancel-nt"){el.onclick=()=>{showNT=false;render();};}
     else if(a==="spec-room-sel"){el.onclick=(ev)=>{ if(ev)ev.stopPropagation(); const id=el.dataset.id; const n=Object.assign({},specSel); if(n[id])delete n[id]; else n[id]=true; specSel=n; render(); };}
     else if(a==="spec-room-open"){el.onclick=()=>{ specActiveRoom=Object.assign({},specActiveRoom,{[el.dataset.oid]:el.dataset.id}); render(); };}
-    else if(a==="spec-height"){el.onchange=()=>{ const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return; ensureSpecs(o); o.specs.height=(el.value===""?"":Number(el.value)); fl(); };}
+    else if(a==="spec-height"){el.onchange=()=>{ const o=specOwner(el.dataset.oid); if(!o)return; ensureSpecs(o); o.specs.height=(el.value===""?"":Number(el.value)); fl(); };}
     else if(a==="spec-sel-clear"){el.onclick=()=>{ specSel={}; render(); };}
     else if(a==="spec-copy-open"){el.onclick=()=>{ specCopyPicker=el.dataset.oid; render(); };}
     else if(a==="spec-copy-close"){el.onclick=()=>{ specCopyPicker=null; render(); };}
     else if(a==="spec-copy-pick"){el.onclick=()=>{
-      const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid);
+      const o=specOwner(el.dataset.oid);
       const src=templates.find(x=>x.id===el.dataset.src);
       if(!o||!src||!src.specs){ specCopyPicker=null; render(); return; }
       const copy=JSON.parse(JSON.stringify(src.specs));
@@ -15988,8 +16049,8 @@ function bind(){
     };}
     else if(a==="spec-file-pick"){el.onclick=()=>{ specFilePicker={oid:el.dataset.oid,kind:el.dataset.kind}; render(); };}
     else if(a==="spec-file-close"){el.onclick=()=>{ specFilePicker=null; render(); };}
-    else if(a==="spec-file-unlink"){el.onclick=()=>{ const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return; ensureSpecs(o); const k=el.dataset.kind; if(k==="plan"){o.specs.planUrl="";o.specs.planName="";}else{o.specs.specUrl="";o.specs.specName="";} fl(); };}
-    else if(a==="spec-file-choose"){el.onclick=()=>{ const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return; ensureSpecs(o); const k=el.dataset.kind; if(k==="plan"){o.specs.planUrl=el.dataset.url;o.specs.planName=el.dataset.name;}else{o.specs.specUrl=el.dataset.url;o.specs.specName=el.dataset.name;} specFilePicker=null; fl(); };}
+    else if(a==="spec-file-unlink"){el.onclick=()=>{ const o=specOwner(el.dataset.oid); if(!o)return; ensureSpecs(o); const k=el.dataset.kind; if(k==="plan"){o.specs.planUrl="";o.specs.planName="";}else{o.specs.specUrl="";o.specs.specName="";} fl(); };}
+    else if(a==="spec-file-choose"){el.onclick=()=>{ const o=specOwner(el.dataset.oid); if(!o)return; ensureSpecs(o); const k=el.dataset.kind; if(k==="plan"){o.specs.planUrl=el.dataset.url;o.specs.planName=el.dataset.name;}else{o.specs.specUrl=el.dataset.url;o.specs.specName=el.dataset.name;} specFilePicker=null; fl(); };}
     else if(a==="obj-doc-upload"){
       const oid=el.dataset.oid, field=el.dataset.field;
       const inp=document.getElementById("obj-doc-inp-"+oid+"-"+field);
@@ -16009,28 +16070,28 @@ function bind(){
         });
       }
     }
-    else if(a==="obj-doc-unlink"){el.onclick=()=>{ const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return; ensureSpecs(o); const field=el.dataset.field; o.specs[field+"Url"]=""; o.specs[field+"Name"]=""; fl(); };}
+    else if(a==="obj-doc-unlink"){el.onclick=()=>{ const o=specOwner(el.dataset.oid); if(!o)return; ensureSpecs(o); const field=el.dataset.field; o.specs[field+"Url"]=""; o.specs[field+"Name"]=""; fl(); };}
     else if(a==="specs-collapse"){el.onclick=()=>{ const oid=el.dataset.oid; specsCollapsed=Object.assign({},specsCollapsed,{[oid]:(specsCollapsed[oid]===false)}); render(); };}
     else if(a==="spec-room-add"){el.onclick=()=>{
-      const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return;
+      const o=specOwner(el.dataset.oid); if(!o)return;
       ensureSpecs(o); const _rid="r"+Math.random().toString(36).slice(2,9); o.specs.rooms=o.specs.rooms.concat([{id:_rid,name:"",floor:"",wall:"",ceil:""}]); specActiveRoom=Object.assign({},specActiveRoom,{[o.id]:_rid}); fl();
     };}
     else if(a==="spec-room-del"){el.onclick=()=>{
-      const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return;
+      const o=specOwner(el.dataset.oid); if(!o)return;
       const i=parseInt(el.dataset.i,10); ensureSpecs(o); o.specs.rooms=o.specs.rooms.filter((_,k)=>k!==i); fl();
     };}
     else if(a==="spec-open-add"){el.onclick=()=>{
-      const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return;
+      const o=specOwner(el.dataset.oid); if(!o)return;
       ensureSpecs(o); o.specs.openings=o.specs.openings.concat([{name:"",w:"",h:"",n:1}]); fl();
     };}
     else if(a==="spec-open-del"){el.onclick=()=>{
-      const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return;
+      const o=specOwner(el.dataset.oid); if(!o)return;
       const i=parseInt(el.dataset.i,10); ensureSpecs(o); o.specs.openings=o.specs.openings.filter((_,k)=>k!==i); fl();
     };}
     else if(a==="spec-room-field"){
       // синк по change (на blur) — ввод не теряется при перерисовке, тоталы обновляются
       el.onchange=()=>{
-        const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return;
+        const o=specOwner(el.dataset.oid); if(!o)return;
         const i=parseInt(el.dataset.i,10), f=el.dataset.f; ensureSpecs(o);
         if(!o.specs.rooms[i])return;
         o.specs.rooms[i][f]=(f==="name")?el.value:(el.value===""?"":Number(el.value));
@@ -16039,7 +16100,7 @@ function bind(){
     }
     else if(a==="spec-open-field"){
       el.onchange=()=>{
-        const o=templates.find(x=>x.id===el.dataset.oid)||objects.find(x=>x.id===el.dataset.oid); if(!o)return;
+        const o=specOwner(el.dataset.oid); if(!o)return;
         const i=parseInt(el.dataset.i,10), f=el.dataset.f; ensureSpecs(o);
         if(!o.specs.openings[i])return;
         o.specs.openings[i][f]=(f==="name")?el.value:(el.value===""?"":Number(el.value));
