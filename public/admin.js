@@ -42,10 +42,11 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // одинаково считаться в панели и в Telegram, иначе бригадир и снабженец увидят разное.
 import { needStatus, needState, objectSupply, migrateLegacy, needQty, isSelection, pendingSelections } from "../src/supply.js";
 // Сроки этапов — тот же общий модуль, что читают напоминания (см. src/stages.js).
-import { sheetPositions, sheetTotals, sheetIssues, optionGroups, roomArea } from "../src/spec.js";
+import { sheetPositions, sheetTotals, sheetIssues, optionGroups, roomArea,
+  SPEC_POINTS, pointMeta, pointTotals, roomPoints } from "../src/spec.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
-const APP_BUILD = "2026-08-30.3";
+const APP_BUILD = "2026-08-30.4";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -2441,6 +2442,24 @@ function specsEditorHtml(o, title){
             fld("spec-r-wallLen-"+o.id+"-"+actIdx,o.id,actIdx,"wallLen",r.wallLen,"длина стен")+
             '<span style="font-size:12px;color:#9aabbf;white-space:nowrap">× '+(specs.height||0).toLocaleString("ru-RU")+' м</span>'+
             '<span style="background:#16a08515;color:#16a085;font-weight:800;border-radius:8px;padding:8px 10px;font-size:13px;white-space:nowrap;flex-shrink:0">= '+c.wall.toLocaleString("ru-RU")+' м²</span>'+
+          '</div>'+
+        '</div>'+
+        // Раскладка помещения: то, что на дизайн-проекте нарисовано значками, а на
+        // площадке монтируется поштучно. Считаем здесь, а не в смете, потому что
+        // розетки живут в комнате, а не в работе.
+        '<div style="margin-bottom:10px">'+
+          '<div style="font-size:9px;color:#9aabbf;font-weight:700;margin-bottom:5px">РАСКЛАДКА — ОКНА, РОЗЕТКИ, СВЕТ</div>'+
+          '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:5px">'+
+            SPEC_POINTS.map(function(pt){
+              const n=roomPoints(r,pt.k);
+              return '<div title="'+esc(pt.note||"")+'" style="display:flex;align-items:center;gap:5px;padding:5px 6px;border:1px solid '+(n?"#16a08555":"#e6ecf3")+';background:'+(n?"#16a08510":"#fff")+';border-radius:8px">'+
+                '<span style="font-size:13px;flex-shrink:0">'+pt.emoji+'</span>'+
+                '<span style="flex:1;min-width:0;font-size:10.5px;color:'+(n?"#0d1b2e":"#9aabbf")+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(pt.n)+'</span>'+
+                '<button data-a="spec-pt" data-oid="'+o.id+'" data-i="'+actIdx+'" data-k="'+pt.k+'" data-d="-1" style="width:20px;height:20px;border:1px solid #dde6f0;background:#fff;border-radius:6px;cursor:pointer;color:#7a9aaa;font-size:12px;line-height:1;flex-shrink:0">−</button>'+
+                '<span style="min-width:14px;text-align:center;font-size:12px;font-weight:800;color:'+(n?"#16a085":"#c3cedb")+'">'+n+'</span>'+
+                '<button data-a="spec-pt" data-oid="'+o.id+'" data-i="'+actIdx+'" data-k="'+pt.k+'" data-d="1" style="width:20px;height:20px;border:1px solid #16a08555;background:#fff;border-radius:6px;cursor:pointer;color:#16a085;font-size:12px;line-height:1;flex-shrink:0">+</button>'+
+              '</div>';
+            }).join("")+
           '</div>'+
         '</div>'+
         // ПОТОЛОК = ПОЛ (не редактируется — площадь пола равна площади потолка)
@@ -7616,6 +7635,17 @@ function renderEstimates(){
             '</div>'+
             '<div style="font-size:10px;color:#a0b4c8;margin-top:6px;line-height:1.4">Количество материалов пересчитается от площади помещения: м² подставятся как есть, листы и пачки — через фасовку.</div>'
           :'')+
+          // Точки считаются штуками, а не квадратами: «монтаж розетки» ×18 берётся из
+          // раскладки помещений. Доступно и обязательным позициям — розетки в доме есть
+          // всегда, выбирать тут нечего.
+          '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin:9px 0 5px">СЧИТАТЬ ПО ТОЧКАМ РАСКЛАДКИ</div>'+
+          '<div style="display:flex;gap:5px;flex-wrap:wrap">'+
+            [{k:"",n:"не считать",emoji:""}].concat(SPEC_POINTS).map(function(pt){
+              var on=(e.optPoint||"")===pt.k;
+              return '<button class="est-point" data-pt="'+pt.k+'" style="border:1.5px solid '+(on?"#8e44ad":"#dde6f0")+';background:'+(on?"#8e44ad":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">'+(pt.emoji?pt.emoji+' ':'')+esc(pt.n)+'</button>';
+            }).join("")+
+          '</div>'+
+          (e.optPoint?'<div style="font-size:10px;color:#a0b4c8;margin-top:6px;line-height:1.4">Количество материалов умножится на число таких точек в раскладке. Точек нет — позиции в спецификации тоже нет.</div>':'')+
         '</div>'+
         '<div style="padding:0 12px">'+
           (e.lines.length?e.lines.map(function(l,i){var p=estProd(l.pid);if(!p)return '';var mo=EXP_MODES.find(function(x){return x.k===(p.mode||"piece");})||EXP_MODES[0];var conv=expConv(p);
@@ -7686,6 +7716,11 @@ function renderEstimates(){
       var sc=b.dataset.sc||"";
       if(sc)e.optScope=sc; else { delete e.optScope; delete e.optGroup; delete e.optLabel; delete e.optSurface; }
       renderEstimates();
+    };});
+    el.querySelectorAll(".est-point").forEach(function(b){b.onclick=function(){
+      var pt=b.dataset.pt||"";
+      if(pt)e.optPoint=pt; else delete e.optPoint;
+      renderEstimates(); scheduleSave();
     };});
     el.querySelectorAll(".est-surface").forEach(function(b){b.onclick=function(){
       var sf=b.dataset.sf||"";
@@ -9465,8 +9500,10 @@ function buildSpecPrint(sh){
   const matsOf=function(p){ const txt=specMatsText(p); return txt?'<div class="mats">'+esc(txt)+'</div>':""; };
   const roomOf=function(p){ return p.room?'<span class="rm">'+esc(p.room)+'</span> ':''; };
   const row=function(p){
+    // Точечная позиция меряется штуками: «×18», а не площадью.
+    const qtyCell=p.count?('×'+p.count):(p.area?numRu(p.area)+' м²':'—');
     return '<tr><td>'+roomOf(p)+esc(p.name)+(p.label?' <span class="v">'+esc(p.label)+'</span>':'')+matsOf(p)+'</td>'+
-      '<td class="c">'+(p.area?numRu(p.area)+' м²':'—')+'</td>'+
+      '<td class="c">'+qtyCell+'</td>'+
       '<td class="r">'+RUk(shown[p.key])+'</td></tr>';
   };
 
@@ -9501,6 +9538,24 @@ function buildSpecPrint(sh){
       }).join("")+'</table>'
     : "";
 
+  // Раскладка: окна, розетки, свет по помещениям. Клиент читает проект именно так —
+  // «в зале шесть розеток и шесть светильников», — и на старте это первое, о чём спрашивают.
+  const ptCols=SPEC_POINTS.filter(function(pt){ return (specs.rooms||[]).some(function(r){return roomPoints(r,pt.k);}); });
+  const layoutTable=ptCols.length
+    ? '<h2>Раскладка</h2><table><tr><th>Помещение</th><th class="c">Площадь</th>'+
+        ptCols.map(function(pt){return '<th class="c" title="'+esc(pt.n)+'">'+pt.emoji+'<div class="pt">'+esc(pt.n)+'</div></th>';}).join("")+'</tr>'+
+      (specs.rooms||[]).map(function(r){
+        if(!ptCols.some(function(pt){return roomPoints(r,pt.k);}))return "";
+        return '<tr><td>'+esc(r.name||"Помещение")+'</td>'+
+          '<td class="c">'+numRu(roomArea(r,specs.height,"floor"))+' м²</td>'+
+          ptCols.map(function(pt){ const n=roomPoints(r,pt.k); return '<td class="c">'+(n||'—')+'</td>'; }).join("")+
+        '</tr>';
+      }).join("")+
+      '<tr class="subr"><td class="sub">Всего</td><td class="c sub">'+numRu((specs.rooms||[]).reduce(function(a,r){return a+roomArea(r,specs.height,"floor");},0))+' м²</td>'+
+        ptCols.map(function(pt){ return '<td class="c sub">'+((specs.rooms||[]).reduce(function(a,r){return a+roomPoints(r,pt.k);},0))+'</td>'; }).join("")+
+      '</tr></table>'
+    : "";
+
   const html='<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Спецификация '+esc(sh.name||"")+'</title><style>'+
     'body{font-family:-apple-system,Segoe UI,Arial,sans-serif;padding:28px;color:#1a2a3a;max-width:780px;margin:0 auto}'+
     'h1{font-size:22px;margin:0 0 4px}.sub{font-size:13px;color:#555;margin:2px 0}'+
@@ -9513,6 +9568,7 @@ function buildSpecPrint(sh){
     '.subr td{background:#f5fbf9}.sub{font-weight:700;color:#0e7a67}'+
     '.v{color:#0e7a67;font-weight:700}'+
     '.mats{margin-top:4px;font-size:11px;color:#6b7c8a;line-height:1.45}'+
+    '.pt{font-size:9px;font-weight:600;color:#6b7c8a;margin-top:2px;white-space:nowrap}'+
     '.rm{display:inline-block;background:#eef4f2;color:#0e7a67;border-radius:4px;padding:1px 6px;font-size:10.5px;font-weight:700;margin-right:2px}'+
     'h2{font-size:14px;margin:22px 0 0;color:#0e7a67}'+
     '.foot{margin-top:16px;font-size:11.5px;color:#666;line-height:1.5}'+
@@ -9528,7 +9584,7 @@ function buildSpecPrint(sh){
       stageRows+
       '<tr><td class="sub" colspan="2">ИТОГО</td><td class="r sub">'+RUk(t.price)+'</td></tr>'+
     '</table>'+
-    roomTable+
+    layoutTable+roomTable+
     '<div class="foot">Площади рассчитаны по планировке. Позиции «выбор клиента» могут быть заменены на равные по стоимости без доплаты; более дорогой выбор согласовывается отдельно.<br>Предложение носит предварительный характер и действует 14 дней.</div>'+
     '<button class="btn" onclick="window.print()">🖨 Печать / Сохранить в PDF</button>'+
     '</body></html>';
@@ -9699,6 +9755,14 @@ function tSpecCard(sh){
           '<span style="font-size:10.5px;color:#7a9aaa;white-space:nowrap">пол '+numRu(roomArea(r,specs.height,"floor"))+' · стены '+numRu(roomArea(r,specs.height,"wall"))+' м²</span>'+
           '<span style="font-size:12.5px;font-weight:800;color:#16a085;white-space:nowrap">'+RUk(rTotal)+'</span>'+
         '</div>'+
+        // Раскладка помещения: окна, розетки, свет — видно сразу, до всякого выбора отделки.
+        (SPEC_POINTS.some(function(pt){return roomPoints(r,pt.k);})
+          ? '<div style="display:flex;gap:5px;flex-wrap:wrap;padding:8px 13px 0">'+
+              SPEC_POINTS.filter(function(pt){return roomPoints(r,pt.k);}).map(function(pt){
+                return '<span title="'+esc(pt.n)+'" style="display:inline-flex;align-items:center;gap:3px;background:#f4f7fb;border-radius:6px;padding:2px 7px;font-size:11px;color:#5a7a9a"><span>'+pt.emoji+'</span><b style="color:#0d1b2e">'+roomPoints(r,pt.k)+'</b></span>';
+              }).join("")+
+            '</div>'
+          : '')+
         '<div style="padding:9px 13px">'+
           (roomGroups.length?roomGroups.map(function(g){
             const cur=picks[g.group]||"";
@@ -9773,6 +9837,25 @@ function tSpecCard(sh){
   }
 
   // Итог и действия
+  // Раскладка по дому: сколько всего окон, розеток и света. Это первое, что клиент
+  // спрашивает на старте, и это же потом считается в монтажных работах.
+  const ptTot=pointTotals(sh);
+  const ptKeys=SPEC_POINTS.filter(function(pt){return ptTot[pt.k];});
+  if(ptKeys.length){
+    h+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:10px">'+
+      '<div style="font-size:11px;font-weight:700;color:#7a9aaa;letter-spacing:0.5px;margin-bottom:8px">РАСКЛАДКА ПО ДОМУ</div>'+
+      '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:7px">'+
+        ptKeys.map(function(pt){
+          return '<div style="display:flex;align-items:center;gap:6px">'+
+            '<span style="font-size:15px">'+pt.emoji+'</span>'+
+            '<div style="min-width:0"><div style="font-size:14px;font-weight:800;color:#0d1b2e;line-height:1.1">'+ptTot[pt.k]+'</div>'+
+            '<div style="font-size:10px;color:#9aabbf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(pt.n)+'</div></div>'+
+          '</div>';
+        }).join("")+
+      '</div>'+
+    '</div>';
+  }
+
   // Разбивка по этапам: по ним идут сроки, приёмка и транши договора, поэтому продавец
   // должен видеть цену в том же разрезе, в каком потом пойдёт стройка.
   const stageKeys=Object.keys(t.byStage||{}).map(Number).sort(function(a,b){return a-b;});
@@ -16787,6 +16870,16 @@ function bind(){
     else if(a==="spec-open-del"){el.onclick=()=>{
       const o=specOwner(el.dataset.oid); if(!o)return;
       const i=parseInt(el.dataset.i,10); ensureSpecs(o); o.specs.openings=o.specs.openings.filter((_,k)=>k!==i); fl();
+    };}
+    else if(a==="spec-pt"){el.onclick=()=>{
+      const o=specOwner(el.dataset.oid); if(!o)return;
+      ensureSpecs(o);
+      const r=o.specs.rooms[parseInt(el.dataset.i,10)]; if(!r)return;
+      const k=el.dataset.k, d=parseInt(el.dataset.d,10)||0;
+      const n=Math.max(0,(Number((r.pts||{})[k])||0)+d);
+      r.pts=Object.assign({},r.pts||{});
+      if(n)r.pts[k]=n; else delete r.pts[k];   // ноль не храним — его нечего показывать
+      fl();
     };}
     else if(a==="spec-room-field"){
       // синк по change (на blur) — ввод не теряется при перерисовке, тоталы обновляются

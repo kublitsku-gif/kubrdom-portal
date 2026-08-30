@@ -14,6 +14,46 @@
 //   sheet.qty[key]      = number                                   ручная правка количества
 //   sheet.markup        — наценка, %
 
+// Точки раскладки: то, что на дизайн-проекте нарисовано значками, а на площадке
+// монтируется поштучно. Считаются ПО ПОМЕЩЕНИЯМ, потому что и монтируются там же,
+// и клиент читает проект по комнатам: «в зале шесть розеток и шесть светильников».
+// Порядок в списке — порядок листов проекта: проёмы, розетки, свет, инженерия.
+export const SPEC_POINTS = [
+  { k: "win",     n: "Окно",                 emoji: "🪟", note: "поворотно-откидное" },
+  { k: "door",    n: "Дверь",                emoji: "🚪", note: "H=210" },
+  { k: "sock",    n: "Розетка",              emoji: "🔌", note: "H=30" },
+  { k: "sockIp",  n: "Розетка влагозащ.",    emoji: "💧", note: "IP44" },
+  { k: "sockOut", n: "Уличная розетка",      emoji: "🌧", note: "с термозащитой" },
+  { k: "sw",      n: "Выключатель",          emoji: "🎚", note: "H=90" },
+  { k: "lamp",    n: "Светильник встроенный", emoji: "💡", note: "в потолке" },
+  { k: "spot",    n: "Настенный спот",       emoji: "🔦", note: "H=180" },
+  { k: "heat",    n: "Тёплый пол",           emoji: "♨️", note: "контур" },
+  { k: "ac",      n: "Кондиционер",          emoji: "❄️", note: "H=220" },
+  { k: "vent",    n: "Вытяжка",              emoji: "🌀", note: "H=220" },
+  { k: "rad",     n: "Радиатор",             emoji: "🔥", note: "под окном" },
+];
+
+export function pointMeta(k) {
+  return SPEC_POINTS.find(function (x) { return x.k === k; }) || null;
+}
+
+// Сколько таких точек в помещении.
+export function roomPoints(room, k) {
+  return Number(((room && room.pts) || {})[k]) || 0;
+}
+
+// Раскладка всего дома: {sock: 18, lamp: 9, …}. Нули не храним — их нечего показывать.
+export function pointTotals(sheet) {
+  const out = {};
+  (((sheet && sheet.specs) || {}).rooms || []).forEach(function (r) {
+    Object.keys((r && r.pts) || {}).forEach(function (k) {
+      const n = Number(r.pts[k]) || 0;
+      if (n > 0) out[k] = (out[k] || 0) + n;
+    });
+  });
+  return out;
+}
+
 // Площадь поверхности комнаты. Потолок равен полу — это же плоскость дома, а не отдельный
 // размер; стены считаются от периметра и высоты (см. specRoomCalc в панели).
 export function roomArea(room, height, surface) {
@@ -75,7 +115,10 @@ function position(est, ctx, prodById, qtyOverride) {
       packBase: p.packBase, packPer: p.packPer, lenPer: p.lenPer, sheetM2: p.sheetM2,
       qty: Number(l.qty) || 0,
     };
-    if (ctx.area > 0) base.qty = matQtyForArea(base, ctx.area);
+    // Смета считается либо от площади, либо от числа точек — но не от обоих сразу:
+    // «монтаж розетки» меряется штуками, «обшивка стен» квадратами.
+    if (ctx.count > 0) base.qty = Math.round((Number(l.qty) || 0) * ctx.count * 100) / 100;
+    else if (ctx.area > 0) base.qty = matQtyForArea(base, ctx.area);
     return base;
   });
   const cost = mats.reduce(function (a, m) { return a + (Number(m.cost) || 0) * (Number(m.qty) || 0); }, 0);
@@ -85,6 +128,7 @@ function position(est, ctx, prodById, qtyOverride) {
     room: ctx.roomName || "", roomId: ctx.roomId || "", surface: ctx.surface || "",
     group: est.optGroup || "", label: est.optLabel || "",
     area: Math.round((ctx.area || 0) * 100) / 100,
+    point: ctx.point || "", count: Number(ctx.count) || 0,
     mats: mats, cost: Math.round(cost * factor), factor: factor,
   };
 }
@@ -100,9 +144,15 @@ export function sheetPositions(sheet, estimates, products) {
   const H = Number(specs.height) || 0;
   const qty = (sheet && sheet.qty) || {};
   const out = [];
+  const totals = pointTotals(sheet);
 
+  // Смета, помеченная точкой (`optPoint`), считается по раскладке: «монтаж розетки» ×18.
+  // Точек в доме нет — позиции нет: платить за монтаж того, чего не заложили, не за что.
   baseEstimates(estimates, kind).forEach(function (e) {
-    out.push(position(e, { key: "base:" + e.id, area: 0 }, prodById, qty["base:" + e.id]));
+    const cnt = e.optPoint ? (totals[e.optPoint] || 0) : 0;
+    if (e.optPoint && !cnt) return;
+    out.push(position(e, { key: "base:" + e.id, area: 0, count: cnt, point: e.optPoint || "" },
+      prodById, qty["base:" + e.id]));
   });
 
   // Выбор по комнате хранится ПО ГРУППЕ, а не по трём поверхностям: «Стены черновые» и
@@ -114,9 +164,14 @@ export function sheetPositions(sheet, estimates, products) {
       const e = picks[group] && byId[picks[group]];
       if (!e) return;
       const key = "room:" + r.id + ":" + group;
+      // У комнатной сметы точки считаются по ЭТОЙ комнате: розетки зала не переезжают
+      // в спальню оттого, что их посчитали на весь дом.
+      const cnt = e.optPoint ? roomPoints(r, e.optPoint) : 0;
+      if (e.optPoint && !cnt) return;
       out.push(position(e, {
-        key: key, area: e.optSurface ? roomArea(r, H, e.optSurface) : 0,
+        key: key, area: (!e.optPoint && e.optSurface) ? roomArea(r, H, e.optSurface) : 0,
         roomId: r.id, roomName: r.name || "", surface: e.optSurface || "",
+        count: cnt, point: e.optPoint || "",
       }, prodById, qty[key]));
     });
   });
@@ -127,12 +182,15 @@ export function sheetPositions(sheet, estimates, products) {
     if (!e) return;
     // Общедомовая опция может считаться от суммарной площади дома — тогда у неё задана
     // поверхность, и площадь берётся по всем комнатам сразу.
+    const cnt = e.optPoint ? (totals[e.optPoint] || 0) : 0;
+    if (e.optPoint && !cnt) return;
     let area = 0;
-    if (e.optSurface) {
+    if (!e.optPoint && e.optSurface) {
       ((specs.rooms) || []).forEach(function (r) { area += roomArea(r, H, e.optSurface); });
     }
     const key = "global:" + group;
-    out.push(position(e, { key: key, area: Math.round(area * 100) / 100, surface: e.optSurface || "" }, prodById, qty[key]));
+    out.push(position(e, { key: key, area: Math.round(area * 100) / 100, surface: e.optSurface || "",
+      count: cnt, point: e.optPoint || "" }, prodById, qty[key]));
   });
 
   return out;

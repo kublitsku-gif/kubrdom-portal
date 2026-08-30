@@ -4,7 +4,8 @@
 // Это цена, которую продавец называет клиенту и которая уходит в договор, поэтому
 // сторожим не «функция что-то вернула», а решения: площади берутся из комнат, фасовки
 // пересчитываются, выбор варианта меняет сумму, а недособранная спека честно об этом говорит.
-import { roomArea, matQtyForArea, optionGroups, baseEstimates, sheetPositions, sheetTotals, sheetIssues } from '../src/spec.js'
+import { roomArea, matQtyForArea, optionGroups, baseEstimates, sheetPositions, sheetTotals, sheetIssues,
+  SPEC_POINTS, pointMeta, pointTotals, roomPoints } from '../src/spec.js'
 
 let failed = 0
 const ok = (name, cond, extra) => {
@@ -165,6 +166,50 @@ const SHEET = () => ({
   const noH = SHEET(); noH.specs.height = 0
   noH.global = { 'Утепление': 'e_ppu8' }
   ok('без высоты потолка предупреждаем', sheetIssues(noH, EST, PRODUCTS).some((x) => /высота/i.test(x)))
+}
+
+// ── Раскладка: окна, розетки, свет ───────────────────────────────────────────
+// Дизайн-проект рисует их значками по комнатам, монтируются они поштучно, и в смете
+// это не квадраты, а штуки. Сторожим ровно это: количество приходит из раскладки.
+{
+  console.log('Раскладка точек')
+  const PT_EST = EST.concat([
+    { id: 'e_sock', kind: 'banya', name: 'Розетка — монтаж', stage: 2, optPoint: 'sock',
+      lines: [{ pid: 'p_screw', qty: 1 }] },
+    { id: 'e_lamp', kind: 'banya', name: 'Светильник — монтаж', stage: 3, optScope: 'room', optGroup: 'Свет',
+      optLabel: 'Встроенный', optPoint: 'lamp', lines: [{ pid: 'p_screw', qty: 2 }] },
+  ])
+  const sh = SHEET()
+  sh.specs.rooms[0].pts = { sock: 6, lamp: 4 }
+  sh.specs.rooms[1].pts = { sock: 3 }
+
+  ok('раскладка складывается по дому', JSON.stringify(pointTotals(sh)) === JSON.stringify({ sock: 9, lamp: 4 }),
+    JSON.stringify(pointTotals(sh)))
+  ok('точка помещения читается отдельно', roomPoints(sh.specs.rooms[1], 'sock') === 3)
+  ok('у каждой точки есть название', SPEC_POINTS.every((x) => x.k && x.n) && pointMeta('sock').n === 'Розетка')
+
+  const pos = sheetPositions(sh, PT_EST, PRODUCTS)
+  const sock = pos.find((x) => x.estId === 'e_sock')
+  ok('позиция по точкам одна на дом', pos.filter((x) => x.estId === 'e_sock').length === 1)
+  ok('количество взято из раскладки', sock.count === 9, String(sock && sock.count))
+  ok('материалы умножены на число точек', sock.mats[0].qty === 9, JSON.stringify(sock.mats))
+  ok('цена — тоже', sock.cost === 9 * 300, String(sock.cost))
+  ok('площадь такой позиции не считается', sock.area === 0,
+    'монтаж розетки меряется штуками, а не квадратами')
+
+  // Комнатная точечная смета считает СВОЮ комнату: свет зала не переезжает в мойку.
+  sh.rooms = { r1: { 'Свет': 'e_lamp' }, r2: { 'Свет': 'e_lamp' } }
+  const pos2 = sheetPositions(sh, PT_EST, PRODUCTS)
+  const lamps = pos2.filter((x) => x.estId === 'e_lamp')
+  ok('в комнате без светильников позиции нет', lamps.length === 1 && lamps[0].roomId === 'r1',
+    JSON.stringify(lamps.map((x) => x.roomId)))
+  ok('и считается по этой комнате', lamps[0].count === 4 && lamps[0].mats[0].qty === 8,
+    JSON.stringify({ c: lamps[0].count, q: lamps[0].mats[0].qty }))
+
+  // Точек нет — работы нет: платить за монтаж того, чего не заложили, не за что.
+  const empty = SHEET()
+  ok('без раскладки точечных позиций не появляется',
+    sheetPositions(empty, PT_EST, PRODUCTS).every((x) => x.estId !== 'e_sock'))
 }
 
 console.log(failed ? `\n✘ провалено проверок: ${failed}` : '\n✓ все проверки прошли')

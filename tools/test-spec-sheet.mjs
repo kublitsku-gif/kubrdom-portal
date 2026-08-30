@@ -350,6 +350,50 @@ function assembled(p) {
   t.ok('повторно та же планировка не заводится', q.q('dbPlans').length === 3)
 }
 
+// ── 9б. Раскладка в панели: счётчики, сводка, печать ─────────────────────────
+{
+  t.section('Раскладка в панели')
+  const p = panel()
+  const id = assembled(p)
+  const rid = p.q('specSheets')[0].specs.rooms[0].id
+
+  // Счётчик у помещения: продавец снимает раскладку с дизайн-проекта кнопками.
+  const inc = p.dom.node({ a: 'spec-pt', oid: id, i: '0', k: 'sock', d: '1' })
+  p.run('bind();')
+  inc.onclick(); inc.onclick(); inc.onclick()
+  t.ok('точки записались в помещение', p.q('specSheets')[0].specs.rooms[0].pts.sock === 3,
+    JSON.stringify(p.q('specSheets')[0].specs.rooms[0].pts))
+
+  const dec = p.dom.node({ a: 'spec-pt', oid: id, i: '0', k: 'sock', d: '-1' })
+  p.run('bind();')
+  dec.onclick(); dec.onclick(); dec.onclick(); dec.onclick()
+  t.ok('ниже нуля не уходит и пустое не хранится',
+    !(p.q('specSheets')[0].specs.rooms[0].pts || {}).sock,
+    JSON.stringify(p.q('specSheets')[0].specs.rooms[0].pts))
+
+  // Раскладка целого дома видна на старте — и на экране, и в печати.
+  p.run(`(function(){var sh=specSheet(${JSON.stringify(id)});
+    sh.specs.rooms[0].pts={win:2,sock:10,lamp:6,sw:1};
+    sh.specs.rooms[1].pts={win:1,sock:5,lamp:3};})();`)
+  t.ok('сводка по дому сложилась', JSON.stringify(p.q(`pointTotals(specSheet(${JSON.stringify(id)}))`)) ===
+    JSON.stringify({ win: 3, sock: 15, lamp: 9, sw: 1 }),
+    JSON.stringify(p.q(`pointTotals(specSheet(${JSON.stringify(id)}))`)))
+
+  p.run(`specOpenId=${JSON.stringify(id)};specsCollapsed={${JSON.stringify(id)}:false};`)
+  const card = p.run('tSpec()')
+  t.ok('в карточке есть блок раскладки', card.indexOf('РАСКЛАДКА ПО ДОМУ') > 0)
+  t.ok('и счётчики в развёрнутом редакторе помещений', card.indexOf('spec-pt') > 0)
+
+  p.run('window.__printed="";window.open=function(){return {document:{write:function(h){window.__printed=h;},close:function(){}}};};')
+  const btn = p.dom.node({ a: 'spec-print', id })
+  p.run('bind();')
+  btn.onclick()
+  const html = p.run('window.__printed')
+  t.ok('в печатной форме есть таблица раскладки', html.indexOf('>Раскладка<') > 0,
+    'клиент читает проект по комнатам: сколько где розеток и света')
+  t.ok('с итогом по каждой точке', /Всего/.test(html) && html.indexOf('Розетка') > 0)
+}
+
 // ── 10. Вкладка рисуется ──────────────────────────────────────────────────────
 {
   t.section('Отрисовка вкладки')
