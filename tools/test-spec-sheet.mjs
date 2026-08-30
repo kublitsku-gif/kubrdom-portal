@@ -446,10 +446,29 @@ function assembled(p) {
     JSON.stringify(sh.specs.rooms.map((r) => r.pts)))
   t.ok('стоимость изделий видна', p.q(`modelTotals(specSheet(${JSON.stringify(id)}).model, winTypes).openingsCost`) === 14555)
 
+  // Продольная перегородка: санузел в углу.
+  const bayId = p.q('specSheets')[0].model.rooms[0].id
+  const sw = p.dom.node({ a: 'model-split-w', id: bayId })
+  p.run('bind();')
+  sw.onclick()
+  const sh2 = p.q('specSheets')[0]
+  t.ok('в отсеке две комнаты', sh2.specs.rooms.filter((r) => r.id === bayId || true).length >= 3,
+    JSON.stringify(sh2.specs.rooms.map((r) => r.name)))
+  t.ok('и обе попали в характеристики', sh2.specs.rooms.length === 3, String(sh2.specs.rooms.length))
+
   // Карточка рисуется вместе с планом и вкладками этапов.
   p.run(`specOpenId=${JSON.stringify(id)};`)
   const card = p.run('tSpec()')
   t.ok('в карточке есть план', card.indexOf('model-svg') > 0 && card.indexOf('model-drag') > 0)
+  t.ok('проём на плане можно тащить', card.indexOf('model-op-drag') > 0)
+  t.ok('и продольную перегородку тоже', card.indexOf('model-drag-w') > 0)
+
+  // Развёртка стены — второй вид той же модели.
+  p.run('modelView="elev";modelSide="n";')
+  const elev = p.run('tSpec()')
+  t.ok('развёртка рисуется', elev.indexOf('отметки в см от чистого пола') > 0)
+  t.ok('на ней видно высоту низа проёма', /H=\d/.test(elev), 'план сверху высоту показать не может')
+  p.run('modelView="plan";')
   t.ok('и вкладки этапов', card.indexOf('РАБОТЫ ПО ЭТАПАМ') > 0 && card.indexOf('model-stage') > 0)
   t.ok('ручного редактора размеров при модели нет', card.indexOf('РАЗМЕРЫ ПОМЕЩЕНИЙ') < 0,
     'два источника правды об одних помещениях разъедутся в первый же день')

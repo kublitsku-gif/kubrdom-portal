@@ -7,8 +7,10 @@
 // съедать помещение до нуля, а id помещений обязаны переживать правки — на них
 // висит раскладка и выбранная отделка.
 import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyContainer, modelRooms,
-  sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom,
+  modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom,
+  splitLengthwise, mergeLengthwise, moveLengthwise, elevation,
   openingCounts, modelToSpecs, modelTotals, modelIssues } from '../src/model.js'
+import { SPEC_POINTS } from '../src/spec.js'
 
 let failed = 0
 const ok = (name, cond, extra) => {
@@ -145,6 +147,80 @@ function house() {
   const bare = modelRooms(Object.assign({}, m, { finish: 0 }))
   ok('без отделки считаем по железу', bare[0].finW === m.w && bare[0].area > rooms[0].area,
     bare[0].area + ' vs ' + rooms[0].area)
+}
+
+// ── 5в. Продольная перегородка: санузел в углу ───────────────────────────────
+{
+  console.log('Санузел в углу')
+  const m0 = house()
+  const m = splitLengthwise(m0, 'san', 'wc')
+  const rooms = modelRooms(m)
+  ok('в отсеке стало две комнаты', rooms.filter((r) => r.bayId === 'san').length === 2,
+    JSON.stringify(rooms.map((r) => r.id)))
+  const [a, b] = rooms.filter((r) => r.bayId === 'san')
+  ok('они делят ширину, а не длину', a.y1 < b.y0 && a.x0 === b.x0 && a.x1 === b.x1,
+    JSON.stringify([a.y0, a.y1, b.y0, b.y1]))
+  ok('обе площади меньше исходной', a.area + b.area < modelRooms(m0).find((r) => r.id === 'san').area,
+    'перегородка съедает свои сантиметры, и это должно быть видно')
+
+  const wide = moveLengthwise(m, 'san', 400)
+  const [wa, wb] = modelRooms(wide).filter((r) => r.bayId === 'san')
+  ok('перенос вдоль забирает у соседа', wa.finW > a.finW && wb.finW < b.finW,
+    JSON.stringify([wa.finW, wb.finW]))
+  ok('уже минимума не сжимается', modelRooms(moveLengthwise(m, 'san', 99999))
+    .filter((r) => r.bayId === 'san')[1].y1 - modelRooms(moveLengthwise(m, 'san', 99999))
+    .filter((r) => r.bayId === 'san')[1].y0 === MIN_ROOM)
+
+  // Стена принадлежит той комнате, которая её касается.
+  const rr = modelRooms(m).filter((r) => r.bayId === 'san')
+  const north = { id: 'x1', side: 'n', pos: rr[0].x0 + 300, typeId: 't_win' }
+  const south = { id: 'x2', side: 's', pos: rr[0].x0 + 300, typeId: 't_win' }
+  const mm = Object.assign({}, m, { openings: [north, south] })
+  ok('северное окно — первой комнате', openingRoom(mm, north).id === 'san')
+  ok('южное окно — второй', openingRoom(mm, south).id === 'wc',
+    'иначе окно санузла считается в соседней комнате')
+
+  const merged = mergeLengthwise(m, 'san')
+  ok('перегородка убирается', modelRooms(merged).filter((r) => r.bayId === 'san').length === 1)
+
+  // Поперечное деление отсека с продольной перегородкой сохраняет её.
+  const both = splitRoom(m, 'san', 'san2', 'wc2')
+  ok('обе половины сохранили продольную стену',
+    modelRooms(both).filter((r) => r.bayId === 'san2').length === 2, JSON.stringify(modelRooms(both).map((r) => r.id)))
+  ok('слияние разных отсеков не проходит',
+    mergeRoom(both, 'spal').rooms.length === both.rooms.length,
+    'П-образную комнату модель описать не умеет, а врать про площади нельзя')
+}
+
+// ── 5г. Развёртка стены ──────────────────────────────────────────────────────
+{
+  console.log('Развёртка стены')
+  const m = house()
+  m.rooms[0].name = 'ЗАЛ'
+  m.rooms[0].pts = { sock: 3, sw: 1, spot: 1, lamp: 4 }
+  m.openings = [
+    { id: 'o1', side: 'n', pos: 2000, typeId: 't_win' },
+    { id: 'o2', side: 'w', pos: 600, typeId: 't_door' },
+  ]
+  const E = elevation(m, 'n', TYPES, SPEC_POINTS)
+  ok('стена длиной с контейнер', E.len === totalLength(m) && E.height === m.h)
+  ok('на стене только её проёмы', E.openings.length === 1 && E.openings[0].id === 'o1')
+  ok('окно на высоте подоконника', E.openings[0].y0 === 900 && E.openings[0].y1 === 900 + 1150,
+    JSON.stringify(E.openings[0]))
+
+  const kinds = E.marks.map((x) => x.k)
+  ok('розетки, выключатель и спот на своих отметках',
+    kinds.filter((k) => k === 'sock').length === 3 && kinds.includes('sw') && kinds.includes('spot'),
+    JSON.stringify(kinds))
+  ok('потолочный свет на развёртке не рисуем', !kinds.includes('lamp'),
+    'светильник в потолке высоты на стене не имеет')
+  const sock = E.marks.find((x) => x.k === 'sock')
+  ok('высота взята из каталога точек', sock.h === 300, String(sock.h))
+  ok('точки разнесены по своей комнате', new Set(E.marks.filter((x) => x.k === 'sock').map((x) => x.x)).size === 3)
+
+  const doorWall = elevation(m, 'w', TYPES, SPEC_POINTS)
+  ok('дверь у порога', doorWall.openings[0].y0 === 0, JSON.stringify(doorWall.openings[0]))
+  ok('торец меряется по ширине', doorWall.len === m.w)
 }
 
 // ── 6. Что мешает считать ────────────────────────────────────────────────────

@@ -45,11 +45,12 @@ import { needStatus, needState, objectSupply, migrateLegacy, needQty, isSelectio
 import { sheetPositions, sheetTotals, sheetIssues, optionGroups, roomArea,
   SPEC_POINTS, pointMeta, pointTotals, roomPoints } from "../src/spec.js";
 import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyContainer, modelRooms,
-  sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom,
+  modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom,
+  splitLengthwise, mergeLengthwise, moveLengthwise, elevation,
   modelToSpecs, modelTotals, modelIssues } from "../src/model.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
-const APP_BUILD = "2026-08-30.6";
+const APP_BUILD = "2026-08-30.7";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -2078,6 +2079,8 @@ let stock=[];
 let winTypes=[];           // типовые окна и двери (справочник поставщика)
 let winTypeNew=null;       // форма нового изделия
 let modelSide="n";         // стена, на которую ставим проём
+let modelView="plan";      // plan | elev — план сверху или развёртка стены
+let modelOpDrag=null;      // проём под пальцем
 let modelStageTab=0;       // 0 = все этапы
 let specSheets=[];
 let specOpenId=null;      // открытая спецификация (null = список)
@@ -9535,44 +9538,90 @@ const MODEL_SIDES=[["n","Левая длинная"],["s","Правая длин
 // поэтому перетаскивание считается в мм и не зависит от размера телефона.
 function modelPlanSvg(sh){
   const m=sh.model, W=Number(m.w)||0, L=totalLength(m), TH=Number(m.wallThick)||0;
-  const rooms=modelRooms(m);
+  const rooms=modelRooms(m), bays=modelBays(m);
   const PAD=700;
   const vb=(-PAD)+" "+(-PAD)+" "+(L+PAD*2)+" "+(W+PAD*2);
   let g='';
-  // Корпус
   g+='<rect x="0" y="0" width="'+L+'" height="'+W+'" fill="#f7fafc" stroke="#0d1b2e" stroke-width="60"/>';
-  // Помещения и перегородки
-  rooms.forEach(function(r,i){
-    g+='<rect x="'+r.x0+'" y="0" width="'+r.len+'" height="'+W+'" fill="#ffffff" stroke="none"/>';
-    g+='<text x="'+(r.x0+r.len/2)+'" y="'+(W/2-120)+'" text-anchor="middle" font-size="220" font-weight="700" fill="#0d1b2e">'+esc(r.name||"Помещение")+'</text>';
-    g+='<text x="'+(r.x0+r.len/2)+'" y="'+(W/2+180)+'" text-anchor="middle" font-size="190" fill="#7a9aaa">'+numRu(r.area)+' м² · '+numRu(Math.round(r.len/10)/100)+' м</text>';
-    if(i<rooms.length-1){
-      const x=r.x1;
-      g+='<rect x="'+x+'" y="0" width="'+TH+'" height="'+W+'" fill="#8e44ad"/>';
-      // Ручка переноса границы — крупная: на телефоне в тонкую линию не попасть.
-      g+='<g data-a="model-drag" data-i="'+i+'" data-len="'+L+'" style="cursor:ew-resize">'+
-        '<rect x="'+(x-260)+'" y="'+(W/2-320)+'" width="'+(TH+520)+'" height="640" rx="120" fill="#8e44ad" opacity="0.92"/>'+
-        '<text x="'+(x+TH/2)+'" y="'+(W/2+90)+'" text-anchor="middle" font-size="300" fill="#fff" font-weight="800">⇄</text>'+
-      '</g>';
-    }
+  rooms.forEach(function(r){
+    const cx=r.x0+(r.x1-r.x0)/2, cy=r.y0+(r.y1-r.y0)/2, tall=(r.y1-r.y0)>900;
+    g+='<rect x="'+r.x0+'" y="'+r.y0+'" width="'+(r.x1-r.x0)+'" height="'+(r.y1-r.y0)+'" fill="#ffffff"/>';
+    g+='<text x="'+cx+'" y="'+(cy-(tall?110:20))+'" text-anchor="middle" font-size="200" font-weight="700" fill="#0d1b2e">'+esc(r.name||"Помещение")+'</text>';
+    if(tall)g+='<text x="'+cx+'" y="'+(cy+180)+'" text-anchor="middle" font-size="175" fill="#7a9aaa">'+numRu(r.area)+' м²</text>';
   });
-  // Проёмы
+  // Продольные перегородки и ручка их переноса
+  bays.forEach(function(b){
+    if(!b.sub)return;
+    const at=Number(b.sub.at)||0;
+    g+='<rect x="'+b.x0+'" y="'+at+'" width="'+b.len+'" height="'+TH+'" fill="#e67e22"/>';
+    const cx=b.x0+b.len/2;
+    g+='<g data-a="model-drag-w" data-id="'+b.id+'" data-w="'+W+'" style="cursor:ns-resize">'+
+      '<rect x="'+(cx-320)+'" y="'+(at-260)+'" width="640" height="'+(TH+520)+'" rx="120" fill="#e67e22" opacity="0.92"/>'+
+      '<text x="'+cx+'" y="'+(at+TH/2+90)+'" text-anchor="middle" font-size="280" fill="#fff" font-weight="800">⇅</text>'+
+    '</g>';
+  });
+  // Поперечные перегородки
+  bays.forEach(function(b,i){
+    if(i>=bays.length-1)return;
+    const x=b.x1;
+    g+='<rect x="'+x+'" y="0" width="'+TH+'" height="'+W+'" fill="#8e44ad"/>';
+    g+='<g data-a="model-drag" data-i="'+i+'" data-len="'+L+'" style="cursor:ew-resize">'+
+      '<rect x="'+(x-260)+'" y="'+(W/2-320)+'" width="'+(TH+520)+'" height="640" rx="120" fill="#8e44ad" opacity="0.92"/>'+
+      '<text x="'+(x+TH/2)+'" y="'+(W/2+90)+'" text-anchor="middle" font-size="300" fill="#fff" font-weight="800">⇄</text>'+
+    '</g>';
+  });
+  // Проёмы — их двигают прямо на плане вдоль своей стены
   (m.openings||[]).forEach(function(op){
     const t=winType(op.typeId); if(!t)return;
     const km=winKindMeta(t.kind), ln=Number(t.w)||0, pos=Number(op.pos)||0;
+    const along=(op.side==="n"||op.side==="s");
     let x,y,ww,hh;
-    if(op.side==="n"){ x=pos; y=-90; ww=ln; hh=180; }
-    else if(op.side==="s"){ x=pos; y=W-90; ww=ln; hh=180; }
-    else if(op.side==="w"){ x=-90; y=pos; ww=180; hh=ln; }
-    else { x=L-90; y=pos; ww=180; hh=ln; }
-    g+='<g data-a="model-op-drag" data-id="'+op.id+'" style="cursor:pointer">'+
-      '<rect x="'+x+'" y="'+y+'" width="'+ww+'" height="'+hh+'" fill="'+km.c+'" rx="40"/>'+
-      '<text x="'+(x+ww/2)+'" y="'+(y+hh/2+(op.side==="n"||op.side==="s"?-160:0))+'" text-anchor="middle" font-size="200" fill="'+km.c+'" font-weight="700">'+numRu(Math.round(ln/10)/100)+'</text>'+
+    if(op.side==="n"){ x=pos; y=-110; ww=ln; hh=220; }
+    else if(op.side==="s"){ x=pos; y=W-110; ww=ln; hh=220; }
+    else if(op.side==="w"){ x=-110; y=pos; ww=220; hh=ln; }
+    else { x=L-110; y=pos; ww=220; hh=ln; }
+    const on=modelOpDrag===op.id;
+    g+='<g data-a="model-op-drag" data-id="'+op.id+'" data-side="'+op.side+'" data-span="'+sideLength(m,op.side)+'" data-w="'+ln+'" data-len="'+L+'" data-cw="'+W+'" style="cursor:'+(along?"ew-resize":"ns-resize")+'">'+
+      '<rect x="'+(x-60)+'" y="'+(y-60)+'" width="'+(ww+120)+'" height="'+(hh+120)+'" fill="'+km.c+'" opacity="'+(on?"0.35":"0.12")+'" rx="60"/>'+
+      '<rect x="'+x+'" y="'+y+'" width="'+ww+'" height="'+hh+'" fill="'+km.c+'" rx="50"/>'+
+      '<text x="'+(x+ww/2)+'" y="'+(y+(along?(op.side==="n"?-130:hh+240):hh/2+70))+'" text-anchor="middle" font-size="190" fill="'+km.c+'" font-weight="700">'+numRu(Math.round(ln/10)/100)+'</text>'+
     '</g>';
   });
-  // Габарит
-  g+='<text x="'+(L/2)+'" y="'+(W+520)+'" text-anchor="middle" font-size="200" fill="#9aabbf">'+numRu(Math.round(L/10)/100)+' × '+numRu(Math.round(W/10)/100)+' м · высота '+numRu(Math.round((Number(m.h)||0)/10)/100)+' м</text>';
+  g+='<text x="'+(L/2)+'" y="'+(W+560)+'" text-anchor="middle" font-size="200" fill="#9aabbf">'+numRu(Math.round(L/10)/100)+' × '+numRu(Math.round(W/10)/100)+' м · высота '+numRu(Math.round((Number(m.h)||0)/10)/100)+' м</text>';
   return '<svg id="model-svg" viewBox="'+vb+'" style="width:100%;height:auto;display:block;touch-action:pan-y;user-select:none">'+g+'</svg>';
+}
+
+// Развёртка стены — то, чего план сверху показать не может: на какой высоте что стоит.
+// По этим числам электрик ставит подрозетники, а бригада вешает споты.
+function modelElevSvg(sh){
+  const m=sh.model;
+  const E=elevation(m, modelSide, winTypes, SPEC_POINTS);
+  const L=E.len, H=E.height, PAD=600;
+  const Y=function(mm){ return H-mm; };   // рисуем от пола вверх
+  let g='';
+  g+='<rect x="0" y="0" width="'+L+'" height="'+H+'" fill="#f7fafc" stroke="#0d1b2e" stroke-width="50"/>';
+  // Границы помещений на стене
+  E.rooms.forEach(function(wr,i){
+    if(i)g+='<rect x="'+(wr.a-40)+'" y="0" width="80" height="'+H+'" fill="#8e44ad"/>';
+    g+='<text x="'+((wr.a+wr.b)/2)+'" y="'+(H+330)+'" text-anchor="middle" font-size="190" font-weight="700" fill="#5a7a9a">'+esc(wr.room.name)+'</text>';
+  });
+  // Проёмы с отметкой низа
+  E.openings.forEach(function(op){
+    const km=winKindMeta(op.kind);
+    g+='<rect x="'+op.x0+'" y="'+Y(op.y1)+'" width="'+(op.x1-op.x0)+'" height="'+(op.y1-op.y0)+'" fill="'+km.c+'22" stroke="'+km.c+'" stroke-width="45"/>';
+    g+='<text x="'+((op.x0+op.x1)/2)+'" y="'+(Y(op.y1)-80)+'" text-anchor="middle" font-size="165" fill="'+km.c+'" font-weight="700">'+esc(op.name)+'</text>';
+    if(op.sill>0)g+='<text x="'+((op.x0+op.x1)/2)+'" y="'+(Y(op.y0)+230)+'" text-anchor="middle" font-size="165" fill="#7a9aaa">H='+Math.round(op.sill/10)+'</text>';
+  });
+  // Точки раскладки на своих высотах
+  E.marks.forEach(function(mk){
+    g+='<g><line x1="'+mk.x+'" y1="'+Y(0)+'" x2="'+mk.x+'" y2="'+Y(mk.h)+'" stroke="#dde6f0" stroke-width="25" stroke-dasharray="60 60"/>'+
+      '<circle cx="'+mk.x+'" cy="'+Y(mk.h)+'" r="115" fill="#fff" stroke="#16a085" stroke-width="40"/>'+
+      '<text x="'+mk.x+'" y="'+(Y(mk.h)+60)+'" text-anchor="middle" font-size="150">'+mk.emoji+'</text>'+
+      '<text x="'+mk.x+'" y="'+(Y(mk.h)-180)+'" text-anchor="middle" font-size="140" fill="#7a9aaa">'+Math.round(mk.h/10)+'</text></g>';
+  });
+  g+='<text x="'+(L/2)+'" y="'+(-200)+'" text-anchor="middle" font-size="190" fill="#9aabbf">высота '+numRu(Math.round(H/10)/100)+' м · отметки в см от чистого пола</text>';
+  const vb=(-PAD)+" "+(-PAD)+" "+(L+PAD*2)+" "+(H+PAD*2);
+  return '<svg viewBox="'+vb+'" style="width:100%;height:auto;display:block;user-select:none">'+g+'</svg>';
 }
 
 function specModelHtml(sh){
@@ -9605,8 +9654,22 @@ function specModelHtml(sh){
       '<input data-a="model-finish" value="'+((m.finish==null?FINISH_THICK:m.finish))+'" type="number" step="1" inputmode="numeric" style="width:70px;padding:6px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12.5px;outline:none;box-sizing:border-box;text-align:right">'+
       '<span style="font-size:11px;color:#7a9aaa">мм на стену</span>'+
     '</div>';
-  // План
-  h+='<div style="background:#f6f8fa;border:1px solid #e6ecf3;border-radius:11px;padding:10px;margin-bottom:9px">'+modelPlanSvg(sh)+'</div>';
+  // План или развёртка. Высоту план показать не может в принципе, а именно по ней
+  // электрик ставит подрозетники — поэтому это два вида одной модели, а не картинка.
+  h+='<div style="display:flex;gap:5px;margin-bottom:7px">'+
+    [["plan","🗺 План сверху"],["elev","📏 Развёртка стены"]].map(function(v){
+      const on=modelView===v[0];
+      return '<button data-a="model-view" data-v="'+v[0]+'" style="flex:1;border:1.5px solid '+(on?"#0d1b2e":"#dde6f0")+';background:'+(on?"#0d1b2e":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:7px;font-size:11.5px;font-weight:700;cursor:pointer">'+v[1]+'</button>';
+    }).join("")+'</div>';
+  if(modelView==="elev"){
+    h+='<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:7px">'+
+      MODEL_SIDES.map(function(sd){
+        const on=modelSide===sd[0];
+        return '<button data-a="model-side" data-s="'+sd[0]+'" style="border:1.5px solid '+(on?"#2980b9":"#dde6f0")+';background:'+(on?"#2980b9":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">'+esc(sd[1])+'</button>';
+      }).join("")+'</div>';
+  }
+  h+='<div style="background:#f6f8fa;border:1px solid #e6ecf3;border-radius:11px;padding:10px;margin-bottom:9px">'+
+    (modelView==="elev"?modelElevSvg(sh):modelPlanSvg(sh))+'</div>';
   h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px">'+
     [["пол",numRu(tot.floorArea)+" м²"],["перегородок",String(tot.partitions)],["проёмов",String((m.openings||[]).length)],["изделия",RUk(tot.openingsCost)]]
       .map(function(x){return '<div style="text-align:center;background:#f6f8fa;border-radius:9px;padding:6px 4px"><div style="font-size:9px;color:#9aabbf;font-weight:700">'+x[0].toUpperCase()+'</div><div style="font-size:12.5px;font-weight:800;color:#0d1b2e">'+x[1]+'</div></div>';}).join("")+
@@ -9617,29 +9680,43 @@ function specModelHtml(sh){
   }
   // Помещения: имя, длина, раскладка
   h+='<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:6px">ПОМЕЩЕНИЯ</div>';
-  rooms.forEach(function(r,i){
-    h+='<div style="border:1px solid #e6ecf3;border-radius:11px;padding:9px 10px;margin-bottom:7px">'+
-      '<div style="display:flex;gap:6px;align-items:center;margin-bottom:7px">'+
-        '<input data-a="model-room-name" data-id="'+r.id+'" value="'+esc(r.name)+'" placeholder="Название" style="flex:1;min-width:0;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;font-weight:700;outline:none;box-sizing:border-box">'+
-        '<input data-a="model-room-len" data-id="'+r.id+'" value="'+numRu(Math.round(r.len/10)/100)+'" type="number" step="0.01" inputmode="decimal" style="width:78px;padding:7px 8px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;text-align:right">'+
-        '<span style="font-size:11px;color:#7a9aaa">м</span>'+
-        '<button data-a="model-split" data-id="'+r.id+'" title="Разделить перегородкой" style="width:30px;height:30px;border:1px solid #8e44ad55;background:#fff;border-radius:8px;cursor:pointer;color:#8e44ad;font-size:14px;flex-shrink:0">⊟</button>'+
-        (i<rooms.length-1?'<button data-a="model-merge" data-id="'+r.id+'" title="Убрать перегородку справа" style="width:30px;height:30px;border:1px solid #e74c3c44;background:#fff;border-radius:8px;cursor:pointer;color:#e74c3c;font-size:13px;flex-shrink:0">✕</button>':'')+
-      '</div>'+
-      '<div style="font-size:10.5px;color:#7a9aaa;margin-bottom:6px">'+numRu(r.area)+' м² пола · стены '+numRu(Math.round(r.wallLen*(Number(m.h)||0)/1000*100)/100)+' м²</div>'+
-      '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(124px,1fr));gap:5px">'+
-        SPEC_POINTS.filter(function(pt){return pt.k!=="win"&&pt.k!=="door";}).map(function(pt){
-          const n=Number((r.pts||{})[pt.k])||0;
-          return '<div style="display:flex;align-items:center;gap:4px;padding:4px 5px;border:1px solid '+(n?"#16a08555":"#eef2f7")+';background:'+(n?"#16a08510":"#fff")+';border-radius:7px">'+
-            '<span style="font-size:12px">'+pt.emoji+'</span>'+
-            '<span style="flex:1;min-width:0;font-size:10px;color:'+(n?"#0d1b2e":"#9aabbf")+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(pt.n)+'</span>'+
-            '<button data-a="model-pt" data-id="'+r.id+'" data-k="'+pt.k+'" data-d="-1" style="width:19px;height:19px;border:1px solid #dde6f0;background:#fff;border-radius:5px;cursor:pointer;color:#7a9aaa;font-size:11px;line-height:1;flex-shrink:0">−</button>'+
-            '<span style="min-width:12px;text-align:center;font-size:11.5px;font-weight:800;color:'+(n?"#16a085":"#c3cedb")+'">'+n+'</span>'+
-            '<button data-a="model-pt" data-id="'+r.id+'" data-k="'+pt.k+'" data-d="1" style="width:19px;height:19px;border:1px solid #16a08555;background:#fff;border-radius:5px;cursor:pointer;color:#16a085;font-size:11px;line-height:1;flex-shrink:0">+</button>'+
-          '</div>';
-        }).join("")+
-      '</div>'+
+  const ptRow=function(r){
+    return '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(124px,1fr));gap:5px">'+
+      SPEC_POINTS.filter(function(pt){return pt.k!=="win"&&pt.k!=="door";}).map(function(pt){
+        const n=Number((r.pts||{})[pt.k])||0;
+        return '<div style="display:flex;align-items:center;gap:4px;padding:4px 5px;border:1px solid '+(n?"#16a08555":"#eef2f7")+';background:'+(n?"#16a08510":"#fff")+';border-radius:7px">'+
+          '<span style="font-size:12px">'+pt.emoji+'</span>'+
+          '<span style="flex:1;min-width:0;font-size:10px;color:'+(n?"#0d1b2e":"#9aabbf")+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(pt.n)+'</span>'+
+          '<button data-a="model-pt" data-id="'+r.id+'" data-k="'+pt.k+'" data-d="-1" style="width:19px;height:19px;border:1px solid #dde6f0;background:#fff;border-radius:5px;cursor:pointer;color:#7a9aaa;font-size:11px;line-height:1;flex-shrink:0">−</button>'+
+          '<span style="min-width:12px;text-align:center;font-size:11.5px;font-weight:800;color:'+(n?"#16a085":"#c3cedb")+'">'+n+'</span>'+
+          '<button data-a="model-pt" data-id="'+r.id+'" data-k="'+pt.k+'" data-d="1" style="width:19px;height:19px;border:1px solid #16a08555;background:#fff;border-radius:5px;cursor:pointer;color:#16a085;font-size:11px;line-height:1;flex-shrink:0">+</button>'+
+        '</div>';
+      }).join("")+
     '</div>';
+  };
+  const bays=modelBays(m);
+  bays.forEach(function(b,i){
+    const inBay=rooms.filter(function(r){return r.bayId===b.id;});
+    h+='<div style="border:1px solid #e6ecf3;border-radius:11px;padding:9px 10px;margin-bottom:7px">';
+    h+='<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">'+
+        '<span style="font-size:10px;font-weight:700;color:#9aabbf;flex:1">ОТСЕК '+(i+1)+' · '+numRu(Math.round(b.len/10)/100)+' м</span>'+
+        '<input data-a="model-room-len" data-id="'+b.id+'" value="'+numRu(Math.round(b.len/10)/100)+'" type="number" step="0.01" inputmode="decimal" style="width:76px;padding:6px 8px;border-radius:8px;border:1px solid #d0dae8;font-size:12.5px;outline:none;box-sizing:border-box;text-align:right">'+
+        '<button data-a="model-split" data-id="'+b.id+'" title="Поперечная перегородка" style="width:30px;height:30px;border:1px solid #8e44ad55;background:#fff;border-radius:8px;cursor:pointer;color:#8e44ad;font-size:14px;flex-shrink:0">⊟</button>'+
+        (b.sub
+          ? '<button data-a="model-merge-w" data-id="'+b.id+'" title="Убрать продольную перегородку" style="width:30px;height:30px;border:1px solid #e67e2255;background:#fff;border-radius:8px;cursor:pointer;color:#e67e22;font-size:13px;flex-shrink:0">⇕</button>'
+          : '<button data-a="model-split-w" data-id="'+b.id+'" title="Продольная перегородка — санузел в углу" style="width:30px;height:30px;border:1px solid #e67e2255;background:#fff;border-radius:8px;cursor:pointer;color:#e67e22;font-size:14px;flex-shrink:0">⊞</button>')+
+        (i<bays.length-1?'<button data-a="model-merge" data-id="'+b.id+'" title="Убрать перегородку справа" style="width:30px;height:30px;border:1px solid #e74c3c44;background:#fff;border-radius:8px;cursor:pointer;color:#e74c3c;font-size:13px;flex-shrink:0">✕</button>':'')+
+      '</div>';
+    inBay.forEach(function(r){
+      h+='<div style="'+(inBay.length>1?'border-left:3px solid '+(r.sub?"#e67e22":"#8e44ad")+';padding-left:8px;margin-bottom:8px':'')+'">'+
+        '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">'+
+          '<input data-a="model-room-name" data-id="'+r.id+'" value="'+esc(r.name)+'" placeholder="Название" style="flex:1;min-width:0;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;font-weight:700;outline:none;box-sizing:border-box">'+
+          '<span style="font-size:11px;color:#7a9aaa;white-space:nowrap">'+numRu(r.area)+' м²</span>'+
+        '</div>'+
+        ptRow(r)+
+      '</div>';
+    });
+    h+='</div>';
   });
   // Проёмы
   h+='<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin:10px 0 6px">ОКНА И ДВЕРИ В СТЕНАХ</div>';
@@ -9667,7 +9744,8 @@ function specModelHtml(sh){
         '<span style="font-size:14px">'+km.emoji+'</span>'+
         '<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(t.n)+'</div>'+
         '<div style="font-size:10px;color:#7a9aaa">от края '+numRu(Math.round((Number(op.pos)||0)/10)/100)+' м · '+RUk(t.cost)+'</div></div>'+
-        '<input data-a="model-op-pos" data-id="'+op.id+'" type="range" min="0" max="'+Math.max(0,len-(Number(t.w)||0))+'" step="10" value="'+(Number(op.pos)||0)+'" style="flex:1.4;min-width:90px">'+
+        '<input data-a="model-op-sill" data-id="'+op.id+'" value="'+numRu(Math.round((op.sill==null?(t.kind==="door"?0:900):op.sill)/10)/100)+'" type="number" step="0.05" inputmode="decimal" title="Высота низа проёма от пола, м" style="width:64px;padding:6px 7px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;text-align:right">'+
+        '<input data-a="model-op-pos" data-id="'+op.id+'" type="range" min="0" max="'+Math.max(0,len-(Number(t.w)||0))+'" step="10" value="'+(Number(op.pos)||0)+'" style="flex:1.2;min-width:80px">'+
         '<button data-a="model-op-del" data-id="'+op.id+'" style="width:28px;height:28px;border:1px solid #e74c3c44;background:#fff;border-radius:7px;cursor:pointer;color:#e74c3c;font-size:12px;flex-shrink:0">🗑</button>'+
       '</div>';
     }).join("");
@@ -17774,7 +17852,8 @@ function bind(){
       const t=winType(el.dataset.t); if(!t)return;
       const len=sideLength(sh.model, modelSide);
       const max=Math.max(0,len-(Number(t.w)||0));
-      sh.model.openings=(sh.model.openings||[]).concat([{id:gid(),side:modelSide,pos:Math.round(max/2),typeId:t.id}]);
+      sh.model.openings=(sh.model.openings||[]).concat([{id:gid(),side:modelSide,pos:Math.round(max/2),
+        sill:(t.kind==="door")?0:900, typeId:t.id}]);
       modelSync(sh); fl();
     };}
     else if(a==="model-op-del"){el.onclick=()=>{
@@ -17791,6 +17870,80 @@ function bind(){
         op.pos=Math.round(Number(el.value)||0);
       };
       el.onchange=()=>{ const sh=specSheet(specOpenId); if(!sh)return; modelSync(sh); fl(); };
+    }
+    else if(a==="model-view"){el.onclick=()=>{ modelView=el.dataset.v; render(); };}
+    else if(a==="model-split-w"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      const before=JSON.stringify(sh.model.rooms);
+      sh.model=splitLengthwise(sh.model, el.dataset.id, gid());
+      if(JSON.stringify(sh.model.rooms)===before){ alert("Контейнер слишком узкий для продольной перегородки."); return; }
+      modelSync(sh); fl();
+    };}
+    else if(a==="model-merge-w"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      if(!confirm("Убрать продольную перегородку?\n\nПомещения объединятся, раскладка второго переедет в первое."))return;
+      sh.model=mergeLengthwise(sh.model, el.dataset.id);
+      modelSync(sh); fl();
+    };}
+    else if(a==="model-op-sill"){el.onchange=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      const op=(sh.model.openings||[]).find(function(o){return o.id===el.dataset.id;}); if(!op)return;
+      op.sill=Math.max(0,Math.round((parseFloat(String(el.value).replace(",","."))||0)*1000));
+      modelSync(sh); fl();
+    };}
+    else if(a==="model-drag-w"){
+      // Продольная перегородка: та же арифметика, но по ширине контейнера.
+      el.onpointerdown=(ev)=>{
+        const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+        const svg=document.getElementById("model-svg"); if(!svg)return;
+        const box=svg.getBoundingClientRect();
+        // Масштаб берём по ширине картинки: viewBox сохраняет пропорции, поэтому
+        // мм на пиксель одинаковы по обеим осям.
+        const mmPerPx=(totalLength(sh.model)+1400)/Math.max(1,box.width);
+        const y0=ev.clientY; let d=0;
+        ev.preventDefault();
+        try{ el.setPointerCapture(ev.pointerId); }catch(e){}
+        const up=function(){
+          el.onpointermove=null; el.onpointerup=null; el.onpointercancel=null;
+          if(Math.abs(d)<20)return;
+          sh.model=moveLengthwise(sh.model, el.dataset.id, d);
+          modelSync(sh); fl();
+        };
+        el.onpointermove=function(e){ d=Math.round((e.clientY-y0)*mmPerPx); };
+        el.onpointerup=up; el.onpointercancel=up;
+      };
+    }
+    else if(a==="model-op-drag"){
+      // Проём двигают пальцем по своей стене. Тап без движения ничего не меняет —
+      // иначе прокрутка страницы переставляла бы окна.
+      el.onpointerdown=(ev)=>{
+        const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+        const svg=document.getElementById("model-svg"); if(!svg)return;
+        const op=(sh.model.openings||[]).find(function(o){return o.id===el.dataset.id;}); if(!op)return;
+        const along=(op.side==="n"||op.side==="s");
+        const mmPerPx=(Number(el.dataset.len)+1400)/Math.max(1,svg.getBoundingClientRect().width);
+        const span=Number(el.dataset.span)||0, wid=Number(el.dataset.w)||0;
+        const start=Number(op.pos)||0;
+        const c0=along?ev.clientX:ev.clientY;
+        let moved=false;
+        ev.preventDefault();
+        try{ el.setPointerCapture(ev.pointerId); }catch(e){}
+        modelOpDrag=op.id;
+        const up=function(){
+          el.onpointermove=null; el.onpointerup=null; el.onpointercancel=null;
+          modelOpDrag=null;
+          if(!moved){ render(); return; }
+          modelSync(sh); fl();
+        };
+        el.onpointermove=function(e){
+          const d=Math.round(((along?e.clientX:e.clientY)-c0)*mmPerPx);
+          if(Math.abs(d)<20&&!moved)return;
+          moved=true;
+          op.pos=Math.max(0, Math.min(Math.max(0,span-wid), start+d));
+          render();
+        };
+        el.onpointerup=up; el.onpointercancel=up;
+      };
     }
     else if(a==="model-drag"){
       // Перетаскивание границы на плане. Считаем в миллиметрах модели: SVG сам приводит
