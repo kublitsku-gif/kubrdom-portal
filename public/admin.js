@@ -4175,37 +4175,20 @@ function bottomTabsOf(accessible){
   BOTTOM_NAV.forEach(function(d){ if(out.length<BOTTOM_SLOTS&&accessible.has(d[0])&&out.indexOf(d[0])<0)out.push(d[0]); });
   return out;
 }
-// Сколько внимания ждёт раздел. Один источник и для строки заголовка, и для плитки:
-// две копии разошлись бы при первом же новом бейдже.
-function tabBadgeCount(k){
-  if(k==="crm")return crmUnansweredCount()||0;
-  if(k==="issues")return issuesMineOpen().length||0;
-  return 0;
-}
-
 // Шторка «Ещё»: все доступные разделы плиткой + режим настройки панели.
 function moreSheet(allTabs,accessible,picked){
   if(!moreOpen)return "";
   const items=allTabs.filter(function(t){return accessible.has(t[0]);});
-  const cell=function(t,idx){
+  const cell=function(t){
     const k=t[0],n=String(t[1]);
     const on=picked.indexOf(k)>=0;
     const cur=tab===k;
     const act=moreEdit?'data-a="more-pick" data-k="'+k+'"':'data-a="more-go" data-k="'+k+'"';
-    const badge=tabBadgeCount(k);
-    const btn='<button '+act+' style="position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:12px 6px;border-radius:13px;cursor:pointer;border:1.5px solid '+(moreEdit&&on?"#2980b9":cur&&!moreEdit?"#2980b9":"#e3eaf2")+';background:'+(moreEdit&&on?"#eaf2fb":"#fff")+';min-height:78px;width:100%">'+
+    return '<button '+act+' style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:12px 6px;border-radius:13px;cursor:pointer;border:1.5px solid '+(moreEdit&&on?"#2980b9":cur&&!moreEdit?"#2980b9":"#e3eaf2")+';background:'+(moreEdit&&on?"#eaf2fb":"#fff")+';min-height:78px">'+
       '<span style="font-size:22px;line-height:1">'+n.split(" ")[0]+'</span>'+
       '<span style="font-size:10.5px;font-weight:'+(cur?700:600)+';color:'+(cur&&!moreEdit?"#2980b9":"#5a7080")+';text-align:center;line-height:1.25">'+esc(n.split(" ").slice(1).join(" ")||n)+'</span>'+
       (moreEdit?'<span style="font-size:9px;font-weight:700;color:'+(on?"#2980b9":"#c4cdd8")+'">'+(on?"● в панели":"○")+'</span>':"")+
-      // Бейдж переехал сюда из ленты: без него, спрятав ленту, мы спрятали бы и сигнал.
-      (badge&&!moreEdit?'<span style="position:absolute;top:6px;right:6px;background:#c0392b;color:#fff;border-radius:9px;padding:1px 6px;font-size:10px;font-weight:800">'+badge+'</span>':"")+
     '</button>';
-    // Порядок разделов админ по-прежнему тасует перетаскиванием — он переехал вместе
-    // с лентой в эту сетку, иначе настройка порядка просто пропала бы.
-    const isAdm=currentUser&&currentUser.roles.includes("admin");
-    return (isAdm&&!moreEdit)
-      ? '<div draggable="true" data-a="tab-drag" data-k="'+k+'" data-i="'+idx+'" style="cursor:grab">'+btn+'</div>'
-      : btn;
   };
   return '<div data-a="more-close" style="position:fixed;inset:0;background:rgba(13,27,46,0.45);z-index:70"></div>'+
     '<div style="position:fixed;left:0;right:0;bottom:0;z-index:71;max-width:480px;margin:0 auto;background:#fff;border-radius:20px 20px 0 0;padding:10px 14px calc(16px + env(safe-area-inset-bottom,0px));box-shadow:0 -10px 40px rgba(10,25,40,0.26)">'+
@@ -4268,12 +4251,27 @@ function render(){
   if(currentUser.mustChangePin){ a.innerHTML=forcedPinPage(); bind(); return; }
   // Запоминаем позицию прокрутки ленты вкладок до перерисовки,
   // иначе при клике по крайним вкладкам («Команда»/«Маркетинг») лента прыгает влево.
+  const _tabsScrollPrev=(function(){const e=document.getElementById("tabs-scroll");return e?e.scrollLeft:null;})();
   // Был ли фокус в поле поиска до перерисовки — чтобы не выдёргивать клавиатуру при открытии вкладки
   const _prevActiveId=(document.activeElement&&document.activeElement.id)||"";
   let _prevSelStart=null;
   try{ if(_prevActiveId&&document.activeElement.selectionStart!=null)_prevSelStart=document.activeElement.selectionStart; }catch(e){}
   a.innerHTML=page();
   // Восстанавливаем прокрутку ленты вкладок, чтобы экран не «дёргался».
+  if(_tabsScrollPrev!=null){const e=document.getElementById("tabs-scroll");if(e)e.scrollLeft=_tabsScrollPrev;}
+  // Довести ленту до активной вкладки. Раньше положение только СОХРАНЯЛОСЬ между
+  // перерисовками, и раздел за краем так и оставался за краем: человек с восемью
+  // вкладками не видел, где находится.
+  try{
+    const _ts=document.getElementById("tabs-scroll");
+    const _at=_ts&&_ts.querySelector('[data-a="tab"][data-k="'+tab+'"]');
+    if(_at){
+      const l=_at.offsetLeft, r=l+_at.offsetWidth;
+      if(l<_ts.scrollLeft||r>_ts.scrollLeft+_ts.clientWidth){
+        _ts.scrollTo({left:Math.max(0,l-16),behavior:_tabsScrollPrev==null?"auto":"smooth"});
+      }
+    }
+  }catch(e){}
   // Возвращаем фокус и курсор в поле, где печатал пользователь: перерисовка на каждую букву
   // (поиски клиента/CRM и т.п.) иначе «съедает» все символы после первого — клавиатура
   // печатает в никуда, пока поле без фокуса.
@@ -4549,27 +4547,22 @@ ${showPinChange?`<div style="background:#fff;border-bottom:1px solid #eef2f7;pad
     <button data-a="pin-change-save" style="width:100%;padding:10px;background:#27ae60;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">Сохранить PIN</button>
   </div>
 </div>`:""}
-<!-- Вместо горизонтальной ленты — название текущего раздела и кнопка «Разделы».
-     Лента прятала половину вкладок за краем: у сотрудника с пятью ролями их восемь,
-     и до нужной приходилось листать. Сетка показывает все разом. -->
-<div id="section-head" style="background:linear-gradient(180deg,#fff 0%,#f8fafc 100%);border-bottom:1px solid #dde6f0;padding:9px 12px;position:sticky;top:53px;z-index:49;box-shadow:0 2px 4px rgba(0,0,0,0.04);display:flex;align-items:center;gap:9px">
-  ${(()=>{
-    const cur=TABS.find(function(t){return t[0]===tab;})||TABS[0]||["","Раздел"];
-    const nm=String(cur[1]);
-    const sp=nm.indexOf(" ");
-    const ico=sp>0?nm.slice(0,sp):"";
-    const txt=sp>0?nm.slice(sp+1):nm;
-    // Сколько внимания ждёт в ДРУГИХ разделах: иначе, спрятав ленту, мы спрятали бы
-    // и бейджи — человек перестал бы видеть, что где-то его ждут.
-    let other=0;
-    TABS.forEach(function(t){ if(t[0]===tab)return; other+=tabBadgeCount(t[0]); });
-    return '<div style="font-size:18px;line-height:1;flex-shrink:0">'+ico+'</div>'+
-      '<div style="flex:1;min-width:0;font-size:15px;font-weight:800;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(txt)+'</div>'+
-      '<button data-a="more-open" style="display:flex;align-items:center;gap:6px;padding:8px 13px;border-radius:10px;cursor:pointer;font-size:12px;font-weight:700;border:1.5px solid '+(moreOpen?"#2980b9":"#dde6f0")+';background:'+(moreOpen?"#2980b9":"#fff")+';color:'+(moreOpen?"#fff":"#5a7080")+';white-space:nowrap">'+
-        '<span>☰ Разделы</span>'+
-        (other?'<span style="background:#c0392b;color:#fff;border-radius:9px;padding:1px 6px;font-size:10px;font-weight:800">'+other+'</span>':"")+
-      '</button>';
-  })()}
+<div style="background:linear-gradient(180deg,#fff 0%,#f8fafc 100%);border-bottom:1px solid #dde6f0;padding:8px 0;position:sticky;top:53px;z-index:49;box-shadow:0 2px 4px rgba(0,0,0,0.04)">
+  <div style="display:flex;overflow-x:auto;padding:0 10px;scrollbar-width:none;-webkit-overflow-scrolling:touch;gap:6px" id="tabs-scroll">
+  ${TABS.map(([k,n],i)=>{
+    const active=tab===k;
+    const _crmBadge=(k==="crm"&&crmUnansweredCount()>0)?`<span style="margin-left:6px;background:#e74c3c;color:#fff;border-radius:9px;padding:1px 6px;font-size:10px;font-weight:800">${crmUnansweredCount()}</span>`:"";
+    // Бейдж считает ТОЛЬКО адресованное мне и незакрытое: если он горит всегда,
+    // его перестают замечать за неделю.
+    const _issN=(k==="issues")?issuesMineOpen().length:0;
+    const _issBadge=_issN?`<span style="margin-left:6px;background:#c0392b;color:#fff;border-radius:9px;padding:1px 6px;font-size:10px;font-weight:800">${_issN}</span>`:"";
+    const tabBtn=`<button data-a="tab" data-k="${k}" style="flex-shrink:0;padding:9px 14px;border:none;border-radius:10px;background:${active?"#2980b9":"#f0f4f8"};cursor:pointer;font-size:12.5px;font-weight:${active?700:600};color:${active?"#fff":"#5a7080"};white-space:nowrap;box-shadow:${active?"0 2px 8px rgba(41,128,185,0.3)":"none"};transition:all 0.15s;letter-spacing:0.2px">${n}${_crmBadge}${_issBadge}</button>`;
+    return isAdmin
+      ? `<div draggable="true" data-a="tab-drag" data-k="${k}" data-i="${i}" style="flex-shrink:0;cursor:grab">${tabBtn}</div>`
+      : tabBtn;
+  }).join("")}
+  </div>
+  ${TABS.length>4?`<div style="font-size:9px;color:#9aabbf;text-align:center;margin-top:4px;letter-spacing:0.5px">← смахни для других вкладок →</div>`:""}
 </div>
 <div id="tab-content" style="padding:14px">
   ${tabContentHtml()}
@@ -15753,14 +15746,14 @@ function tCRMInstruction(){
 }
 
 
-// Липкий заголовок этапа должен вставать ПОД уже прилипшими шапкой и строкой раздела.
-// Их высоту не зашиваем константой (роли в шапке переносятся на две строки) — меряем
-// по факту и кладём в CSS-переменную --stagetop.
+// Липкий заголовок этапа должен вставать ПОД уже прилипшими шапкой и лентой вкладок.
+// Их высоту не зашиваем константой (роли в шапке переносятся на две строки, у ленты
+// бывает подпись «смахни») — меряем по факту и кладём в CSS-переменную --stagetop.
 function updateStageStickyTop(){
   try{
-    const hb=document.getElementById("section-head");
-    if(!hb)return;
-    const top=53+hb.offsetHeight;   // 53px — высота шапки пользователя (sticky top:0)
+    const ts=document.getElementById("tabs-scroll");
+    if(!ts||!ts.parentElement)return;
+    const top=53+ts.parentElement.offsetHeight;   // 53px — высота шапки пользователя (sticky top:0)
     document.documentElement.style.setProperty("--stagetop",top+"px");
   }catch(e){}
 }
