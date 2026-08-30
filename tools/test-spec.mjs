@@ -153,7 +153,7 @@ const SHEET = () => ({
 {
   console.log('Проверка готовности')
   const empty = sheetIssues({ id: 'x', kind: 'banya', specs: { rooms: [] }, rooms: {}, global: {} }, EST, PRODUCTS)
-  ok('нет планировки — сказано прямо', empty.some((x) => /планировка/i.test(x)), JSON.stringify(empty))
+  ok('нет помещений — сказано прямо', empty.some((x) => /помещени/i.test(x)), JSON.stringify(empty))
   ok('и что выбор не сделан', empty.some((x) => /Утепление/.test(x)), JSON.stringify(empty))
 
   const s = SHEET()

@@ -45,7 +45,7 @@ import { needStatus, needState, objectSupply, migrateLegacy, needQty, isSelectio
 import { sheetPositions, sheetTotals, sheetIssues, optionGroups, roomArea } from "../src/spec.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
-const APP_BUILD = "2026-08-30.1";
+const APP_BUILD = "2026-08-30.2";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -9297,6 +9297,23 @@ function kpStages(t){ // [{name,color,cost,price,works}]
 function specSheet(id){ return (specSheets||[]).find(function(x){return x.id===id;})||null; }
 // Планировки того же вида: у планировок две категории (дом / баня), у смет три вида.
 function specPlanCat(kind){ return kind==="house"?"house":"banya"; }
+// Список планировок для селекта. Показываем ВСЕ, а не только «свою» категорию: видов смет
+// в портале уже шесть (апартаменты, глэмпинг…), а категорий у планировок две, и жёсткий
+// фильтр оставлял продавца с пустым списком. Своя категория идёт первой группой.
+function specPlanOptions(kind, sel){
+  const own=specPlanCat(kind);
+  const grp=function(cat,label){
+    const list=dbPlans.filter(function(p){return (p.cat||"house")===cat;});
+    if(!list.length)return "";
+    return '<optgroup label="'+label+'">'+list.map(function(p){
+      const n=((p.specs||{}).rooms||[]).length;
+      return '<option value="'+p.id+'"'+(sel===p.id?" selected":"")+'>'+esc(p.name||"Планировка")+
+        (n?" · "+n+" помещ.":" · размеры не заданы")+'</option>';
+    }).join("")+'</optgroup>';
+  };
+  const house=grp("house","🏠 Дома"), banya=grp("banya","🛁 Бани");
+  return own==="house"?(house+banya):(banya+house);
+}
 function specTot(sh){ return sheetTotals(sh, estimates, expProducts); }
 const SPEC_SURFACE={floor:"пол", wall:"стены", ceil:"потолок"};
 
@@ -9309,6 +9326,8 @@ function specApplyPlan(sh, planId){
   sh.planId=planId;
   sh.specs=JSON.parse(JSON.stringify(pl.specs||{height:2.5,rooms:[],openings:[]}));
   if(sh.specs.height==null)sh.specs.height=2.5;
+  // Чертёж идёт вместе с размерами: продавец показывает клиенту план, а не таблицу чисел.
+  if(pl.img){ sh.specs.planUrl=pl.img; sh.specs.planName=pl.name||"Планировка"; }
   sh.rooms={};
   return true;
 }
@@ -9422,7 +9441,6 @@ function tSpec(){
   '</div>';
 
   if(specShowNew){
-    const cat=specPlanCat(specNew.kind);
     h+='<div style="background:#fff;border:2px solid #16a085;border-radius:14px;padding:14px;margin-bottom:12px">'+
       '<div style="font-size:10px;font-weight:700;color:#16a085;letter-spacing:0.5px;margin-bottom:8px">НОВАЯ СПЕЦИФИКАЦИЯ</div>'+
       '<input id="spec-n-name" value="'+esc(specNew.name)+'" placeholder="Название (например: Баня Ивановых)" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:8px">'+
@@ -9432,10 +9450,7 @@ function tSpec(){
       }).join("")+'</div>'+
       '<select id="spec-n-plan" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:8px">'+
         '<option value="">— планировка (можно выбрать позже) —</option>'+
-        dbPlans.filter(function(p){return (p.cat||"house")===cat;}).map(function(p){
-          const rooms=((p.specs||{}).rooms||[]).length;
-          return '<option value="'+p.id+'"'+(specNew.planId===p.id?" selected":"")+'>'+esc(p.name||"Планировка")+(rooms?" · "+rooms+" помещ.":" · размеры не заданы")+'</option>';
-        }).join("")+
+        specPlanOptions(specNew.kind, specNew.planId)+
       '</select>'+
       '<select id="spec-n-client" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:10px">'+
         '<option value="">— клиент из CRM (необязательно) —</option>'+
@@ -9484,7 +9499,6 @@ function tSpecCard(sh){
   const rooms=specs.rooms||[];
   const roomGroups=optionGroups(estimates, sh.kind, "room");
   const globalGroups=optionGroups(estimates, sh.kind, "global");
-  const cat=specPlanCat(sh.kind);
   const posByKey={}; t.positions.forEach(function(p){ posByKey[p.key]=p; });
 
   let h='<div>';
@@ -9499,10 +9513,7 @@ function tSpecCard(sh){
     '<div style="display:flex;gap:7px;flex-wrap:wrap">'+
       '<select data-a="spec-plan" style="flex:1;min-width:170px;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12.5px;outline:none;box-sizing:border-box">'+
         '<option value="">— планировка не выбрана —</option>'+
-        dbPlans.filter(function(p){return (p.cat||"house")===cat;}).map(function(p){
-          const n=((p.specs||{}).rooms||[]).length;
-          return '<option value="'+p.id+'"'+(sh.planId===p.id?" selected":"")+'>'+esc(p.name||"Планировка")+(n?" · "+n+" помещ.":" · размеры не заданы")+'</option>';
-        }).join("")+
+        specPlanOptions(sh.kind, sh.planId)+
       '</select>'+
       '<select data-a="spec-client" style="flex:1;min-width:150px;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12.5px;outline:none;box-sizing:border-box">'+
         '<option value="">— клиент —</option>'+
@@ -9511,6 +9522,28 @@ function tSpecCard(sh){
     '</div>'+
     (sh.planId?'<div style="font-size:10.5px;color:#a0b4c8;margin-top:7px;line-height:1.4">Размеры скопированы из планировки в момент выбора. Правка планировки в базе эту спецификацию уже не изменит — проданное остаётся таким, как продали.</div>':'')+
   '</div>';
+
+  // Планировка клиента: файл и размеры. Планировки в базе есть не под каждый вид и не под
+  // каждого клиента — чертёж приносят на встречу, поэтому его можно загрузить прямо сюда,
+  // а площади снять руками. Считает портал: продавец вводит только ширину, длину и высоту.
+  h+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:14px;padding:12px 14px;margin-bottom:10px">'+
+    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:'+(specs.planUrl?'9px':'0')+'">'+
+      '<span style="font-size:11px;font-weight:700;color:#8e44ad;letter-spacing:0.5px;flex:1">📐 ПЛАНИРОВКА КЛИЕНТА</span>'+
+      (specs.planUrl
+        ? '<button data-a="obj-doc-unlink" data-oid="'+sh.id+'" data-field="plan" style="font-size:11px;color:#e74c3c;background:transparent;border:none;cursor:pointer;text-decoration:underline">удалить</button>'
+        : '<label data-a="obj-doc-upload" data-oid="'+sh.id+'" data-field="plan" style="padding:5px 12px;background:#8e44ad;border-radius:8px;cursor:pointer;color:#fff;font-size:11.5px;font-weight:700">⬆️ Загрузить план<input id="obj-doc-inp-'+sh.id+'-plan" type="file" accept="image/*,.pdf" style="display:none"></label>')+
+    '</div>'+
+    (specs.planUrl
+      ? '<div style="display:flex;align-items:center;gap:8px">'+
+          '<span style="font-size:18px">📐</span>'+
+          '<div style="flex:1;min-width:0;font-size:12.5px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(specs.planName||"План")+'</div>'+
+          '<a href="'+esc(specs.planUrl)+'" target="_blank" rel="noopener" style="padding:5px 11px;background:#8e44ad18;border:1px solid #8e44ad44;border-radius:7px;color:#8e44ad;font-size:11.5px;font-weight:700;text-decoration:none;flex-shrink:0">Открыть</a>'+
+          (dbPlans.some(function(x){return x.img===specs.planUrl;})?''
+            :'<button data-a="spec-plan-tobase" data-id="'+sh.id+'" title="Сохранить в базу планировок" style="padding:5px 11px;background:#fff;border:1px solid #8e44ad44;border-radius:7px;cursor:pointer;color:#8e44ad;font-size:11.5px;font-weight:700;flex-shrink:0">В базу</button>')+
+        '</div>'
+      : '<div style="font-size:11.5px;color:#9aabbf;line-height:1.45;margin-top:7px">Выберите планировку из базы выше или загрузите чертёж клиента — файлом (фото, PDF). Размеры помещений внесите ниже: площади пола, стен и потолка портал посчитает сам.</div>')+
+  '</div>';
+  h+=specsEditorHtml(sh, "📐 РАЗМЕРЫ ПОМЕЩЕНИЙ");
 
   if(issues.length){
     h+='<div style="background:#fff3e0;border:1px solid #e67e2244;border-radius:12px;padding:11px 13px;margin-bottom:10px">'+
@@ -9556,7 +9589,7 @@ function tSpecCard(sh){
       '</div>';
     });
   } else {
-    h+='<div style="background:#fff;border:1px dashed #d0dae8;border-radius:13px;padding:18px;text-align:center;font-size:12.5px;color:#9aabbf;margin-bottom:10px;line-height:1.5">Выберите планировку — появятся помещения с площадями, и по каждому можно будет выбрать отделку.</div>';
+    h+='<div style="background:#fff;border:1px dashed #d0dae8;border-radius:13px;padding:18px;text-align:center;font-size:12.5px;color:#9aabbf;margin-bottom:10px;line-height:1.5">Помещений пока нет. Выберите планировку из базы или добавьте их в «Размерах помещений» выше — по каждому появится выбор отделки.</div>';
   }
 
   // Общедомовые опции
@@ -16501,7 +16534,7 @@ function bind(){
           let url;
           try{ url=await uploadFileR2(f); }
           catch(e){ alert("Не удалось загрузить файл: "+((e&&e.message)||e)); return; }
-          const o=templates.find(x=>x.id===oid)||objects.find(x=>x.id===oid);
+          const o=specOwner(oid);
           if(!o)return; ensureSpecs(o);
           o.specs[field+"Url"]=url; o.specs[field+"Name"]=f.name;
           fl();
@@ -17033,6 +17066,21 @@ function bind(){
       const g=el.dataset.g, eid=el.dataset.eid||"";
       sh.global=Object.assign({},sh.global||{});
       if(eid&&sh.global[g]!==eid)sh.global[g]=eid; else delete sh.global[g];
+      fl();
+    };}
+    else if(a==="spec-plan-tobase"){el.onclick=()=>{
+      const sh=specSheet(el.dataset.id); if(!sh)return;
+      const specs=ensureSpecs(sh);
+      if(!specs.planUrl){ alert("Сначала загрузите план."); return; }
+      if(dbPlans.some(function(p){return p.img===specs.planUrl;})){ alert("Эта планировка уже есть в базе."); return; }
+      const name=(prompt("Название планировки для базы:", specs.planName||sh.name||"Планировка")||"").trim();
+      if(!name)return;
+      // Копия размеров, а не ссылка: дальше спецификация и база живут порознь.
+      const pid=gid();
+      dbPlans=dbPlans.concat([{ id:pid, name:name, img:specs.planUrl, cat:specPlanCat(sh.kind), tgMsgId:null,
+        specs:JSON.parse(JSON.stringify({height:specs.height,rooms:specs.rooms||[],openings:specs.openings||[]})) }]);
+      sh.planId=pid;
+      alert("Планировка добавлена в базу — её можно выбрать для следующего клиента.");
       fl();
     };}
     else if(a==="spec-print"){el.onclick=()=>{ buildSpecPrint(specSheet(el.dataset.id)); };}

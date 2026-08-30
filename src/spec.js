@@ -157,7 +157,7 @@ export function sheetIssues(sheet, estimates, products) {
   const out = [];
   const specs = (sheet && sheet.specs) || {};
   const rooms = specs.rooms || [];
-  if (!rooms.length) out.push("Не выбрана планировка — площади считать не из чего");
+  if (!rooms.length) out.push("Нет помещений — выберите планировку или внесите размеры вручную");
   if (!Number(specs.height)) out.push("Не задана высота потолка — площадь стен будет нулевой");
   rooms.forEach(function (r) {
     if (!roomArea(r, specs.height, "floor")) out.push("«" + (r.name || "помещение") + "»: не заданы размеры");

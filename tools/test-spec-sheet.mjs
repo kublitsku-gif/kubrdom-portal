@@ -37,7 +37,7 @@ const PLANS = [
     { id: 'r1', name: 'Парная', w: 2, l: 3, wallLen: 10 },
     { id: 'r2', name: 'Комната отдыха', w: 3, l: 4, wallLen: 14 },
   ] } },
-  { id: 'pl2', name: 'Баня 3×3', cat: 'banya', specs: { height: 2.4, openings: [], rooms: [
+  { id: 'pl2', name: 'Дом 3×3', cat: 'house', specs: { height: 2.4, openings: [], rooms: [
     { id: 'q1', name: 'Мойка', w: 3, l: 3, wallLen: 12 },
   ] } },
 ]
@@ -273,7 +273,75 @@ function assembled(p) {
     'пустой объект на площадке хуже, чем его отсутствие')
 }
 
-// ── 8. Вкладка рисуется ──────────────────────────────────────────────────────
+// ── 8. Планировка клиента: свой чертёж и размеры руками ──────────────────────
+{
+  t.section('Планировка клиента')
+  const p = panel()
+  // Планировок «своей» категории может не быть вовсе — как у вида «Дом» на проде.
+  const opts = p.run('specPlanOptions("house","")')
+  t.ok('в списке видны планировки обеих категорий', /pl1/.test(opts) && /pl2/.test(opts),
+    'жёсткий фильтр по категории оставлял продавца с пустым списком: ' + opts)
+  t.ok('своя категория идёт первой группой', opts.indexOf('Дома') < opts.indexOf('Бани'), opts)
+
+  // Дом собирается и без планировки в базе: помещения заводятся руками по чертежу клиента.
+  const id = create(p, '').id
+  t.ok('помещений сначала нет', p.q('specSheets')[0].specs.rooms.length === 0)
+  const add = p.dom.node({ a: 'spec-room-add', oid: id })
+  p.run('bind();')
+  add.onclick()
+  const set = (f, v) => {
+    const el = p.dom.node({ a: 'spec-room-field', oid: id, i: '0', f })
+    el.value = String(v)
+    p.run('bind();')
+    el.onchange()
+  }
+  set('name', 'Гостиная'); set('w', 4); set('l', 5); set('wallLen', 18)
+  p.run(`specSheet(${JSON.stringify(id)}).specs.height=2.7;`)
+  const r = p.q('specSheets')[0].specs.rooms[0]
+  t.ok('размеры записаны', r.name === 'Гостиная' && r.w === 4 && r.l === 5 && r.wallLen === 18, JSON.stringify(r))
+
+  const rid = r.id
+  pickRoom(p, rid, 'Пол', 'e_lam')
+  const pos = p.q(`sheetPositions(specSheet(${JSON.stringify(id)}), estimates, expProducts)`)
+    .find((x) => x.roomId === rid)
+  t.ok('площадь пола посчитана из введённых размеров', pos.area === 20, String(pos.area))
+  t.ok('и цена собралась по ней', pos.cost === 20 * 800, String(pos.cost))
+  pickRoom(p, rid, 'Стены', 'e_mdf')
+  const wall = p.q(`sheetPositions(specSheet(${JSON.stringify(id)}), estimates, expProducts)`)
+    .find((x) => x.surface === 'wall' && x.roomId === rid)
+  t.ok('стены — периметр × высота', wall.area === 18 * 2.7, String(wall.area))
+  t.ok('замечания про помещения больше нет',
+    !p.q(`sheetIssues(specSheet(${JSON.stringify(id)}), estimates, expProducts)`).some((x) => /Нет помещений/.test(x)))
+}
+
+// ── 9. Чертёж: из базы и в базу ──────────────────────────────────────────────
+{
+  t.section('Чертёж планировки')
+  const p = panel()
+  p.run('dbPlans[0].img="/api/file/plans/64.png";')
+  const id = create(p).id
+  const sh = p.q('specSheets')[0]
+  t.ok('план из базы приехал вместе с чертежом', sh.specs.planUrl === '/api/file/plans/64.png',
+    'продавец показывает клиенту план, а не таблицу чисел')
+
+  // Загруженный чертёж можно завести в базу — иначе он грузится заново каждому клиенту.
+  const q = panel()
+  const qid = create(q, '').id
+  q.run(`(function(){var sh=specSheet(${JSON.stringify(qid)});ensureSpecs(sh);sh.specs.planUrl="/api/file/plans/client.pdf";sh.specs.planName="План Петровых";sh.specs.rooms=[{id:"x1",name:"Зал",w:3,l:4,wallLen:14}];sh.specs.height=2.6;})();`)
+  q.run('window.prompt=function(){return "Дом Петровых";};')
+  const toBase = q.dom.node({ a: 'spec-plan-tobase', id: qid })
+  q.run('bind();')
+  toBase.onclick()
+  const plans = q.q('dbPlans')
+  t.ok('планировка добавлена в базу', plans.length === 3 && plans[2].img === '/api/file/plans/client.pdf', String(plans.length))
+  t.ok('размеры скопированы вместе с ней', plans[2].specs.rooms.length === 1 && plans[2].specs.height === 2.6)
+  t.ok('категория взята у вида сметы', plans[2].cat === 'banya', plans[2].cat)
+  t.ok('спецификация теперь ссылается на неё', q.q('specSheets')[0].planId === plans[2].id)
+  toBase.onclick()
+  t.ok('повторно та же планировка не заводится', q.q('dbPlans').length === 3)
+}
+
+// ── 10. Вкладка рисуется ──────────────────────────────────────────────────────
 {
   t.section('Отрисовка вкладки')
   const p = panel()
