@@ -396,6 +396,65 @@ function assembled(p) {
   t.ok('с итогом по каждой точке', /Всего/.test(html) && html.indexOf('Розетка') > 0)
 }
 
+// ── 9в. Модель контейнера в панели ───────────────────────────────────────────
+// Смысл модели один: подвинул перегородку — поехала смета. Это и сторожим.
+{
+  t.section('Модель контейнера')
+  const p = panel()
+  const id = create(p, '').id
+
+  const mk = p.dom.node({ a: 'model-create', k: '40hc' })
+  p.run('bind();')
+  mk.onclick()
+  const sh0 = p.q('specSheets')[0]
+  t.ok('модель создана', !!sh0.model && sh0.model.l === 12032, JSON.stringify(sh0.model && sh0.model.type))
+  t.ok('характеристики приехали из модели', sh0.specs.rooms.length === 1 && sh0.specs.height === 2.7,
+    JSON.stringify(sh0.specs.rooms))
+
+  // Делим на два помещения и отделываем оба.
+  const rid = sh0.specs.rooms[0].id
+  const split = p.dom.node({ a: 'model-split', id: rid })
+  p.run('bind();')
+  split.onclick()
+  const rooms = p.q('specSheets')[0].specs.rooms
+  t.ok('помещений стало два', rooms.length === 2, JSON.stringify(rooms.map((r) => r.l)))
+  // Отделка у помещений разная — иначе перенос метров из одного в другое
+  // ничего не изменит в сумме, и проверка ничего не проверит.
+  pickRoom(p, rooms[0].id, 'Пол', 'e_lam')
+  pickRoom(p, rooms[1].id, 'Стены', 'e_mdf')
+
+  const before = p.q(`specTot(specSheet(${JSON.stringify(id)}))`)
+  const beforeLeft = p.q(`sheetPositions(specSheet(${JSON.stringify(id)}), estimates, expProducts)`)
+    .find((x) => x.roomId === rooms[0].id).area
+
+  // Двигаем границу на два метра — площади и цена обязаны поехать.
+  p.run(`(function(){var sh=specSheet(${JSON.stringify(id)});sh.model=moveBoundary(sh.model,0,2000);modelSync(sh);})();`)
+  const after = p.q(`specTot(specSheet(${JSON.stringify(id)}))`)
+  const afterLeft = p.q(`sheetPositions(specSheet(${JSON.stringify(id)}), estimates, expProducts)`)
+    .find((x) => x.roomId === rooms[0].id).area
+  t.ok('площадь левого помещения выросла', afterLeft > beforeLeft, beforeLeft + ' → ' + afterLeft)
+  t.ok('смета пересчиталась', after.cost !== before.cost, before.cost + ' → ' + after.cost)
+
+  // Типовое изделие в проём: цена изделия и «монтаж окна» считаются от модели.
+  p.run('winTypes=[{id:"t1",kind:"win",n:"Окно 1300×1150",w:1300,h:1150,cost:14555}];')
+  const addOp = p.dom.node({ a: 'model-op-add', t: 't1' })
+  p.run('bind();')
+  addOp.onclick()
+  const sh = p.q('specSheets')[0]
+  t.ok('проём встал в стену', (sh.model.openings || []).length === 1, JSON.stringify(sh.model.openings))
+  t.ok('и попал в раскладку помещения', sh.specs.rooms.some((r) => (r.pts || {}).win === 1),
+    JSON.stringify(sh.specs.rooms.map((r) => r.pts)))
+  t.ok('стоимость изделий видна', p.q(`modelTotals(specSheet(${JSON.stringify(id)}).model, winTypes).openingsCost`) === 14555)
+
+  // Карточка рисуется вместе с планом и вкладками этапов.
+  p.run(`specOpenId=${JSON.stringify(id)};`)
+  const card = p.run('tSpec()')
+  t.ok('в карточке есть план', card.indexOf('model-svg') > 0 && card.indexOf('model-drag') > 0)
+  t.ok('и вкладки этапов', card.indexOf('РАБОТЫ ПО ЭТАПАМ') > 0 && card.indexOf('model-stage') > 0)
+  t.ok('ручного редактора размеров при модели нет', card.indexOf('РАЗМЕРЫ ПОМЕЩЕНИЙ') < 0,
+    'два источника правды об одних помещениях разъедутся в первый же день')
+}
+
 // ── 10. Вкладка рисуется ──────────────────────────────────────────────────────
 {
   t.section('Отрисовка вкладки')

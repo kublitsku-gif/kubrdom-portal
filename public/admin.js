@@ -44,9 +44,12 @@ import { needStatus, needState, objectSupply, migrateLegacy, needQty, isSelectio
 // Сроки этапов — тот же общий модуль, что читают напоминания (см. src/stages.js).
 import { sheetPositions, sheetTotals, sheetIssues, optionGroups, roomArea,
   SPEC_POINTS, pointMeta, pointTotals, roomPoints } from "../src/spec.js";
+import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyContainer, modelRooms,
+  sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom,
+  modelToSpecs, modelTotals, modelIssues } from "../src/model.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
-const APP_BUILD = "2026-08-30.5";
+const APP_BUILD = "2026-08-30.6";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -266,6 +269,7 @@ function serializeState(){
     { work_id: "purchases",       data: purchases       },
     { work_id: "stock",           data: stock           },
     { work_id: "specSheets",      data: specSheets      },
+    { work_id: "winTypes",        data: winTypes        },
     { work_id: "purchased",       data: purchased       },
     { work_id: "arrived",         data: arrived         },
     { work_id: "finTxns",         data: finTxns         },
@@ -314,6 +318,7 @@ function applyState(items){
   purchases       = arr("purchases",       purchases);
   stock           = arr("stock",           stock);
   specSheets      = arr("specSheets",      specSheets);
+  winTypes        = arr("winTypes",        winTypes);
   purchased       = obj("purchased",       purchased);
   arrived         = obj("arrived",         arrived);
   finSalaries     = obj("finSalaries",     finSalaries);
@@ -2070,6 +2075,10 @@ let stock=[];
 //   {id, name, kind, clientId, planId, specs{height,rooms,openings},
 //    rooms:{roomId:{floor,wall,ceil}}, global:{группа:estId}, qty:{key:число},
 //    markup, status:"draft"|"sold", contractId, objId, at, by}
+let winTypes=[];           // типовые окна и двери (справочник поставщика)
+let winTypeNew=null;       // форма нового изделия
+let modelSide="n";         // стена, на которую ставим проём
+let modelStageTab=0;       // 0 = все этапы
 let specSheets=[];
 let specOpenId=null;      // открытая спецификация (null = список)
 let specNew={name:"",kind:"banya",clientId:"",planId:""};
@@ -9492,6 +9501,268 @@ function specApplyPlan(sh, planId){
   return true;
 }
 
+// ═══ МОДЕЛЬ КОНТЕЙНЕРА ═══════════════════════════════════════════════════════
+// Дом из контейнера — коробка фиксированного размера с перегородками и проёмами.
+// Двигаешь перегородку — меняются площади помещений, а вместе с ними отделка,
+// материалы и цена. Расчёт живёт в src/model.js, здесь только показ и мышь.
+
+// Типовые изделия из спецификации поставщика: их заказывают повторно, поэтому
+// достаточно один раз завести справочник, а дальше ставить в проём одним тапом.
+const WIN_PRESETS=[
+  {kind:"win",  n:"Окно 1300×1150 п/о",     w:1300, h:1150, cost:14555},
+  {kind:"win",  n:"Окно 1500×1200 п/о",     w:1500, h:1200, cost:16307},
+  {kind:"win",  n:"Окно 500×500",           w:500,  h:500,  cost:6576},
+  {kind:"win",  n:"Витраж 2160×2390 глухой",w:2160, h:2390, cost:22282},
+  {kind:"door", n:"Дверь входная 1000×2100",w:1000, h:2100, cost:27150},
+];
+function winType(id){ return (winTypes||[]).find(function(t){return t.id===id;})||null; }
+function winKindMeta(k){ return k==="door"?{n:"Дверь",c:"#8e44ad",emoji:"🚪"}:{n:"Окно",c:"#2980b9",emoji:"🪟"}; }
+
+// Модель — источник характеристик: помещения и раскладка приезжают из неё, поэтому
+// спецификация считается тем же кодом, что и раньше. Файл планировки не трогаем —
+// это чертёж клиента, он к модели отношения не имеет.
+function modelSync(sh){
+  if(!sh||!sh.model)return;
+  const keep=sh.specs||{};
+  const next=modelToSpecs(sh.model, winTypes);
+  next.planUrl=keep.planUrl||""; next.planName=keep.planName||"";
+  sh.specs=next;
+}
+
+const MODEL_SIDES=[["n","Левая длинная"],["s","Правая длинная"],["w","Торец начала"],["e","Торец конца"]];
+
+// План сверху. Рисуем в миллиметрах модели: viewBox сам приводит их к экрану,
+// поэтому перетаскивание считается в мм и не зависит от размера телефона.
+function modelPlanSvg(sh){
+  const m=sh.model, W=Number(m.w)||0, L=totalLength(m), TH=Number(m.wallThick)||0;
+  const rooms=modelRooms(m);
+  const PAD=700;
+  const vb=(-PAD)+" "+(-PAD)+" "+(L+PAD*2)+" "+(W+PAD*2);
+  let g='';
+  // Корпус
+  g+='<rect x="0" y="0" width="'+L+'" height="'+W+'" fill="#f7fafc" stroke="#0d1b2e" stroke-width="60"/>';
+  // Помещения и перегородки
+  rooms.forEach(function(r,i){
+    g+='<rect x="'+r.x0+'" y="0" width="'+r.len+'" height="'+W+'" fill="#ffffff" stroke="none"/>';
+    g+='<text x="'+(r.x0+r.len/2)+'" y="'+(W/2-120)+'" text-anchor="middle" font-size="220" font-weight="700" fill="#0d1b2e">'+esc(r.name||"Помещение")+'</text>';
+    g+='<text x="'+(r.x0+r.len/2)+'" y="'+(W/2+180)+'" text-anchor="middle" font-size="190" fill="#7a9aaa">'+numRu(r.area)+' м² · '+numRu(Math.round(r.len/10)/100)+' м</text>';
+    if(i<rooms.length-1){
+      const x=r.x1;
+      g+='<rect x="'+x+'" y="0" width="'+TH+'" height="'+W+'" fill="#8e44ad"/>';
+      // Ручка переноса границы — крупная: на телефоне в тонкую линию не попасть.
+      g+='<g data-a="model-drag" data-i="'+i+'" data-len="'+L+'" style="cursor:ew-resize">'+
+        '<rect x="'+(x-260)+'" y="'+(W/2-320)+'" width="'+(TH+520)+'" height="640" rx="120" fill="#8e44ad" opacity="0.92"/>'+
+        '<text x="'+(x+TH/2)+'" y="'+(W/2+90)+'" text-anchor="middle" font-size="300" fill="#fff" font-weight="800">⇄</text>'+
+      '</g>';
+    }
+  });
+  // Проёмы
+  (m.openings||[]).forEach(function(op){
+    const t=winType(op.typeId); if(!t)return;
+    const km=winKindMeta(t.kind), ln=Number(t.w)||0, pos=Number(op.pos)||0;
+    let x,y,ww,hh;
+    if(op.side==="n"){ x=pos; y=-90; ww=ln; hh=180; }
+    else if(op.side==="s"){ x=pos; y=W-90; ww=ln; hh=180; }
+    else if(op.side==="w"){ x=-90; y=pos; ww=180; hh=ln; }
+    else { x=L-90; y=pos; ww=180; hh=ln; }
+    g+='<g data-a="model-op-drag" data-id="'+op.id+'" style="cursor:pointer">'+
+      '<rect x="'+x+'" y="'+y+'" width="'+ww+'" height="'+hh+'" fill="'+km.c+'" rx="40"/>'+
+      '<text x="'+(x+ww/2)+'" y="'+(y+hh/2+(op.side==="n"||op.side==="s"?-160:0))+'" text-anchor="middle" font-size="200" fill="'+km.c+'" font-weight="700">'+numRu(Math.round(ln/10)/100)+'</text>'+
+    '</g>';
+  });
+  // Габарит
+  g+='<text x="'+(L/2)+'" y="'+(W+520)+'" text-anchor="middle" font-size="200" fill="#9aabbf">'+numRu(Math.round(L/10)/100)+' × '+numRu(Math.round(W/10)/100)+' м · высота '+numRu(Math.round((Number(m.h)||0)/10)/100)+' м</text>';
+  return '<svg id="model-svg" viewBox="'+vb+'" style="width:100%;height:auto;display:block;touch-action:pan-y;user-select:none">'+g+'</svg>';
+}
+
+function specModelHtml(sh){
+  const RUk=function(n){return Math.round(n).toLocaleString("ru-RU")+" ₽";};
+  const m=sh.model;
+  if(!m){
+    return '<div style="background:#fff;border:1px dashed #8e44ad55;border-radius:14px;padding:16px;margin-bottom:10px;text-align:center">'+
+      '<div style="font-size:12.5px;color:#5a7a9a;line-height:1.5;margin-bottom:10px">Дом из контейнера можно собрать моделью: коробка нужного типоразмера, перегородки двигаются, окна и двери ставятся в стены. Площади и смета пересчитываются на каждое движение.</div>'+
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center">'+
+        CONTAINERS.map(function(c){
+          return '<button data-a="model-create" data-k="'+c.k+'" style="padding:9px 14px;background:#8e44ad;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">📦 '+esc(c.n)+'</button>';
+        }).join("")+
+      '</div>'+
+    '</div>';
+  }
+  const rooms=modelRooms(m), tot=modelTotals(m, winTypes), iss=modelIssues(m, winTypes);
+  let h='<div style="background:#fff;border:1px solid #8e44ad44;border-radius:14px;padding:12px 13px;margin-bottom:10px">';
+  h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:9px">'+
+      '<span style="font-size:11px;font-weight:700;color:#8e44ad;letter-spacing:0.5px;flex:1">🧱 МОДЕЛЬ КОНТЕЙНЕРА</span>'+
+      '<button data-a="model-drop" style="font-size:11px;color:#e74c3c;background:transparent;border:none;cursor:pointer;text-decoration:underline">убрать модель</button>'+
+    '</div>';
+  // Типоразмер
+  h+='<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:9px">'+
+    CONTAINERS.map(function(c){
+      const on=m.type===c.k;
+      return '<button data-a="model-type" data-k="'+c.k+'" style="border:1.5px solid '+(on?"#8e44ad":"#dde6f0")+';background:'+(on?"#8e44ad":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">'+esc(c.n)+'</button>';
+    }).join("")+'</div>';
+  h+='<div style="display:flex;align-items:center;gap:8px;background:#f6f8fa;border-radius:9px;padding:7px 10px;margin-bottom:9px">'+
+      '<span style="font-size:11px;color:#5a7a9a;flex:1">Отделка стен съедает по</span>'+
+      '<input data-a="model-finish" value="'+((m.finish==null?FINISH_THICK:m.finish))+'" type="number" step="1" inputmode="numeric" style="width:70px;padding:6px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12.5px;outline:none;box-sizing:border-box;text-align:right">'+
+      '<span style="font-size:11px;color:#7a9aaa">мм на стену</span>'+
+    '</div>';
+  // План
+  h+='<div style="background:#f6f8fa;border:1px solid #e6ecf3;border-radius:11px;padding:10px;margin-bottom:9px">'+modelPlanSvg(sh)+'</div>';
+  h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px">'+
+    [["пол",numRu(tot.floorArea)+" м²"],["перегородок",String(tot.partitions)],["проёмов",String((m.openings||[]).length)],["изделия",RUk(tot.openingsCost)]]
+      .map(function(x){return '<div style="text-align:center;background:#f6f8fa;border-radius:9px;padding:6px 4px"><div style="font-size:9px;color:#9aabbf;font-weight:700">'+x[0].toUpperCase()+'</div><div style="font-size:12.5px;font-weight:800;color:#0d1b2e">'+x[1]+'</div></div>';}).join("")+
+  '</div>';
+  if(iss.length){
+    h+='<div style="background:#fff3e0;border:1px solid #e67e2244;border-radius:10px;padding:9px 11px;margin-bottom:9px;font-size:11.5px;color:#8a5a1f;line-height:1.5">'+
+      iss.slice(0,4).map(function(x){return "• "+esc(x);}).join("<br>")+'</div>';
+  }
+  // Помещения: имя, длина, раскладка
+  h+='<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:6px">ПОМЕЩЕНИЯ</div>';
+  rooms.forEach(function(r,i){
+    h+='<div style="border:1px solid #e6ecf3;border-radius:11px;padding:9px 10px;margin-bottom:7px">'+
+      '<div style="display:flex;gap:6px;align-items:center;margin-bottom:7px">'+
+        '<input data-a="model-room-name" data-id="'+r.id+'" value="'+esc(r.name)+'" placeholder="Название" style="flex:1;min-width:0;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;font-weight:700;outline:none;box-sizing:border-box">'+
+        '<input data-a="model-room-len" data-id="'+r.id+'" value="'+numRu(Math.round(r.len/10)/100)+'" type="number" step="0.01" inputmode="decimal" style="width:78px;padding:7px 8px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;text-align:right">'+
+        '<span style="font-size:11px;color:#7a9aaa">м</span>'+
+        '<button data-a="model-split" data-id="'+r.id+'" title="Разделить перегородкой" style="width:30px;height:30px;border:1px solid #8e44ad55;background:#fff;border-radius:8px;cursor:pointer;color:#8e44ad;font-size:14px;flex-shrink:0">⊟</button>'+
+        (i<rooms.length-1?'<button data-a="model-merge" data-id="'+r.id+'" title="Убрать перегородку справа" style="width:30px;height:30px;border:1px solid #e74c3c44;background:#fff;border-radius:8px;cursor:pointer;color:#e74c3c;font-size:13px;flex-shrink:0">✕</button>':'')+
+      '</div>'+
+      '<div style="font-size:10.5px;color:#7a9aaa;margin-bottom:6px">'+numRu(r.area)+' м² пола · стены '+numRu(Math.round(r.wallLen*(Number(m.h)||0)/1000*100)/100)+' м²</div>'+
+      '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(124px,1fr));gap:5px">'+
+        SPEC_POINTS.filter(function(pt){return pt.k!=="win"&&pt.k!=="door";}).map(function(pt){
+          const n=Number((r.pts||{})[pt.k])||0;
+          return '<div style="display:flex;align-items:center;gap:4px;padding:4px 5px;border:1px solid '+(n?"#16a08555":"#eef2f7")+';background:'+(n?"#16a08510":"#fff")+';border-radius:7px">'+
+            '<span style="font-size:12px">'+pt.emoji+'</span>'+
+            '<span style="flex:1;min-width:0;font-size:10px;color:'+(n?"#0d1b2e":"#9aabbf")+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(pt.n)+'</span>'+
+            '<button data-a="model-pt" data-id="'+r.id+'" data-k="'+pt.k+'" data-d="-1" style="width:19px;height:19px;border:1px solid #dde6f0;background:#fff;border-radius:5px;cursor:pointer;color:#7a9aaa;font-size:11px;line-height:1;flex-shrink:0">−</button>'+
+            '<span style="min-width:12px;text-align:center;font-size:11.5px;font-weight:800;color:'+(n?"#16a085":"#c3cedb")+'">'+n+'</span>'+
+            '<button data-a="model-pt" data-id="'+r.id+'" data-k="'+pt.k+'" data-d="1" style="width:19px;height:19px;border:1px solid #16a08555;background:#fff;border-radius:5px;cursor:pointer;color:#16a085;font-size:11px;line-height:1;flex-shrink:0">+</button>'+
+          '</div>';
+        }).join("")+
+      '</div>'+
+    '</div>';
+  });
+  // Проёмы
+  h+='<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin:10px 0 6px">ОКНА И ДВЕРИ В СТЕНАХ</div>';
+  h+='<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:7px">'+
+    MODEL_SIDES.map(function(sd){
+      const on=modelSide===sd[0];
+      return '<button data-a="model-side" data-s="'+sd[0]+'" style="border:1.5px solid '+(on?"#2980b9":"#dde6f0")+';background:'+(on?"#2980b9":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">'+esc(sd[1])+'</button>';
+    }).join("")+'</div>';
+  if(!winTypes.length){
+    h+='<div style="font-size:11.5px;color:#9aabbf;line-height:1.45;margin-bottom:7px">Сначала заведите типовые изделия — из них и ставятся проёмы.</div>';
+  } else {
+    h+='<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">'+
+      winTypes.map(function(t){
+        const km=winKindMeta(t.kind);
+        return '<button data-a="model-op-add" data-t="'+t.id+'" style="border:1.5px solid '+km.c+'55;background:#fff;color:'+km.c+';border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">+ '+km.emoji+' '+esc(t.n)+'</button>';
+      }).join("")+'</div>';
+  }
+  const ops=(m.openings||[]).filter(function(op){return op.side===modelSide;});
+  if(ops.length){
+    const len=sideLength(m, modelSide);
+    h+=ops.map(function(op){
+      const t=winType(op.typeId)||{n:"?",w:0,cost:0};
+      const km=winKindMeta(t.kind);
+      return '<div style="display:flex;align-items:center;gap:7px;padding:7px 9px;border:1px solid #e6ecf3;border-radius:10px;margin-bottom:5px">'+
+        '<span style="font-size:14px">'+km.emoji+'</span>'+
+        '<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(t.n)+'</div>'+
+        '<div style="font-size:10px;color:#7a9aaa">от края '+numRu(Math.round((Number(op.pos)||0)/10)/100)+' м · '+RUk(t.cost)+'</div></div>'+
+        '<input data-a="model-op-pos" data-id="'+op.id+'" type="range" min="0" max="'+Math.max(0,len-(Number(t.w)||0))+'" step="10" value="'+(Number(op.pos)||0)+'" style="flex:1.4;min-width:90px">'+
+        '<button data-a="model-op-del" data-id="'+op.id+'" style="width:28px;height:28px;border:1px solid #e74c3c44;background:#fff;border-radius:7px;cursor:pointer;color:#e74c3c;font-size:12px;flex-shrink:0">🗑</button>'+
+      '</div>';
+    }).join("");
+  } else {
+    h+='<div style="font-size:11.5px;color:#c0ccd8;margin-bottom:6px">На этой стене проёмов нет.</div>';
+  }
+  // Справочник типовых изделий
+  h+='<div style="display:flex;align-items:center;gap:8px;margin:12px 0 6px">'+
+      '<span style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;flex:1">ТИПОВЫЕ ИЗДЕЛИЯ · '+winTypes.length+'</span>'+
+      '<button data-a="wt-new" style="padding:5px 11px;background:#2980b9;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">+ Изделие</button>'+
+    '</div>';
+  if(winTypeNew){
+    h+='<div style="border:2px solid #2980b9;border-radius:11px;padding:10px;margin-bottom:8px">'+
+      '<input id="wt-n" value="'+esc(winTypeNew.n||"")+'" placeholder="Название (Окно 1300×1150 п/о)" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:6px">'+
+      '<div style="display:flex;gap:5px;margin-bottom:6px">'+
+        ["win","door"].map(function(k){
+          const on=(winTypeNew.kind||"win")===k, km=winKindMeta(k);
+          return '<button data-a="wt-kind" data-k="'+k+'" style="flex:1;border:1.5px solid '+(on?km.c:"#dde6f0")+';background:'+(on?km.c:"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:8px;padding:7px;font-size:12px;font-weight:700;cursor:pointer">'+km.emoji+' '+km.n+'</button>';
+        }).join("")+
+      '</div>'+
+      '<div style="display:flex;gap:5px;margin-bottom:8px">'+
+        '<input id="wt-w" value="'+(winTypeNew.w||"")+'" type="number" inputmode="numeric" placeholder="Ширина, мм" style="flex:1;min-width:0;padding:8px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box">'+
+        '<input id="wt-h" value="'+(winTypeNew.h||"")+'" type="number" inputmode="numeric" placeholder="Высота, мм" style="flex:1;min-width:0;padding:8px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box">'+
+        '<input id="wt-c" value="'+(winTypeNew.cost||"")+'" type="number" inputmode="numeric" placeholder="Цена, ₽" style="flex:1;min-width:0;padding:8px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box">'+
+      '</div>'+
+      '<div style="display:flex;gap:6px">'+
+        '<button data-a="wt-save" style="flex:1;padding:9px;background:#2980b9;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700">Сохранить</button>'+
+        '<button data-a="wt-cancel" style="padding:9px 14px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:12.5px">Отмена</button>'+
+      '</div>'+
+      '<div style="font-size:10px;color:#9aabbf;margin-top:8px;line-height:1.4">Из спецификации поставщика:</div>'+
+      '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:5px">'+
+        WIN_PRESETS.map(function(pr,i){
+          return '<button data-a="wt-preset" data-i="'+i+'" style="border:1px dashed #2980b955;background:#fff;color:#2980b9;border-radius:8px;padding:5px 9px;font-size:10.5px;font-weight:700;cursor:pointer">'+winKindMeta(pr.kind).emoji+' '+esc(pr.n)+'</button>';
+        }).join("")+
+      '</div>'+
+    '</div>';
+  }
+  if(winTypes.length){
+    h+=winTypes.map(function(t){
+      const km=winKindMeta(t.kind);
+      const used=(m.openings||[]).filter(function(o){return o.typeId===t.id;}).length;
+      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-bottom:1px solid #f4f7fb">'+
+        '<span style="font-size:13px">'+km.emoji+'</span>'+
+        '<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(t.n)+'</div>'+
+        '<div style="font-size:10px;color:#9aabbf">'+(t.w||0)+'×'+(t.h||0)+' мм'+(used?' · в модели '+used:'')+'</div></div>'+
+        '<span style="font-size:12px;font-weight:700;color:#0d1b2e;white-space:nowrap">'+RUk(t.cost||0)+'</span>'+
+        '<button data-a="wt-del" data-id="'+t.id+'" style="width:26px;height:26px;border:1px solid #e74c3c33;background:#fff;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">🗑</button>'+
+      '</div>';
+    }).join("");
+  }
+  return h+'</div>';
+}
+
+// Работы модели по этапам: продавец и производство смотрят на один и тот же дом,
+// но производство — по этапам, в том порядке, в каком его будут строить.
+function specStagesHtml(sh){
+  const RUk=function(n){return Math.round(n).toLocaleString("ru-RU")+" ₽";};
+  const t=specTot(sh);
+  const stages=EST_STAGES.slice().sort(function(a,b){return a.n-b.n;});
+  let h='<div style="background:#fff;border:1px solid #dde6f0;border-radius:14px;padding:12px 13px;margin-bottom:10px">';
+  h+='<div style="font-size:11px;font-weight:700;color:#7a9aaa;letter-spacing:0.5px;margin-bottom:8px">РАБОТЫ ПО ЭТАПАМ</div>';
+  h+='<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:9px">'+
+    [{n:0,label:"Все"}].concat(stages.map(function(st){return {n:st.n,label:st.short,color:st.color};})).map(function(x){
+      const on=modelStageTab===x.n, col=x.color||"#5a7080";
+      return '<button data-a="model-stage" data-n="'+x.n+'" style="border:1.5px solid '+(on?col:"#dde6f0")+';background:'+(on?col:"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:6px 11px;font-size:11.5px;font-weight:700;cursor:pointer">'+esc(x.label)+'</button>';
+    }).join("")+'</div>';
+  const pos=t.positions.filter(function(p){return !modelStageTab||(Number(p.stage)||0)===modelStageTab;});
+  if(!pos.length){
+    h+='<div style="font-size:11.5px;color:#9aabbf;line-height:1.45">На этом этапе работ пока нет — они появятся, когда сметы этого этапа попадут в спецификацию.</div>';
+    return h+'</div>';
+  }
+  // Подэтапы: группа выбора, если она есть, иначе помещение, иначе «общее по дому».
+  const groups={};
+  pos.forEach(function(p){
+    const g=p.group||p.room||"Общее по дому";
+    (groups[g]=groups[g]||[]).push(p);
+  });
+  h+=Object.keys(groups).map(function(g){
+    const list=groups[g], sum=list.reduce(function(a,p){return a+p.cost;},0);
+    return '<div style="margin-bottom:9px">'+
+      '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:4px">'+
+        '<span style="font-size:11.5px;font-weight:700;color:#5a7a9a;flex:1;min-width:0">'+esc(g)+'</span>'+
+        '<span style="font-size:11.5px;font-weight:800;color:#0d1b2e">'+RUk(sum)+'</span>'+
+      '</div>'+
+      list.map(function(p){
+        return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0 4px 10px;border-left:2px solid #eef2f7;font-size:11.5px;color:#5a7a9a">'+
+          '<span style="flex:1;min-width:0">'+esc(p.name)+(p.count?' <b style="color:#8e44ad">×'+p.count+'</b>':'')+(p.area?' <span style="color:#9aabbf">'+numRu(p.area)+' м²</span>':'')+'</span>'+
+          '<span style="font-weight:700;color:#0d1b2e;white-space:nowrap">'+RUk(p.cost)+'</span>'+
+        '</div>';
+      }).join("")+
+    '</div>';
+  }).join("");
+  return h+'</div>';
+}
+
 // Печатная форма спецификации для клиента: по помещениям, с площадями и ценой.
 // Себестоимость и материалы наружу не выносим — клиенту важно, ЧТО у него будет
 // в каждой комнате и сколько это стоит, а не из чего мы это считали.
@@ -9742,7 +10013,10 @@ function tSpecCard(sh){
         '</div>'
       : '<div style="font-size:11.5px;color:#9aabbf;line-height:1.45;margin-top:7px">Выберите планировку из базы выше или загрузите чертёж клиента — файлом (фото, PDF). Размеры помещений внесите ниже: площади пола, стен и потолка портал посчитает сам.</div>')+
   '</div>';
-  h+=specsEditorHtml(sh, "📐 РАЗМЕРЫ ПОМЕЩЕНИЙ");
+  h+=specModelHtml(sh);
+  // Размеры руками нужны, только пока дом не собран моделью: иначе это два источника
+  // правды об одних и тех же помещениях, и они разъедутся в первый же день.
+  if(!sh.model)h+=specsEditorHtml(sh, "📐 РАЗМЕРЫ ПОМЕЩЕНИЙ");
 
   if(issues.length){
     h+='<div style="background:#fff3e0;border:1px solid #e67e2244;border-radius:12px;padding:11px 13px;margin-bottom:10px">'+
@@ -9895,6 +10169,8 @@ function tSpecCard(sh){
       '<span style="font-size:26px;font-weight:800">'+RUk(t.price)+'</span>'+
     '</div>'+
   '</div>';
+
+  h+=specStagesHtml(sh);
 
   h+='<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px">'+
     '<button data-a="spec-print" data-id="'+sh.id+'" style="flex:1;min-width:130px;padding:11px;background:#fff;border:1px solid #16a08555;border-radius:10px;cursor:pointer;color:#16a085;font-size:12.5px;font-weight:700">🖨 Клиенту</button>'+
@@ -17428,6 +17704,149 @@ function bind(){
         specs:JSON.parse(JSON.stringify({height:specs.height,rooms:specs.rooms||[],openings:specs.openings||[]})) }]);
       sh.planId=pid;
       alert("Планировка добавлена в базу — её можно выбрать для следующего клиента.");
+      fl();
+    };}
+    // ─── Модель контейнера ─────────────────────────────────────────────────
+    else if(a==="model-create"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh)return;
+      sh.model=emptyModel(el.dataset.k);
+      sh.model.rooms[0].id=gid();
+      modelSync(sh); fl();
+    };}
+    else if(a==="model-drop"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh)return;
+      if(!confirm("Убрать модель?\n\nПомещения и раскладка останутся, но двигать перегородки будет нельзя."))return;
+      delete sh.model; fl();
+    };}
+    else if(a==="model-type"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      sh.model=applyContainer(sh.model, el.dataset.k);
+      modelSync(sh); fl();
+    };}
+    else if(a==="model-room-name"){el.oninput=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      const r=(sh.model.rooms||[]).find(function(x){return x.id===el.dataset.id;}); if(!r)return;
+      r.name=el.value; modelSync(sh); scheduleSave();
+    };}
+    else if(a==="model-room-len"){el.onchange=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      const rooms=sh.model.rooms||[];
+      const i=rooms.findIndex(function(x){return x.id===el.dataset.id;}); if(i<0)return;
+      const mm=Math.round((parseFloat(String(el.value).replace(",","."))||0)*1000);
+      // Длина помещения — это перенос миллиметров у соседа: контейнер не растягивается.
+      const j=(i<rooms.length-1)?i:i-1;
+      if(j<0){ render(); return; }
+      const d=(i===j)?(mm-(Number(rooms[i].len)||0)):((Number(rooms[i].len)||0)-mm);
+      sh.model=moveBoundary(sh.model, j, d);
+      modelSync(sh); fl();
+    };}
+    else if(a==="model-split"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      const before=(sh.model.rooms||[]).length;
+      sh.model=splitRoom(sh.model, el.dataset.id, gid());
+      if((sh.model.rooms||[]).length===before){ alert("Помещение слишком короткое, чтобы делить его перегородкой."); return; }
+      modelSync(sh); fl();
+    };}
+    else if(a==="model-merge"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      if(!confirm("Убрать перегородку? Помещения объединятся, отделка правого потеряется."))return;
+      sh.model=mergeRoom(sh.model, el.dataset.id);
+      modelSync(sh); fl();
+    };}
+    else if(a==="model-pt"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      const r=(sh.model.rooms||[]).find(function(x){return x.id===el.dataset.id;}); if(!r)return;
+      const k=el.dataset.k, d=parseInt(el.dataset.d,10)||0;
+      const n=Math.max(0,(Number((r.pts||{})[k])||0)+d);
+      r.pts=Object.assign({},r.pts||{});
+      if(n)r.pts[k]=n; else delete r.pts[k];
+      modelSync(sh); fl();
+    };}
+    else if(a==="model-finish"){el.onchange=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      sh.model.finish=Math.max(0,Math.round(Number(el.value)||0));
+      modelSync(sh); fl();
+    };}
+    else if(a==="model-side"){el.onclick=()=>{ modelSide=el.dataset.s; render(); };}
+    else if(a==="model-stage"){el.onclick=()=>{ modelStageTab=parseInt(el.dataset.n,10)||0; render(); };}
+    else if(a==="model-op-add"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      const t=winType(el.dataset.t); if(!t)return;
+      const len=sideLength(sh.model, modelSide);
+      const max=Math.max(0,len-(Number(t.w)||0));
+      sh.model.openings=(sh.model.openings||[]).concat([{id:gid(),side:modelSide,pos:Math.round(max/2),typeId:t.id}]);
+      modelSync(sh); fl();
+    };}
+    else if(a==="model-op-del"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      sh.model.openings=(sh.model.openings||[]).filter(function(o){return o.id!==el.dataset.id;});
+      modelSync(sh); fl();
+    };}
+    else if(a==="model-op-pos"){
+      // Ползунок двигают пальцем — перерисовывать на каждый шаг значит выбить его из-под
+      // пальца. Пишем на input, а полную перерисовку и сохранение делаем на change.
+      el.oninput=()=>{
+        const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+        const op=(sh.model.openings||[]).find(function(o){return o.id===el.dataset.id;}); if(!op)return;
+        op.pos=Math.round(Number(el.value)||0);
+      };
+      el.onchange=()=>{ const sh=specSheet(specOpenId); if(!sh)return; modelSync(sh); fl(); };
+    }
+    else if(a==="model-drag"){
+      // Перетаскивание границы на плане. Считаем в миллиметрах модели: SVG сам приводит
+      // их к экрану, поэтому жест одинаково работает на телефоне и на мониторе.
+      el.onpointerdown=(ev)=>{
+        const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+        const svg=document.getElementById("model-svg"); if(!svg)return;
+        const i=parseInt(el.dataset.i,10);
+        const mmPerPx=(Number(el.dataset.len)||1)/Math.max(1,svg.getBoundingClientRect().width);
+        const x0=ev.clientX; let d=0;
+        ev.preventDefault();
+        try{ el.setPointerCapture(ev.pointerId); }catch(e){}
+        const move=function(e){ d=Math.round((e.clientX-x0)*mmPerPx); };
+        const up=function(){
+          el.onpointermove=null; el.onpointerup=null; el.onpointercancel=null;
+          if(Math.abs(d)<20)return;                      // случайный тап границу не двигает
+          sh.model=moveBoundary(sh.model, i, d);
+          modelSync(sh); fl();
+        };
+        el.onpointermove=move; el.onpointerup=up; el.onpointercancel=up;
+      };
+    }
+    // ─── Типовые изделия ───────────────────────────────────────────────────
+    else if(a==="wt-new"){el.onclick=()=>{ winTypeNew={kind:"win",n:"",w:"",h:"",cost:""}; render(); };}
+    else if(a==="wt-cancel"){el.onclick=()=>{ winTypeNew=null; render(); };}
+    else if(a==="wt-kind"){el.onclick=()=>{
+      if(!winTypeNew)return;
+      winTypeNew=Object.assign({},winTypeNew,{
+        kind:el.dataset.k,
+        n:(document.getElementById("wt-n")||{}).value||winTypeNew.n,
+        w:(document.getElementById("wt-w")||{}).value||winTypeNew.w,
+        h:(document.getElementById("wt-h")||{}).value||winTypeNew.h,
+        cost:(document.getElementById("wt-c")||{}).value||winTypeNew.cost,
+      });
+      render();
+    };}
+    else if(a==="wt-preset"){el.onclick=()=>{
+      const pr=WIN_PRESETS[parseInt(el.dataset.i,10)]; if(!pr)return;
+      winTypes=winTypes.concat([{id:gid(),kind:pr.kind,n:pr.n,w:pr.w,h:pr.h,cost:pr.cost}]);
+      fl();
+    };}
+    else if(a==="wt-save"){el.onclick=()=>{
+      const n=((document.getElementById("wt-n")||{}).value||"").trim();
+      const w=Math.round(Number((document.getElementById("wt-w")||{}).value)||0);
+      const hh=Math.round(Number((document.getElementById("wt-h")||{}).value)||0);
+      const c=Math.round(Number((document.getElementById("wt-c")||{}).value)||0);
+      if(!n){ alert("Назовите изделие — по этому имени его будут ставить в стены."); return; }
+      if(!w||!hh){ alert("Укажите ширину и высоту в миллиметрах."); return; }
+      winTypes=winTypes.concat([{id:gid(),kind:(winTypeNew&&winTypeNew.kind)||"win",n:n,w:w,h:hh,cost:c}]);
+      winTypeNew=null; fl();
+    };}
+    else if(a==="wt-del"){el.onclick=()=>{
+      const id=el.dataset.id;
+      const used=specSheets.some(function(x){return ((x.model||{}).openings||[]).some(function(o){return o.typeId===id;});});
+      if(used&&!confirm("Это изделие стоит в проёмах спецификаций.\n\nУдалить? Проёмы останутся без цены."))return;
+      winTypes=winTypes.filter(function(t){return t.id!==id;});
       fl();
     };}
     else if(a==="spec-print"){el.onclick=()=>{ buildSpecPrint(specSheet(el.dataset.id)); };}
