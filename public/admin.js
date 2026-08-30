@@ -45,7 +45,7 @@ import { needStatus, needState, objectSupply, migrateLegacy, needQty, isSelectio
 import { sheetPositions, sheetTotals, sheetIssues, optionGroups, roomArea } from "../src/spec.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
-const APP_BUILD = "2026-08-30.2";
+const APP_BUILD = "2026-08-30.3";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -9419,6 +9419,15 @@ function specPlanOptions(kind, sel){
 }
 function specTot(sh){ return sheetTotals(sh, estimates, expProducts); }
 const SPEC_SURFACE={floor:"пол", wall:"стены", ceil:"потолок"};
+// Что физически входит в позицию. Одна формулировка на экран продавца и на печать
+// клиенту: расхождение здесь означает, что в кабинете обещали одно, а на бумаге другое.
+// Количества показываем, закупочные цены — нет: это спецификация, а не наша калькуляция.
+function specMatUnit(m){ const md=EXP_MODES.find(function(x){return x.k===((m&&m.mode)||"piece");}); return md?md.unit:"шт"; }
+function specMatsText(p){
+  return ((p&&p.mats)||[]).filter(function(m){ return (Number(m.qty)||0)>0 && String(m.n||"").trim(); })
+    .map(function(m){ return m.n+" — "+numRu(Math.round((Number(m.qty)||0)*100)/100)+" "+specMatUnit(m); })
+    .join(" · ");
+}
 
 // Перенести размеры планировки в спецификацию. Копия, а не ссылка: планировку правят
 // в базе, а проданная спецификация обязана остаться такой, какой её продали.
@@ -9453,25 +9462,43 @@ function buildSpecPrint(sh){
   const d=new Date();
   const ds=String(d.getDate()).padStart(2,"0")+"."+String(d.getMonth()+1).padStart(2,"0")+"."+d.getFullYear();
 
-  const roomRows=(specs.rooms||[]).map(function(r){
-    const pos=t.positions.filter(function(p){return p.roomId===r.id;});
-    if(!pos.length)return "";
+  const matsOf=function(p){ const txt=specMatsText(p); return txt?'<div class="mats">'+esc(txt)+'</div>':""; };
+  const roomOf=function(p){ return p.room?'<span class="rm">'+esc(p.room)+'</span> ':''; };
+  const row=function(p){
+    return '<tr><td>'+roomOf(p)+esc(p.name)+(p.label?' <span class="v">'+esc(p.label)+'</span>':'')+matsOf(p)+'</td>'+
+      '<td class="c">'+(p.area?numRu(p.area)+' м²':'—')+'</td>'+
+      '<td class="r">'+RUk(shown[p.key])+'</td></tr>';
+  };
+
+  // Группируем по ЭТАПАМ: стройка меряется этапами, по ним же идут сроки и платежи,
+  // поэтому клиент должен видеть предложение в том же разрезе, в каком будет идти работа.
+  const byStage={};
+  t.positions.forEach(function(p){ const n=Number(p.stage)||0; (byStage[n]=byStage[n]||[]).push(p); });
+  const stageRows=Object.keys(byStage).map(Number).sort(function(a,b){return a-b;}).map(function(n){
+    const st=EST_STAGES.find(function(x){return x.n===n;});
+    const pos=byStage[n];
     const sum=pos.reduce(function(a,p){return a+shown[p.key];},0);
-    return '<tr><td class="sh" colspan="3">'+esc(r.name||"Помещение")+' · пол '+numRu(roomArea(r,specs.height,"floor"))+' м² · стены '+numRu(roomArea(r,specs.height,"wall"))+' м²</td></tr>'+
-      pos.map(function(p){
-        return '<tr><td>'+esc(p.name)+(p.label?' <span class="v">'+esc(p.label)+'</span>':'')+'</td>'+
-          '<td class="c">'+(p.area?numRu(p.area)+' м²':'—')+'</td>'+
-          '<td class="r">'+RUk(shown[p.key])+'</td></tr>';
-      }).join("")+
-      '<tr class="subr"><td class="sub" colspan="2">Итого по помещению</td><td class="r sub">'+RUk(sum)+'</td></tr>';
+    const title=st?((st.emoji?st.emoji+" ":"")+st.short.toUpperCase()+" — "+st.label.toUpperCase()):"ПРОЧИЕ РАБОТЫ";
+    return '<tr><td class="sh" colspan="3">'+esc(title)+'</td></tr>'+
+      pos.map(row).join("")+
+      '<tr class="subr"><td class="sub" colspan="2">Итого по этапу</td><td class="r sub">'+RUk(sum)+'</td></tr>';
   }).join("");
 
-  const other=t.positions.filter(function(p){return !p.roomId;});
-  const otherRows=other.length
-    ? '<tr><td class="sh" colspan="3">ОБЩЕЕ ПО ДОМУ</td></tr>'+other.map(function(p){
-        return '<tr><td>'+esc(p.name)+(p.label?' <span class="v">'+esc(p.label)+'</span>':'')+'</td>'+
-          '<td class="c">'+(p.area?numRu(p.area)+' м²':'—')+'</td><td class="r">'+RUk(shown[p.key])+'</td></tr>';
-      }).join("")
+  // Сводка по помещениям — отдельной короткой таблицей: в разрезе этапов она бы
+  // повторяла одни и те же комнаты в каждом блоке.
+  const roomsWithPos=(specs.rooms||[]).map(function(r){
+    const pos=t.positions.filter(function(p){return p.roomId===r.id;});
+    if(!pos.length)return null;
+    return { r:r, sum:pos.reduce(function(a,p){return a+shown[p.key];},0) };
+  }).filter(Boolean);
+  const roomTable=roomsWithPos.length
+    ? '<h2>По помещениям</h2><table><tr><th>Помещение</th><th class="c">Пол</th><th class="c">Стены</th><th class="r">Стоимость</th></tr>'+
+      roomsWithPos.map(function(x){
+        return '<tr><td>'+esc(x.r.name||"Помещение")+'</td>'+
+          '<td class="c">'+numRu(roomArea(x.r,specs.height,"floor"))+' м²</td>'+
+          '<td class="c">'+numRu(roomArea(x.r,specs.height,"wall"))+' м²</td>'+
+          '<td class="r rsum">'+RUk(x.sum)+'</td></tr>';
+      }).join("")+'</table>'
     : "";
 
   const html='<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Спецификация '+esc(sh.name||"")+'</title><style>'+
@@ -9485,6 +9512,9 @@ function buildSpecPrint(sh){
     '.sh{background:#e2f4ee;font-weight:800;color:#0e7a67;font-size:12px;letter-spacing:0.3px}'+
     '.subr td{background:#f5fbf9}.sub{font-weight:700;color:#0e7a67}'+
     '.v{color:#0e7a67;font-weight:700}'+
+    '.mats{margin-top:4px;font-size:11px;color:#6b7c8a;line-height:1.45}'+
+    '.rm{display:inline-block;background:#eef4f2;color:#0e7a67;border-radius:4px;padding:1px 6px;font-size:10.5px;font-weight:700;margin-right:2px}'+
+    'h2{font-size:14px;margin:22px 0 0;color:#0e7a67}'+
     '.foot{margin-top:16px;font-size:11.5px;color:#666;line-height:1.5}'+
     '.btn{display:inline-block;margin:14px 0;padding:10px 16px;background:#16a085;color:#fff;border:none;border-radius:9px;font-size:14px;cursor:pointer}'+
     '@media print{.btn{display:none}}'+
@@ -9493,11 +9523,12 @@ function buildSpecPrint(sh){
     '<div class="sub">'+estKindLabel(sh.kind)+(cl?' · '+esc(cl.name):'')+' · '+ds+'</div>'+
     '<div class="box"><div style="font-size:12px;color:#0e7a67;font-weight:700">СТОИМОСТЬ</div>'+
       '<div class="price">'+RUk(t.price)+'</div>'+
-      '<div class="sub">Работы и материалы по позициям ниже</div></div>'+
+      '<div class="sub">Состав работ и материалов по этапам — ниже</div></div>'+
     '<table><tr><th>Что входит</th><th class="c">Площадь</th><th class="r">Стоимость</th></tr>'+
-      roomRows+otherRows+
+      stageRows+
       '<tr><td class="sub" colspan="2">ИТОГО</td><td class="r sub">'+RUk(t.price)+'</td></tr>'+
     '</table>'+
+    roomTable+
     '<div class="foot">Площади рассчитаны по планировке. Позиции «выбор клиента» могут быть заменены на равные по стоимости без доплаты; более дорогой выбор согласовывается отдельно.<br>Предложение носит предварительный характер и действует 14 дней.</div>'+
     '<button class="btn" onclick="window.print()">🖨 Печать / Сохранить в PDF</button>'+
     '</body></html>';
@@ -9686,6 +9717,7 @@ function tSpecCard(sh){
                 }).join("")+
                 (cur?'<button data-a="spec-pick-room" data-rid="'+r.id+'" data-g="'+esc(g.group)+'" data-eid="" title="Убрать выбор" style="border:1.5px dashed #d0dae8;background:#fff;color:#9aabbf;border-radius:9px;padding:7px 10px;font-size:11.5px;font-weight:700;cursor:pointer">✕</button>':'')+
               '</div>'+
+              (p?'<div style="font-size:10.5px;color:#8a9bb0;line-height:1.4;margin-top:4px">'+esc(specMatsText(p))+'</div>':'')+
             '</div>';
           }).join(""):'<div style="font-size:11.5px;color:#9aabbf;line-height:1.45">Для этого вида нет позиций «выбор по комнате». Разметьте сметы в «База данных → Сметы»: область выбора, группа и площадь.</div>')+
         '</div>'+
@@ -9715,6 +9747,7 @@ function tSpecCard(sh){
               return '<button data-a="spec-pick-global" data-g="'+esc(g.group)+'" data-eid="'+v.id+'" style="border:1.5px solid '+(on?"#2980b9":"#dde6f0")+';background:'+(on?"#2980b9":"#fff")+';color:'+(on?"#fff":"#5a7a9a")+';border-radius:9px;padding:7px 11px;font-size:11.5px;font-weight:700;cursor:pointer">'+esc(v.optLabel||v.name||"Вариант")+'</button>';
             }).join("")+
           '</div>'+
+          (p?'<div style="font-size:10.5px;color:#8a9bb0;line-height:1.4;margin-top:4px">'+esc(specMatsText(p))+'</div>':'')+
         '</div>';
       }).join("")+
     '</div>';
@@ -9731,12 +9764,33 @@ function tSpecCard(sh){
         '<span style="font-size:12.5px;font-weight:800;color:#0d1b2e">'+RUk(basePos.reduce(function(a,p){return a+p.cost;},0))+'</span>'+
       '</div>'+
       (open?'<div style="padding:0 13px 11px">'+basePos.map(function(p){
-        return '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid #f4f7fb;font-size:11.5px;color:#5a7a9a"><span style="flex:1;min-width:0">'+esc(p.name)+'</span><span style="font-weight:700;color:#0d1b2e">'+RUk(p.cost)+'</span></div>';
+        return '<div style="padding:6px 0;border-top:1px solid #f4f7fb">'+
+          '<div style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:#5a7a9a"><span style="flex:1;min-width:0">'+esc(p.name)+'</span><span style="font-weight:700;color:#0d1b2e;white-space:nowrap">'+RUk(p.cost)+'</span></div>'+
+          (specMatsText(p)?'<div style="font-size:10.5px;color:#9aabbf;line-height:1.4;margin-top:3px">'+esc(specMatsText(p))+'</div>':'')+
+        '</div>';
       }).join("")+'</div>':'')+
     '</div>';
   }
 
   // Итог и действия
+  // Разбивка по этапам: по ним идут сроки, приёмка и транши договора, поэтому продавец
+  // должен видеть цену в том же разрезе, в каком потом пойдёт стройка.
+  const stageKeys=Object.keys(t.byStage||{}).map(Number).sort(function(a,b){return a-b;});
+  if(stageKeys.length){
+    h+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:10px">'+
+      '<div style="font-size:11px;font-weight:700;color:#7a9aaa;letter-spacing:0.5px;margin-bottom:7px">ПО ЭТАПАМ</div>'+
+      stageKeys.map(function(n){
+        const st=EST_STAGES.find(function(x){return x.n===n;});
+        const cnt=t.positions.filter(function(p){return (Number(p.stage)||0)===n;}).length;
+        return '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:12px">'+
+          '<span style="width:8px;height:8px;border-radius:3px;background:'+(st?st.color:"#7a9aaa")+';flex-shrink:0"></span>'+
+          '<span style="flex:1;min-width:0;color:#5a7a9a">'+esc(st?(st.short+" — "+st.label):"Прочие работы")+'</span>'+
+          '<span style="font-size:10.5px;color:#9aabbf;white-space:nowrap">'+cnt+' поз.</span>'+
+          '<span style="font-weight:800;color:#0d1b2e;white-space:nowrap">'+RUk(t.byStage[n])+'</span>'+
+        '</div>';
+      }).join("")+
+    '</div>';
+  }
   h+='<div style="background:#0d1b2e;border-radius:14px;padding:14px 16px;color:#fff;margin-bottom:10px">'+
     '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'+
       '<div style="flex:1"><div style="font-size:11px;color:#9fb3c8">Себестоимость</div><div style="font-size:17px;font-weight:800">'+RUk(t.cost)+'</div></div>'+
