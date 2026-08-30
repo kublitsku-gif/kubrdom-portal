@@ -9,6 +9,7 @@
 import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyContainer, modelRooms,
   modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom,
   splitLengthwise, mergeLengthwise, moveLengthwise, elevation,
+  bayAt, splitAt, splitLengthwiseAt, nearestSide, opPosAt,
   openingCounts, modelToSpecs, modelTotals, modelIssues } from '../src/model.js'
 import { SPEC_POINTS } from '../src/spec.js'
 
@@ -221,6 +222,36 @@ function house() {
   const doorWall = elevation(m, 'w', TYPES, SPEC_POINTS)
   ok('дверь у порога', doorWall.openings[0].y0 === 0, JSON.stringify(doorWall.openings[0]))
   ok('торец меряется по ширине', doorWall.len === m.w)
+}
+
+// ── 5д. Рисование: стена и проём появляются там, где их поставили ────────────
+{
+  console.log('Рисование на плане')
+  const m = emptyModel('40hc')
+  m.rooms[0].id = 'a'
+  const at4 = splitAt(m, 4000, 'b')
+  ok('стена встала ровно там, где нарисовали', at4.rooms[0].len === 4000,
+    String(at4.rooms[0].len) + ' — деление пополам тут было бы враньём про жест')
+  ok('и контейнер сошёлся', totalLength(at4) === m.l, String(totalLength(at4)))
+  ok('отсек находится по координате', bayAt(at4, 5000).id === 'b' && bayAt(at4, 100).id === 'a')
+
+  ok('у самого края стену не ставим', splitAt(m, 200, 'x').rooms.length === 1,
+    'иначе получилось бы помещение меньше минимума')
+
+  const lw = splitLengthwiseAt(m, 'a', 1200, 'wc')
+  ok('продольная стена — на своей отметке', lw.rooms[0].sub.at === 1200, String(lw.rooms[0].sub.at))
+  ok('и не ближе минимума к стене', splitLengthwiseAt(m, 'a', 50, 'wc').rooms[0].sub.at === MIN_ROOM)
+
+  // Проём ставят тапом рядом со стеной: сторона определяется тем, к какой ближе.
+  ok('верх — северная стена', nearestSide(m, 6000, 100) === 'n')
+  ok('низ — южная', nearestSide(m, 6000, m.w - 100) === 's')
+  ok('левый край — торец начала', nearestSide(m, 100, 1200) === 'w')
+  ok('правый край — торец конца', nearestSide(m, totalLength(m) - 100, 1200) === 'e')
+
+  ok('проём центрируется по точке тапа', opPosAt(m, 'n', 6000, 50, 1300) === 6000 - 650,
+    String(opPosAt(m, 'n', 6000, 50, 1300)))
+  ok('и не вылезает за стену', opPosAt(m, 'n', totalLength(m), 50, 1300) === totalLength(m) - 1300)
+  ok('и не уходит в минус', opPosAt(m, 'n', 0, 50, 1300) === 0)
 }
 
 // ── 6. Что мешает считать ────────────────────────────────────────────────────

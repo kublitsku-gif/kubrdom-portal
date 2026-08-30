@@ -232,6 +232,60 @@ export function splitLengthwise(model, bayId, newId) {
   return Object.assign({}, model, { rooms: rooms.slice(0, i).concat([bay], rooms.slice(i + 1)) });
 }
 
+// Отсек, в который попала координата вдоль контейнера.
+export function bayAt(model, x) {
+  const bays = modelBays(model);
+  return bays.find(function (b) { return x >= b.x0 && x <= b.x1; }) ||
+    (x < 0 ? bays[0] : bays[bays.length - 1]) || null;
+}
+
+// Поперечная стена ровно там, где её нарисовали. Это то же деление отсека, но
+// не пополам: рисуя стену, человек показывает место, а не факт деления.
+export function splitAt(model, x, newId, newSubId) {
+  const bay = bayAt(model, x);
+  if (!bay) return model;
+  const rooms = model.rooms || [];
+  const i = rooms.findIndex(function (r) { return r.id === bay.id; });
+  if (i < 0) return model;
+  const th = Number(model.wallThick) || 0;
+  const left = Math.round(x - bay.x0);
+  const right = (Number(rooms[i].len) || 0) - left - th;
+  if (left < MIN_ROOM || right < MIN_ROOM) return model;   // слишком близко к соседу
+  const a = Object.assign({}, rooms[i], { len: left });
+  const b = { id: newId, name: "Помещение", len: right, pts: {} };
+  if (rooms[i].sub) b.sub = { id: newSubId || (newId + "s"), name: "Помещение", pts: {}, at: rooms[i].sub.at };
+  return Object.assign({}, model, { rooms: rooms.slice(0, i).concat([a, b], rooms.slice(i + 1)) });
+}
+
+// Продольная стена на заданной отметке по ширине — тем же жестом, что и поперечная.
+export function splitLengthwiseAt(model, bayId, y, newId) {
+  const rooms = model.rooms || [];
+  const i = rooms.findIndex(function (r) { return r.id === bayId; });
+  if (i < 0 || rooms[i].sub) return model;
+  const W = Number(model.w) || 0, th = Number(model.wallThick) || 0;
+  const at = Math.round(Math.max(MIN_ROOM, Math.min(W - th - MIN_ROOM, y)));
+  if (W - th < MIN_ROOM * 2) return model;
+  const bay = Object.assign({}, rooms[i], { sub: { id: newId, name: "Помещение", pts: {}, at: at } });
+  return Object.assign({}, model, { rooms: rooms.slice(0, i).concat([bay], rooms.slice(i + 1)) });
+}
+
+// К какой стене ближе точка. Проём ставят тапом рядом со стеной, а не выбором
+// из списка: на плане видно, куда он встанет.
+export function nearestSide(model, x, y) {
+  const L = totalLength(model), W = Number(model.w) || 0;
+  const d = [["n", y], ["s", W - y], ["w", x], ["e", L - x]];
+  d.sort(function (a, b) { return a[1] - b[1]; });
+  return d[0][0];
+}
+
+// Позиция проёма на стене по точке клика, с учётом его ширины и границ стены.
+export function opPosAt(model, side, x, y, widthMm) {
+  const along = (side === "n" || side === "s");
+  const span = sideLength(model, side);
+  const c = along ? x : y;
+  return Math.max(0, Math.min(Math.max(0, span - (Number(widthMm) || 0)), Math.round(c - (Number(widthMm) || 0) / 2)));
+}
+
 // Убрать продольную перегородку. Раскладка второй комнаты переезжает в первую —
 // розетки никуда не делись, их всё равно монтировать.
 export function mergeLengthwise(model, bayId) {

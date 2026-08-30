@@ -489,6 +489,21 @@ function assembled(p) {
   t.ok('проём на плане можно тащить', card.indexOf('model-op-drag') > 0)
   t.ok('и продольную перегородку тоже', card.indexOf('model-drag-w') > 0)
 
+  // Полноэкранный редактор: панель свёрстана в колонку 480 px, а рисуют на большом
+  // экране — поэтому он оверлеем, а не растянутой вкладкой.
+  p.run('modelFull=true;modelTool="wall";')
+  const full = p.run('modelFullOverlay()')
+  t.ok('оверлей на весь экран', full.indexOf('position:fixed;inset:0') > 0)
+  t.ok('с инструментами рисования', full.indexOf('model-tool') > 0 && full.indexOf('Стена поперёк') > 0)
+  t.ok('и холстом, который принимает тапы', full.indexOf('model-canvas') > 0)
+  t.ok('ручки перетаскивания в режиме рисования спрятаны',
+    p.run('modelPlanSvg(specSheet(' + JSON.stringify(id) + '),true)').indexOf('model-drag"') < 0,
+    'иначе они перехватывают тап по стене')
+  p.run('modelTool="sel";')
+  t.ok('в режиме «двигать» ручки на месте',
+    p.run('modelPlanSvg(specSheet(' + JSON.stringify(id) + '),true)').indexOf('model-drag') > 0)
+  p.run('modelFull=false;')
+
   // Развёртка стены — второй вид той же модели.
   p.run('modelView="elev";modelSide="n";')
   const elev = p.run('tSpec()')

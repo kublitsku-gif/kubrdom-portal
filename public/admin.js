@@ -47,10 +47,11 @@ import { sheetPositions, sheetTotals, sheetIssues, optionGroups, roomArea,
 import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyContainer, modelRooms,
   modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom,
   splitLengthwise, mergeLengthwise, moveLengthwise, elevation,
+  bayAt, splitAt, splitLengthwiseAt, nearestSide, opPosAt,
   modelToSpecs, modelTotals, modelIssues } from "../src/model.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
-const APP_BUILD = "2026-08-30.8";
+const APP_BUILD = "2026-08-30.9";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -2081,6 +2082,10 @@ let winTypeNew=null;       // форма нового изделия
 let modelSide="n";         // стена, на которую ставим проём
 let modelView="plan";      // plan | elev — план сверху или развёртка стены
 let modelOpDrag=null;      // проём под пальцем
+let modelFull=false;       // редактор на весь экран
+let modelTool="sel";       // sel | wall | wallw | op | del
+let modelPlaceType="";     // какое изделие ставим инструментом «проём»
+let modelZoom=1;           // 1 = вписать по ширине
 let modelStageTab=0;       // 0 = все этапы
 let specSheets=[];
 let specOpenId=null;      // открытая спецификация (null = список)
@@ -4486,6 +4491,11 @@ function render(){
   }
   if(specCopyPicker){
     a.insertAdjacentHTML("beforeend", specCopyModal());
+  }
+  // Полноэкранный редактор модели: панель свёрстана в колонку 480 px, а планировку
+  // рисуют на большом экране — поэтому он выходит из колонки оверлеем.
+  if(modelFull&&specOpenId){
+    a.insertAdjacentHTML("beforeend", modelFullOverlay());
   }
   // Мастер записи времени/фото («+ Запись»)
   if(tlWizard){
@@ -9536,8 +9546,11 @@ const MODEL_SIDES=[["n","Левая длинная"],["s","Правая длин
 
 // План сверху. Рисуем в миллиметрах модели: viewBox сам приводит их к экрану,
 // поэтому перетаскивание считается в мм и не зависит от размера телефона.
-function modelPlanSvg(sh){
+function modelPlanSvg(sh, full){
   const m=sh.model, W=Number(m.w)||0, L=totalLength(m), TH=Number(m.wallThick)||0;
+  // В оверлее рисование идёт инструментами, и ручки перетаскивания мешают попадать
+  // тапом по стене — показываем их только в режиме «двигать».
+  const drag=!full||modelTool==="sel";
   const rooms=modelRooms(m), bays=modelBays(m);
   const PAD=700;
   const vb=(-PAD)+" "+(-PAD)+" "+(L+PAD*2)+" "+(W+PAD*2);
@@ -9553,8 +9566,9 @@ function modelPlanSvg(sh){
   bays.forEach(function(b){
     if(!b.sub)return;
     const at=Number(b.sub.at)||0;
-    g+='<rect x="'+b.x0+'" y="'+at+'" width="'+b.len+'" height="'+TH+'" fill="#e67e22"/>';
+    g+='<rect data-a="model-wallw-hit" data-id="'+b.id+'" x="'+b.x0+'" y="'+(at-120)+'" width="'+b.len+'" height="'+(TH+240)+'" fill="#e67e22"/>';
     const cx=b.x0+b.len/2;
+    if(!drag)return;
     g+='<g data-a="model-drag-w" data-id="'+b.id+'" data-w="'+W+'" style="cursor:ns-resize">'+
       '<rect x="'+(cx-320)+'" y="'+(at-260)+'" width="640" height="'+(TH+520)+'" rx="120" fill="#e67e22" opacity="0.92"/>'+
       '<text x="'+cx+'" y="'+(at+TH/2+90)+'" text-anchor="middle" font-size="280" fill="#fff" font-weight="800">⇅</text>'+
@@ -9564,7 +9578,8 @@ function modelPlanSvg(sh){
   bays.forEach(function(b,i){
     if(i>=bays.length-1)return;
     const x=b.x1;
-    g+='<rect x="'+x+'" y="0" width="'+TH+'" height="'+W+'" fill="#8e44ad"/>';
+    g+='<rect data-a="model-wall-hit" data-i="'+i+'" x="'+(x-120)+'" y="0" width="'+(TH+240)+'" height="'+W+'" fill="#8e44ad"/>';
+    if(!drag)return;
     g+='<g data-a="model-drag" data-i="'+i+'" data-len="'+L+'" style="cursor:ew-resize">'+
       '<rect x="'+(x-260)+'" y="'+(W/2-320)+'" width="'+(TH+520)+'" height="640" rx="120" fill="#8e44ad" opacity="0.92"/>'+
       '<text x="'+(x+TH/2)+'" y="'+(W/2+90)+'" text-anchor="middle" font-size="300" fill="#fff" font-weight="800">⇄</text>'+
@@ -9581,14 +9596,75 @@ function modelPlanSvg(sh){
     else if(op.side==="w"){ x=-110; y=pos; ww=220; hh=ln; }
     else { x=L-110; y=pos; ww=220; hh=ln; }
     const on=modelOpDrag===op.id;
-    g+='<g data-a="model-op-drag" data-id="'+op.id+'" data-side="'+op.side+'" data-span="'+sideLength(m,op.side)+'" data-w="'+ln+'" data-len="'+L+'" data-cw="'+W+'" style="cursor:'+(along?"ew-resize":"ns-resize")+'">'+
+    g+='<g data-a="'+(drag?"model-op-drag":"model-op-hit")+'" data-id="'+op.id+'" data-side="'+op.side+'" data-span="'+sideLength(m,op.side)+'" data-w="'+ln+'" data-len="'+L+'" data-cw="'+W+'" style="cursor:'+(along?"ew-resize":"ns-resize")+'">'+
       '<rect x="'+(x-60)+'" y="'+(y-60)+'" width="'+(ww+120)+'" height="'+(hh+120)+'" fill="'+km.c+'" opacity="'+(on?"0.35":"0.12")+'" rx="60"/>'+
       '<rect x="'+x+'" y="'+y+'" width="'+ww+'" height="'+hh+'" fill="'+km.c+'" rx="50"/>'+
       '<text x="'+(x+ww/2)+'" y="'+(y+(along?(op.side==="n"?-130:hh+240):hh/2+70))+'" text-anchor="middle" font-size="190" fill="'+km.c+'" font-weight="700">'+numRu(Math.round(ln/10)/100)+'</text>'+
     '</g>';
   });
   g+='<text x="'+(L/2)+'" y="'+(W+560)+'" text-anchor="middle" font-size="200" fill="#9aabbf">'+numRu(Math.round(L/10)/100)+' × '+numRu(Math.round(W/10)/100)+' м · высота '+numRu(Math.round((Number(m.h)||0)/10)/100)+' м</text>';
-  return '<svg id="model-svg" viewBox="'+vb+'" style="width:100%;height:auto;display:block;touch-action:pan-y;user-select:none">'+g+'</svg>';
+  return '<svg '+(full?'id="model-svg-full" data-a="model-canvas" data-vb="'+vb+'"':'id="model-svg"')+
+    ' viewBox="'+vb+'" style="width:100%;height:auto;display:block;touch-action:pan-y;user-select:none;'+
+    (full&&modelTool!=="sel"?"cursor:crosshair":"")+'">'+g+'</svg>';
+}
+
+// Полноэкранный редактор. Панель свёрстана в колонку 480 px под телефон, а
+// планировку рисуют на большом экране — поэтому редактор выходит из колонки
+// оверлеем на весь экран, а не растягивает вкладку.
+const MODEL_TOOLS=[
+  ["sel",  "🖐", "Двигать",        "Тяните перегородки и проёмы"],
+  ["wall", "┃",  "Стена поперёк",  "Тап по плану — стена в этом месте"],
+  ["wallw","━",  "Стена вдоль",    "Тап внутри отсека — санузел в углу"],
+  ["op",   "🪟", "Проём",          "Тап у стены — окно или дверь в этом месте"],
+  ["del",  "🗑", "Убрать",         "Тап по проёму или перегородке"],
+];
+function modelToolMeta(k){ return MODEL_TOOLS.find(function(t){return t[0]===k;})||MODEL_TOOLS[0]; }
+
+function modelFullOverlay(){
+  const sh=specSheet(specOpenId); if(!sh||!sh.model)return "";
+  const m=sh.model, tot=modelTotals(m, winTypes);
+  const RUk=function(n){return Math.round(n).toLocaleString("ru-RU")+" ₽";};
+  const tm=modelToolMeta(modelTool);
+  let h='<div id="model-full" style="position:fixed;inset:0;z-index:900;background:#0d1b2e;display:flex;flex-direction:column">';
+  // Шапка
+  h+='<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:#0d1b2e;border-bottom:1px solid rgba(255,255,255,.12);flex-shrink:0">'+
+      '<span style="font-size:13px;font-weight:800;color:#fff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🧱 '+esc(sh.name||"Модель")+'</span>'+
+      '<span style="font-size:11px;color:#9fb3c8;white-space:nowrap">'+numRu(tot.floorArea)+' м² · '+tot.partitions+' перегор. · '+(m.openings||[]).length+' проём. · '+RUk(tot.openingsCost)+'</span>'+
+      '<button data-a="model-full-close" style="padding:7px 14px;background:rgba(255,255,255,.12);border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:12px;font-weight:700;flex-shrink:0">Готово</button>'+
+    '</div>';
+  // Инструменты
+  h+='<div style="display:flex;align-items:center;gap:6px;padding:9px 14px;background:#122236;border-bottom:1px solid rgba(255,255,255,.08);flex-wrap:wrap;flex-shrink:0">'+
+    MODEL_TOOLS.map(function(t){
+      const on=modelTool===t[0];
+      return '<button data-a="model-tool" data-k="'+t[0]+'" style="display:flex;align-items:center;gap:6px;border:1.5px solid '+(on?"#16a085":"rgba(255,255,255,.18)")+';background:'+(on?"#16a085":"transparent")+';color:#fff;border-radius:9px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer"><span>'+t[1]+'</span>'+esc(t[2])+'</button>';
+    }).join("")+
+    '<span style="flex:1"></span>'+
+    [1,2,4].map(function(z){
+      const on=modelZoom===z;
+      return '<button data-a="model-zoom" data-z="'+z+'" style="border:1.5px solid '+(on?"#2980b9":"rgba(255,255,255,.18)")+';background:'+(on?"#2980b9":"transparent")+';color:#fff;border-radius:8px;padding:6px 10px;font-size:11.5px;font-weight:700;cursor:pointer">'+z+'×</button>';
+    }).join("")+
+  '</div>';
+  // Выбор изделия — виден только когда ставим проём: иначе это шум.
+  if(modelTool==="op"){
+    h+='<div style="display:flex;align-items:center;gap:6px;padding:8px 14px;background:#0f2033;border-bottom:1px solid rgba(255,255,255,.08);overflow-x:auto;flex-shrink:0">'+
+      (winTypes.length
+        ? winTypes.map(function(t){
+            const on=modelPlaceType===t.id, km=winKindMeta(t.kind);
+            return '<button data-a="model-place-type" data-t="'+t.id+'" style="flex-shrink:0;border:1.5px solid '+(on?km.c:"rgba(255,255,255,.18)")+';background:'+(on?km.c:"transparent")+';color:#fff;border-radius:9px;padding:6px 11px;font-size:11.5px;font-weight:700;cursor:pointer">'+km.emoji+' '+esc(t.n)+'</button>';
+          }).join("")
+        : '<span style="font-size:12px;color:#9fb3c8">Сначала заведите типовые изделия — в карточке, блок «Типовые изделия».</span>')+
+    '</div>';
+  }
+  // Холст
+  h+='<div style="flex:1;min-height:0;overflow:auto;background:#f4f7fa;padding:18px">'+
+      '<div style="width:'+(modelZoom*100)+'%;min-width:100%">'+modelPlanSvg(sh, true)+'</div>'+
+    '</div>';
+  // Подсказка
+  h+='<div style="padding:9px 14px;background:#122236;color:#9fb3c8;font-size:12px;flex-shrink:0;display:flex;gap:10px;align-items:center">'+
+      '<span style="font-size:14px">'+tm[1]+'</span><span style="flex:1">'+esc(tm[3])+'</span>'+
+      (modelTool==="op"&&!modelPlaceType?'<span style="color:#e67e22;font-weight:700">выберите изделие сверху</span>':'')+
+    '</div>';
+  return h+'</div>';
 }
 
 // Развёртка стены — то, чего план сверху показать не может: на какой высоте что стоит.
@@ -9660,7 +9736,9 @@ function specModelHtml(sh){
     [["plan","🗺 План сверху"],["elev","📏 Развёртка стены"]].map(function(v){
       const on=modelView===v[0];
       return '<button data-a="model-view" data-v="'+v[0]+'" style="flex:1;border:1.5px solid '+(on?"#0d1b2e":"#dde6f0")+';background:'+(on?"#0d1b2e":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:7px;font-size:11.5px;font-weight:700;cursor:pointer">'+v[1]+'</button>';
-    }).join("")+'</div>';
+    }).join("")+
+    '<button data-a="model-full" title="Рисовать на весь экран" style="border:1.5px solid #16a085;background:#16a085;color:#fff;border-radius:9px;padding:7px 12px;font-size:11.5px;font-weight:700;cursor:pointer;flex-shrink:0">⛶ Во весь экран</button>'+
+  '</div>';
   if(modelView==="elev"){
     h+='<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:7px">'+
       MODEL_SIDES.map(function(sd){
@@ -17893,6 +17971,77 @@ function bind(){
       };
       el.onchange=()=>{ const sh=specSheet(specOpenId); if(!sh)return; modelSync(sh); fl(); };
     }
+    // ─── Полноэкранный редактор ────────────────────────────────────────────
+    else if(a==="model-full"){el.onclick=()=>{ modelFull=true; modelTool="sel"; render(); };}
+    else if(a==="model-full-close"){el.onclick=()=>{ modelFull=false; render(); };}
+    else if(a==="model-tool"){el.onclick=()=>{
+      modelTool=el.dataset.k;
+      if(modelTool==="op"&&!modelPlaceType&&winTypes.length)modelPlaceType=winTypes[0].id;
+      render();
+    };}
+    else if(a==="model-zoom"){el.onclick=()=>{ modelZoom=parseInt(el.dataset.z,10)||1; render(); };}
+    else if(a==="model-place-type"){el.onclick=()=>{ modelPlaceType=el.dataset.t; render(); };}
+    else if(a==="model-op-hit"){el.onclick=()=>{
+      // В режиме «убрать» тап по проёму его удаляет; в остальных — просто выделяет.
+      if(modelTool!=="del")return;
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      sh.model.openings=(sh.model.openings||[]).filter(function(o){return o.id!==el.dataset.id;});
+      modelSync(sh); fl();
+    };}
+    else if(a==="model-wall-hit"){el.onclick=()=>{
+      if(modelTool!=="del")return;
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      const bays=modelBays(sh.model), b=bays[parseInt(el.dataset.i,10)];
+      if(!b)return;
+      const next=mergeRoom(sh.model, b.id);
+      if(next===sh.model||JSON.stringify(next.rooms)===JSON.stringify(sh.model.rooms)){
+        alert("Эти отсеки не сливаются: у них разное деление по ширине.\n\nСначала уберите продольную перегородку.");
+        return;
+      }
+      sh.model=next; modelSync(sh); fl();
+    };}
+    else if(a==="model-wallw-hit"){el.onclick=()=>{
+      if(modelTool!=="del")return;
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      sh.model=mergeLengthwise(sh.model, el.dataset.id);
+      modelSync(sh); fl();
+    };}
+    else if(a==="model-canvas"){
+      // Рисование: экранная точка → миллиметры модели через viewBox. Инструмент
+      // решает, что появится — стена, проём или ничего.
+      el.onclick=(ev)=>{
+        if(modelTool==="sel"||modelTool==="del")return;
+        const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+        const vb=String(el.dataset.vb||"").split(" ").map(Number);
+        const box=el.getBoundingClientRect();
+        if(!box.width||!box.height||vb.length!==4)return;
+        const x=vb[0]+(ev.clientX-box.left)/box.width*vb[2];
+        const y=vb[1]+(ev.clientY-box.top)/box.height*vb[3];
+        const m=sh.model, L=totalLength(m), W=Number(m.w)||0;
+        if(modelTool==="wall"){
+          if(x<0||x>L){ return; }
+          const before=(m.rooms||[]).length;
+          sh.model=splitAt(m, x, gid(), gid());
+          if((sh.model.rooms||[]).length===before){ alert("Слишком близко к соседней стене — помещение получилось бы меньше "+(MIN_ROOM/1000)+" м."); return; }
+        } else if(modelTool==="wallw"){
+          const bay=bayAt(m, x); if(!bay)return;
+          if((m.rooms||[]).find(function(r){return r.id===bay.id;}).sub){ alert("В этом отсеке продольная перегородка уже есть."); return; }
+          const before=JSON.stringify(m.rooms);
+          sh.model=splitLengthwiseAt(m, bay.id, y, gid());
+          if(JSON.stringify(sh.model.rooms)===before){ alert("Контейнер слишком узкий для продольной перегородки."); return; }
+        } else if(modelTool==="op"){
+          const t=winType(modelPlaceType);
+          if(!t){ alert("Выберите изделие в панели сверху."); return; }
+          const side=nearestSide(m, Math.max(0,Math.min(L,x)), Math.max(0,Math.min(W,y)));
+          sh.model.openings=(sh.model.openings||[]).concat([{
+            id:gid(), side:side, pos:opPosAt(m, side, x, y, t.w),
+            sill:(t.kind==="door")?0:900, typeId:t.id,
+          }]);
+          modelSide=side;
+        }
+        modelSync(sh); fl();
+      };
+    }
     else if(a==="model-view"){el.onclick=()=>{ modelView=el.dataset.v; render(); };}
     else if(a==="model-split-w"){el.onclick=()=>{
       const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
@@ -17917,7 +18066,7 @@ function bind(){
       // Продольная перегородка: та же арифметика, но по ширине контейнера.
       el.onpointerdown=(ev)=>{
         const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
-        const svg=document.getElementById("model-svg"); if(!svg)return;
+        const svg=el.ownerSVGElement||document.getElementById("model-svg"); if(!svg)return;
         const box=svg.getBoundingClientRect();
         // Масштаб берём по ширине картинки: viewBox сохраняет пропорции, поэтому
         // мм на пиксель одинаковы по обеим осям.
@@ -17940,7 +18089,7 @@ function bind(){
       // иначе прокрутка страницы переставляла бы окна.
       el.onpointerdown=(ev)=>{
         const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
-        const svg=document.getElementById("model-svg"); if(!svg)return;
+        const svg=el.ownerSVGElement||document.getElementById("model-svg"); if(!svg)return;
         const op=(sh.model.openings||[]).find(function(o){return o.id===el.dataset.id;}); if(!op)return;
         const along=(op.side==="n"||op.side==="s");
         const mmPerPx=(Number(el.dataset.len)+1400)/Math.max(1,svg.getBoundingClientRect().width);
@@ -17972,7 +18121,7 @@ function bind(){
       // их к экрану, поэтому жест одинаково работает на телефоне и на мониторе.
       el.onpointerdown=(ev)=>{
         const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
-        const svg=document.getElementById("model-svg"); if(!svg)return;
+        const svg=el.ownerSVGElement||document.getElementById("model-svg"); if(!svg)return;
         const i=parseInt(el.dataset.i,10);
         const mmPerPx=(Number(el.dataset.len)||1)/Math.max(1,svg.getBoundingClientRect().width);
         const x0=ev.clientX; let d=0;
