@@ -381,10 +381,14 @@ function assembled(p) {
     JSON.stringify({ win: 3, sock: 15, lamp: 9, sw: 1 }),
     JSON.stringify(p.q(`pointTotals(specSheet(${JSON.stringify(id)}))`)))
 
-  p.run(`specOpenId=${JSON.stringify(id)};specsCollapsed={${JSON.stringify(id)}:false};`)
+  p.run(`specOpenId=${JSON.stringify(id)};specsCollapsed={${JSON.stringify(id)}:false};specView="sheet";specAcc={rooms:true,pts:true};`)
   const card = p.run('tSpec()')
-  t.ok('в карточке есть блок раскладки', card.indexOf('РАСКЛАДКА ПО ДОМУ') > 0)
-  t.ok('и счётчики в развёрнутом редакторе помещений', card.indexOf('spec-pt') > 0)
+  t.ok('в карточке есть блок раскладки', card.indexOf('Раскладка по дому') > 0 && card.indexOf('15') > 0)
+  // Редактор помещений переехал в блок «откуда дом» — раскладка правится там же,
+  // где размеры, а не третьим блоком на экране.
+  p.run('specGeoOpen=true;specGeoTab="manual";')
+  t.ok('и счётчики в развёрнутом редакторе помещений', p.run('tSpec()').indexOf('spec-pt') > 0)
+  p.run('specGeoOpen=false;specGeoTab="";')
 
   p.run('window.__printed="";window.open=function(){return {document:{write:function(h){window.__printed=h;},close:function(){}}};};')
   const btn = p.dom.node({ a: 'spec-print', id })
@@ -510,7 +514,9 @@ function assembled(p) {
   t.ok('развёртка рисуется', elev.indexOf('отметки в см от чистого пола') > 0)
   t.ok('на ней видно высоту низа проёма', /H=\d/.test(elev), 'план сверху высоту показать не может')
   p.run('modelView="plan";')
-  t.ok('и вкладки этапов', card.indexOf('РАБОТЫ ПО ЭТАПАМ') > 0 && card.indexOf('model-stage') > 0)
+  p.run('specView="sheet";specAcc={stages:true};')
+  const stagesCard = p.run('tSpec()')
+  t.ok('и вкладки этапов', stagesCard.indexOf('Работы по этапам') > 0 && stagesCard.indexOf('model-stage') > 0)
   t.ok('ручного редактора размеров при модели нет', card.indexOf('РАЗМЕРЫ ПОМЕЩЕНИЙ') < 0,
     'два источника правды об одних помещениях разъедутся в первый же день')
 }
@@ -523,7 +529,7 @@ function assembled(p) {
   p.run('specOpenId=null;')
   const list = p.run('tSpec()')
   t.ok('в списке видно спецификацию и её цену', list.indexOf('Баня Иванова') > 0 && list.indexOf('spec-open') > 0)
-  p.run(`specOpenId=${JSON.stringify(id)};`)
+  p.run(`specOpenId=${JSON.stringify(id)};specView="sheet";specAcc={rooms:true,global:true};`)
   const card = p.run('tSpec()')
   t.ok('карточка показывает помещения и группы выбора',
     card.indexOf('Парная') > 0 && card.indexOf('spec-pick-room') > 0 && card.indexOf('spec-pick-global') > 0)

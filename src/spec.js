@@ -106,6 +106,33 @@ export function matQtyForArea(mat, area) {
   return Number(mat.qty) || 0;
 }
 
+// Чем меряется вариант в конкретном месте: площадью поверхности комнаты, числом
+// точек раскладки или ничем. Вынесено отдельно, потому что этим же контекстом считается
+// цена ЕЩЁ НЕ выбранного варианта — та самая подпись «+64 200» на кнопке выбора.
+// У комнатной сметы точки считаются по ЭТОЙ комнате: розетки зала не переезжают
+// в спальню оттого, что их посчитали на весь дом.
+function roomCtx(est, room, H, group) {
+  return {
+    key: "room:" + room.id + ":" + group,
+    area: (!est.optPoint && est.optSurface) ? roomArea(room, H, est.optSurface) : 0,
+    roomId: room.id, roomName: room.name || "", surface: est.optSurface || "",
+    count: est.optPoint ? roomPoints(room, est.optPoint) : 0, point: est.optPoint || "",
+  };
+}
+
+// Общедомовая опция может считаться от суммарной площади дома — тогда у неё задана
+// поверхность, и площадь берётся по всем комнатам сразу.
+function globalCtx(est, specs, H, totals, group) {
+  let area = 0;
+  if (!est.optPoint && est.optSurface) {
+    ((specs && specs.rooms) || []).forEach(function (r) { area += roomArea(r, H, est.optSurface); });
+  }
+  return {
+    key: "global:" + group, area: Math.round(area * 100) / 100, surface: est.optSurface || "",
+    count: est.optPoint ? (totals[est.optPoint] || 0) : 0, point: est.optPoint || "",
+  };
+}
+
 // Позиция спецификации: работа из сметы с посчитанным количеством и ценой.
 // key — устойчивый адрес позиции: по нему хранится ручная правка количества и по нему
 // же собирается объект, поэтому он не должен зависеть от порядка комнат.
@@ -166,16 +193,9 @@ export function sheetPositions(sheet, estimates, products) {
     Object.keys(picks).forEach(function (group) {
       const e = picks[group] && byId[picks[group]];
       if (!e) return;
-      const key = "room:" + r.id + ":" + group;
-      // У комнатной сметы точки считаются по ЭТОЙ комнате: розетки зала не переезжают
-      // в спальню оттого, что их посчитали на весь дом.
-      const cnt = e.optPoint ? roomPoints(r, e.optPoint) : 0;
-      if (e.optPoint && !cnt) return;
-      out.push(position(e, {
-        key: key, area: (!e.optPoint && e.optSurface) ? roomArea(r, H, e.optSurface) : 0,
-        roomId: r.id, roomName: r.name || "", surface: e.optSurface || "",
-        count: cnt, point: e.optPoint || "",
-      }, prodById, qty[key]));
+      const ctx = roomCtx(e, r, H, group);
+      if (e.optPoint && !ctx.count) return;
+      out.push(position(e, ctx, prodById, qty[ctx.key]));
     });
   });
 
@@ -183,20 +203,29 @@ export function sheetPositions(sheet, estimates, products) {
     const estId = sheet.global[group];
     const e = estId && byId[estId];
     if (!e) return;
-    // Общедомовая опция может считаться от суммарной площади дома — тогда у неё задана
-    // поверхность, и площадь берётся по всем комнатам сразу.
-    const cnt = e.optPoint ? (totals[e.optPoint] || 0) : 0;
-    if (e.optPoint && !cnt) return;
-    let area = 0;
-    if (!e.optPoint && e.optSurface) {
-      ((specs.rooms) || []).forEach(function (r) { area += roomArea(r, H, e.optSurface); });
-    }
-    const key = "global:" + group;
-    out.push(position(e, { key: key, area: Math.round(area * 100) / 100, surface: e.optSurface || "",
-      count: cnt, point: e.optPoint || "" }, prodById, qty[key]));
+    const ctx = globalCtx(e, specs, H, totals, group);
+    if (e.optPoint && !ctx.count) return;
+    out.push(position(e, ctx, prodById, qty[ctx.key]));
   });
 
   return out;
+}
+
+// Сколько стоит ОДИН вариант в этом месте. Нужно там, где выбор ещё не сделан:
+// подпись «+64 200» на кнопке, цена ячейки матрицы, цена комплектации. Считается
+// тем же position(), что и попавшая в спецификацию позиция, — иначе кнопка обещала бы
+// одно, а итог показывал другое. `room` = null для общедомовой опции.
+export function optionCost(sheet, est, room, products) {
+  if (!est) return 0;
+  const specs = (sheet && sheet.specs) || {};
+  const H = Number(specs.height) || 0;
+  const prodById = {};
+  (products || []).forEach(function (p) { if (p && p.id) prodById[p.id] = p; });
+  const ctx = room
+    ? roomCtx(est, room, H, est.optGroup || "")
+    : globalCtx(est, specs, H, pointTotals(sheet), est.optGroup || "");
+  if (est.optPoint && !ctx.count) return 0;
+  return position(est, ctx, prodById, ((sheet && sheet.qty) || {})[ctx.key]).cost;
 }
 
 // Итоги: себестоимость, цена клиенту и разбивка по этапам. Наценка одна на спецификацию —
