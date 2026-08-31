@@ -19548,6 +19548,7 @@ function bind(){
         op.sill=(t.kind==="door")?0:headSill(sh.model, t.h, winTypes);
       }
       sh.model.openings=(sh.model.openings||[]).concat([op]);
+      modelOpSel=op.id; modelPosWarn=null;
       modelSync(sh); fl();
     };}
     else if(a==="model-op-del"){el.onclick=()=>{
@@ -19616,12 +19617,26 @@ function bind(){
       if(modelTool==="op")modelPlaceType=t.id; else modelPlace[(t.kind||"win")]=t.id;
       render();
     };}
-    else if(a==="model-op-hit"){el.onclick=()=>{
-      // В режиме «убрать» тап по проёму его удаляет; в остальных — просто выделяет.
-      if(modelTool!=="del")return;
+    else if(a==="model-op-hit"){el.onclick=(ev)=>{
+      // Тап по проёму — это разговор про ЭТОТ проём: в «Убрать» он удаляется, в
+      // остальных инструментах выделяется, и у выбранного появляются петли, сторона
+      // створки и положение числом. Раньше в режиме установки тап по двери молча
+      // ничего не делал, и настроить уже поставленную дверь было нечем: ручки
+      // выделения в этом режиме скрыты, а уходить за ними в «Двигать» никто не
+      // догадывался.
+      //
+      // Событие дальше НЕ пускаем: тап всплыл бы до холста, и инструмент «Двери»
+      // положил бы вторую дверь поверх той, по которой тапнули.
+      if(ev&&ev.stopPropagation)ev.stopPropagation();
       const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
-      sh.model.openings=(sh.model.openings||[]).filter(function(o){return o.id!==el.dataset.id;});
-      modelSync(sh); fl();
+      if(modelTool==="del"){
+        if(modelOpSel===el.dataset.id)modelOpSel=null;
+        sh.model.openings=(sh.model.openings||[]).filter(function(o){return o.id!==el.dataset.id;});
+        modelSync(sh); fl(); return;
+      }
+      modelOpSel=(modelOpSel===el.dataset.id)?null:el.dataset.id;
+      modelPosWarn=null;
+      render();
     };}
     else if(a==="model-wall-hit"){el.onclick=()=>{
       if(modelTool!=="del")return;
@@ -19739,22 +19754,24 @@ function bind(){
           const pt=(modelPlaceKind()==="win")
             ? null
             : modelParts(m).find(function(q){ return Math.abs(x-(q.x+TH/2))<=TH/2+PART_HIT; });
+          // Поставленный проём сразу и выбран: у двери тут же есть петли, сторона
+          // створки и положение числом — за ними не надо идти в другой инструмент.
           if(pt){
             const max=Math.max(0, W-(Number(t.w)||0));
-            sh.model.openings=(sh.model.openings||[]).concat([{
-              id:gid(), side:"part", after:pt.id, into:1, hinge:"start",
-              pos:Math.max(0, Math.min(max, Math.round(y-(Number(t.w)||0)/2))), typeId:t.id,
-            }]);
+            const op={ id:gid(), side:"part", after:pt.id, into:1, hinge:"start",
+              pos:Math.max(0, Math.min(max, Math.round(y-(Number(t.w)||0)/2))), typeId:t.id };
+            sh.model.openings=(sh.model.openings||[]).concat([op]);
             modelSide="part"; modelPart=pt.id;
+            modelOpSel=op.id; modelPosWarn=null;
             modelSync(sh); fl();
             return;
           }
           const side=nearestSide(m, Math.max(0,Math.min(L,x)), Math.max(0,Math.min(W,y)));
-          sh.model.openings=(sh.model.openings||[]).concat([{
-            id:gid(), side:side, pos:opPosAt(m, side, x, y, t.w),
-            sill:(t.kind==="door")?0:headSill(m, t.h, winTypes), typeId:t.id,
-          }]);
+          const op={ id:gid(), side:side, pos:opPosAt(m, side, x, y, t.w),
+            sill:(t.kind==="door")?0:headSill(m, t.h, winTypes), typeId:t.id };
+          sh.model.openings=(sh.model.openings||[]).concat([op]);
           modelSide=side;
+          modelOpSel=op.id; modelPosWarn=null;
         }
         if(modelTool==="wall"||modelTool==="wallw")modelTool="sel";
         modelSync(sh); fl();

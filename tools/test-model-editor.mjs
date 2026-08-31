@@ -314,8 +314,53 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   t.ok('на наружную стену ничего не уехало',
     p.q('specSheets[0].model.openings.filter(function(o){return o.side!=="part";}).length') === outer0)
   t.ok('створку есть чем нарисовать', d[0].into === 1 && d[0].hinge === 'start')
+  // И она сразу выбрана: петли со створкой правят тут же, не переключая инструмент.
+  t.ok('и она сразу выбрана', p.q('modelOpSel') === d[0].id)
   t.ok('и на чертеже она появилась',
     (p.run('modelPlanSvg(specSheets[0], true)').match(/data-side="part"/g) || []).length === 1)
+}
+
+// ── 9б. Тап по проёму в режиме установки — это выбор, а не второй проём ──────
+// Ручки перетаскивания в режиме установки скрыты (иначе они перехватывают тап по
+// стене), и поставленную дверь стало нечем настроить: петли, сторону створки и
+// положение числом правят у ВЫБРАННОГО проёма. Уходить за ними в «Двигать» никто
+// не догадывается, а тап по двери инструментом «Двери» клал вторую поверх первой.
+{
+  t.section('Настроить поставленную дверь')
+  const p = lab()
+  // Двери берём у ОТКРЫТОГО листа: боевой рядом, и его проёмы здесь ни при чём.
+  const open = () => p.q('specSheet(specOpenId).model.openings.filter(function(o){return o.side==="part";})')
+  click(p, { a: 'model-tool', k: 'door' })
+  const door = open()[0]
+  const before = p.q('specSheet(specOpenId).model.openings.length')
+
+  click(p, { a: 'model-op-hit', id: door.id })
+  t.ok('дверь выбрана', p.q('modelOpSel') === door.id)
+  t.ok('второй двери не появилось',
+    p.q('specSheet(specOpenId).model.openings.length') === before, String(before))
+
+  const bar = p.run('modelFullOverlay()')
+  t.ok('петли и створка под рукой',
+    bar.indexOf('data-a="model-op-hinge"') >= 0 && bar.indexOf('data-a="model-op-into"') >= 0)
+  t.ok('и положение числом', bar.indexOf('data-a="model-op-posn"') >= 0)
+
+  // Число — то же, что на чертеже: дверь в перегородке меряется от ЧИСТОВОЙ стены,
+  // поэтому 1 м на экране это 1076 по коробке (обшивка 76).
+  const inp = p.dom.node({ a: 'model-op-posn', id: door.id })
+  p.run('bind();')
+  inp.value = '1'; inp.onchange()
+  t.ok('размер вводится числом', open()[0].pos === 1076, String(open()[0].pos))
+
+  click(p, { a: 'model-op-hinge', id: door.id })
+  click(p, { a: 'model-op-into', id: door.id })
+  t.ok('петли и створка переключились', open()[0].hinge === 'end' && open()[0].into === -1)
+
+  // Повторный тап снимает выбор, а в «Убрать» тап по-прежнему удаляет.
+  click(p, { a: 'model-op-hit', id: door.id })
+  t.ok('повторный тап снимает выбор', p.q('modelOpSel') === null)
+  click(p, { a: 'model-tool', k: 'del' })
+  click(p, { a: 'model-op-hit', id: door.id })
+  t.ok('в «Убрать» тап удаляет', !open().some((o) => o.id === door.id))
 }
 
 // ── 10. «Вернуть» отменяет удаление ──────────────────────────────────────────
