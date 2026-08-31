@@ -2094,6 +2094,9 @@ let modelView="plan";      // plan | elev | iso — план, развёртка
 // Камера объёмного вида. Живёт во вкладке, а не в модели: это взгляд человека на
 // дом, а не свойство дома — у второго смотрящего он свой.
 let modelYaw=35, modelTilt=55;
+// Что делать с ближней стеной: "ghost" — прозрачная (видно и комнаты, и её окна),
+// "cut" — снятая совсем (чистый вид внутрь).
+let modelIsoWalls="ghost";
 let modelOpDrag=null;      // проём под пальцем
 let modelOpSel=null;       // проём, выбранный тапом: у него правят открывание
 let modelPosWarn=null;     // {id,msg} — введённое число не влезло в стену
@@ -10077,6 +10080,11 @@ function modelFullOverlay(){
   if(modelView==="iso"){
     h+='<div style="display:flex;align-items:center;gap:6px;padding:9px 14px;background:#122236;border-bottom:1px solid rgba(255,255,255,.08);flex-wrap:wrap;flex-shrink:0">'+
       viewBtn("plan","🗺 План")+viewBtn("iso","🧊 3D")+
+      '<span style="width:10px"></span>'+
+      [["ghost","👁 Сквозь стены"],["cut","✂ Снять ближние"]].map(function(w){
+        const on=modelIsoWalls===w[0];
+        return '<button data-a="model-iso-walls" data-w="'+w[0]+'" style="border:1.5px solid '+(on?"#16a085":"rgba(255,255,255,.18)")+';background:'+(on?"#16a085":"transparent")+';color:#fff;border-radius:9px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer">'+w[1]+'</button>';
+      }).join("")+
       '<span style="flex:1"></span>'+
       '<span style="font-size:11.5px;color:#7f97ae">поворот '+Math.round(((modelYaw%360)+360)%360)+'° · наклон '+modelTilt+'°</span>'+
       '<button data-a="model-iso-reset" style="border:1.5px solid rgba(255,255,255,.25);background:transparent;color:#fff;border-radius:9px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer">↺ Как было</button>'+
@@ -10711,7 +10719,8 @@ function specListHtml(list){
 // ═══ ДОМ В ОБЪЁМЕ ════════════════════════════════════════════════════════════
 // Чертёж отвечает строителю, объём — клиенту: тот не обязан уметь читать план.
 // Сцену считает `isoScene` (src/iso.js), здесь только цвет и SVG.
-const ISO_COLOR={ slab:"#2b343d", floor:"#e6ecf4", shell:"#3a4753", part:"#c9d4e0", reveal:"#f2f6fa", glass:"#a9c9e8" };
+const ISO_COLOR={ slab:"#2b343d", floor:"#e6ecf4", shell:"#3a4753", ghost:"#5b6b7c", part:"#c9d4e0", reveal:"#f2f6fa", glass:"#a9c9e8" };
+const ISO_OPACITY={ glass:0.5, ghost:0.18 };
 
 // Освещённость — множитель к цвету грани: без него коробка читается плоским пятном.
 function isoShade(hex, k){
@@ -10725,16 +10734,23 @@ function isoPath(f){
 }
 
 function modelIsoSvg(sh, full){
-  const sc=isoScene(sh.model, winTypes, { yaw:modelYaw, tilt:modelTilt });
+  const sc=isoScene(sh.model, winTypes, { yaw:modelYaw, tilt:modelTilt, walls:modelIsoWalls });
   const PAD=600;
   const vb=(sc.x0-PAD)+" "+(sc.y0-PAD)+" "+((sc.x1-sc.x0)+PAD*2)+" "+((sc.y1-sc.y0)+PAD*2);
   let g="";
   sc.faces.forEach(function(f){
     const base=ISO_COLOR[f.kind]||"#cccccc";
     const fill=(f.kind==="glass")?base:isoShade(base, f.shade);
+    // Рамка проёма на прозрачной стене — только контур: заливка там нечего скрывать.
+    if(f.kind==="frame"){
+      g+='<path d="'+isoPath(f)+'" fill="none" stroke="#0d1b2e" stroke-width="34" stroke-opacity="0.75" stroke-linejoin="round"/>';
+      return;
+    }
+    const op=ISO_OPACITY[f.kind];
     g+='<path d="'+isoPath(f)+'" fill="'+fill+'" fill-rule="evenodd"'+
-      (f.kind==="glass"?' opacity="0.5"':'')+
-      ' stroke="#0d1b2e" stroke-width="'+(f.kind==="floor"?10:16)+'" stroke-opacity="'+(f.kind==="floor"?"0.10":"0.35")+'" stroke-linejoin="round"/>';
+      (op?' opacity="'+op+'"':'')+
+      ' stroke="#0d1b2e" stroke-width="'+(f.kind==="floor"?10:16)+'" stroke-opacity="'+
+      (f.kind==="floor"?"0.10":(f.kind==="ghost"?"0.5":"0.35"))+'" stroke-linejoin="round"/>';
   });
   // На весь экран дом ВПИСЫВАЕМ в область просмотра (высота 100%), иначе при
   // повороте он то упирается в края, то уезжает за них: у аксонометрии габарит
@@ -10786,6 +10802,8 @@ const SCH_OVER=130;        // выносная линия переходит р�
 const SCH_LEAD=300;
 const SCH_GAPTXT=90;       // просвет между цифрой и линией, над которой она стоит
 const SWING_GAP=240;       // просвет между дугой открывания и размерной линией
+// Сколько чистого места нужно комнате, чтобы принять цепочку к своей стене.
+const CHAIN_ROOM=700;
 
 // Ширина полки — под своё число: полка короче цифры выглядит обрывком.
 function schShelfW(t){ return Math.max(320, Math.round(String(t).length*0.62*SCH_SMALL)+140); }
@@ -10912,7 +10930,15 @@ function schemeParts(sc){
       if(x+th<=at)lo=Math.max(lo, x+th);
       if(x>=at+th)hi=Math.min(hi, x);
     });
-    chainSide[at]=((hi-(at+th))>(at-lo))?1:-1;
+    // Створка занимает одну сторону перегородки — цепочка уходит на ДРУГУЮ. Не
+    // отодвигается за размах двери (тогда размер убегает на метр от того, что
+    // меряет), а просто перескакивает через стену: у стены ему и место.
+    // Комнате напротив нужен хоть какой-то просвет — иначе цепочка встанет в стену,
+    // и тогда уж лучше остаться на просторной стороне, за дугой.
+    const door=sc.openings.find(function(o){ return o.side==="part"&&o.x===at&&o.swing; });
+    const swing=door?((door.swing.tip.x>door.x)?1:-1):0;
+    const room=function(sd){ return sd>0?(hi-(at+th)):(at-lo); };
+    chainSide[at]=(swing&&room(-swing)>=CHAIN_ROOM)?(-swing):(((hi-(at+th))>(at-lo))?1:-1);
   });
 
   let g='<defs><pattern id="sch-hatch" width="150" height="150" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">'+
@@ -19721,6 +19747,7 @@ function bind(){
       };
     }
     else if(a==="model-view"){el.onclick=()=>{ modelView=el.dataset.v; render(); };}
+    else if(a==="model-iso-walls"){el.onclick=()=>{ modelIsoWalls=el.dataset.w; render(); };}
     else if(a==="model-iso-reset"){el.onclick=()=>{ modelYaw=35; modelTilt=55; render(); };}
     else if(a==="model-iso"){
       // Вращение: тянем по дому. Во время жеста пересобираем ТОЛЬКО эту картинку —

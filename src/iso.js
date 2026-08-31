@@ -88,13 +88,17 @@ function openingsOf(sc, wall) {
 
 // Сцена: грани, отсортированные от дальней к ближней, и рамка вокруг них.
 //
-// `open` — «кукольный дом»: стены, которые смотрят в камеру, не рисуются, иначе
-// поворот показывает глухую коробку. Именно так подают планировку клиенту.
+// Ближняя стена — та, что смотрит в камеру, — загораживает всё, ради чего смотрят.
+// С ней два обхождения, и оба нужны:
+//   `walls:"ghost"` — стена ПРОЗРАЧНАЯ. Видно и комнаты, и её собственные окна с
+//      дверьми: смотрят на дом чаще всего со стороны фасада, и «окон не видно» —
+//      это про снятую вместе с ними стену.
+//   `walls:"cut"`   — стена снята совсем: чистый вид внутрь, как в кукольном доме.
 export function isoScene(model, winTypes, opts) {
   const o = opts || {};
   const yaw = (o.yaw == null) ? 35 : Number(o.yaw);
   const tilt = (o.tilt == null) ? 55 : Number(o.tilt);
-  const open = (o.open == null) ? true : !!o.open;
+  const cut = (o.walls === "cut");
   const sc = modelScheme(model, winTypes);
   const H = Number((model || {}).h) || 0;
   const project = camera(yaw, tilt, sc.l / 2, sc.w / 2);
@@ -125,18 +129,22 @@ export function isoScene(model, winTypes, opts) {
 
   sc.walls.forEach(function (w) {
     const shell = w.kind === "shell";
-    // Ближняя наружная стена загораживает всё, ради чего смотрят: убираем её.
-    if (open && shell) {
+    // Ближняя наружная стена: снимаем совсем или делаем прозрачной.
+    let near = false;
+    if (shell) {
       const nx = (w.w > w.h) ? 0 : ((w.x < sc.l / 2) ? -1 : 1);
       const ny = (w.w > w.h) ? ((w.y < sc.w / 2) ? -1 : 1) : 0;
-      if (nx * view.x + ny * view.y < -0.15) return;
+      near = (nx * view.x + ny * view.y) < -0.15;
+      if (near && cut) return;
     }
     const ops = openingsOf(sc, w);
     const along = w.w > w.h;                 // стена вдоль оси X
-    const kind = shell ? "shell" : "part";
+    const kind = near ? "ghost" : (shell ? "shell" : "part");
 
     boxFaces(project, w, 0, H, kind, function (n) {
       // Грани, отвёрнутые от камеры, скрыты самой стеной — не рисуем их вовсе.
+      // Для прозрачной это тем более верно: две полупрозрачные грани подряд дают
+      // муть вместо стены, а видно сквозь неё одинаково хорошо и через одну.
       return (n[2] === 0) && (n[0] * view.x + n[1] * view.y) > 0;
     }, function (n) {
       // Дырки — только на двух больших гранях стены: проём проходит её насквозь.
@@ -160,11 +168,20 @@ export function isoScene(model, winTypes, opts) {
       const a0 = along ? op.x : op.y, a1 = along ? op.x + op.w : op.y + op.h;
       const b0 = along ? w.y : w.x, b1 = along ? w.y + w.h : w.x + w.w;
       const pt = function (a, b, z) { return along ? [a, b, z] : [b, a, z]; };
-      // Откосы: низ, верх и два боковых.
-      faces.push(face(project, [pt(a0, b0, z0), pt(a1, b0, z0), pt(a1, b1, z0), pt(a0, b1, z0)], 0.86, "reveal"));
-      faces.push(face(project, [pt(a0, b0, z1), pt(a1, b0, z1), pt(a1, b1, z1), pt(a0, b1, z1)], 0.72, "reveal"));
-      faces.push(face(project, [pt(a0, b0, z0), pt(a0, b1, z0), pt(a0, b1, z1), pt(a0, b0, z1)], 0.8, "reveal"));
-      faces.push(face(project, [pt(a1, b0, z0), pt(a1, b1, z0), pt(a1, b1, z1), pt(a1, b0, z1)], 0.8, "reveal"));
+      // Откосы: низ, верх и два боковых. В прозрачной стене они превращаются в муть —
+      // там достаточно самого проёма и стекла.
+      if (!near) {
+        faces.push(face(project, [pt(a0, b0, z0), pt(a1, b0, z0), pt(a1, b1, z0), pt(a0, b1, z0)], 0.86, "reveal"));
+        faces.push(face(project, [pt(a0, b0, z1), pt(a1, b0, z1), pt(a1, b1, z1), pt(a0, b1, z1)], 0.72, "reveal"));
+        faces.push(face(project, [pt(a0, b0, z0), pt(a0, b1, z0), pt(a0, b1, z1), pt(a0, b0, z1)], 0.8, "reveal"));
+        faces.push(face(project, [pt(a1, b0, z0), pt(a1, b1, z0), pt(a1, b1, z1), pt(a1, b0, z1)], 0.8, "reveal"));
+      }
+      // На прозрачной стене проём иначе не прочитать: и дырка, и сама стена там
+      // одинаково бледные. Обводим его рамкой — как оконный переплёт на фасаде.
+      if (near) {
+        const b = (along ? ((view.y < 0) ? w.y : w.y + w.h) : ((view.x < 0) ? w.x : w.x + w.w));
+        faces.push(face(project, [pt(a0, b, z0), pt(a1, b, z0), pt(a1, b, z1), pt(a0, b, z1)], 1, "frame"));
+      }
       // Стекло — посередине толщины; у двери его нет, там проём насквозь.
       if (op.kind !== "door") {
         const bm = (b0 + b1) / 2;

@@ -22,7 +22,7 @@ const { model, winTypes } = presetModel('c12-san-liv-bed', [], ids())
 // ── 1. Сцена собирается ──────────────────────────────────────────────────────
 {
   console.log('Сцена')
-  const s = isoScene(model, winTypes, { yaw: 35, tilt: 55 })
+  const s = isoScene(model, winTypes, { yaw: 35, tilt: 55, walls: 'cut' })
   const k = kinds(s)
   ok('есть пол, коробка и перегородки', k.floor > 0 && k.shell > 0 && k.part > 0, JSON.stringify(k))
   ok('дом стоит на плите', k.slab > 0)
@@ -35,8 +35,8 @@ const { model, winTypes } = presetModel('c12-san-liv-bed', [], ids())
 // «Кукольный дом»: без этого поворот показывает глухой ящик, и смотреть не на что.
 {
   console.log('Кукольный дом')
-  const a = isoScene(model, winTypes, { yaw: 35, tilt: 55 })
-  const b = isoScene(model, winTypes, { yaw: 215, tilt: 55 })
+  const a = isoScene(model, winTypes, { yaw: 35, tilt: 55, walls: 'cut' })
+  const b = isoScene(model, winTypes, { yaw: 215, tilt: 55, walls: 'cut' })
   ok('часть коробки скрыта', kinds(a).shell < 4 * 5, String(kinds(a).shell))
   // Развернули дом на 180° — скрытыми стали ДРУГИЕ стены, а всего их столько же.
   ok('поворот меняет, какие стены сняты', kinds(a).shell === kinds(b).shell)
@@ -46,15 +46,19 @@ const { model, winTypes } = presetModel('c12-san-liv-bed', [], ids())
   ok('с другой стороны видно другие проёмы', kinds(a).reveal !== kinds(b).reveal,
     kinds(a).reveal + ' и ' + kinds(b).reveal)
 
-  const closed = isoScene(model, winTypes, { yaw: 35, tilt: 55, open: false })
-  ok('без «кукольного дома» коробка целая', kinds(closed).shell > kinds(a).shell,
-    kinds(closed).shell + ' против ' + kinds(a).shell)
+  // Прозрачные стены — обхождение по умолчанию: смотрят на дом чаще со стороны
+  // фасада, и «окон не видно» — это про снятую вместе с ними стену.
+  const ghost = isoScene(model, winTypes, { yaw: 215, tilt: 55 })
+  ok('по умолчанию ближняя стена прозрачная, а не снятая', kinds(ghost).ghost > 0, JSON.stringify(kinds(ghost)))
+  ok('и её окна видно', (kinds(ghost).glass || 0) > (kinds(b).glass || 0),
+    kinds(ghost).glass + ' против ' + kinds(b).glass)
+  ok('сквозь неё видно и комнаты', kinds(ghost).floor === kinds(b).floor)
 }
 
 // ── 3. Проём — дырка, а не наклейка ──────────────────────────────────────────
 {
   console.log('Проёмы')
-  const s = isoScene(model, winTypes, { yaw: 35, tilt: 55 })
+  const s = isoScene(model, winTypes, { yaw: 35, tilt: 55, walls: 'cut' })
   const holed = s.faces.filter((f) => f.holes && f.holes.length)
   ok('в стенах прорезаны дырки', holed.length > 0, String(holed.length))
   ok('дырка лежит внутри своей грани', holed.every((f) => {
@@ -73,7 +77,7 @@ const { model, winTypes } = presetModel('c12-san-liv-bed', [], ids())
 // сверху, и никакая плоскость пола не может закрыть стену, которая на ней стоит.
 {
   console.log('Порядок граней')
-  const s = isoScene(model, winTypes, { yaw: 35, tilt: 55 })
+  const s = isoScene(model, winTypes, { yaw: 35, tilt: 55, walls: 'cut' })
   const iFloor = s.faces.map((f, i) => (f.kind === 'floor' || f.kind === 'slab') ? i : -1).filter((i) => i >= 0)
   const iWall = s.faces.map((f, i) => (f.kind === 'shell' || f.kind === 'part') ? i : -1).filter((i) => i >= 0)
   ok('пол и плита рисуются первыми', Math.max.apply(null, iFloor) < Math.min.apply(null, iWall),

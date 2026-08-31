@@ -725,6 +725,11 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   click(p, { a: 'model-op-into', id: id })
   t.ok('после разворота створки — тоже не проходит', !crosses(plan()),
     JSON.stringify(chainXs(plan())) + ' против ' + JSON.stringify(doors().map((d) => [d.x, d.swing.tip.x])))
+
+  // И уступает ПЕРЕСКОКОМ через стену, а не бегством за размах двери: размер,
+  // убежавший на метр от того, что он меряет, читать невозможно.
+  const near = doors().map((d) => Math.min.apply(null, chainXs(plan()).map((x) => Math.abs(x - d.x))))
+  t.ok('цепочка держится у своей перегородки', near.every((v) => v < 700), JSON.stringify(near))
 }
 
 t.done()
