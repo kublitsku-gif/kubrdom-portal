@@ -406,13 +406,36 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
 
   // Тап по двери — без сдвига: сдвиг двигает проём, тап выбирает.
   const hit = p.dom.node({ a: 'model-op-drag', id: door.id, side: 'part', span: '2352', w: '700' })
+  hit.setAttribute = () => {}
   // querySelector — как в настоящем SVG: во время жеста редактор двигает группу проёма.
   hit.ownerSVGElement = { dataset: { vbw: '13352' }, getBoundingClientRect: () => ({ width: 1000, height: 300 }),
-    querySelector: () => null }
+    querySelector: () => ({ setAttribute: () => {} }) }
   p.run('bind();')
   hit.onpointerdown({ clientX: 100, clientY: 100, pointerId: 1, preventDefault() {} })
   hit.onpointerup()
   t.ok('дверь выбрана', p.q('modelOpSel') === door.id, String(p.q('modelOpSel')))
+
+  // Тап с дрожанием руки — всё ещё тап. Порог считается в ПИКСЕЛЯХ экрана: в
+  // миллиметрах он зависит от масштаба, и на плане 12 м два пикселя дрожания — это
+  // 25 мм. Обычный клик уезжал перетаскиванием, и панель выбора не открывалась
+  // вовсе — вместе с ней пропадали и петли, и точный размер.
+  p.run('modelOpSel=null;')
+  const was = p.q('specSheets[0].model.openings.filter(function(o){return o.side==="part";})[0].pos')
+  hit.onpointerdown({ clientX: 100, clientY: 100, pointerId: 1, preventDefault() {} })
+  hit.onpointermove({ clientX: 101, clientY: 102 })
+  hit.onpointerup()
+  t.ok('дрожащий тап всё равно выбирает', p.q('modelOpSel') === door.id, String(p.q('modelOpSel')))
+  t.ok('и проём не сдвинулся',
+    p.q('specSheets[0].model.openings.filter(function(o){return o.side==="part";})[0].pos') === was,
+    was + ' → ' + p.q('specSheets[0].model.openings.filter(function(o){return o.side==="part";})[0].pos'))
+
+  // А настоящий жест по-прежнему двигает.
+  hit.onpointerdown({ clientX: 100, clientY: 100, pointerId: 1, preventDefault() {} })
+  hit.onpointermove({ clientX: 100, clientY: 140 })
+  hit.onpointerup()
+  t.ok('жест на сорок пикселей двигает',
+    p.q('specSheets[0].model.openings.filter(function(o){return o.side==="part";})[0].pos') !== was)
+  p.run('modelOpSel=' + JSON.stringify(door.id) + ';')
 
   const bar = p.run('modelFullOverlay()')
   t.ok('панель открывания появилась',
@@ -503,9 +526,10 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   hit.ownerSVGElement = { dataset: { vbw: String(VBW) }, getBoundingClientRect: () => ({ width: PX, height: 300 }),
     querySelector: () => ({ setAttribute: () => {} }) }
   p.run('bind();')
-  // Жест вертикальный — вдоль торца.
+  // Жест вертикальный — вдоль торца. Двигаем на 20 пикселей: меньше семи считается
+  // дрожанием руки и остаётся тапом, иначе обычный клик уезжал бы перетаскиванием.
   hit.onpointerdown({ clientX: 0, clientY: 0, pointerId: 1, preventDefault() {} })
-  hit.onpointermove({ clientX: 0, clientY: 5 })
+  hit.onpointermove({ clientX: 0, clientY: 20 })
   hit.onpointerup()
   t.ok('жестом по торцу проём едет', pos() !== op.pos, op.pos + ' → ' + pos())
   t.ok('и упирается в край стены', pos() <= 2352 - 2000, String(pos()))

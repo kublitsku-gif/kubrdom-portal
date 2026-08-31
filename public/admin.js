@@ -9709,6 +9709,10 @@ function modelKindSides(kind){ return (kind==="door")?MODEL_OP_SIDES:MODEL_SIDES
 // Промах по перегородке в пределах этого допуска считается попаданием: сама она
 // 100 мм, и пальцем в неё на телефоне не попасть.
 const PART_HIT=260;
+// Порог «тап или перетаскивание» — в ПИКСЕЛЯХ экрана, а не в миллиметрах модели.
+// В миллиметрах он зависит от масштаба: на плане 12 м два пикселя дрожания руки —
+// это 25 мм, и обычный клик уезжал перетаскиванием, съедая выбор проёма.
+const TAP_PX=7;
 // Перегородка названа отсеком, за которым стоит: id отсека переживает деление и
 // слияние, а номер стены — нет.
 function modelParts(m){
@@ -19663,16 +19667,20 @@ function bind(){
         const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
         // Масштаб один по обеим осям: viewBox сохраняет пропорции.
         const mmPerPx=planMmPerPx(el); if(!mmPerPx)return;
-        const y0=ev.clientY; let d=0;
+        const y0=ev.clientY; let d=0, moved=false;
         ev.preventDefault();
         try{ el.setPointerCapture(ev.pointerId); }catch(e){}
         const up=function(){
           el.onpointermove=null; el.onpointerup=null; el.onpointercancel=null;
-          if(Math.abs(d)<20)return;
+          if(!moved||!d)return;
           sh.model=moveLengthwise(sh.model, el.dataset.id, d);
           modelSync(sh); fl();
         };
-        el.onpointermove=function(e){ d=Math.round((e.clientY-y0)*mmPerPx); };
+        el.onpointermove=function(e){
+          if(!moved&&Math.abs(e.clientY-y0)<TAP_PX)return;
+          moved=true;
+          d=Math.round((e.clientY-y0)*mmPerPx);
+        };
         el.onpointerup=up; el.onpointercancel=up;
       };
     }
@@ -19713,10 +19721,11 @@ function bind(){
           op.pos=pos;
           modelSync(sh); fl();
         };
+        const px0={x:ev.clientX, y:ev.clientY};
         el.onpointermove=function(e){
-          const d=Math.round(((along?e.clientX:e.clientY)-c0)*mmPerPx);
-          if(Math.abs(d)<20&&!moved)return;
+          if(!moved&&Math.abs(e.clientX-px0.x)<TAP_PX&&Math.abs(e.clientY-px0.y)<TAP_PX)return;
           moved=true;
+          const d=Math.round(((along?e.clientX:e.clientY)-c0)*mmPerPx);
           pos=Math.max(lim.min, Math.min(lim.max, start+d));
           shift(pos-start);
         };
@@ -19730,13 +19739,17 @@ function bind(){
         const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
         const i=parseInt(el.dataset.i,10);
         const mmPerPx=planMmPerPx(el); if(!mmPerPx)return;
-        const x0=ev.clientX; let d=0;
+        const x0=ev.clientX; let d=0, moved=false;
         ev.preventDefault();
         try{ el.setPointerCapture(ev.pointerId); }catch(e){}
-        const move=function(e){ d=Math.round((e.clientX-x0)*mmPerPx); };
+        const move=function(e){
+          if(!moved&&Math.abs(e.clientX-x0)<TAP_PX)return;   // дрожание руки — не жест
+          moved=true;
+          d=Math.round((e.clientX-x0)*mmPerPx);
+        };
         const up=function(){
           el.onpointermove=null; el.onpointerup=null; el.onpointercancel=null;
-          if(Math.abs(d)<20)return;                      // случайный тап границу не двигает
+          if(!moved||!d)return;                      // случайный тап границу не двигает
           sh.model=moveBoundary(sh.model, i, d);
           modelSync(sh); fl();
         };
