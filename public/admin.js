@@ -9577,8 +9577,35 @@ function winKindMeta(k){ return k==="door"?{n:"Дверь",c:"#8e44ad",emoji:"�
 // Модель — источник характеристик: помещения и раскладка приезжают из неё, поэтому
 // спецификация считается тем же кодом, что и раньше. Файл планировки не трогаем —
 // это чертёж клиента, он к модели отношения не имеет.
+// История правок планировки. Живёт в памяти вкладки, а не в снимке: это про
+// «удалил не то», а не про версии проекта. Снимок кладём в `modelSync` — через него
+// проходит КАЖДАЯ правка модели, и одно место надёжнее двадцати вызовов по
+// обработчикам, где один рано или поздно забудут.
+//
+// Считаем правкой только ГЕОМЕТРИЮ: имя комнаты пишется на каждую букву, и с ними
+// «Вернуть» откатывало бы набор по одному символу вместо снесённой перегородки.
+const MODEL_HIST_MAX=40;
+let modelHist=[];        // состояния ДО правок, свежие в конце
+let modelHistNow=null;   // модель на момент последней синхронизации
+let modelHistId=null;    // чей это лист: у соседнего своя история
+
+function modelGeoSig(m){
+  return JSON.stringify(m, function(k,v){ return k==="name"?undefined:v; });
+}
+function modelHistTrack(sh){
+  const snap=JSON.stringify(sh.model);
+  if(modelHistId!==sh.id){ modelHist=[]; modelHistId=sh.id; modelHistNow=snap; return; }
+  if(modelHistNow&&modelGeoSig(JSON.parse(modelHistNow))!==modelGeoSig(sh.model)){
+    modelHist.push(modelHistNow);
+    if(modelHist.length>MODEL_HIST_MAX)modelHist.shift();
+  }
+  modelHistNow=snap;
+}
+function modelCanUndo(sh){ return !!(sh&&modelHistId===sh.id&&modelHist.length); }
+
 function modelSync(sh){
   if(!sh||!sh.model)return;
+  modelHistTrack(sh);
   const keep=sh.specs||{};
   const next=modelToSpecs(sh.model, winTypes);
   next.planUrl=keep.planUrl||""; next.planName=keep.planName||"";
@@ -9589,6 +9616,9 @@ const MODEL_SIDES=[["n","Левая длинная"],["s","Правая длин
 // Перегородки живут только в списке проёмов. На развёртке их нет: развёртка — это
 // вид на стену коробки изнутри, а перегородка стоит поперёк и в такой вид не попадает.
 const MODEL_OP_SIDES=MODEL_SIDES.concat([["part","Перегородки"]]);
+// Промах по перегородке в пределах этого допуска считается попаданием: сама она
+// 100 мм, и пальцем в неё на телефоне не попасть.
+const PART_HIT=260;
 // Перегородка названа отсеком, за которым стоит: id отсека переживает деление и
 // слияние, а номер стены — нет.
 function modelParts(m){
@@ -9700,7 +9730,7 @@ const MODEL_TOOLS=[
   ["sel",  "🖐", "Двигать",        "Тяните перегородки и проёмы"],
   ["wall", "┃",  "Стена поперёк",  "Тап по плану — стена в этом месте"],
   ["wallw","━",  "Стена вдоль",    "Тап внутри отсека — санузел в углу"],
-  ["op",   "🪟", "Проём",          "Тап у стены — окно или дверь в этом месте"],
+  ["op",   "🪟", "Проём",          "Тап у стены — окно или дверь; тап по перегородке — межкомнатная дверь"],
   ["del",  "🗑", "Убрать",         "Тап по проёму или перегородке"],
 ];
 // В поле type="number" значение обязано быть с ТОЧКОЙ: значение с запятой браузер
@@ -9784,6 +9814,12 @@ function modelFullOverlay(){
       const on=modelTool===t[0];
       return '<button data-a="model-tool" data-k="'+t[0]+'" style="display:flex;align-items:center;gap:6px;border:1.5px solid '+(on?"#16a085":"rgba(255,255,255,.18)")+';background:'+(on?"#16a085":"transparent")+';color:#fff;border-radius:9px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer"><span>'+t[1]+'</span>'+esc(t[2])+'</button>';
     }).join("")+
+    // «Вернуть» — рядом с «Убрать»: инструмент, который стирает, и кнопка, которая
+    // это отменяет, должны жить в одном месте, иначе за отменой идут в перезагрузку.
+    (function(){
+      const can=modelCanUndo(sh);
+      return '<button data-a="model-undo"'+(can?'':' disabled')+' title="Вернуть последнее изменение планировки" style="display:flex;align-items:center;gap:6px;border:1.5px solid rgba(255,255,255,'+(can?'.35':'.12')+');background:transparent;color:'+(can?'#fff':'rgba(255,255,255,.3)')+';border-radius:9px;padding:7px 12px;font-size:12px;font-weight:700;cursor:'+(can?'pointer':'default')+'"><span>↶</span>Вернуть'+(can?' <span style="opacity:.6">'+modelHist.length+'</span>':'')+'</button>';
+    })()+
     '<span style="flex:1"></span>'+
     [1,2,4].map(function(z){
       const on=modelZoom===z;
@@ -18989,6 +19025,15 @@ function bind(){
       if(modelTool==="op"&&!modelPlaceType&&winTypes.length)modelPlaceType=winTypes[0].id;
       render();
     };}
+    else if(a==="model-undo"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!modelCanUndo(sh))return;
+      const prev=modelHist.pop();
+      sh.model=JSON.parse(prev);
+      // Ставим «текущее» ДО пересчёта: иначе modelSync запишет сам возврат как
+      // очередную правку, и «Вернуть» начнёт ходить туда-обратно по одному шагу.
+      modelHistNow=prev;
+      modelSync(sh); fl();
+    };}
     else if(a==="model-zoom"){el.onclick=()=>{ modelZoom=parseInt(el.dataset.z,10)||1; render(); };}
     else if(a==="model-place-type"){el.onclick=()=>{ modelPlaceType=el.dataset.t; render(); };}
     else if(a==="model-op-hit"){el.onclick=()=>{
@@ -19042,6 +19087,22 @@ function bind(){
         } else if(modelTool==="op"){
           const t=winType(modelPlaceType);
           if(!t){ alert("Выберите изделие в панели сверху."); return; }
+          // Тап пришёлся на перегородку — проём ставим В НЕЁ. Так и ставят
+          // межкомнатную дверь: показывают стену, в которой она стоит. Раньше
+          // тап по перегородке уезжал на ближайшую НАРУЖНУЮ стену, и дверь между
+          // комнатами поставить на плане было нечем.
+          const TH=Number(m.wallThick)||0;
+          const pt=modelParts(m).find(function(q){ return Math.abs(x-(q.x+TH/2))<=TH/2+PART_HIT; });
+          if(pt){
+            const max=Math.max(0, W-(Number(t.w)||0));
+            sh.model.openings=(sh.model.openings||[]).concat([{
+              id:gid(), side:"part", after:pt.id, into:1, hinge:"start",
+              pos:Math.max(0, Math.min(max, Math.round(y-(Number(t.w)||0)/2))), typeId:t.id,
+            }]);
+            modelSide="part"; modelPart=pt.id;
+            modelSync(sh); fl();
+            return;
+          }
           const side=nearestSide(m, Math.max(0,Math.min(L,x)), Math.max(0,Math.min(W,y)));
           sh.model.openings=(sh.model.openings||[]).concat([{
             id:gid(), side:side, pos:opPosAt(m, side, x, y, t.w),

@@ -224,4 +224,74 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
     p.q('modelAreas(specSheets[0].model, winTypes).rooms.filter(function(r){return r.name==="Душевая";}).length') === 1)
 }
 
+// ── 9. Дверь в перегородку ставится тапом по ней ─────────────────────────────
+// Межкомнатную дверь показывают стеной, в которой она стоит. Раньше тап по
+// перегородке уезжал на ближайшую НАРУЖНУЮ стену: на плане межкомнатную дверь
+// поставить было нечем вообще, и в редакторе их «не было видно».
+{
+  t.section('Дверь тапом по перегородке')
+  const p = panel()
+  p.run('specSheets[0].model.openings=specSheets[0].model.openings.filter(function(o){return o.side!=="part";});modelSync(specSheets[0]);')
+  const outer0 = p.q('specSheets[0].model.openings.length')
+  click(p, { a: 'model-full' })
+  const doorType = p.q('winTypes.find(function(x){return x.kind==="door";}).id')
+  click(p, { a: 'model-tool', k: 'op' })
+  click(p, { a: 'model-place-type', t: doorType })
+
+  // Тап ровно по оси первой перегородки, как пальцем по плану.
+  const plan = p.run('modelPlanSvg(specSheets[0], true)')
+  const vb = /viewBox="([-\d]+) ([-\d]+) (\d+) (\d+)"/.exec(plan).slice(1).map(Number)
+  const PX = 1200
+  const canvas = p.dom.node({ a: 'model-canvas', vb: vb.join(' ') })
+  canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: PX, height: PX * vb[3] / vb[2] })
+  p.run('bind();')
+  const xmm = p.q('modelBays(specSheets[0].model)[0].x1') + p.q('specSheets[0].model.wallThick') / 2
+  canvas.onclick({ clientX: (xmm - vb[0]) / vb[2] * PX, clientY: (1200 - vb[1]) / vb[2] * PX })
+
+  const d = doors(p)
+  t.ok('дверь встала в перегородку', d.length === 1, JSON.stringify(d))
+  t.ok('и именно в ту, по которой тапнули',
+    d.length === 1 && d[0].after === p.q('specSheets[0].model.rooms[0].id'), JSON.stringify(d[0]))
+  t.ok('на наружную стену ничего не уехало',
+    p.q('specSheets[0].model.openings.filter(function(o){return o.side!=="part";}).length') === outer0)
+  t.ok('створку есть чем нарисовать', d[0].into === 1 && d[0].hinge === 'start')
+  t.ok('и на чертеже она появилась',
+    (p.run('modelPlanSvg(specSheets[0], true)').match(/data-side="part"/g) || []).length === 1)
+}
+
+// ── 10. «Вернуть» отменяет удаление ──────────────────────────────────────────
+// Удаление здесь необратимо по своей природе: перегородка уносит с собой помещение.
+// Без отмены единственный способ вернуть промах — собирать планировку заново.
+{
+  t.section('Вернуть удалённое')
+  const p = panel()
+  click(p, { a: 'model-full' })
+  t.ok('пока ничего не меняли, «Вернуть» неактивна',
+    /data-a="model-undo" disabled/.test(p.run('modelFullOverlay()')))
+
+  const rooms0 = p.q('specSheets[0].model.rooms.length')
+  click(p, { a: 'model-tool', k: 'del' })
+  click(p, { a: 'model-wall-hit', i: '0' })
+  t.ok('перегородки не стало', p.q('specSheets[0].model.rooms.length') === rooms0 - 1,
+    String(p.q('specSheets[0].model.rooms.length')))
+  t.ok('и кнопка стала активной', !/data-a="model-undo" disabled/.test(p.run('modelFullOverlay()')))
+
+  click(p, { a: 'model-undo' })
+  t.ok('перегородка вернулась', p.q('specSheets[0].model.rooms.length') === rooms0,
+    String(p.q('specSheets[0].model.rooms.length')))
+  t.ok('и характеристики пересчитались обратно',
+    p.q('specSheets[0].specs.rooms.length') === rooms0,
+    String(p.q('specSheets[0].specs.rooms.length')))
+  t.ok('второй раз возвращать нечего', /data-a="model-undo" disabled/.test(p.run('modelFullOverlay()')))
+
+  // Имя комнаты пишется на каждую букву — отменять его посимвольно значит
+  // похоронить в истории ту самую снесённую перегородку.
+  const rid = p.q('specSheets[0].model.rooms[0].id')
+  const inp = p.dom.node({ a: 'model-room-name', id: rid })
+  p.run('bind();')
+  inp.value = 'Санузе'; inp.oninput()
+  inp.value = 'Санузел 2'; inp.oninput()
+  t.ok('переименование историю не засоряет', /data-a="model-undo" disabled/.test(p.run('modelFullOverlay()')))
+}
+
 t.done()
