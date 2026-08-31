@@ -59,24 +59,32 @@ const ids = () => { let i = 0; return () => 'id' + (++i) }
   ok('витраж 2000 с подоконником 200', byId[vit.typeId].w === 2000 && vit.sill === 200)
   ok('витраж не выходит за торец', vit.pos + 2000 <= sideLength(model, 'e'), String(vit.pos))
   ok('простенки торца по 100', vit.pos - model.finish === 100, String(vit.pos - model.finish))
-  // Двери в перегородках проёмами не описываются — они в раскладке помещений.
+  // Межкомнатные двери стоят в перегородках и считаются ровно по разу: дверь
+  // принадлежит двум комнатам сразу, и посчитать её дважды значит заказать лишнюю.
+  const parts = model.openings.filter((o) => o.side === 'part')
+  ok('две двери в перегородках', parts.length === 2, String(parts.length))
+  ok('дверь санузла отмерена 750 от чистовой стены', parts[0].pos - model.finish === 750, String(parts[0].pos))
+  ok('дверь спальни — 1450', parts[1].pos - model.finish === 1450, String(parts[1].pos))
+  ok('петли и сторона открывания заданы',
+    parts.every((o) => o.hinge && o.into), JSON.stringify(parts.map((o) => [o.hinge, o.into])))
   const specs = modelToSpecs(model, winTypes)
-  ok('дверь санузла в раскладке', specs.rooms[0].pts.door === 1, JSON.stringify(specs.rooms[0].pts))
-  ok('дверь спальни не затёрта витражом',
-    specs.rooms[2].pts.door === 1 && specs.rooms[2].pts.win === 1, JSON.stringify(specs.rooms[2].pts))
+  const doors = specs.rooms.reduce((a, r) => a + (r.pts.door || 0), 0)
+  ok('всего дверей три, без задвоения', doors === 3, JSON.stringify(specs.rooms.map((r) => r.pts)))
+  ok('дверь санузла засчитана санузлу', specs.rooms[0].pts.door === 1, JSON.stringify(specs.rooms[0].pts))
+  ok('витраж не затёр раскладку спальни', specs.rooms[2].pts.win === 1, JSON.stringify(specs.rooms[2].pts))
 }
 
 // ── 3. Справочник изделий ────────────────────────────────────────────────────
 {
   console.log('Типовые изделия')
   const a = presetModel('c12-san-liv-bed', [], ids())
-  ok('трёх изделий не хватало — завели', a.winTypes.length === 3, String(a.winTypes.length))
+  ok('четырёх изделий не хватало — завели', a.winTypes.length === 4, String(a.winTypes.length))
   ok('цена не выдумана', a.winTypes.every((t) => t.cost === 0), JSON.stringify(a.winTypes.map((t) => t.cost)))
 
   // Своё изделие того же размера — берём его вместе с ценой, второй копии не заводим.
   const have = [{ id: 'mine', kind: 'door', n: 'Дверь входная (наша)', w: 1000, h: 2100, cost: 27150 }]
   const b = presetModel('c12-san-liv-bed', have, ids())
-  ok('дубля по размеру нет', b.winTypes.length === 3, JSON.stringify(b.winTypes.map((t) => t.n)))
+  ok('дубля по размеру нет', b.winTypes.length === 4, JSON.stringify(b.winTypes.map((t) => t.n)))
   ok('своя дверь осталась своей', b.winTypes[0].id === 'mine' && b.winTypes[0].cost === 27150)
   ok('проём ссылается на неё', b.model.openings[1].typeId === 'mine')
   ok('цена изделий пришла из справочника', modelTotals(b.model, b.winTypes).openingsCost === 27150,
@@ -87,8 +95,12 @@ const ids = () => { let i = 0; return () => 'id' + (++i) }
   const c = presetModel('c12-san-liv-bed', [], ids())
   ok('вторая модель с новыми id', c.model.rooms[0].id !== a.model.rooms[0].id ||
     a.model.rooms[0].id !== MODEL_PRESETS[0].rooms[0].id)
-  ok('заготовка в коде не изменилась', MODEL_PRESETS[0].rooms[0].pts.door === 1 &&
-    !('id' in MODEL_PRESETS[0].rooms[0]))
+  // Заготовку берут много раз — она обязана остаться шаблоном, а не превратиться
+  // в первую собранную из неё модель.
+  ok('заготовка в коде не изменилась',
+    !('id' in MODEL_PRESETS[0].rooms[0]) && !('id' in MODEL_PRESETS[0].openings[0]) &&
+    !('after' in MODEL_PRESETS[0].openings[3]) && MODEL_PRESETS[0].openings[3].afterRoom === 0,
+    JSON.stringify(MODEL_PRESETS[0].openings[3]))
 }
 
 // ── 4. Неизвестная заготовка ─────────────────────────────────────────────────

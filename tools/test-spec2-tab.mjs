@@ -51,9 +51,13 @@ function create(p, preset) {
   // Экрана продажи в разделе нет — его собирают заново.
   const marks = ['spec-new', 'spec-create', 'spec-open', 'spec-back', 'spec-del', 'spec-view', 'spec-preset']
   marks.forEach((m) => t.ok('нет ' + m, html.indexOf('data-a="' + m + '"') < 0))
-  // Схема — чертёж, а не план с мебелью: ни площадей, ни имён комнат.
+  // Схема — чертёж, а не план с мебелью: площадей нет, но имена комнат и марки
+  // проёмов есть — без них чертёж читают, водя пальцем по цепочкам.
   t.ok('площадей на схеме нет', html.indexOf('м²') < 0)
-  t.ok('имён помещений нет', html.indexOf('Кухня-гостиная') < 0 && html.indexOf('Санузел') < 0)
+  t.ok('имена помещений на месте', /САНУЗЕЛ/.test(html) && /СПАЛЬНЯ/.test(html) && /КУХНЯ-ГОСТИНАЯ/.test(html))
+  t.ok('межкомнатные двери отмечены', /Д-2/.test(html) && /Д-3/.test(html))
+  t.ok('окна и вход отмечены', /О-1/.test(html) && /О-2/.test(html) && /Д-1/.test(html))
+  t.ok('цепочки дверей в перегородках нарисованы', /<text[^>]*>1450</.test(html) && /<text[^>]*>750</.test(html))
 
   // Лист в разделе схему не подменяет — сейчас она про заготовку.
   p.run('specSheets2=[' + JSON.stringify(SHEET2) + '];specOpenId="old2";')
@@ -88,8 +92,9 @@ function create(p, preset) {
   const sh = p.q('specSheets')[0]
   t.ok('лист заведён в боевом разделе', p.q('specSheets').length === 1 && p.q('specSheets2').length === 0)
   t.ok('модель собрана', !!sh.model && sh.model.rooms.length === 3, JSON.stringify((sh.model || {}).rooms || null))
-  t.ok('проёмы на месте', (sh.model.openings || []).length === 3)
-  t.ok('изделия заведены в справочник', p.q('winTypes').length === 3, String(p.q('winTypes').length))
+  t.ok('проёмы на месте, включая межкомнатные двери', (sh.model.openings || []).length === 5,
+    String((sh.model.openings || []).length))
+  t.ok('изделия заведены в справочник', p.q('winTypes').length === 4, String(p.q('winTypes').length))
   const areas = (sh.specs.rooms || []).map((r) => Math.round(r.w * r.l * 100) / 100)
   t.ok('площади с чертежа 4,4 / 14,08 / 7,04', String(areas) === '4.4,14.08,7.04', String(areas))
 
@@ -99,7 +104,7 @@ function create(p, preset) {
   p.run('bind();')
   btn.onclick()
   t.ok('выбор по комнатам сброшен', Object.keys(p.q('specSheets')[0].rooms || {}).length === 0)
-  t.ok('изделия не задвоились', p.q('winTypes').length === 3, String(p.q('winTypes').length))
+  t.ok('изделия не задвоились', p.q('winTypes').length === 4, String(p.q('winTypes').length))
 }
 
 // ── 4. Раздел как данные ─────────────────────────────────────────────────────

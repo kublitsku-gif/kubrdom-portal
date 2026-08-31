@@ -48,7 +48,8 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom,
   splitLengthwise, mergeLengthwise, moveLengthwise, elevation,
   bayAt, splitAt, splitLengthwiseAt, nearestSide, opPosAt,
-  modelToSpecs, modelTotals, modelIssues, modelScheme, MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
+  modelToSpecs, modelTotals, modelIssues, modelScheme, partitionAt,
+  MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2 } from "../src/spec2.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
@@ -9630,6 +9631,14 @@ function modelPlanSvg(sh, full){
   (m.openings||[]).forEach(function(op){
     const t=winType(op.typeId); if(!t)return;
     const km=winKindMeta(t.kind), ln=Number(t.w)||0, pos=Number(op.pos)||0;
+    // Проём в перегородке: рисуем на своей стене, но без ручки — тянуть его общим
+    // жестом нельзя, у него другая ось и своя перегородка.
+    if(op.side==="part"){
+      const pt=partitionAt(m, op.after);
+      if(!pt)return;
+      g+='<rect x="'+(pt.x-30)+'" y="'+pos+'" width="'+(pt.w+60)+'" height="'+ln+'" fill="#fff" stroke="'+km.c+'" stroke-width="40"/>';
+      return;
+    }
     const along=(op.side==="n"||op.side==="s");
     let x,y,ww,hh;
     if(op.side==="n"){ x=pos; y=-110; ww=ln; hh=220; }
@@ -10253,8 +10262,11 @@ function schChainH(ch, y, dir){
 }
 function schChainV(ch, x, dir){
   let g='';
+  // Внутренняя цепочка стоит вплотную к своей перегородке: длинная выноска
+  // перечёркивала бы план поперёк комнаты.
+  const reach=ch.inner?260:(SCH_FIRST-140);
   ch.ticks.forEach(function(t){
-    g+='<line x1="'+(x-dir*90)+'" y1="'+t+'" x2="'+(x-dir*(SCH_FIRST-140))+'" y2="'+t+'" stroke="'+SCH_DIM+'" stroke-width="12" opacity="0.5"/>';
+    g+='<line x1="'+(x-dir*90)+'" y1="'+t+'" x2="'+(x-dir*reach)+'" y2="'+t+'" stroke="'+SCH_DIM+'" stroke-width="12" opacity="0.5"/>';
     g+=schTick(x,t);
   });
   g+=schDimLine(x,ch.ticks[0],x,ch.ticks[ch.ticks.length-1]);
@@ -10266,22 +10278,15 @@ function schChainV(ch, x, dir){
   return g;
 }
 
-// Створка двери: петли на одном откосе, полотно наружу, дуга — путь створки.
-// Куда открывать, модель не знает, и выдумывать сторону нельзя: рисуем наружу,
-// это верно для входной двери и честно для любой другой.
+// Створка: точки считает модель (`swing`), панель их только соединяет. Сторону
+// дуги берём из геометрии, а не угадываем: короткая дуга от откоса к полотну.
 function schDoorSwing(op){
-  const wd=op.width;
-  const out=(op.side==="n")?[0,-1]:(op.side==="s")?[0,1]:(op.side==="w")?[-1,0]:[1,0];
-  const along=(op.side==="n"||op.side==="s");
-  // Петли — на дальнем откосе, отсчёт полотна идёт к ближнему.
-  const hx=along?(op.x+wd):(op.x+(out[0]>0?op.w:0));
-  const hy=along?(op.y+(out[1]>0?op.h:0)):(op.y+wd);
-  const jx=along?op.x:hx, jy=along?hy:op.y;
-  const tx=hx+out[0]*wd, ty=hy+out[1]*wd;
-  const aJ=Math.atan2(jy-hy,jx-hx), aT=Math.atan2(ty-hy,tx-hx);
+  const sw=op.swing; if(!sw)return "";
+  const H=sw.hinge, J=sw.jamb, T=sw.tip, wd=op.width;
+  const aJ=Math.atan2(J.y-H.y,J.x-H.x), aT=Math.atan2(T.y-H.y,T.x-H.x);
   let d=aT-aJ; while(d>Math.PI)d-=2*Math.PI; while(d<=-Math.PI)d+=2*Math.PI;
-  return '<line x1="'+hx+'" y1="'+hy+'" x2="'+tx+'" y2="'+ty+'" stroke="#0d1b2e" stroke-width="70"/>'+
-    '<path d="M '+jx+' '+jy+' A '+wd+' '+wd+' 0 0 '+(d>0?1:0)+' '+tx+' '+ty+'" fill="none" stroke="#0d1b2e" stroke-width="22" stroke-dasharray="120 90"/>';
+  return '<line x1="'+H.x+'" y1="'+H.y+'" x2="'+T.x+'" y2="'+T.y+'" stroke="#0d1b2e" stroke-width="70"/>'+
+    '<path d="M '+J.x+' '+J.y+' A '+wd+' '+wd+' 0 0 '+(d>0?1:0)+' '+T.x+' '+T.y+'" fill="none" stroke="#0d1b2e" stroke-width="22" stroke-dasharray="120 90"/>';
 }
 
 function modelSchemeSvg(model, types){
@@ -10310,12 +10315,28 @@ function modelSchemeSvg(model, types){
         ? '<line x1="'+op.x+'" y1="'+cy0+'" x2="'+(op.x+op.w)+'" y2="'+cy0+'" stroke="#0d1b2e" stroke-width="16"/>'
         : '<line x1="'+cx0+'" y1="'+op.y+'" x2="'+cx0+'" y2="'+(op.y+op.h)+'" stroke="#0d1b2e" stroke-width="16"/>';
     }
+    // Марка и размер — как на чертеже: Д-1 сверху, габарит проёма под ней.
     const cx=op.x+op.w/2, cy=op.y+op.h/2;
-    const lx=(op.side==="w")?cx+330:(op.side==="e")?cx-330:cx;
-    const ly=(op.side==="n")?cy+330:(op.side==="s")?cy-190:cy;
-    g+='<text x="'+lx+'" y="'+ly+'" font-size="165" fill="#0d1b2e" font-weight="700" text-anchor="middle"'+
-      ((op.side==="w"||op.side==="e")?' transform="rotate(-90 '+lx+' '+ly+')"':'')+'>'+
+    const part=(op.side==="part");
+    const vert=(op.side==="w"||op.side==="e");
+    const dirX=(part&&op.swing&&op.swing.tip.x>op.x)?1:-1;
+    const lx=part?(op.x+op.w/2+dirX*300):(vert?(cx+(op.side==="e"?-420:420)):cx);
+    const ly=part?(op.y-360):(vert?cy:(op.side==="n"?cy+420:cy-300));
+    const rot=vert?' transform="rotate(-90 '+lx+' '+ly+')"':'';
+    const anch=part?(dirX>0?"start":"end"):"middle";
+    g+='<text x="'+lx+'" y="'+ly+'" font-size="180" fill="#0d1b2e" font-weight="700" text-anchor="'+anch+'"'+rot+'>'+esc(op.mark)+'</text>'+
+      '<text x="'+(vert?lx+200:lx)+'" y="'+(vert?ly:ly+195)+'" font-size="150" fill="#5a7a9a" text-anchor="'+anch+'"'+
+      (vert?' transform="rotate(-90 '+(lx+200)+' '+ly+')"':'')+'>'+
       esc(op.width+"×"+op.height+(op.sill?" · h"+op.sill:""))+'</text>';
+  });
+  // Имена помещений: без них чертёж читают, водя пальцем по цепочкам.
+  sc.labels.forEach(function(r){
+    g+='<text x="'+r.x+'" y="'+(sc.finish+(sc.w-sc.finish*2)*0.34)+'" font-size="190" fill="#9aabbf" font-weight="700" text-anchor="middle">'+
+      esc(String(r.name||"").toUpperCase())+'</text>';
+  });
+  // Цепочки дверей в перегородках стоят у своей перегородки, внутри плана.
+  sc.dims.filter(function(d){return d.side==="part";}).forEach(function(ch){
+    g+=schChainV(ch, ch.at-260, 1);
   });
   // Размерные цепочки
   top.forEach(function(ch,i){ g+=schChainH(ch, -(SCH_FIRST+i*SCH_GAP), 1); });
