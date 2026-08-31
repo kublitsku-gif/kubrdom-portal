@@ -294,4 +294,40 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   t.ok('переименование историю не засоряет', /data-a="model-undo" disabled/.test(p.run('modelFullOverlay()')))
 }
 
+// ── 11. Полотно межкомнатной двери заводится из редактора ────────────────────
+// Лист, собранный до появления межкомнатных дверей, такого изделия не знает: в
+// ряду изделий его нет, и поставить дверь между комнатами нечем. Уходить за одной
+// строкой справочника в карточку — это выйти из редактора посреди работы.
+{
+  t.section('Завести межкомнатное полотно')
+  const p = panel()
+  // Лист «из прошлого»: двери в перегородках и само полотно ещё не заводили.
+  p.run('specSheets[0].model.openings=specSheets[0].model.openings.filter(function(o){return o.side!=="part";});' +
+    'winTypes=winTypes.filter(function(t){return !(t.kind==="door"&&t.w===700);});modelSync(specSheets[0]);')
+  click(p, { a: 'model-full' })
+  click(p, { a: 'model-tool', k: 'op' })
+  const bar = p.run('modelFullOverlay()')
+  t.ok('кнопка «завести полотно» предлагается', bar.indexOf('data-a="model-inner-door"') >= 0)
+
+  click(p, { a: 'model-inner-door' })
+  const d = p.q('winTypes.filter(function(t){return t.kind==="door"&&t.w===700;})')
+  t.ok('полотно заведено 700×2050', d.length === 1 && d[0].h === 2050, JSON.stringify(d))
+  t.ok('цена нулевая — её ставит человек', d[0].cost === 0, String(d[0].cost))
+  t.ok('и оно сразу выбрано для установки', p.q('modelPlaceType') === d[0].id)
+  t.ok('инструмент — «Проём»', p.q('modelTool') === 'op')
+  t.ok('второй раз кнопка не предлагается',
+    p.run('modelFullOverlay()').indexOf('data-a="model-inner-door"') < 0)
+
+  // И этим полотном дверь ставится тапом по перегородке.
+  const plan = p.run('modelPlanSvg(specSheets[0], true)')
+  const vb = /viewBox="([-\d]+) ([-\d]+) (\d+) (\d+)"/.exec(plan).slice(1).map(Number)
+  const PX = 1200
+  const canvas = p.dom.node({ a: 'model-canvas', vb: vb.join(' ') })
+  canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: PX, height: PX * vb[3] / vb[2] })
+  p.run('bind();')
+  const xmm = p.q('modelBays(specSheets[0].model)[0].x1') + p.q('specSheets[0].model.wallThick') / 2
+  canvas.onclick({ clientX: (xmm - vb[0]) / vb[2] * PX, clientY: (1200 - vb[1]) / vb[2] * PX })
+  t.ok('дверь встала в перегородку', doors(p).length === 1, JSON.stringify(doors(p)))
+}
+
 t.done()

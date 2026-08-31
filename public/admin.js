@@ -48,7 +48,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom,
   splitLengthwise, mergeLengthwise, moveLengthwise, elevation,
   bayAt, splitAt, splitLengthwiseAt, nearestSide, opPosAt,
-  modelToSpecs, modelTotals, modelIssues, modelScheme, modelAreas, partitionAt,
+  modelToSpecs, modelTotals, modelIssues, modelScheme, modelAreas, partitionAt, INNER_DOOR,
   MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2 } from "../src/spec2.js";
@@ -9572,6 +9572,13 @@ const WIN_PRESETS=[
   {kind:"door", n:"Дверь входная 1000×2100",w:1000, h:2100, cost:27150},
 ];
 function winType(id){ return (winTypes||[]).find(function(t){return t.id===id;})||null; }
+// Ищем по ВИДУ И РАЗМЕРУ, а не по имени: имена правят и дублируют, а полотно
+// 700×2050 остаётся тем же полотном.
+function findInnerDoor(){
+  return (winTypes||[]).find(function(t){
+    return t&&(t.kind||"win")==="door"&&Number(t.w)===INNER_DOOR.w&&Number(t.h)===INNER_DOOR.h;
+  })||null;
+}
 function winKindMeta(k){ return k==="door"?{n:"Дверь",c:"#8e44ad",emoji:"🚪"}:{n:"Окно",c:"#2980b9",emoji:"🪟"}; }
 
 // Модель — источник характеристик: помещения и раскладка приезжают из неё, поэтому
@@ -9836,7 +9843,11 @@ function modelFullOverlay(){
             const on=modelPlaceType===t.id, km=winKindMeta(t.kind);
             return '<button data-a="model-place-type" data-t="'+t.id+'" style="flex-shrink:0;border:1.5px solid '+(on?km.c:"rgba(255,255,255,.18)")+';background:'+(on?km.c:"transparent")+';color:#fff;border-radius:9px;padding:6px 11px;font-size:11.5px;font-weight:700;cursor:pointer">'+km.emoji+' '+esc(t.n)+'</button>';
           }).join("")
-        : '<span style="font-size:12px;color:#9fb3c8">Сначала заведите типовые изделия — в карточке, блок «Типовые изделия».</span>')+
+        : '<span style="font-size:12px;color:#9fb3c8">Изделий пока нет — заведите первое кнопкой справа или в карточке, блок «Типовые изделия».</span>')+
+      // Дверь между комнатами ставить нечем, пока такого полотна нет в справочнике:
+      // лист, собранный до появления межкомнатных дверей, их и не знает. Заводим
+      // тут же — уходить из редактора за одной строкой справочника незачем.
+      (findInnerDoor()?'':'<button data-a="model-inner-door" title="Завести стандартное межкомнатное полотно и выбрать его" style="flex-shrink:0;border:1.5px dashed #8e44ad;background:transparent;color:#c79ae0;border-radius:9px;padding:6px 11px;font-size:11.5px;font-weight:700;cursor:pointer">+ 🚪 '+esc(INNER_DOOR.n)+'</button>')+
     '</div>';
   }
   // Холст и площади рядом. На большом экране панель стоит справа и числа меняются
@@ -19037,6 +19048,16 @@ function bind(){
       modelSync(sh); fl();
     };}
     else if(a==="model-zoom"){el.onclick=()=>{ modelZoom=parseInt(el.dataset.z,10)||1; render(); };}
+    else if(a==="model-inner-door"){el.onclick=()=>{
+      const has=findInnerDoor();
+      if(!has){
+        // Цена нулевая: её ставит человек, а выдумывать её за него — врать смете.
+        winTypes=winTypes.concat([Object.assign({id:gid(), cost:0}, INNER_DOOR)]);
+      }
+      modelPlaceType=(has||winTypes[winTypes.length-1]).id;
+      modelTool="op";
+      fl();
+    };}
     else if(a==="model-place-type"){el.onclick=()=>{ modelPlaceType=el.dataset.t; render(); };}
     else if(a==="model-op-hit"){el.onclick=()=>{
       // В режиме «убрать» тап по проёму его удаляет; в остальных — просто выделяет.
