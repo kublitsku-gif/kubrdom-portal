@@ -48,7 +48,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom,
   splitLengthwise, mergeLengthwise, moveLengthwise, elevation,
   bayAt, splitAt, splitLengthwiseAt, nearestSide, opPosAt,
-  modelToSpecs, modelTotals, modelIssues, MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
+  modelToSpecs, modelTotals, modelIssues, modelScheme, MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2 } from "../src/spec2.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
@@ -9738,7 +9738,7 @@ function modelElevSvg(sh){
   });
   g+='<text x="'+(L/2)+'" y="'+(-200)+'" text-anchor="middle" font-size="190" fill="#9aabbf">высота '+numRu(Math.round(H/10)/100)+' м · отметки в см от чистого пола</text>';
   const vb=(-PAD)+" "+(-PAD)+" "+(L+PAD*2)+" "+(H+PAD*2);
-  return '<svg viewBox="'+vb+'" style="width:100%;height:auto;display:block;user-select:none">'+g+'</svg>';
+  return '<svg viewBox="'+vb+'" style="width:100%;min-width:820px;height:auto;display:block;user-select:none">'+g+'</svg>';
 }
 
 // Заготовки планировок (src/model.js): типовой контейнер уже начерчен — отсеки,
@@ -10212,16 +10212,139 @@ function specListHtml(list){
   }).join("");
 }
 
-// ═══ ВКЛАДКА «СПЕЦИФИКАЦИЯ 2» ════════════════════════════════════════════════
-// Раздел намеренно ПУСТОЙ. Это не заглушка «пока не сделали»: логику раздела
-// собирают с нуля, и любой унаследованный экран — список, форма создания, карточка —
-// молча решал бы за неё, как всё должно выглядеть.
+// ═══ СХЕМА ПЛАНА ═════════════════════════════════════════════════════════════
+// Чертёж, а не картинка дома: несущие стены, перегородки, проёмы и размерные
+// цепочки. Мебели, сантехники и площадей здесь нет — это другой документ. План с
+// диваном отвечает на вопрос «как жить», схема — «что строить», и вместе они
+// мешают обоим.
 //
-// Живым осталось только то, что экрана не касается: свой раздел снимка
-// (`specSheets2`), поиск листа по id в обеих коллекциях и развилка расчёта
-// (`src/spec2.js`). Отсюда раздел и будет расти.
+// Геометрию и цепочки считает `modelScheme` (src/model.js) — здесь только SVG.
+// Рисуем в миллиметрах модели: viewBox сам приводит их к экрану, поэтому чертёж
+// одинаково читается на телефоне и на мониторе.
+const SCH_DIM="#1c4f8f";
+const SCH_FIRST=560, SCH_GAP=640;     // отступ первой цепочки и шаг между ними
+
+function schDimLine(x1,y1,x2,y2){
+  return '<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" stroke="'+SCH_DIM+'" stroke-width="24"/>';
+}
+function schTick(x,y){
+  return '<line x1="'+(x-95)+'" y1="'+(y+95)+'" x2="'+(x+95)+'" y2="'+(y-95)+'" stroke="'+SCH_DIM+'" stroke-width="26"/>';
+}
+function schText(x,y,t,size,anchor,rot){
+  return '<text x="'+x+'" y="'+y+'" font-size="'+size+'" fill="'+SCH_DIM+'" text-anchor="'+(anchor||"middle")+'"'+
+    (rot?' transform="rotate('+rot+' '+x+' '+y+')"':'')+'>'+esc(t)+'</text>';
+}
+// Узкий отрезок подписью поперёк не влезает — ставим её вдоль, как на чертежах.
+const SCH_NARROW=900;
+
+function schChainH(ch, y, dir){
+  let g='';
+  ch.ticks.forEach(function(t){
+    g+='<line x1="'+t+'" y1="'+(y-dir*90)+'" x2="'+t+'" y2="'+(y-dir*(SCH_FIRST-140))+'" stroke="'+SCH_DIM+'" stroke-width="12" opacity="0.5"/>';
+    g+=schTick(t,y);
+  });
+  g+=schDimLine(ch.ticks[0],y,ch.ticks[ch.ticks.length-1],y);
+  ch.segs.forEach(function(len,i){
+    const c=(ch.ticks[i]+ch.ticks[i+1])/2;
+    if(len<SCH_NARROW) g+=schText(c+70, y-dir*230, String(len), 170, "start", -90);
+    else g+=schText(c, y-dir*150-(dir>0?0:150), String(len), 215);
+  });
+  return g;
+}
+function schChainV(ch, x, dir){
+  let g='';
+  ch.ticks.forEach(function(t){
+    g+='<line x1="'+(x-dir*90)+'" y1="'+t+'" x2="'+(x-dir*(SCH_FIRST-140))+'" y2="'+t+'" stroke="'+SCH_DIM+'" stroke-width="12" opacity="0.5"/>';
+    g+=schTick(x,t);
+  });
+  g+=schDimLine(x,ch.ticks[0],x,ch.ticks[ch.ticks.length-1]);
+  ch.segs.forEach(function(len,i){
+    const c=(ch.ticks[i]+ch.ticks[i+1])/2;
+    if(len<SCH_NARROW) g+=schText(x-dir*230, c+70, String(len), 170, dir>0?"end":"start");
+    else g+=schText(x-dir*150, c, String(len), 215, "middle", -90);
+  });
+  return g;
+}
+
+// Створка двери: петли на одном откосе, полотно наружу, дуга — путь створки.
+// Куда открывать, модель не знает, и выдумывать сторону нельзя: рисуем наружу,
+// это верно для входной двери и честно для любой другой.
+function schDoorSwing(op){
+  const wd=op.width;
+  const out=(op.side==="n")?[0,-1]:(op.side==="s")?[0,1]:(op.side==="w")?[-1,0]:[1,0];
+  const along=(op.side==="n"||op.side==="s");
+  // Петли — на дальнем откосе, отсчёт полотна идёт к ближнему.
+  const hx=along?(op.x+wd):(op.x+(out[0]>0?op.w:0));
+  const hy=along?(op.y+(out[1]>0?op.h:0)):(op.y+wd);
+  const jx=along?op.x:hx, jy=along?hy:op.y;
+  const tx=hx+out[0]*wd, ty=hy+out[1]*wd;
+  const aJ=Math.atan2(jy-hy,jx-hx), aT=Math.atan2(ty-hy,tx-hx);
+  let d=aT-aJ; while(d>Math.PI)d-=2*Math.PI; while(d<=-Math.PI)d+=2*Math.PI;
+  return '<line x1="'+hx+'" y1="'+hy+'" x2="'+tx+'" y2="'+ty+'" stroke="#0d1b2e" stroke-width="70"/>'+
+    '<path d="M '+jx+' '+jy+' A '+wd+' '+wd+' 0 0 '+(d>0?1:0)+' '+tx+' '+ty+'" fill="none" stroke="#0d1b2e" stroke-width="22" stroke-dasharray="120 90"/>';
+}
+
+function modelSchemeSvg(model, types){
+  const sc=modelScheme(model, types);
+  const L=sc.l, W=sc.w;
+  const byS=function(sd){ return sc.dims.filter(function(d){return d.side===sd;}); };
+  const top=byS("top"), bottom=byS("bottom"), left=byS("left"), right=byS("right");
+  const pad=function(list){ return list.length?(SCH_FIRST+(list.length-1)*SCH_GAP+520):600; };
+  const pT=pad(top), pB=pad(bottom), pL=pad(left), pR=pad(right);
+
+  let g='<defs><pattern id="sch-hatch" width="150" height="150" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">'+
+    '<rect width="150" height="150" fill="#eef1f5"/><line x1="0" y1="0" x2="0" y2="150" stroke="#9aabbf" stroke-width="20"/></pattern></defs>';
+
+  // Стены и перегородки
+  sc.walls.forEach(function(w){
+    g+='<rect x="'+w.x+'" y="'+w.y+'" width="'+w.w+'" height="'+w.h+'" fill="url(#sch-hatch)" stroke="#0d1b2e" stroke-width="30"/>';
+  });
+  // Проёмы: окно — рамой со створкой, дверь — полотном и дугой
+  sc.openings.forEach(function(op){
+    g+='<rect x="'+op.x+'" y="'+op.y+'" width="'+op.w+'" height="'+op.h+'" fill="#fff" stroke="#0d1b2e" stroke-width="26"/>';
+    if(op.kind==="door"){ g+=schDoorSwing(op); }
+    else {
+      const along=(op.side==="n"||op.side==="s");
+      const cx0=op.x+op.w/2, cy0=op.y+op.h/2;
+      g+=along
+        ? '<line x1="'+op.x+'" y1="'+cy0+'" x2="'+(op.x+op.w)+'" y2="'+cy0+'" stroke="#0d1b2e" stroke-width="16"/>'
+        : '<line x1="'+cx0+'" y1="'+op.y+'" x2="'+cx0+'" y2="'+(op.y+op.h)+'" stroke="#0d1b2e" stroke-width="16"/>';
+    }
+    const cx=op.x+op.w/2, cy=op.y+op.h/2;
+    const lx=(op.side==="w")?cx+330:(op.side==="e")?cx-330:cx;
+    const ly=(op.side==="n")?cy+330:(op.side==="s")?cy-190:cy;
+    g+='<text x="'+lx+'" y="'+ly+'" font-size="165" fill="#0d1b2e" font-weight="700" text-anchor="middle"'+
+      ((op.side==="w"||op.side==="e")?' transform="rotate(-90 '+lx+' '+ly+')"':'')+'>'+
+      esc(op.width+"×"+op.height+(op.sill?" · h"+op.sill:""))+'</text>';
+  });
+  // Размерные цепочки
+  top.forEach(function(ch,i){ g+=schChainH(ch, -(SCH_FIRST+i*SCH_GAP), 1); });
+  bottom.forEach(function(ch,i){ g+=schChainH(ch, W+SCH_FIRST+i*SCH_GAP, -1); });
+  left.forEach(function(ch,i){ g+=schChainV(ch, -(SCH_FIRST+i*SCH_GAP), 1); });
+  right.forEach(function(ch,i){ g+=schChainV(ch, L+SCH_FIRST+i*SCH_GAP, -1); });
+
+  const vb=(-pL)+" "+(-pT)+" "+(L+pL+pR)+" "+(W+pT+pB);
+  return '<svg viewBox="'+vb+'" style="width:100%;height:auto;display:block;user-select:none">'+g+'</svg>';
+}
+
+// ═══ ВКЛАДКА «СПЕЦИФИКАЦИЯ 2» ════════════════════════════════════════════════
+// В разделе пока одно — схема плана. Списка, формы и карточки здесь нет намеренно:
+// логику раздела собирают с нуля, и унаследованный экран решал бы за неё, как всё
+// должно выглядеть. Схема рисуется по МОДЕЛИ, а не картинкой: подвинется
+// перегородка — поедет и чертёж, и размерные цепочки под ним.
 function tSpec2(){
-  return '<div></div>';
+  const pr=MODEL_PRESETS[0];
+  const built=pr?presetModel(pr, winTypes, gid):null;
+  if(!built)return '<div></div>';
+  return '<div>'+
+    '<div style="font-size:11px;color:#8e44ad;font-weight:700;letter-spacing:1px;margin-bottom:2px">📐 СХЕМА ПЛАНА</div>'+
+    '<div style="font-size:12px;color:#5a7a9a;margin-bottom:10px;line-height:1.45">'+esc(pr.n)+'</div>'+
+    '<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:12px;margin-bottom:9px;overflow-x:auto">'+
+      modelSchemeSvg(built.model, built.winTypes)+
+    '</div>'+
+    '<div style="font-size:10.5px;color:#9aabbf;line-height:1.5;margin-bottom:20px">'+
+      'Несущие стены, перегородки, проёмы и размеры — в миллиметрах. Мебель, сантехника и площади на схему не выносятся.</div>'+
+  '</div>';
 }
 
 // Карточка спецификации: всё решение продавца на одном экране.

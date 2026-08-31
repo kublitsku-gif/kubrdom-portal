@@ -507,6 +507,94 @@ export function elevation(model, side, winTypes, points) {
   return { side: side, len: len, height: H, rooms: wallRooms, openings: ops, marks: marks };
 }
 
+// ─── СХЕМА ПЛАНА ─────────────────────────────────────────────────────────────
+// Чертёж в том виде, в каком его читают на площадке: несущие стены, перегородки,
+// проёмы и размерные цепочки. Мебели, сантехники и площадей здесь нет намеренно —
+// это разные документы. Мебель на плане отвечает на вопрос «как жить», схема — на
+// вопрос «что строить», и смешанные вместе они мешают обоим.
+//
+// Геометрия считается здесь, а не в панели: те же числа нужны экрану, печати и
+// проверке, и разъехаться им нельзя. Панель из этого рисует SVG, и только.
+//
+// Стена коробки на схеме — это ОБШИВКА (`finish`): своей толщины у железа
+// контейнера модель не знает, а обрешётка с утеплителем — знает, и именно она
+// съедает те сантиметры, из-за которых площади не сходятся с чертежом.
+export function modelScheme(model, winTypes) {
+  const m = model || {};
+  const fin = (m.finish == null) ? FINISH_THICK : (Number(m.finish) || 0);
+  const th = Number(m.wallThick) || 0;
+  const W = Number(m.w) || 0;
+  const L = totalLength(m);
+  const bays = modelBays(m);
+  const byType = {};
+  (winTypes || []).forEach(function (t) { if (t && t.id) byType[t.id] = t; });
+
+  const walls = [
+    { kind: "shell", x: 0, y: 0, w: L, h: fin },
+    { kind: "shell", x: 0, y: W - fin, w: L, h: fin },
+    { kind: "shell", x: 0, y: fin, w: fin, h: Math.max(0, W - fin * 2) },
+    { kind: "shell", x: L - fin, y: fin, w: fin, h: Math.max(0, W - fin * 2) },
+  ];
+  bays.forEach(function (b, i) {
+    if (i < bays.length - 1) walls.push({ kind: "part", x: b.x1, y: fin, w: th, h: Math.max(0, W - fin * 2) });
+    // Продольная перегородка (санузел в углу) идёт по чистовой длине своего отсека.
+    if (b.sub) {
+      const x0 = Math.max(b.x0, fin), x1 = Math.min(b.x1, L - fin);
+      walls.push({ kind: "part", x: x0, y: Number(b.sub.at) || 0, w: Math.max(0, x1 - x0), h: th });
+    }
+  });
+
+  const openings = (m.openings || []).map(function (op) {
+    const t = byType[op.typeId] || { n: "Проём", w: 0, h: 0, kind: "win" };
+    const wd = Number(t.w) || 0, pos = Number(op.pos) || 0;
+    const sill = (op.sill == null) ? ((t.kind === "door") ? 0 : 900) : (Number(op.sill) || 0);
+    const box = (op.side === "n") ? { x: pos, y: 0, w: wd, h: fin }
+      : (op.side === "s") ? { x: pos, y: W - fin, w: wd, h: fin }
+      : (op.side === "w") ? { x: 0, y: pos, w: fin, h: wd }
+      : { x: L - fin, y: pos, w: fin, h: wd };
+    return {
+      id: op.id, side: op.side, kind: t.kind || "win", name: t.n || "Проём",
+      pos: pos, width: wd, height: Number(t.h) || 0, sill: sill,
+      x: box.x, y: box.y, w: box.w, h: box.h,
+    };
+  }).filter(function (o) { return o.width > 0; });
+
+  // Размерная цепочка — набор отметок и длин между ними. Считаем отсюда, чтобы
+  // подпись на чертеже не могла разойтись с моделью: сумма цепочки равна габариту.
+  const chain = function (side, span, marks, name) {
+    const seen = {};
+    const ticks = marks.concat([0, span])
+      .map(function (v) { return Math.round(Math.max(0, Math.min(span, v))); })
+      .filter(function (v) { if (seen[v]) return false; seen[v] = 1; return true; })
+      .sort(function (a, b) { return a - b; });
+    const segs = [];
+    for (let i = 0; i < ticks.length - 1; i++) segs.push(ticks[i + 1] - ticks[i]);
+    return { side: side, name: name, span: span, ticks: ticks, segs: segs };
+  };
+  const along = function (sd) {
+    return openings.filter(function (o) { return o.side === sd; })
+      .reduce(function (a, o) { return a.concat([o.pos, o.pos + o.width]); }, []);
+  };
+
+  const bayMarks = [fin];
+  bays.forEach(function (b, i) {
+    bayMarks.push((i === bays.length - 1) ? (b.x1 - fin) : b.x1);
+    if (i < bays.length - 1) bayMarks.push(b.x1 + th);
+  });
+
+  const dims = [
+    chain("top", L, bayMarks, "Помещения и перегородки"),
+    chain("top", L, [], "Габарит"),
+    chain("left", W, [fin, W - fin], "Ширина"),
+  ];
+  if (along("s").length) dims.push(chain("bottom", L, along("s"), "Проёмы"));
+  if (along("n").length) dims.push(chain("top", L, along("n"), "Проёмы"));
+  if (along("e").length) dims.push(chain("right", W, along("e"), "Проёмы"));
+  if (along("w").length) dims.push(chain("left", W, along("w"), "Проёмы"));
+
+  return { l: L, w: W, finish: fin, wallThick: th, walls: walls, openings: openings, dims: dims };
+}
+
 // Что мешает считать по модели. Продавец должен видеть это до клиента.
 export function modelIssues(model, winTypes) {
   const out = [];

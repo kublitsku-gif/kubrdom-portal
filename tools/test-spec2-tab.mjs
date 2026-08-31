@@ -41,18 +41,25 @@ function create(p, preset) {
   btn.onclick()
 }
 
-// ── 1. Вкладка пуста ─────────────────────────────────────────────────────────
+// ── 1. На вкладке только схема ───────────────────────────────────────────────
 {
   t.section('Вкладка «Спецификация 2»')
   const p = panel()
-  const empty = p.run('tSpec2()')
-  t.ok('ничего не рисует', empty === '<div></div>', JSON.stringify(empty))
-  // Даже если листы в разделе есть — экрана для них нет.
+  const html = p.run('tSpec2()')
+  t.ok('схема нарисована', html.indexOf('<svg') >= 0 && html.indexOf('sch-hatch') >= 0)
+  t.ok('размеры на чертеже есть', /<text[^>]*>11952</.test(html), html.slice(0, 200))
+  // Экрана продажи в разделе нет — его собирают заново.
+  const marks = ['spec-new', 'spec-create', 'spec-open', 'spec-back', 'spec-del', 'spec-view', 'spec-preset']
+  marks.forEach((m) => t.ok('нет ' + m, html.indexOf('data-a="' + m + '"') < 0))
+  // Схема — чертёж, а не план с мебелью: ни площадей, ни имён комнат.
+  t.ok('площадей на схеме нет', html.indexOf('м²') < 0)
+  t.ok('имён помещений нет', html.indexOf('Кухня-гостиная') < 0 && html.indexOf('Санузел') < 0)
+
+  // Лист в разделе схему не подменяет — сейчас она про заготовку.
   p.run('specSheets2=[' + JSON.stringify(SHEET2) + '];specOpenId="old2";')
-  const withData = p.run('tSpec2()')
-  t.ok('лист в разделе её не наполняет', withData === '<div></div>', JSON.stringify(withData).slice(0, 200))
-  const marks = ['spec-new', 'spec-create', 'spec-open', 'spec-back', 'spec-del', 'model-preset']
-  marks.forEach((m) => t.ok('нет ' + m, withData.indexOf('data-a="' + m + '"') < 0))
+  t.ok('лист в разделе экрана не добавляет', p.run('tSpec2()') === html)
+  // Справочник изделий портала от рендера не растёт: схема строится копией.
+  t.ok('изделия в портале не заводятся', p.q('winTypes').length === 0, String(p.q('winTypes').length))
 }
 
 // ── 2. Живой раздел не задет ─────────────────────────────────────────────────
