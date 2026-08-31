@@ -528,6 +528,32 @@ function assembled(p) {
   // Цифру пересекают выносные линии соседних цепочек — под ней белая подложка.
   t.ok('под цифрами подложка', narrowTexts.every((x) => x.indexOf('paint-order="stroke"') > 0))
 
+  // Створка выходит из коробки на всю ширину полотна. Размерная цепочка обязана
+  // лежать ЗА ней: линия, перечёркнутая дверью, читается как часть двери.
+  // В этом листе дверей нет — ставим входную на длинную стену.
+  p.run('winTypes=winTypes.concat([{id:"td",kind:"door",n:"Дверь 1000×2100",w:1000,h:2100,cost:0}]);')
+  p.run('(function(){var sh=specSheet(' + JSON.stringify(id) + ');' +
+    'sh.model.openings=(sh.model.openings||[]).concat([{id:"od",side:"s",pos:1000,sill:0,typeId:"td"}]);' +
+    'modelSync(sh);})();')
+  const withDoor = p.run('modelPlanSvg(specSheet(' + JSON.stringify(id) + '),true)')
+  const sc = p.q('modelScheme(specSheet(' + JSON.stringify(id) + ').model, winTypes)')
+  const outward = sc.openings.filter((o) => o.swing && o.swing.tip.y > sc.w)
+  t.ok('дверь наружу на чертеже есть', outward.length > 0, JSON.stringify(sc.openings.map((o) => o.side)))
+  const tipY = Math.max(...outward.map((o) => o.swing.tip.y))
+  // Размерные линии — единственные с этой толщиной; берём те, что ниже коробки.
+  const dimY = [...withDoor.matchAll(/<line x1="[-\d.]+" y1="([-\d.]+)"[^>]*stroke-width="24"/g)]
+    .map((m) => Number(m[1])).filter((y) => y > sc.w)
+  t.ok('цепочки снизу есть', dimY.length > 0, JSON.stringify(dimY))
+  t.ok('и ни одна не проходит сквозь створку', dimY.every((y) => y > tipY),
+    'створка до ' + tipY + ', линии на ' + dimY.join(', '))
+
+  // На глухой стене цепочка не отъезжает: отступ платится только за размах створки.
+  const roomier = p.q('(function(){var m=JSON.parse(JSON.stringify(specSheet(' + JSON.stringify(id) + ').model));' +
+    'm.openings.forEach(function(o){o.into=-1;});return modelSchemeSvg(m, winTypes);})()')
+  const vbOf = (h) => Number(/viewBox="[-\d]+ [-\d]+ \d+ (\d+)"/.exec(h)[1])
+  t.ok('внутрь открытая дверь поля не занимает', vbOf(roomier) < vbOf(withDoor),
+    vbOf(roomier) + ' против ' + vbOf(withDoor))
+
   // Жест целиком: палец проехал N пикселей — перегородка обязана проехать ровно
   // столько миллиметров, сколько чертежа под этими пикселями. Здесь и ловится
   // ошибка масштаба: считать мм/пиксель по длине дома нельзя, холст шире неё на

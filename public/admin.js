@@ -2090,6 +2090,7 @@ let modelPart="";          // какая именно перегородка в�
 let modelView="plan";      // plan | elev — план сверху или развёртка стены
 let modelOpDrag=null;      // проём под пальцем
 let modelOpSel=null;       // проём, выбранный тапом: у него правят открывание
+let modelPosWarn=null;     // {id,msg} — введённое число не влезло в стену
 let modelFull=false;       // редактор на весь экран
 let modelTool="sel";       // sel | wall | wallw | op | del
 let modelPlaceType="";     // какое изделие ставим инструментом «проём»
@@ -9573,6 +9574,18 @@ const WIN_PRESETS=[
   {kind:"door", n:"Дверь входная 1000×2100",w:1000, h:2100, cost:27150},
 ];
 function winType(id){ return (winTypes||[]).find(function(t){return t.id===id;})||null; }
+// Границы, в которых живёт проём, и точка отсчёта его положения. Одна арифметика на
+// жест, на поле и на ползунок: три места, считающие «докуда можно», разъедутся.
+// Дверь в перегородке отсчитывается от ЧИСТОВОЙ стены — именно это число стоит на
+// чертеже, и в обшивку ей заезжать нечем.
+function opPosBase(m, op){
+  const t=winType(op.typeId)||{w:0};
+  const fin=(m.finish==null?FINISH_THICK:Number(m.finish)||0);
+  const part=(op.side==="part");
+  const span=part?(Number(m.w)||0):sideLength(m, op.side);
+  const min=part?fin:0;
+  return { min:min, max:Math.max(min, span-min-(Number(t.w)||0)) };
+}
 // Ищем по ВИДУ И РАЗМЕРУ, а не по имени: имена правят и дублируют, а полотно
 // 700×2050 остаётся тем же полотном.
 function findInnerDoor(){
@@ -9825,12 +9838,17 @@ function modelSwingBar(sh){
       : '')+
     // Положение числом. В торце витраж 2000 стоит в стене 2352 — ходу 352 мм, и
     // пальцем это три сантиметра на экране: там проём ставят размером, а не жестом.
+    //
+    // Число здесь — ТО ЖЕ, что стоит на чертеже. Дверь в перегородке чертёж меряет
+    // от чистовой стены, и поле обязано говорить так же: иначе человек вводит 0,9,
+    // видит на чертеже 824 и не понимает, кто из двоих врёт.
     (function(){
-      const span=(op.side==="part")?(Number(m.w)||0):sideLength(m, op.side);
-      const room=Math.max(0, span-(Number(t.w)||0));
-      return '<span style="flex-shrink:0;font-size:11.5px;color:#9fb3c8">от края</span>'+
-        '<input data-a="model-op-posn" data-id="'+op.id+'" value="'+numInp(op.pos)+'" type="number" step="0.01" inputmode="decimal" style="flex-shrink:0;width:86px;padding:5px 8px;border-radius:8px;border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.08);color:#fff;font-size:12.5px;outline:none;box-sizing:border-box;text-align:right">'+
-        '<span style="flex-shrink:0;font-size:11.5px;color:#7f97ae">м · ход 0…'+numRu(Math.round(room/10)/100)+'</span>';
+      const b=opPosBase(m, op);
+      return '<span style="flex-shrink:0;font-size:11.5px;color:#9fb3c8">'+(op.side==="part"?"от стены":"от края")+'</span>'+
+        '<input data-a="model-op-posn" data-id="'+op.id+'" value="'+numInp((Number(op.pos)||0)-b.min)+'" type="number" step="0.01" inputmode="decimal" style="flex-shrink:0;width:86px;padding:5px 8px;border-radius:8px;border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.08);color:#fff;font-size:12.5px;outline:none;box-sizing:border-box;text-align:right">'+
+        '<span style="flex-shrink:0;font-size:11.5px;color:#7f97ae">м · ход 0…'+numRu(Math.round((b.max-b.min)/10)/100)+'</span>'+
+        ((modelPosWarn&&modelPosWarn.id===op.id)
+          ? '<span style="flex-shrink:0;font-size:11.5px;color:#e8975a;font-weight:700">'+esc(modelPosWarn.msg)+'</span>' : '');
     })()+
     '<span style="flex:1"></span>'+
     '<button data-a="model-op-del" data-id="'+op.id+'" style="flex-shrink:0;border:1.5px solid #e8746a66;background:transparent;color:#e8746a;border-radius:9px;padding:6px 11px;font-size:11.5px;font-weight:700;cursor:pointer">🗑 Убрать</button>'+
@@ -10102,7 +10120,7 @@ function specModelHtml(sh){
       return '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:7px;padding:7px 9px;border:1px solid #e6ecf3;border-radius:10px;margin-bottom:5px">'+
         '<span style="font-size:14px">'+km.emoji+'</span>'+
         '<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(t.n)+'</div>'+
-        '<div style="font-size:10px;color:#7a9aaa">от края '+numRu(Math.round((Number(op.pos)||0)/10)/100)+' м · '+RUk(t.cost)+'</div></div>'+
+        '<div style="font-size:10px;color:#7a9aaa">'+(op.side==="part"?"от стены ":"от края ")+numRu(Math.round(((Number(op.pos)||0)-opPosBase(m,op).min)/10)/100)+' м · '+RUk(t.cost)+'</div></div>'+
         // У двери в перегородке подоконника нет, зато есть то, что нельзя угадать:
         // в какую комнату открывается створка и на каком откосе петли.
         // У двери в перегородке подоконника нет, зато у ЛЮБОЙ двери есть то, чего
@@ -10113,7 +10131,7 @@ function specModelHtml(sh){
           ? '<button data-a="model-op-into" data-id="'+op.id+'" title="Открывать в другую сторону" style="width:30px;height:28px;border:1px solid #8e44ad55;background:#fff;border-radius:7px;cursor:pointer;color:#8e44ad;font-size:13px;flex-shrink:0">⇅</button>'+
             '<button data-a="model-op-hinge" data-id="'+op.id+'" title="Петли на другой откос" style="width:30px;height:28px;border:1px solid #8e44ad55;background:#fff;border-radius:7px;cursor:pointer;color:#8e44ad;font-size:13px;flex-shrink:0">⇄</button>'
           : '')+
-        '<input data-a="model-op-pos" data-id="'+op.id+'" type="range" min="0" max="'+Math.max(0,len-(Number(t.w)||0))+'" step="10" value="'+(Number(op.pos)||0)+'" style="flex:1.2;min-width:80px">'+
+        '<input data-a="model-op-pos" data-id="'+op.id+'" type="range" min="'+opPosBase(m,op).min+'" max="'+opPosBase(m,op).max+'" step="10" value="'+(Number(op.pos)||0)+'" style="flex:1.2;min-width:80px">'+
         '<button data-a="model-op-del" data-id="'+op.id+'" style="width:28px;height:28px;border:1px solid #e74c3c44;background:#fff;border-radius:7px;cursor:pointer;color:#e74c3c;font-size:12px;flex-shrink:0">🗑</button>'+
       '</div>';
     }).join("");
@@ -10563,14 +10581,47 @@ function schemeParts(sc){
   // отрезок, его число ушло на полочку — а полочка поднимается выше линии и вылезает
   // вбок за край чертежа. Не заложить это поле значит обрезать размер по краю.
   const narrow=function(list){ return list.some(function(d){ return d.segs.some(function(v){ return v<SCH_NARROW; }); }); };
-  const pad=function(list){
-    if(!list.length)return 600;
-    return SCH_FIRST+(list.length-1)*SCH_GAP+(narrow(list)?(SCH_LEAD+SCH_TXT+320):520);
+
+  // Створка выходит из коробки на всю ширину полотна, а размерная цепочка обязана
+  // лежать ЗА габаритами чертежа: линия, перечёркнутая дверью, читается как часть
+  // двери. Поэтому первая цепочка на стороне отодвигается за самый дальний размах
+  // створок именно этой стороны — на глухой стене она остаётся там же, где была.
+  const reach={ top:0, bottom:0, left:0, right:0 };
+  sc.openings.forEach(function(o){
+    if(!o.swing)return;
+    const t=o.swing.tip;
+    reach.top=Math.max(reach.top, -t.y);
+    reach.bottom=Math.max(reach.bottom, t.y-W);
+    reach.left=Math.max(reach.left, -t.x);
+    reach.right=Math.max(reach.right, t.x-L);
+  });
+  const SWING_GAP=240;   // просвет между дугой и размерной линией
+  const first=function(side){ return SCH_FIRST+(reach[side]>0?Math.round(reach[side])+SWING_GAP:0); };
+  const pad=function(list, side){
+    if(!list.length)return 600+(reach[side]>0?Math.round(reach[side]):0);
+    return first(side)+(list.length-1)*SCH_GAP+(narrow(list)?(SCH_LEAD+SCH_TXT+320):520);
   };
   const sideOver=narrow(top)||narrow(bottom)?1250:0;     // полки горизонтальных цепочек
   const endOver=narrow(left)||narrow(right)?900:0;       // полки вертикальных
-  const pT=Math.max(pad(top), endOver), pB=Math.max(pad(bottom), endOver);
-  const pL=Math.max(pad(left), sideOver), pR=Math.max(pad(right), sideOver);
+  const pT=Math.max(pad(top,"top"), endOver), pB=Math.max(pad(bottom,"bottom"), endOver);
+  const pL=Math.max(pad(left,"left"), sideOver), pR=Math.max(pad(right,"right"), sideOver);
+
+  // С какой стороны от перегородки встанет её размерная цепочка: там, где больше
+  // места. Считаем заранее — марку двери отправим на ПРОТИВОПОЛОЖНУЮ сторону,
+  // иначе цепочка и подпись сойдутся в одной точке.
+  const th=sc.wallThick;
+  const cross=sc.walls.filter(function(w){return w.kind==="part"&&w.h>w.w;})
+    .map(function(w){return w.x;}).sort(function(a,b){return a-b;});
+  const chainSide={};
+  sc.dims.filter(function(d){return d.side==="part";}).forEach(function(ch){
+    const at=ch.at;
+    let lo=sc.finish, hi=L-sc.finish;
+    cross.forEach(function(x){
+      if(x+th<=at)lo=Math.max(lo, x+th);
+      if(x>=at+th)hi=Math.min(hi, x);
+    });
+    chainSide[at]=((hi-(at+th))>(at-lo))?1:-1;
+  });
 
   let g='<defs><pattern id="sch-hatch" width="150" height="150" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">'+
     '<rect width="150" height="150" fill="#eef1f5"/><line x1="0" y1="0" x2="0" y2="150" stroke="#9aabbf" stroke-width="20"/></pattern></defs>';
@@ -10597,7 +10648,8 @@ function schemeParts(sc){
     const cx=op.x+op.w/2, cy=op.y+op.h/2;
     const part=(op.side==="part");
     const vert=(op.side==="w"||op.side==="e");
-    const dirX=(part&&op.swing&&op.swing.tip.x>op.x)?1:-1;
+    // Марку ставим напротив цепочки: сама створка подписи не мешает, а цепочка мешает.
+    const dirX=part?-(chainSide[op.x]||-1):((op.swing&&op.swing.tip.x>op.x)?1:-1);
     const lx=part?(op.x+op.w/2+dirX*300):(vert?(cx+(op.side==="e"?-420:420)):cx);
     const ly=part?(op.y-360):(vert?cy:(op.side==="n"?cy+420:cy-300));
     const rot=vert?' transform="rotate(-90 '+lx+' '+ly+')"':'';
@@ -10614,19 +10666,27 @@ function schemeParts(sc){
     g+='<text x="'+r.x+'" y="'+(sc.finish+(sc.w-sc.finish*2)*0.34)+'" font-size="190" fill="#9aabbf" font-weight="700" text-anchor="middle" stroke="#fff" stroke-width="80" paint-order="stroke" stroke-linejoin="round">'+
       esc(String(r.name||"").toUpperCase())+'</text>';
   });
-  // Цепочки дверей в перегородках стоят у своей перегородки, внутри плана.
+  // Цепочки дверей в перегородках стоят у своей перегородки, внутри плана — и с той
+  // её стороны, где БОЛЬШЕ места. В санузле шириной два метра цепочка ложится
+  // поверх его же названия, а в соседней гостиной ей просторно.
   sc.dims.filter(function(d){return d.side==="part";}).forEach(function(ch){
-    g+=schChainV(ch, ch.at-260, 1, null, 1);
+    if(chainSide[ch.at]>0) g+=schChainV(ch, ch.at+th+260, -1, null, 1);
+    else g+=schChainV(ch, ch.at-260, 1, null, 1);
   });
   // Размерные цепочки. Выносные линии идут от самой коробки — так на чертеже
   // видно, что именно измерено, а не «числа где-то сверху».
   // `out` = +1: полка уходит от чертежа (у крайней цепочки там свободно);
   // −1: к чертежу (у внутренней снаружи стоит следующая цепочка).
   const outer=function(list,i){ return i===list.length-1?1:-1; };
-  top.forEach(function(ch,i){ g+=schChainH(ch, -(SCH_FIRST+i*SCH_GAP), 1, -90, outer(top,i)); });
-  bottom.forEach(function(ch,i){ g+=schChainH(ch, W+SCH_FIRST+i*SCH_GAP, -1, W+90, outer(bottom,i)); });
-  left.forEach(function(ch,i){ g+=schChainV(ch, -(SCH_FIRST+i*SCH_GAP), 1, -90, outer(left,i)); });
-  right.forEach(function(ch,i){ g+=schChainV(ch, L+SCH_FIRST+i*SCH_GAP, -1, L+90, outer(right,i)); });
+  // Выносные идут от коробки — но не сквозь створку: линия, перечёркнутая дугой,
+  // и есть та самая некрасивая каша. На стороне с распахнутой дверью они начинаются
+  // за самым дальним размахом, одинаково для всей стороны: вразнобой хуже, чем чуть
+  // дальше от стены.
+  const edge=function(side, base, sign){ return base+sign*(reach[side]>0?Math.round(reach[side])+120:90); };
+  top.forEach(function(ch,i){ g+=schChainH(ch, -(first("top")+i*SCH_GAP), 1, edge("top",0,-1), outer(top,i)); });
+  bottom.forEach(function(ch,i){ g+=schChainH(ch, W+first("bottom")+i*SCH_GAP, -1, edge("bottom",W,1), outer(bottom,i)); });
+  left.forEach(function(ch,i){ g+=schChainV(ch, -(first("left")+i*SCH_GAP), 1, edge("left",0,-1), outer(left,i)); });
+  right.forEach(function(ch,i){ g+=schChainV(ch, L+first("right")+i*SCH_GAP, -1, edge("right",L,1), outer(right,i)); });
 
   return { g:g, vb:(-pL)+" "+(-pT)+" "+(L+pL+pR)+" "+(W+pT+pB), vbw:(L+pL+pR) };
 }
@@ -19074,16 +19134,19 @@ function bind(){
     else if(a==="model-part"){el.onclick=()=>{ modelPart=el.dataset.id; render(); };}
     // Сторона открывания и откос с петлями: угадать их нельзя, а нарисованная не в
     // ту комнату створка — это неверный чертёж у бригады на руках.
-    else if(a==="model-op-unsel"){el.onclick=()=>{ modelOpSel=null; render(); };}
+    else if(a==="model-op-unsel"){el.onclick=()=>{ modelOpSel=null; modelPosWarn=null; render(); };}
     else if(a==="model-op-posn"){el.onchange=()=>{
       const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
       const op=(sh.model.openings||[]).find(function(o){return o.id===el.dataset.id;}); if(!op)return;
-      const t=winType(op.typeId); if(!t)return;
-      const span=(op.side==="part")?(Number(sh.model.w)||0):sideLength(sh.model, op.side);
-      const mm=Math.round((parseFloat(String(el.value).replace(",","."))||0)*1000);
+      const b=opPosBase(sh.model, op);
+      const mm=b.min+Math.round((parseFloat(String(el.value).replace(",","."))||0)*1000);
       // За край своей стены проём не пускаем: там он повиснет в воздухе, а модель
-      // посчитает его площадь как настоящую.
-      op.pos=Math.max(0, Math.min(Math.max(0, span-(Number(t.w)||0)), mm));
+      // посчитает его площадь как настоящую. И говорим, почему число не приняли:
+      // молча подставленный максимум читается как «оно меня не поняло».
+      op.pos=Math.max(b.min, Math.min(b.max, mm));
+      modelPosWarn=(op.pos!==mm)
+        ? { id:op.id, msg:(mm>b.max?("не влезает — максимум "+numRu(Math.round((b.max-b.min)/10)/100)+" м"):"ближе к стене некуда") }
+        : null;
       modelSync(sh); fl();
     };}
     else if(a==="model-op-into"){el.onclick=()=>{
@@ -19308,7 +19371,7 @@ function bind(){
         const op=(sh.model.openings||[]).find(function(o){return o.id===el.dataset.id;}); if(!op)return;
         const along=(op.side==="n"||op.side==="s");
         const mmPerPx=planMmPerPx(el); if(!mmPerPx)return;
-        const span=Number(el.dataset.span)||0, wid=Number(el.dataset.w)||0;
+        const lim=opPosBase(sh.model, op);
         const start=Number(op.pos)||0;
         const c0=along?ev.clientX:ev.clientY;
         let moved=false;
@@ -19333,7 +19396,7 @@ function bind(){
           modelOpDrag=null;
           // Тап без движения — это выбор: у двери появляются кнопки открывания.
           // Двигать и выбирать одним жестом нельзя, поэтому решает наличие сдвига.
-          if(!moved){ modelOpSel=(modelOpSel===op.id)?null:op.id; render(); return; }
+          if(!moved){ modelOpSel=(modelOpSel===op.id)?null:op.id; modelPosWarn=null; render(); return; }
           op.pos=pos;
           modelSync(sh); fl();
         };
@@ -19341,7 +19404,7 @@ function bind(){
           const d=Math.round(((along?e.clientX:e.clientY)-c0)*mmPerPx);
           if(Math.abs(d)<20&&!moved)return;
           moved=true;
-          pos=Math.max(0, Math.min(Math.max(0,span-wid), start+d));
+          pos=Math.max(lim.min, Math.min(lim.max, start+d));
           shift(pos-start);
         };
         el.onpointerup=up; el.onpointercancel=up;

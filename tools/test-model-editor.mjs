@@ -458,4 +458,47 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   t.ok('за край стены число не пускает', pos() === 352, String(pos()))
 }
 
+// ── 15. Число в поле — это число с чертежа ───────────────────────────────────
+// Дверь в перегородке чертёж меряет от ЧИСТОВОЙ стены (обшивка 76 в размер не
+// входит). Поле обязано говорить так же: иначе человек вводит 0,9, читает на
+// чертеже 824 и не понимает, кто из двоих врёт. Одна арифметика на жест, поле и
+// ползунок — три места, считающие «докуда можно», разъедутся в первый же день.
+{
+  t.section('Положение проёма — числом с чертежа')
+  const p = panel()
+  click(p, { a: 'model-full' })
+  const door = p.q('specSheets[0].model.openings.filter(function(o){return o.side==="part";})[0]')
+  const fin = p.q('specSheets[0].model.finish')
+  p.run('modelOpSel=' + JSON.stringify(door.id) + ';')
+
+  // Цепочка на чертеже: первый отрезок — от чистовой стены до двери.
+  const seg = () => p.q('modelScheme(specSheets[0].model, winTypes).dims.filter(function(d){return d.side==="part"&&d.at===' +
+    p.q('modelScheme(specSheets[0].model, winTypes).openings.find(function(o){return o.id===' + JSON.stringify(door.id) + ';}).x') +
+    ';})[0].segs[0]')
+
+  const inp = p.dom.node({ a: 'model-op-posn', id: door.id })
+  p.run('bind();')
+  inp.value = '0,9'; inp.onchange()
+  t.ok('ввели 0,9 — на чертеже 900', seg() === 900, String(seg()))
+  t.ok('в модели это 900 плюс обшивка',
+    p.q('specSheets[0].model.openings.filter(function(o){return o.id===' + JSON.stringify(door.id) + ';})[0].pos') === 900 + fin)
+  t.ok('и поле показывает то же, что чертёж',
+    p.run('modelFullOverlay()').indexOf('value="0.9"') >= 0, 'иначе поле и чертёж говорят разными числами')
+  t.ok('подпись поля — «от стены»', p.run('modelFullOverlay()').indexOf('от стены') >= 0)
+
+  // В обшивку дверь не заезжает ни числом, ни жестом.
+  inp.value = '-1'; inp.onchange()
+  t.ok('к нулю прижимается по чистовой стене',
+    p.q('specSheets[0].model.openings.filter(function(o){return o.id===' + JSON.stringify(door.id) + ';})[0].pos') === fin,
+    String(p.q('specSheets[0].model.openings.filter(function(o){return o.id===' + JSON.stringify(door.id) + ';})[0].pos')))
+  inp.value = '99'; inp.onchange()
+  t.ok('и говорит, почему не приняло',
+    p.run('modelFullOverlay()').indexOf('не влезает — максимум') >= 0,
+    'молча подставленный максимум читается как «оно меня не поняло»')
+  const w = p.q('specSheets[0].model.w'), dw = 700
+  t.ok('и с другого края тоже',
+    p.q('specSheets[0].model.openings.filter(function(o){return o.id===' + JSON.stringify(door.id) + ';})[0].pos') === w - fin - dw,
+    String(p.q('specSheets[0].model.openings.filter(function(o){return o.id===' + JSON.stringify(door.id) + ';})[0].pos')))
+}
+
 t.done()
