@@ -421,4 +421,41 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   t.ok('за край стены не уходит', far === 11952 - 1500, String(far))
 }
 
+// ── 14. Проём в торце: жест и точное число ───────────────────────────────────
+// В торце витраж 2000 стоит в стене 2352: ходу 352 мм — на экране три сантиметра.
+// Жест там работает, но ставить проём в такой щели пальцем бессмысленно, поэтому
+// у выбранного проёма есть поле «от края». Сторожим оба пути и упор в край стены.
+{
+  t.section('Проём в торцевой стене')
+  const p = panel()
+  click(p, { a: 'model-full' })
+  const op = p.q('specSheets[0].model.openings.filter(function(o){return o.side==="e";})[0]')
+  const pos = () => p.q('specSheets[0].model.openings.filter(function(o){return o.side==="e";})[0].pos')
+
+  const VBW = 13352, PX = 1000
+  const hit = p.dom.node({ a: 'model-op-drag', id: op.id, side: 'e', span: '2352', w: '2000' })
+  hit.setAttribute = () => {}
+  hit.ownerSVGElement = { dataset: { vbw: String(VBW) }, getBoundingClientRect: () => ({ width: PX, height: 300 }),
+    querySelector: () => ({ setAttribute: () => {} }) }
+  p.run('bind();')
+  // Жест вертикальный — вдоль торца.
+  hit.onpointerdown({ clientX: 0, clientY: 0, pointerId: 1, preventDefault() {} })
+  hit.onpointermove({ clientX: 0, clientY: 5 })
+  hit.onpointerup()
+  t.ok('жестом по торцу проём едет', pos() !== op.pos, op.pos + ' → ' + pos())
+  t.ok('и упирается в край стены', pos() <= 2352 - 2000, String(pos()))
+
+  // Точное число — там, где жестом уже не попасть.
+  p.run('modelOpSel=' + JSON.stringify(op.id) + ';')
+  const bar = p.run('modelFullOverlay()')
+  t.ok('поле «от края» показано', bar.indexOf('data-a="model-op-posn"') >= 0)
+  t.ok('и рядом видно, сколько всего ходу', bar.indexOf('ход 0…0,35') >= 0, bar.indexOf('ход') >= 0 ? 'подпись есть, но другая' : 'подписи нет')
+  const inp = p.dom.node({ a: 'model-op-posn', id: op.id })
+  p.run('bind();')
+  inp.value = '0,2'; inp.onchange()
+  t.ok('число ставит проём точно', pos() === 200, String(pos()))
+  inp.value = '9'; inp.onchange()
+  t.ok('за край стены число не пускает', pos() === 352, String(pos()))
+}
+
 t.done()

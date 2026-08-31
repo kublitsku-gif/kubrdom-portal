@@ -9822,7 +9822,16 @@ function modelSwingBar(sh){
     '<span style="flex-shrink:0;font-size:11.5px;color:#9fb3c8;font-weight:700">'+km.emoji+' '+esc(t.n)+'</span>'+
     (t.kind==="door"
       ? btn("model-op-hinge","⇄","Петли на другой откос")+btn("model-op-into","⇅","Открывать в другую сторону")
-      : '<span style="font-size:11.5px;color:#7f97ae">У окна створка на чертеже не показывается — правится размер изделия.</span>')+
+      : '')+
+    // Положение числом. В торце витраж 2000 стоит в стене 2352 — ходу 352 мм, и
+    // пальцем это три сантиметра на экране: там проём ставят размером, а не жестом.
+    (function(){
+      const span=(op.side==="part")?(Number(m.w)||0):sideLength(m, op.side);
+      const room=Math.max(0, span-(Number(t.w)||0));
+      return '<span style="flex-shrink:0;font-size:11.5px;color:#9fb3c8">от края</span>'+
+        '<input data-a="model-op-posn" data-id="'+op.id+'" value="'+numInp(op.pos)+'" type="number" step="0.01" inputmode="decimal" style="flex-shrink:0;width:86px;padding:5px 8px;border-radius:8px;border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.08);color:#fff;font-size:12.5px;outline:none;box-sizing:border-box;text-align:right">'+
+        '<span style="flex-shrink:0;font-size:11.5px;color:#7f97ae">м · ход 0…'+numRu(Math.round(room/10)/100)+'</span>';
+    })()+
     '<span style="flex:1"></span>'+
     '<button data-a="model-op-del" data-id="'+op.id+'" style="flex-shrink:0;border:1.5px solid #e8746a66;background:transparent;color:#e8746a;border-radius:9px;padding:6px 11px;font-size:11.5px;font-weight:700;cursor:pointer">🗑 Убрать</button>'+
     '<button data-a="model-op-unsel" style="flex-shrink:0;border:none;background:rgba(255,255,255,.12);color:#fff;border-radius:9px;padding:6px 12px;font-size:11.5px;font-weight:700;cursor:pointer">Готово</button>'+
@@ -10446,40 +10455,88 @@ function schTick(x,y){
   return '<line x1="'+(x-95)+'" y1="'+(y+95)+'" x2="'+(x+95)+'" y2="'+(y-95)+'" stroke="'+SCH_DIM+'" stroke-width="26"/>';
 }
 function schText(x,y,t,size,anchor,rot){
+  // Белая подложка под цифрой: её пересекают выносные линии соседних цепочек, а
+  // размер, прочитанный неверно, дороже любой другой ошибки на чертеже.
   return '<text x="'+x+'" y="'+y+'" font-size="'+size+'" fill="'+SCH_DIM+'" text-anchor="'+(anchor||"middle")+'"'+
+    ' stroke="#fff" stroke-width="70" paint-order="stroke" stroke-linejoin="round"'+
     (rot?' transform="rotate('+rot+' '+x+' '+y+')"':'')+'>'+esc(t)+'</text>';
 }
-// Узкий отрезок подписью поперёк не влезает — ставим её вдоль, как на чертежах.
-const SCH_NARROW=900;
+// Узкий отрезок подписью между засечками не влезает: 76 мм при цифре в 215 —
+// это подпись шире своего размера. Чертёжник в таком случае выносит число НА
+// ПОЛОЧКУ: наклонная выноска от размерной линии, горизонтальная полка и цифра над
+// ней. Читается всегда горизонтально и ни на что не налезает — в отличие от
+// повёрнутого на 90° числа, которым это место занимали раньше.
+const SCH_NARROW=900;      // уже — подпись уходит на полочку
+const SCH_TXT=215;         // высота цифры
+const SCH_SMALL=190;       // цифра на полочке
+const SCH_OVER=130;        // выносная линия переходит размерную на столько
+// Высота выноски одна и с запасом меньше просвета между цепочками (SCH_GAP):
+// полочка ближней цепочки не должна доставать до линии дальней. Разводить соседние
+// полочки высотой нельзя по той же причине — разводим стороной, куда уходит полка.
+const SCH_LEAD=300;
+const SCH_GAPTXT=90;       // просвет между цифрой и линией, над которой она стоит
 
-function schChainH(ch, y, dir){
+// Ширина полки — под своё число: полка короче цифры выглядит обрывком.
+function schShelfW(t){ return Math.max(320, Math.round(String(t).length*0.62*SCH_SMALL)+140); }
+
+// Выноска с полочкой. `ax`,`ay` — точка на размерной линии; `ux`,`uy` — единичное
+// направление НАРУЖУ от чертежа; `sx`,`sy` — вдоль размерной линии, в ту сторону,
+// куда уводим полку (к ближнему краю: там свободно).
+function schShelf(ax, ay, ux, uy, sx, sy, len){
+  const lead=SCH_LEAD, off=Math.round(lead*0.55);
+  const kx=ax+ux*lead+sx*off, ky=ay+uy*lead+sy*off;
+  // Полка ВСЕГДА горизонтальна: на ней стоит цифра, и читать её вертикально
+  // незачем — ради этого полку и делают.
+  const dx=(sx!==0)?sx:((ux!==0)?ux:1);
+  const ex=kx+dx*schShelfW(len);
+  return '<line x1="'+ax+'" y1="'+ay+'" x2="'+kx+'" y2="'+ky+'" stroke="'+SCH_DIM+'" stroke-width="14"/>'+
+    '<line x1="'+kx+'" y1="'+ky+'" x2="'+ex+'" y2="'+ky+'" stroke="'+SCH_DIM+'" stroke-width="14"/>'+
+    schText((kx+ex)/2, ky-SCH_GAPTXT, String(len), SCH_SMALL);
+}
+
+// Горизонтальная цепочка. `objEdge` — от какой линии идут выносные: они начинаются
+// у самого чертежа и переходят размерную линию, как на бумаге; без этого цифры
+// висят в воздухе и непонятно, что именно измерено.
+function schChainH(ch, y, dir, objEdge, out){
   let g='';
+  const mid=(ch.ticks[0]+ch.ticks[ch.ticks.length-1])/2;
   ch.ticks.forEach(function(t){
-    g+='<line x1="'+t+'" y1="'+(y-dir*90)+'" x2="'+t+'" y2="'+(y-dir*(SCH_FIRST-140))+'" stroke="'+SCH_DIM+'" stroke-width="12" opacity="0.5"/>';
+    const from=(objEdge==null)?(y-dir*(SCH_FIRST-140)):objEdge;
+    g+='<line x1="'+t+'" y1="'+from+'" x2="'+t+'" y2="'+(y-dir*SCH_OVER)+'" stroke="'+SCH_DIM+'" stroke-width="12" opacity="0.5"/>';
     g+=schTick(t,y);
   });
-  g+=schDimLine(ch.ticks[0],y,ch.ticks[ch.ticks.length-1],y);
+  g+=schDimLine(ch.ticks[0]-100,y,ch.ticks[ch.ticks.length-1]+100,y);
   ch.segs.forEach(function(len,i){
     const c=(ch.ticks[i]+ch.ticks[i+1])/2;
-    if(len<SCH_NARROW) g+=schText(c+70, y-dir*230, String(len), 170, "start", -90);
-    else g+=schText(c, y-dir*150-(dir>0?0:150), String(len), 215);
+    if(len<SCH_NARROW){
+      g+=schShelf(c, y, 0, out*-dir, (c<mid?1:-1), 0, len);
+    } else {
+      // Цифра стоит НАД своей размерной линией — как её и читают.
+      g+=schText(c, y-SCH_GAPTXT, String(len), SCH_TXT);
+    }
   });
   return g;
 }
-function schChainV(ch, x, dir){
+// Вертикальная цепочка. Крупные размеры читаются снизу вверх (повёрнутая цифра —
+// это норма чертежа), узкие уходят на полочку и остаются горизонтальными.
+function schChainV(ch, x, dir, objEdge, out){
   let g='';
+  const mid=(ch.ticks[0]+ch.ticks[ch.ticks.length-1])/2;
   // Внутренняя цепочка стоит вплотную к своей перегородке: длинная выноска
   // перечёркивала бы план поперёк комнаты.
-  const reach=ch.inner?260:(SCH_FIRST-140);
   ch.ticks.forEach(function(t){
-    g+='<line x1="'+(x-dir*90)+'" y1="'+t+'" x2="'+(x-dir*reach)+'" y2="'+t+'" stroke="'+SCH_DIM+'" stroke-width="12" opacity="0.5"/>';
+    const from=(ch.inner||objEdge==null)?(x-dir*(ch.inner?260:(SCH_FIRST-140))):objEdge;
+    g+='<line x1="'+from+'" y1="'+t+'" x2="'+(x-dir*SCH_OVER)+'" y2="'+t+'" stroke="'+SCH_DIM+'" stroke-width="12" opacity="0.5"/>';
     g+=schTick(x,t);
   });
-  g+=schDimLine(x,ch.ticks[0],x,ch.ticks[ch.ticks.length-1]);
+  g+=schDimLine(x,ch.ticks[0]-100,x,ch.ticks[ch.ticks.length-1]+100);
   ch.segs.forEach(function(len,i){
     const c=(ch.ticks[i]+ch.ticks[i+1])/2;
-    if(len<SCH_NARROW) g+=schText(x-dir*230, c+70, String(len), 170, dir>0?"end":"start");
-    else g+=schText(x-dir*150, c, String(len), 215, "middle", -90);
+    if(len<SCH_NARROW){
+      g+=schShelf(x, c, out*-dir, 0, 0, (c<mid?1:-1), len);
+    } else {
+      g+=schText(x-dir*SCH_GAPTXT, c, String(len), SCH_TXT, "middle", -90);
+    }
   });
   return g;
 }
@@ -10502,8 +10559,18 @@ function schemeParts(sc){
   const L=sc.l, W=sc.w;
   const byS=function(sd){ return sc.dims.filter(function(d){return d.side===sd;}); };
   const top=byS("top"), bottom=byS("bottom"), left=byS("left"), right=byS("right");
-  const pad=function(list){ return list.length?(SCH_FIRST+(list.length-1)*SCH_GAP+520):600; };
-  const pT=pad(top), pB=pad(bottom), pL=pad(left), pR=pad(right);
+  // Поле под цепочки: их высота плюс запас под цифру. Если в цепочке есть узкий
+  // отрезок, его число ушло на полочку — а полочка поднимается выше линии и вылезает
+  // вбок за край чертежа. Не заложить это поле значит обрезать размер по краю.
+  const narrow=function(list){ return list.some(function(d){ return d.segs.some(function(v){ return v<SCH_NARROW; }); }); };
+  const pad=function(list){
+    if(!list.length)return 600;
+    return SCH_FIRST+(list.length-1)*SCH_GAP+(narrow(list)?(SCH_LEAD+SCH_TXT+320):520);
+  };
+  const sideOver=narrow(top)||narrow(bottom)?1250:0;     // полки горизонтальных цепочек
+  const endOver=narrow(left)||narrow(right)?900:0;       // полки вертикальных
+  const pT=Math.max(pad(top), endOver), pB=Math.max(pad(bottom), endOver);
+  const pL=Math.max(pad(left), sideOver), pR=Math.max(pad(right), sideOver);
 
   let g='<defs><pattern id="sch-hatch" width="150" height="150" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">'+
     '<rect width="150" height="150" fill="#eef1f5"/><line x1="0" y1="0" x2="0" y2="150" stroke="#9aabbf" stroke-width="20"/></pattern></defs>';
@@ -10535,26 +10602,31 @@ function schemeParts(sc){
     const ly=part?(op.y-360):(vert?cy:(op.side==="n"?cy+420:cy-300));
     const rot=vert?' transform="rotate(-90 '+lx+' '+ly+')"':'';
     const anch=part?(dirX>0?"start":"end"):"middle";
-    g+='<text x="'+lx+'" y="'+ly+'" font-size="180" fill="#0d1b2e" font-weight="700" text-anchor="'+anch+'"'+rot+'>'+esc(op.mark)+'</text>'+
-      '<text x="'+(vert?lx+200:lx)+'" y="'+(vert?ly:ly+195)+'" font-size="150" fill="#5a7a9a" text-anchor="'+anch+'"'+
+    const halo=' stroke="#fff" stroke-width="70" paint-order="stroke" stroke-linejoin="round"';
+    g+='<text x="'+lx+'" y="'+ly+'" font-size="180" fill="#0d1b2e" font-weight="700" text-anchor="'+anch+'"'+halo+rot+'>'+esc(op.mark)+'</text>'+
+      '<text x="'+(vert?lx+200:lx)+'" y="'+(vert?ly:ly+195)+'" font-size="150" fill="#5a7a9a" text-anchor="'+anch+'"'+halo+
       (vert?' transform="rotate(-90 '+(lx+200)+' '+ly+')"':'')+'>'+
       esc(op.width+"×"+op.height+(op.sill?" · h"+op.sill:""))+'</text>';
     g+='</g>';
   });
   // Имена помещений: без них чертёж читают, водя пальцем по цепочкам.
   sc.labels.forEach(function(r){
-    g+='<text x="'+r.x+'" y="'+(sc.finish+(sc.w-sc.finish*2)*0.34)+'" font-size="190" fill="#9aabbf" font-weight="700" text-anchor="middle">'+
+    g+='<text x="'+r.x+'" y="'+(sc.finish+(sc.w-sc.finish*2)*0.34)+'" font-size="190" fill="#9aabbf" font-weight="700" text-anchor="middle" stroke="#fff" stroke-width="80" paint-order="stroke" stroke-linejoin="round">'+
       esc(String(r.name||"").toUpperCase())+'</text>';
   });
   // Цепочки дверей в перегородках стоят у своей перегородки, внутри плана.
   sc.dims.filter(function(d){return d.side==="part";}).forEach(function(ch){
-    g+=schChainV(ch, ch.at-260, 1);
+    g+=schChainV(ch, ch.at-260, 1, null, 1);
   });
-  // Размерные цепочки
-  top.forEach(function(ch,i){ g+=schChainH(ch, -(SCH_FIRST+i*SCH_GAP), 1); });
-  bottom.forEach(function(ch,i){ g+=schChainH(ch, W+SCH_FIRST+i*SCH_GAP, -1); });
-  left.forEach(function(ch,i){ g+=schChainV(ch, -(SCH_FIRST+i*SCH_GAP), 1); });
-  right.forEach(function(ch,i){ g+=schChainV(ch, L+SCH_FIRST+i*SCH_GAP, -1); });
+  // Размерные цепочки. Выносные линии идут от самой коробки — так на чертеже
+  // видно, что именно измерено, а не «числа где-то сверху».
+  // `out` = +1: полка уходит от чертежа (у крайней цепочки там свободно);
+  // −1: к чертежу (у внутренней снаружи стоит следующая цепочка).
+  const outer=function(list,i){ return i===list.length-1?1:-1; };
+  top.forEach(function(ch,i){ g+=schChainH(ch, -(SCH_FIRST+i*SCH_GAP), 1, -90, outer(top,i)); });
+  bottom.forEach(function(ch,i){ g+=schChainH(ch, W+SCH_FIRST+i*SCH_GAP, -1, W+90, outer(bottom,i)); });
+  left.forEach(function(ch,i){ g+=schChainV(ch, -(SCH_FIRST+i*SCH_GAP), 1, -90, outer(left,i)); });
+  right.forEach(function(ch,i){ g+=schChainV(ch, L+SCH_FIRST+i*SCH_GAP, -1, L+90, outer(right,i)); });
 
   return { g:g, vb:(-pL)+" "+(-pT)+" "+(L+pL+pR)+" "+(W+pT+pB), vbw:(L+pL+pR) };
 }
@@ -19003,6 +19075,17 @@ function bind(){
     // Сторона открывания и откос с петлями: угадать их нельзя, а нарисованная не в
     // ту комнату створка — это неверный чертёж у бригады на руках.
     else if(a==="model-op-unsel"){el.onclick=()=>{ modelOpSel=null; render(); };}
+    else if(a==="model-op-posn"){el.onchange=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      const op=(sh.model.openings||[]).find(function(o){return o.id===el.dataset.id;}); if(!op)return;
+      const t=winType(op.typeId); if(!t)return;
+      const span=(op.side==="part")?(Number(sh.model.w)||0):sideLength(sh.model, op.side);
+      const mm=Math.round((parseFloat(String(el.value).replace(",","."))||0)*1000);
+      // За край своей стены проём не пускаем: там он повиснет в воздухе, а модель
+      // посчитает его площадь как настоящую.
+      op.pos=Math.max(0, Math.min(Math.max(0, span-(Number(t.w)||0)), mm));
+      modelSync(sh); fl();
+    };}
     else if(a==="model-op-into"){el.onclick=()=>{
       const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
       const op=(sh.model.openings||[]).find(function(o){return o.id===el.dataset.id;}); if(!op)return;
