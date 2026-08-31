@@ -677,7 +677,13 @@ export function modelScheme(model, winTypes) {
         : (op.side === "s") ? { x: pos, y: W - fin, w: wd, h: fin }
           : (op.side === "w") ? { x: 0, y: pos, w: fin, h: wd }
             : { x: L - fin, y: pos, w: fin, h: wd };
-      out = (op.side === "n") ? [0, -1] : (op.side === "s") ? [0, 1] : (op.side === "w") ? [-1, 0] : [1, 0];
+      // Куда открывается дверь в наружной стене — тоже свойство проёма, а не стены.
+      // Наружу (`into` +1) чаще, но входная дверь, открывающаяся внутрь тамбура, —
+      // обычное дело, а нарисовать створку не в ту сторону значит соврать о том,
+      // что она заденет: мебель, соседнюю дверь, край крыльца.
+      const outward = (op.side === "n") ? [0, -1] : (op.side === "s") ? [0, 1] : (op.side === "w") ? [-1, 0] : [1, 0];
+      const dir = ((op.into == null) ? 1 : ((Number(op.into) || 1) >= 0 ? 1 : -1));
+      out = [outward[0] * dir, outward[1] * dir];
       along = (op.side === "n" || op.side === "s");
     }
     const kind = t.kind || "win";

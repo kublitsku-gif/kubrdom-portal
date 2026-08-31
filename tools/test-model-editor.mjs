@@ -330,4 +330,95 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   t.ok('дверь встала в перегородку', doors(p).length === 1, JSON.stringify(doors(p)))
 }
 
+// ── 12. Открывание двери правится тапом по ней на чертеже ────────────────────
+// Створку правят там же, где на неё смотрят. Постоянного ряда кнопок нет: он был бы
+// шумом у каждого проёма — панель показывается только у выбранной двери.
+{
+  t.section('Открывание двери на чертеже')
+  const p = panel()
+  click(p, { a: 'model-full' })
+  const door = p.q('specSheets[0].model.openings.filter(function(o){return o.side==="part";})[0]')
+
+  // Тап по двери — без сдвига: сдвиг двигает проём, тап выбирает.
+  const hit = p.dom.node({ a: 'model-op-drag', id: door.id, side: 'part', span: '2352', w: '700' })
+  // querySelector — как в настоящем SVG: во время жеста редактор двигает группу проёма.
+  hit.ownerSVGElement = { dataset: { vbw: '13352' }, getBoundingClientRect: () => ({ width: 1000, height: 300 }),
+    querySelector: () => null }
+  p.run('bind();')
+  hit.onpointerdown({ clientX: 100, clientY: 100, pointerId: 1, preventDefault() {} })
+  hit.onpointerup()
+  t.ok('дверь выбрана', p.q('modelOpSel') === door.id, String(p.q('modelOpSel')))
+
+  const bar = p.run('modelFullOverlay()')
+  t.ok('панель открывания появилась',
+    bar.indexOf('data-a="model-op-into"') >= 0 && bar.indexOf('data-a="model-op-hinge"') >= 0)
+
+  const swing = () => p.q('modelScheme(specSheets[0].model, winTypes).openings.find(function(o){return o.id===' + JSON.stringify(door.id) + ';}).swing')
+  const tip0 = JSON.stringify(swing().tip), hinge0 = JSON.stringify(swing().hinge)
+  click(p, { a: 'model-op-into', id: door.id })
+  t.ok('створка перекинулась в другую комнату', JSON.stringify(swing().tip) !== tip0,
+    tip0 + ' → ' + JSON.stringify(swing().tip))
+  click(p, { a: 'model-op-hinge', id: door.id })
+  t.ok('петли переехали на другой откос', JSON.stringify(swing().hinge) !== hinge0,
+    hinge0 + ' → ' + JSON.stringify(swing().hinge))
+
+  click(p, { a: 'model-op-unsel' })
+  t.ok('«Готово» снимает выбор', p.q('modelOpSel') === null)
+  t.ok('и панель исчезла', p.run('modelFullOverlay()').indexOf('data-a="model-op-hinge"') < 0)
+
+  // Дверь в наружной стене правится теми же кнопками — раньше их у неё не было.
+  const wall = p.q('specSheets[0].model.openings.filter(function(o){return o.side==="s";})[1]')
+  p.run('modelOpSel=' + JSON.stringify(wall.id) + ';')
+  t.ok('у входной двери те же кнопки',
+    p.run('modelFullOverlay()').indexOf('data-a="model-op-into"') >= 0)
+  const wsw = () => p.q('modelScheme(specSheets[0].model, winTypes).openings.find(function(o){return o.id===' + JSON.stringify(wall.id) + ';}).swing')
+  const wtip = JSON.stringify(wsw().tip)
+  click(p, { a: 'model-op-into', id: wall.id })
+  t.ok('и она открывается внутрь', JSON.stringify(wsw().tip) !== wtip, wtip + ' → ' + JSON.stringify(wsw().tip))
+}
+
+// ── 13. Окно и дверь двигаются пальцем ───────────────────────────────────────
+// Жест обязан пережить сам себя: `render()` меняет innerHTML целиком, и элемент с
+// захваченным указателем исчезает вместе с ним — проём отъезжал на пару пикселей и
+// вставал. Поэтому во время жеста двигается РИСУНОК (transform), а модель считается
+// один раз на отпускании. Сторожим и то, и другое.
+{
+  t.section('Двигать окна и двери')
+  const p = panel()
+  click(p, { a: 'model-full' })
+  const win = p.q('specSheets[0].model.openings.filter(function(o){return o.side==="s";})[0]')
+  const VBW = 13352, PX = 1000, DRAG = 60
+  const marks = []
+  const art = { setAttribute: (k, v) => marks.push(['art', k, v]) }
+  const hit = p.dom.node({ a: 'model-op-drag', id: win.id, side: 's', span: '11952', w: '1500' })
+  hit.setAttribute = (k, v) => marks.push(['hit', k, v])
+  hit.ownerSVGElement = {
+    dataset: { vbw: String(VBW) },
+    getBoundingClientRect: () => ({ width: PX, height: 300 }),
+    querySelector: (sel) => (sel.indexOf(win.id) >= 0 ? art : null),
+  }
+  p.run('bind();')
+  hit.onpointerdown({ clientX: 0, clientY: 0, pointerId: 1, preventDefault() {} })
+  hit.onpointermove({ clientX: DRAG, clientY: 0 })
+  t.ok('рисунок едет за пальцем прямо во время жеста',
+    marks.some((m) => m[0] === 'art' && m[1] === 'transform') &&
+    marks.some((m) => m[0] === 'hit' && m[1] === 'transform'), JSON.stringify(marks))
+  t.ok('модель во время жеста не трогаем',
+    p.q('specSheets[0].model.openings.filter(function(o){return o.id===' + JSON.stringify(win.id) + ';})[0].pos') === win.pos)
+
+  hit.onpointerup()
+  const after = p.q('specSheets[0].model.openings.filter(function(o){return o.id===' + JSON.stringify(win.id) + ';})[0].pos')
+  const want = win.pos + Math.round(DRAG * VBW / PX)
+  t.ok('на отпускании проём встал ровно туда, куда вели', Math.abs(after - want) <= 1,
+    after + ' вместо ' + want)
+  t.ok('и характеристики пересчитались', p.q('specSheets[0].specs.rooms.length') > 0)
+
+  // Проём не уезжает за край своей стены — иначе окно повиснет в воздухе.
+  hit.onpointerdown({ clientX: 0, clientY: 0, pointerId: 1, preventDefault() {} })
+  hit.onpointermove({ clientX: 100000, clientY: 0 })
+  hit.onpointerup()
+  const far = p.q('specSheets[0].model.openings.filter(function(o){return o.id===' + JSON.stringify(win.id) + ';})[0].pos')
+  t.ok('за край стены не уходит', far === 11952 - 1500, String(far))
+}
+
 t.done()

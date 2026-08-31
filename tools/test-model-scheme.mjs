@@ -143,6 +143,38 @@ const sum = (a) => a.reduce((x, y) => x + y, 0)
   ok('дверь потерянной перегородки на схему не попала', modelScheme(orphan, winTypes).openings.length === 3)
 }
 
+// ── 3в. Открывание двери в наружной стене ────────────────────────────────────
+// Куда открывается дверь — свойство ПРОЁМА, а не стены: входная дверь бывает и
+// внутрь тамбура, и петли бывают на любом откосе. Нарисовать створку не в ту
+// сторону — соврать о том, что она заденет: мебель, соседнюю дверь, край крыльца.
+{
+  console.log('Открывание двери в стене коробки')
+  const { model, winTypes } = presetModel('c12-san-liv-bed', [], ids())
+  const door = model.openings.filter((o) => o.side !== 'part')
+    .find((o) => (winTypes.find((t) => t.id === o.typeId) || {}).kind === 'door')
+  const swing = () => modelScheme(model, winTypes).openings.find((o) => o.id === door.id).swing
+
+  const out = swing()
+  ok('по умолчанию — наружу', out.tip.y > modelScheme(model, winTypes).w, JSON.stringify(out.tip))
+  const hingeWas = out.hinge.x
+
+  door.into = -1
+  ok('внутрь — створка в комнате', swing().tip.y < modelScheme(model, winTypes).w, JSON.stringify(swing().tip))
+  ok('петли при этом на месте', swing().hinge.x === hingeWas)
+
+  door.hinge = (door.hinge === 'start') ? 'end' : 'start'
+  ok('другой откос — петли переехали', swing().hinge.x !== hingeWas, JSON.stringify(swing().hinge))
+
+  // Четыре сочетания дают четыре разных чертежа — иначе кнопка ничего не меняет.
+  const seen = new Set()
+  ;[1, -1].forEach((into) => ['start', 'end'].forEach((h) => {
+    door.into = into; door.hinge = h
+    const sw = swing()
+    seen.add([sw.hinge.x, sw.hinge.y, sw.tip.x, sw.tip.y].join(' '))
+  }))
+  ok('все четыре положения различаются', seen.size === 4, [...seen].join(' | '))
+}
+
 // ── 4. Ничего лишнего ────────────────────────────────────────────────────────
 {
   console.log('Чего на схеме нет')
