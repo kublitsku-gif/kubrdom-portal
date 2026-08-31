@@ -2085,7 +2085,8 @@ let stock=[];
 //    markup, status:"draft"|"sold", contractId, objId, at, by}
 let winTypes=[];           // типовые окна и двери (справочник поставщика)
 let winTypeNew=null;       // форма нового изделия
-let modelSide="n";         // стена, на которую ставим проём
+let modelSide="n";         // стена, на которую ставим проём (или "part" — перегородки)
+let modelPart="";          // какая именно перегородка выбрана: id отсека перед ней
 let modelView="plan";      // plan | elev — план сверху или развёртка стены
 let modelOpDrag=null;      // проём под пальцем
 let modelFull=false;       // редактор на весь экран
@@ -9585,6 +9586,21 @@ function modelSync(sh){
 }
 
 const MODEL_SIDES=[["n","Левая длинная"],["s","Правая длинная"],["w","Торец начала"],["e","Торец конца"]];
+// Перегородки живут только в списке проёмов. На развёртке их нет: развёртка — это
+// вид на стену коробки изнутри, а перегородка стоит поперёк и в такой вид не попадает.
+const MODEL_OP_SIDES=MODEL_SIDES.concat([["part","Перегородки"]]);
+// Перегородка названа отсеком, за которым стоит: id отсека переживает деление и
+// слияние, а номер стены — нет.
+function modelParts(m){
+  const bays=modelBays(m), rooms=modelRooms(m);
+  const nameOf=function(id){
+    const r=rooms.filter(function(x){return x.bayId===id;});
+    return r.map(function(x){return x.name||"Помещение";}).join(" + ");
+  };
+  return bays.slice(0,-1).map(function(b,i){
+    return { id:b.id, n:i+1, x:b.x1, label:nameOf(b.id)+" / "+nameOf(bays[i+1].id) };
+  });
+}
 
 // План сверху. Рисуем в миллиметрах модели: viewBox сам приводит их к экрану,
 // поэтому перетаскивание считается в мм и не зависит от размера телефона.
@@ -9636,7 +9652,12 @@ function modelPlanSvg(sh, full){
     if(op.side==="part"){
       const pt=partitionAt(m, op.after);
       if(!pt)return;
-      g+='<rect x="'+(pt.x-30)+'" y="'+pos+'" width="'+(pt.w+60)+'" height="'+ln+'" fill="#fff" stroke="'+km.c+'" stroke-width="40"/>';
+      const on=modelOpDrag===op.id;
+      g+='<g data-a="'+(drag?"model-op-drag":"model-op-hit")+'" data-id="'+op.id+'" data-side="part" data-span="'+W+'" data-w="'+ln+'" data-len="'+L+'" data-cw="'+W+'" style="cursor:ns-resize">'+
+        '<rect x="'+(pt.x-160)+'" y="'+(pos-60)+'" width="'+(pt.w+320)+'" height="'+(ln+120)+'" fill="'+km.c+'" opacity="'+(on?"0.35":"0.12")+'" rx="60"/>'+
+        '<rect x="'+(pt.x-30)+'" y="'+pos+'" width="'+(pt.w+60)+'" height="'+ln+'" fill="#fff" stroke="'+km.c+'" stroke-width="40"/>'+
+        '<text x="'+(pt.x+260)+'" y="'+(pos+ln/2+70)+'" font-size="190" fill="'+km.c+'" font-weight="700">'+numRu(Math.round(ln/10)/100)+'</text>'+
+      '</g>';
       return;
     }
     const along=(op.side==="n"||op.side==="s");
@@ -9872,13 +9893,30 @@ function specModelHtml(sh){
     h+='</div>';
   });
   // Проёмы
-  h+='<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin:10px 0 6px">ОКНА И ДВЕРИ В СТЕНАХ</div>';
+  h+='<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin:10px 0 6px">ОКНА И ДВЕРИ</div>';
   h+='<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:7px">'+
-    MODEL_SIDES.map(function(sd){
+    MODEL_OP_SIDES.map(function(sd){
       const on=modelSide===sd[0];
       return '<button data-a="model-side" data-s="'+sd[0]+'" style="border:1.5px solid '+(on?"#2980b9":"#dde6f0")+';background:'+(on?"#2980b9":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">'+esc(sd[1])+'</button>';
     }).join("")+'</div>';
-  if(!winTypes.length){
+  // Какая именно перегородка: их бывает несколько, и «добавить дверь» обязано знать
+  // куда. Без выбора кнопка ставила бы дверь в первую попавшуюся стену.
+  const parts=modelParts(m);
+  if(modelSide==="part"){
+    if(!parts.length){
+      h+='<div style="font-size:11.5px;color:#c0ccd8;margin-bottom:7px">Перегородок в модели нет — поставьте стену поперёк в отсеке выше.</div>';
+    } else {
+      if(!parts.some(function(x){return x.id===modelPart;}))modelPart=parts[0].id;
+      h+='<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">'+
+        parts.map(function(pt){
+          const on=modelPart===pt.id;
+          return '<button data-a="model-part" data-id="'+pt.id+'" style="text-align:left;border:1.5px solid '+(on?"#8e44ad":"#dde6f0")+';background:'+(on?"#8e44ad":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">Перегородка '+pt.n+
+            '<div style="font-size:9.5px;font-weight:600;opacity:.85;margin-top:1px">'+esc(pt.label)+'</div></button>';
+        }).join("")+'</div>';
+    }
+  }
+  if(modelSide==="part"&&!parts.length){ /* ставить проём некуда */ }
+  else if(!winTypes.length){
     h+='<div style="font-size:11.5px;color:#9aabbf;line-height:1.45;margin-bottom:7px">Сначала заведите типовые изделия — из них и ставятся проёмы.</div>';
   } else {
     h+='<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">'+
@@ -9887,7 +9925,9 @@ function specModelHtml(sh){
         return '<button data-a="model-op-add" data-t="'+t.id+'" style="border:1.5px solid '+km.c+'55;background:#fff;color:'+km.c+';border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">+ '+km.emoji+' '+esc(t.n)+'</button>';
       }).join("")+'</div>';
   }
-  const ops=(m.openings||[]).filter(function(op){return op.side===modelSide;});
+  const ops=(m.openings||[]).filter(function(op){
+    return op.side===modelSide && (modelSide!=="part" || op.after===modelPart);
+  });
   if(ops.length){
     const len=sideLength(m, modelSide);
     h+=ops.map(function(op){
@@ -9897,13 +9937,18 @@ function specModelHtml(sh){
         '<span style="font-size:14px">'+km.emoji+'</span>'+
         '<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(t.n)+'</div>'+
         '<div style="font-size:10px;color:#7a9aaa">от края '+numRu(Math.round((Number(op.pos)||0)/10)/100)+' м · '+RUk(t.cost)+'</div></div>'+
-        '<input data-a="model-op-sill" data-id="'+op.id+'" value="'+numRu(Math.round((op.sill==null?(t.kind==="door"?0:900):op.sill)/10)/100)+'" type="number" step="0.05" inputmode="decimal" title="Высота низа проёма от пола, м" style="width:64px;padding:6px 7px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;text-align:right">'+
+        // У двери в перегородке подоконника нет, зато есть то, что нельзя угадать:
+        // в какую комнату открывается створка и на каком откосе петли.
+        (op.side==="part"
+          ? '<button data-a="model-op-into" data-id="'+op.id+'" title="В какую сторону открывается" style="width:30px;height:28px;border:1px solid #8e44ad55;background:#fff;border-radius:7px;cursor:pointer;color:#8e44ad;font-size:13px;flex-shrink:0">'+((Number(op.into)||1)>=0?"→":"←")+'</button>'+
+            '<button data-a="model-op-hinge" data-id="'+op.id+'" title="На каком откосе петли" style="width:30px;height:28px;border:1px solid #8e44ad55;background:#fff;border-radius:7px;cursor:pointer;color:#8e44ad;font-size:13px;flex-shrink:0">'+((op.hinge==="end")?"↓":"↑")+'</button>'
+          : '<input data-a="model-op-sill" data-id="'+op.id+'" value="'+numRu(Math.round((op.sill==null?(t.kind==="door"?0:900):op.sill)/10)/100)+'" type="number" step="0.05" inputmode="decimal" title="Высота низа проёма от пола, м" style="width:64px;padding:6px 7px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;text-align:right">')+
         '<input data-a="model-op-pos" data-id="'+op.id+'" type="range" min="0" max="'+Math.max(0,len-(Number(t.w)||0))+'" step="10" value="'+(Number(op.pos)||0)+'" style="flex:1.2;min-width:80px">'+
         '<button data-a="model-op-del" data-id="'+op.id+'" style="width:28px;height:28px;border:1px solid #e74c3c44;background:#fff;border-radius:7px;cursor:pointer;color:#e74c3c;font-size:12px;flex-shrink:0">🗑</button>'+
       '</div>';
     }).join("");
   } else {
-    h+='<div style="font-size:11.5px;color:#c0ccd8;margin-bottom:6px">На этой стене проёмов нет.</div>';
+    h+='<div style="font-size:11.5px;color:#c0ccd8;margin-bottom:6px">'+(modelSide==="part"?"В этой перегородке проёмов нет.":"На этой стене проёмов нет.")+'</div>';
   }
   // Справочник типовых изделий
   h+='<div style="display:flex;align-items:center;gap:8px;margin:12px 0 6px">'+
@@ -18736,15 +18781,46 @@ function bind(){
       sh.model.finish=Math.max(0,Math.round(Number(el.value)||0));
       modelSync(sh); fl();
     };}
-    else if(a==="model-side"){el.onclick=()=>{ modelSide=el.dataset.s; render(); };}
+    else if(a==="model-side"){el.onclick=()=>{
+      modelSide=el.dataset.s;
+      // Развёртка — вид на стену коробки изнутри; перегородка стоит поперёк и в
+      // такой вид не попадает, поэтому возвращаемся к плану.
+      if(modelSide==="part"&&modelView==="elev")modelView="plan";
+      render();
+    };}
+    else if(a==="model-part"){el.onclick=()=>{ modelPart=el.dataset.id; render(); };}
+    // Сторона открывания и откос с петлями: угадать их нельзя, а нарисованная не в
+    // ту комнату створка — это неверный чертёж у бригады на руках.
+    else if(a==="model-op-into"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      const op=(sh.model.openings||[]).find(function(o){return o.id===el.dataset.id;}); if(!op)return;
+      op.into=((Number(op.into)||1)>=0)?-1:1;
+      fl();
+    };}
+    else if(a==="model-op-hinge"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      const op=(sh.model.openings||[]).find(function(o){return o.id===el.dataset.id;}); if(!op)return;
+      op.hinge=(op.hinge==="end")?"start":"end";
+      fl();
+    };}
     else if(a==="model-stage"){el.onclick=()=>{ modelStageTab=parseInt(el.dataset.n,10)||0; render(); };}
     else if(a==="model-op-add"){el.onclick=()=>{
       const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
       const t=winType(el.dataset.t); if(!t)return;
       const len=sideLength(sh.model, modelSide);
       const max=Math.max(0,len-(Number(t.w)||0));
-      sh.model.openings=(sh.model.openings||[]).concat([{id:gid(),side:modelSide,pos:Math.round(max/2),
-        sill:(t.kind==="door")?0:900, typeId:t.id}]);
+      const op={id:gid(), side:modelSide, pos:Math.round(max/2), typeId:t.id};
+      if(modelSide==="part"){
+        // Проём в перегородке обязан знать СВОЮ перегородку и сторону створки:
+        // без них его нечем ни нарисовать, ни засчитать помещению.
+        const parts=modelParts(sh.model);
+        const pt=parts.find(function(x){return x.id===modelPart;})||parts[0];
+        if(!pt){ alert("В модели нет перегородок — сначала поставьте стену поперёк."); return; }
+        op.after=pt.id; modelPart=pt.id; op.into=1; op.hinge="start";
+      } else {
+        op.sill=(t.kind==="door")?0:900;
+      }
+      sh.model.openings=(sh.model.openings||[]).concat([op]);
       modelSync(sh); fl();
     };}
     else if(a==="model-op-del"){el.onclick=()=>{

@@ -254,6 +254,40 @@ function house() {
   ok('и не уходит в минус', opPosAt(m, 'n', 0, 50, 1300) === 0)
 }
 
+// ── 5.5 Двери в перегородках при правке отсеков ──────────────────────────────
+{
+  console.log('Двери в перегородках')
+  // Перегородка названа отсеком ПЕРЕД ней, поэтому деление и слияние её
+  // переименовывают. Дверь обязана остаться на своей физической стене — иначе
+  // бригада получит чертёж, на котором проём уехал в соседнюю комнату.
+  const base = () => {
+    const m = house()
+    m.openings = [{ id: 'd1', side: 'part', after: 'zal', pos: 800, into: 1, hinge: 'start', typeId: 't_door' }]
+    return m
+  }
+  const door = (m) => (m.openings || []).find((o) => o.side === 'part')
+
+  const split = splitAt(base(), 2000, 'zal2')
+  ok('после деления дверь осталась на своей стене', door(split).after === 'zal2', door(split).after)
+  ok('и не потеряла сторону створки', door(split).into === 1 && door(split).hinge === 'start')
+  const bays = modelBays(split).map((b) => b.id)
+  ok('её перегородка действительно существует', bays.indexOf(door(split).after) >= 0 &&
+    bays.indexOf(door(split).after) < bays.length - 1, bays.join(','))
+
+  const split2 = splitRoom(base(), 'zal', 'zal2')
+  ok('деление пополам — тот же перенос', door(split2).after === 'zal2', door(split2).after)
+
+  const merged = mergeRoom(base(), 'zal')
+  ok('перегородки не стало — дверь ушла с ней', !door(merged), JSON.stringify(merged.openings))
+
+  // Соседнюю перегородку слияние не трогает.
+  const two = base()
+  two.openings = two.openings.concat([{ id: 'd2', side: 'part', after: 'spal', pos: 800, typeId: 't_door' }])
+  const m2 = mergeRoom(two, 'zal')
+  ok('чужая дверь на месте', (m2.openings || []).length === 1 && m2.openings[0].id === 'd2',
+    JSON.stringify(m2.openings))
+}
+
 // ── 6. Что мешает считать ────────────────────────────────────────────────────
 {
   console.log('Предупреждения')

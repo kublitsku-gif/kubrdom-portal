@@ -294,6 +294,16 @@ export function moveBoundary(model, i, deltaMm) {
   return Object.assign({}, model, { rooms: rooms });
 }
 
+// Проёмы в перегородках при правке отсеков. Перегородка названа отсеком ПЕРЕД ней,
+// поэтому деление и слияние её переименовывают — и без этого дверь молча уезжала бы
+// на соседнюю стену или висела бы на перегородке, которой уже нет.
+function repointParts(model, from, to) {
+  const ops = (model.openings || []).map(function (o) {
+    return (o.side === "part" && o.after === from) ? Object.assign({}, o, { after: to }) : o;
+  }).filter(function (o) { return !(o.side === "part" && o.after == null); });
+  return ops;
+}
+
 // Разделить помещение перегородкой пополам. Новое помещение получает свой id —
 // раскладка и отделка привязаны к id, и делить их пополам было бы враньём.
 export function splitRoom(model, roomId, newId, newSubId) {
@@ -309,7 +319,10 @@ export function splitRoom(model, roomId, newId, newSubId) {
   // Отсек с продольной перегородкой делится вместе с ней: иначе санузел в углу
   // при добавлении поперечной стены молча превращался бы в комнату во всю ширину.
   if (r.sub) right.sub = { id: newSubId || (newId + "s"), name: "Помещение", pts: {}, at: r.sub.at };
-  return Object.assign({}, model, { rooms: rooms.slice(0, i).concat([left, right], rooms.slice(i + 1)) });
+  return Object.assign({}, model, {
+    rooms: rooms.slice(0, i).concat([left, right], rooms.slice(i + 1)),
+    openings: repointParts(model, roomId, newId),
+  });
 }
 
 // Убрать перегородку справа от помещения: соседи сливаются, длина перегородки
@@ -332,7 +345,11 @@ export function mergeRoom(model, roomId) {
     pts: addPts(a, b),
   });
   if (a.sub) merged.sub = Object.assign({}, a.sub, { pts: addPts(a.sub, b.sub) });
-  return Object.assign({}, model, { rooms: rooms.slice(0, i).concat([merged], rooms.slice(i + 2)) });
+  return Object.assign({}, model, {
+    rooms: rooms.slice(0, i).concat([merged], rooms.slice(i + 2)),
+    // Перегородки больше нет — висевшая на ней дверь вместе с ней и уходит.
+    openings: repointParts(model, a.id, null),
+  });
 }
 
 // Поставить продольную перегородку в отсеке: санузел в углу — это она.
@@ -370,7 +387,10 @@ export function splitAt(model, x, newId, newSubId) {
   const a = Object.assign({}, rooms[i], { len: left });
   const b = { id: newId, name: "Помещение", len: right, pts: {} };
   if (rooms[i].sub) b.sub = { id: newSubId || (newId + "s"), name: "Помещение", pts: {}, at: rooms[i].sub.at };
-  return Object.assign({}, model, { rooms: rooms.slice(0, i).concat([a, b], rooms.slice(i + 1)) });
+  return Object.assign({}, model, {
+    rooms: rooms.slice(0, i).concat([a, b], rooms.slice(i + 1)),
+    openings: repointParts(model, rooms[i].id, newId),
+  });
 }
 
 // Продольная стена на заданной отметке по ширине — тем же жестом, что и поперечная.
