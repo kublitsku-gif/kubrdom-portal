@@ -48,7 +48,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom,
   splitLengthwise, mergeLengthwise, moveLengthwise, elevation,
   bayAt, splitAt, splitLengthwiseAt, nearestSide, opPosAt,
-  modelToSpecs, modelTotals, modelIssues, modelScheme, partitionAt,
+  modelToSpecs, modelTotals, modelIssues, modelScheme, modelAreas, partitionAt,
   MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2 } from "../src/spec2.js";
@@ -9691,6 +9691,42 @@ const MODEL_TOOLS=[
 ];
 function modelToolMeta(k){ return MODEL_TOOLS.find(function(t){return t[0]===k;})||MODEL_TOOLS[0]; }
 
+// Площади помещений: пол, потолок и стены. Числа считает модель (`modelAreas`),
+// панель их только показывает — те же цифры уходят в отделку и в смету, и своя
+// копия формулы здесь означала бы, что на экране одно, а в договоре другое.
+function modelAreasPanel(sh){
+  const A=modelAreas(sh.model, winTypes);
+  const cell=function(label,val,unit){
+    return '<div style="text-align:center;background:rgba(255,255,255,.06);border-radius:8px;padding:5px 4px">'+
+      '<div style="font-size:8.5px;color:#7f97ae;font-weight:700;letter-spacing:0.4px">'+label+'</div>'+
+      '<div style="font-size:12.5px;font-weight:800;color:#fff">'+numRu(val)+(unit||'')+'</div></div>';
+  };
+  let h='<div style="flex:0 0 330px;min-width:280px;overflow:auto;background:#0f2033;border-left:1px solid rgba(255,255,255,.08);padding:12px 13px">';
+  h+='<div style="font-size:10px;font-weight:700;color:#8ea6bd;letter-spacing:0.6px;margin-bottom:8px">ПОМЕЩЕНИЯ И ПЛОЩАДИ</div>';
+  if(!A.rooms.length){
+    h+='<div style="font-size:12px;color:#7f97ae;line-height:1.5">Помещений нет. Поставьте стену поперёк — отсек разделится.</div>';
+    return h+'</div>';
+  }
+  h+=A.rooms.map(function(r){
+    return '<div style="border:1px solid rgba(255,255,255,.1);border-radius:11px;padding:9px 10px;margin-bottom:8px">'+
+      '<input data-a="model-room-name" data-id="'+r.id+'" value="'+esc(r.name||"")+'" placeholder="Название" style="width:100%;background:transparent;border:none;outline:none;color:#fff;font-size:13.5px;font-weight:700;padding:0 0 5px;box-sizing:border-box">'+
+      '<div style="font-size:10.5px;color:#7f97ae;margin-bottom:7px">'+numRu(r.l)+' × '+numRu(r.w)+' м · высота '+numRu(r.h)+' м</div>'+
+      '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px">'+
+        cell("ПОЛ",r.floor," м²")+cell("ПОТОЛОК",r.ceil," м²")+cell("СТЕНЫ",r.wallNet," м²")+
+      '</div>'+
+      '<div style="font-size:9.5px;color:#6f8aa3;margin-top:6px;line-height:1.4">стены с проёмами '+numRu(r.wallGross)+' м², проёмы '+numRu(r.openings)+' м², периметр '+numRu(r.perimeter)+' м</div>'+
+    '</div>';
+  }).join("");
+  h+='<div style="border-top:1px solid rgba(255,255,255,.12);margin-top:4px;padding-top:9px">'+
+      '<div style="font-size:10px;font-weight:700;color:#8ea6bd;letter-spacing:0.6px;margin-bottom:7px">ВСЕГО ПО ДОМУ</div>'+
+      '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px">'+
+        cell("ПОЛ",A.total.floor," м²")+cell("ПОТОЛОК",A.total.ceil," м²")+cell("СТЕНЫ",A.total.wallNet," м²")+
+      '</div>'+
+      '<div style="font-size:9.5px;color:#6f8aa3;margin-top:6px;line-height:1.4">Стены даны за вычетом проёмов ('+numRu(A.total.openings)+' м²). Полная площадь стен — '+numRu(A.total.wallGross)+' м²: по ней идут обрешётка и утеплитель.</div>'+
+    '</div>';
+  return h+'</div>';
+}
+
 function modelFullOverlay(){
   const sh=specSheet(specOpenId); if(!sh||!sh.model)return "";
   const m=sh.model, tot=modelTotals(m, winTypes);
@@ -9726,9 +9762,14 @@ function modelFullOverlay(){
         : '<span style="font-size:12px;color:#9fb3c8">Сначала заведите типовые изделия — в карточке, блок «Типовые изделия».</span>')+
     '</div>';
   }
-  // Холст
-  h+='<div style="flex:1;min-height:0;overflow:auto;background:#f4f7fa;padding:18px">'+
-      '<div style="width:'+(modelZoom*100)+'%;min-width:100%">'+modelPlanSvg(sh, true)+'</div>'+
+  // Холст и площади рядом. На большом экране панель стоит справа и числа меняются
+  // прямо во время перетаскивания перегородки — ради этого редактор и открывают на
+  // весь экран; на узком экране она переносится под план.
+  h+='<div style="flex:1;min-height:0;display:flex;flex-wrap:wrap;align-items:stretch">'+
+      '<div style="flex:1 1 420px;min-width:0;min-height:240px;overflow:auto;background:#f4f7fa;padding:18px">'+
+        '<div style="width:'+(modelZoom*100)+'%;min-width:100%">'+modelPlanSvg(sh, true)+'</div>'+
+      '</div>'+
+      modelAreasPanel(sh)+
     '</div>';
   // Подсказка
   h+='<div style="padding:9px 14px;background:#122236;color:#9fb3c8;font-size:12px;flex-shrink:0;display:flex;gap:10px;align-items:center">'+
@@ -10398,19 +10439,55 @@ function modelSchemeSvg(model, types){
 // логику раздела собирают с нуля, и унаследованный экран решал бы за неё, как всё
 // должно выглядеть. Схема рисуется по МОДЕЛИ, а не картинкой: подвинется
 // перегородка — поедет и чертёж, и размерные цепочки под ним.
+// Раздел правит ОДИН рабочий лист: модель живёт в снимке, а не в коде, иначе
+// править её можно было бы только правкой заготовки — и правка терялась бы у всех.
+function spec2Sheet(){ return (specSheets2||[])[0]||null; }
+
 function tSpec2(){
+  const sh=spec2Sheet();
   const pr=MODEL_PRESETS[0];
-  const built=pr?presetModel(pr, winTypes, gid):null;
+  // Пока лист не заведён, показываем заготовку: экран не должен быть пустым до
+  // первого нажатия, а числа на нём — те же, что окажутся в листе.
+  const built=(sh&&sh.model)?{model:sh.model,winTypes:winTypes}:(pr?presetModel(pr, winTypes, gid):null);
   if(!built)return '<div></div>';
-  return '<div>'+
-    '<div style="font-size:11px;color:#8e44ad;font-weight:700;letter-spacing:1px;margin-bottom:2px">📐 СХЕМА ПЛАНА</div>'+
-    '<div style="font-size:12px;color:#5a7a9a;margin-bottom:10px;line-height:1.45">'+esc(pr.n)+'</div>'+
-    '<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:12px;margin-bottom:9px;overflow-x:auto">'+
-      modelSchemeSvg(built.model, built.winTypes)+
+  const A=modelAreas(built.model, built.winTypes);
+  const cell=function(label,val){
+    return '<div style="text-align:center;background:#f6f8fa;border-radius:9px;padding:7px 5px">'+
+      '<div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.5px">'+label+'</div>'+
+      '<div style="font-size:14px;font-weight:800;color:#0d1b2e">'+numRu(val)+' м²</div></div>';
+  };
+  let h='<div>';
+  h+='<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:10px">'+
+    '<div style="flex:1;min-width:0">'+
+      '<div style="font-size:11px;color:#8e44ad;font-weight:700;letter-spacing:1px">📐 СХЕМА ПЛАНА</div>'+
+      '<div style="font-size:12px;color:#5a7a9a;margin-top:2px;line-height:1.45">'+esc((sh&&sh.name)||(pr&&pr.n)||"")+'</div>'+
     '</div>'+
-    '<div style="font-size:10.5px;color:#9aabbf;line-height:1.5;margin-bottom:20px">'+
-      'Несущие стены, перегородки, проёмы и размеры — в миллиметрах. Мебель, сантехника и площади на схему не выносятся.</div>'+
+    '<button data-a="spec2-edit" style="padding:9px 15px;background:#8e44ad;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700;flex-shrink:0">⛶ '+(sh?"Редактировать":"Открыть редактор")+'</button>'+
   '</div>';
+  h+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:12px;margin-bottom:9px;overflow-x:auto">'+
+      modelSchemeSvg(built.model, built.winTypes)+
+    '</div>';
+  // Площади рядом со схемой: их считают по этому же чертежу, и держать их на
+  // другом экране значит заставить сверять два экрана.
+  h+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
+    '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:8px">ПЛОЩАДИ · ВСЕГО ПО ДОМУ</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:9px">'+
+      cell("ПОЛ",A.total.floor)+cell("ПОТОЛОК",A.total.ceil)+cell("СТЕНЫ",A.total.wallNet)+
+    '</div>'+
+    A.rooms.map(function(r){
+      return '<div style="display:flex;align-items:baseline;gap:8px;padding:5px 0;border-top:1px solid #f4f7fb;font-size:12px">'+
+        '<span style="flex:1;min-width:0;color:#0d1b2e;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.name||"Помещение")+'</span>'+
+        '<span style="color:#7a9aaa;white-space:nowrap;font-size:11px">'+numRu(r.l)+'×'+numRu(r.w)+' м</span>'+
+        '<span style="color:#0d1b2e;font-weight:700;white-space:nowrap">пол '+numRu(r.floor)+'</span>'+
+        '<span style="color:#5a7a9a;white-space:nowrap">стены '+numRu(r.wallNet)+'</span>'+
+      '</div>';
+    }).join("")+
+  '</div>';
+  h+='<div style="font-size:10.5px;color:#9aabbf;line-height:1.5;margin-bottom:20px">'+
+      'Несущие стены, перегородки, проёмы и размеры — в миллиметрах. Площади чистовые: потолок равен полу, стены — за вычетом проёмов. Мебель и сантехника на схему не выносятся.'+
+      (sh?'':'<br>Это заготовка. Нажмите «Открыть редактор» — она станет рабочей моделью раздела.')+
+    '</div>';
+  return h+'</div>';
 }
 
 // Карточка спецификации: всё решение продавца на одном экране.
@@ -18739,7 +18816,11 @@ function bind(){
     };}
     else if(a==="model-room-name"){el.oninput=()=>{
       const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
-      const r=(sh.model.rooms||[]).find(function(x){return x.id===el.dataset.id;}); if(!r)return;
+      // Комната может быть и вторым помещением отсека (санузел в углу) — искать надо
+      // в обоих местах, иначе половина имён не правится вовсе.
+      let r=(sh.model.rooms||[]).find(function(x){return x.id===el.dataset.id;});
+      if(!r)(sh.model.rooms||[]).forEach(function(b){ if(b.sub&&b.sub.id===el.dataset.id)r=b.sub; });
+      if(!r)return;
       r.name=el.value; modelSync(sh); scheduleSave();
     };}
     else if(a==="model-room-len"){el.onchange=()=>{
@@ -18840,6 +18921,23 @@ function bind(){
     }
     // ─── Полноэкранный редактор ────────────────────────────────────────────
     else if(a==="model-full"){el.onclick=()=>{ modelFull=true; modelTool="sel"; render(); };}
+    // Правка модели раздела: до первого нажатия править нечего — заводим рабочий
+    // лист из заготовки, дальше это обычная модель со своей историей правок.
+    else if(a==="spec2-edit"){el.onclick=()=>{
+      let sh=spec2Sheet();
+      if(!sh){
+        const r=presetModel(MODEL_PRESETS[0], winTypes, gid);
+        if(!r){ alert("Заготовка не найдена."); return; }
+        sh={ id:gid(), name:(MODEL_PRESETS[0].n||"Схема"), kind:"house", clientId:"",
+          specs:{height:2.5,rooms:[],openings:[]}, rooms:{}, global:{}, qty:{},
+          markup:Number((settings&&settings.specMarkup))||30, status:"draft",
+          at:todayISO(), by:(currentUser&&currentUser.id)||"", model:r.model };
+        winTypes=r.winTypes;
+        modelSync(sh);
+        specSheets2=specSheets2.concat([sh]);
+      }
+      specOpenId=sh.id; modelFull=true; modelTool="sel"; fl();
+    };}
     else if(a==="model-full-close"){el.onclick=()=>{ modelFull=false; render(); };}
     else if(a==="model-tool"){el.onclick=()=>{
       modelTool=el.dataset.k;

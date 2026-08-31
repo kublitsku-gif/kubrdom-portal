@@ -563,6 +563,49 @@ export function elevation(model, side, winTypes, points) {
   return { side: side, len: len, height: H, rooms: wallRooms, openings: ops, marks: marks };
 }
 
+// ─── ПЛОЩАДИ ПОМЕЩЕНИЙ ───────────────────────────────────────────────────────
+// Пол, потолок и стены по каждому помещению — то, из чего считается отделка, и то,
+// что человек хочет видеть, пока двигает перегородку: подвинул — увидел новые числа.
+//
+// Потолок равен полу: это одна плоскость дома, а не отдельный размер.
+// Стены даём ДВУМЯ числами. Полная (`wallGross`) — периметр × высота: по ней считают
+// обрешётку и утеплитель, которые идут и за окном тоже. Чистая (`wallNet`) — за
+// вычетом проёмов: по ней красят и обшивают. Одно число вместо двух врало бы одному
+// из двух расчётов, а какому — зависит от материала.
+export function modelAreas(model, winTypes) {
+  const m = model || {};
+  const H = Number(m.h) || 0;
+  const byType = {};
+  (winTypes || []).forEach(function (t) { if (t && t.id) byType[t.id] = t; });
+  const r2 = function (v) { return Math.round(v * 100) / 100; };
+
+  // Проёмы считаем по тому же правилу, что и всё остальное: у каждого ОДНО помещение.
+  const opArea = {};
+  (m.openings || []).forEach(function (op) {
+    const t = byType[op.typeId]; if (!t) return;
+    const room = openingRoom(m, op); if (!room) return;
+    opArea[room.id] = (opArea[room.id] || 0) + (Number(t.w) || 0) * (Number(t.h) || 0) / 1000000;
+  });
+
+  const rooms = modelRooms(m).map(function (r) {
+    const gross = r2(r.wallLen * H / 1000);
+    const ops = r2(opArea[r.id] || 0);
+    return {
+      id: r.id, name: r.name,
+      w: r2(r.finW / 1000), l: r2(r.finL / 1000), h: r2(H / 1000),
+      perimeter: r.wallLen,
+      floor: r.area, ceil: r.area,
+      wallGross: gross, openings: ops, wallNet: Math.max(0, r2(gross - ops)),
+    };
+  });
+  const sum = function (k) { return r2(rooms.reduce(function (a, r) { return a + r[k]; }, 0)); };
+  return {
+    height: r2(H / 1000), rooms: rooms,
+    total: { floor: sum("floor"), ceil: sum("ceil"), wallGross: sum("wallGross"),
+      openings: sum("openings"), wallNet: sum("wallNet") },
+  };
+}
+
 // ─── СХЕМА ПЛАНА ─────────────────────────────────────────────────────────────
 // Чертёж в том виде, в каком его читают на площадке: несущие стены, перегородки,
 // проёмы и размерные цепочки. Мебели, сантехники и площадей здесь нет намеренно —

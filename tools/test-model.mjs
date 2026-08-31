@@ -10,7 +10,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom,
   splitLengthwise, mergeLengthwise, moveLengthwise, elevation,
   bayAt, splitAt, splitLengthwiseAt, nearestSide, opPosAt,
-  openingCounts, modelToSpecs, modelTotals, modelIssues } from '../src/model.js'
+  openingCounts, modelToSpecs, modelTotals, modelIssues, modelAreas } from '../src/model.js'
 import { SPEC_POINTS } from '../src/spec.js'
 
 let failed = 0
@@ -286,6 +286,47 @@ function house() {
   const m2 = mergeRoom(two, 'zal')
   ok('чужая дверь на месте', (m2.openings || []).length === 1 && m2.openings[0].id === 'd2',
     JSON.stringify(m2.openings))
+}
+
+// ── 5.7 Площади: пол, потолок, стены ─────────────────────────────────────────
+{
+  console.log('Площади помещений')
+  const m = house()
+  const A = modelAreas(m, TYPES)
+  ok('по помещению на комнату', A.rooms.length === modelRooms(m).length)
+  ok('потолок равен полу — это одна плоскость', A.rooms.every((r) => r.ceil === r.floor))
+  // Высоту берём из модели в миллиметрах, а не из округлённой до сантиметров:
+  // 2698 мм и 2,70 м дают разные копейки на каждой стене.
+  ok('стены = периметр × высоту',
+    A.rooms.every((r) => Math.abs(r.wallGross - r.perimeter * m.h / 1000) < 0.01),
+    JSON.stringify(A.rooms.map((r) => [r.perimeter, r.wallGross])))
+  ok('без проёмов чистая площадь стен равна полной',
+    A.rooms.every((r) => r.wallNet === r.wallGross))
+  ok('итог — сумма помещений',
+    A.total.floor === Math.round(A.rooms.reduce((a, r) => a + r.floor, 0) * 100) / 100,
+    String(A.total.floor))
+
+  // Проём съедает площадь стены ровно один раз и только в СВОЁм помещении.
+  const rooms = modelRooms(m)
+  const m2 = Object.assign({}, m, {
+    openings: [{ id: 'w1', side: 'n', pos: rooms[0].x0 + 200, typeId: 't_win' }],
+  })
+  const B = modelAreas(m2, TYPES)
+  const winM2 = Math.round(1300 * 1150 / 1000000 * 100) / 100
+  ok('окно вычтено из стен своей комнаты',
+    B.rooms[0].wallNet === Math.round((B.rooms[0].wallGross - winM2) * 100) / 100,
+    JSON.stringify([B.rooms[0].wallGross, B.rooms[0].openings, B.rooms[0].wallNet]))
+  ok('у соседей стены не тронуты', B.rooms[1].wallNet === B.rooms[1].wallGross)
+  ok('полная площадь стен от проёма не изменилась', B.rooms[0].wallGross === A.rooms[0].wallGross)
+  ok('пол и потолок проёмом не режутся', B.rooms[0].floor === A.rooms[0].floor)
+
+  // Двинули перегородку — площади поехали следом. Ради этого редактор и открывают.
+  const moved = modelAreas(moveBoundary(m, 0, 1000), TYPES)
+  ok('перенос границы сразу меняет площади',
+    moved.rooms[0].floor > A.rooms[0].floor && moved.rooms[1].floor < A.rooms[1].floor,
+    JSON.stringify([A.rooms[0].floor, moved.rooms[0].floor]))
+  ok('а общая площадь дома — нет', moved.total.floor === A.total.floor,
+    moved.total.floor + ' ≠ ' + A.total.floor)
 }
 
 // ── 6. Что мешает считать ────────────────────────────────────────────────────

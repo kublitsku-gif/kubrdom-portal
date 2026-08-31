@@ -111,4 +111,51 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   t.ok('кнопок «добавить проём» не показываем', view.indexOf('data-a="model-op-add"') < 0)
 }
 
+// ── 6. Полный экран: площади рядом с планом ─────────────────────────────────
+{
+  t.section('Редактор на весь экран')
+  const p = panel()
+  click(p, { a: 'model-full' })
+  t.ok('оверлей открыт', p.q('modelFull') === true)
+  const ov = p.run('modelFullOverlay()')
+  t.ok('план на месте', ov.indexOf('model-svg-full') >= 0)
+  t.ok('инструменты на месте',
+    ov.indexOf('data-a="model-tool"') >= 0 && ov.indexOf('data-a="model-zoom"') >= 0)
+  t.ok('панель площадей рядом', /ПОМЕЩЕНИЯ И ПЛОЩАДИ/.test(ov) && /ВСЕГО ПО ДОМУ/.test(ov))
+  t.ok('пол, потолок и стены показаны', /ПОЛ/.test(ov) && /ПОТОЛОК/.test(ov) && /СТЕНЫ/.test(ov))
+  t.ok('имя помещения правится прямо там', ov.indexOf('data-a="model-room-name"') >= 0)
+  t.ok('числа настоящие', /25,52/.test(ov), 'нет общей площади пола')
+
+  // Инструмент «проём» показывает каталог изделий — окна ставятся из него.
+  click(p, { a: 'model-tool', k: 'op' })
+  const ops = p.run('modelFullOverlay()')
+  t.ok('каталог изделий предлагается', ops.indexOf('data-a="model-place-type"') >= 0)
+  t.ok('в нём есть окно с чертежа', /Окно 1500×2100/.test(ops))
+
+  // Двинули перегородку — площади в панели поехали следом.
+  const before = p.q('modelAreas(specSheets[0].model, winTypes).rooms[0].floor')
+  p.run('specSheets[0].model=moveBoundary(specSheets[0].model,0,500);')
+  const after = p.q('modelAreas(specSheets[0].model, winTypes).rooms[0].floor')
+  t.ok('перенос границы меняет площадь', after > before, before + ' -> ' + after)
+  t.ok('и панель показывает новое число', p.run('modelFullOverlay()').indexOf(String(after).replace('.', ',')) >= 0,
+    String(after))
+}
+
+// ── 7. Имя второй комнаты в отсеке ──────────────────────────────────────────
+{
+  t.section('Санузел в углу')
+  const p = panel()
+  // Продольная перегородка даёт вторую комнату в том же отсеке; её имя тоже правится.
+  const bay = p.q('specSheets[0].model.rooms[0].id')
+  p.run('specSheets[0].model=splitLengthwiseAt(specSheets[0].model,' + JSON.stringify(bay) + ',1100,"sub1");')
+  const el = p.dom.node({ a: 'model-room-name', id: 'sub1' })
+  el.value = 'Душевая'
+  p.run('bind();')
+  el.oninput()
+  const sub = p.q('specSheets[0].model.rooms[0].sub')
+  t.ok('имя второй комнаты сохранилось', sub && sub.name === 'Душевая', JSON.stringify(sub))
+  t.ok('она попала в площади',
+    p.q('modelAreas(specSheets[0].model, winTypes).rooms.filter(function(r){return r.name==="Душевая";}).length') === 1)
+}
+
 t.done()
