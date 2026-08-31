@@ -1,0 +1,162 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-150 -165 1500 700" width="1560" font-family="Inter, Arial, Helvetica, sans-serif">
+<defs>
+<pattern id="hatch" width="9" height="9" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+<rect width="9" height="9" fill="#ececec"/><line x1="0" y1="0" x2="0" y2="9" stroke="#9a9a9a" stroke-width="1.1"/>
+</pattern>
+</defs>
+<rect x="-150" y="-165" width="1500" height="700" fill="#ffffff"/>
+<rect x="0" y="0" width="1200" height="13" fill="url(#hatch)" stroke="#111" stroke-width="1.6"/>
+<rect x="0" y="0" width="10" height="247" fill="url(#hatch)" stroke="#111" stroke-width="1.6"/>
+<rect x="0" y="233" width="300" height="14" fill="url(#hatch)" stroke="#111" stroke-width="1.6"/>
+<rect x="450" y="233" width="80" height="14" fill="url(#hatch)" stroke="#111" stroke-width="1.6"/>
+<rect x="630" y="233" width="570" height="14" fill="url(#hatch)" stroke="#111" stroke-width="1.6"/>
+<rect x="1190" y="0" width="10" height="23" fill="url(#hatch)" stroke="#111" stroke-width="1.6"/>
+<rect x="1190" y="223" width="10" height="24" fill="url(#hatch)" stroke="#111" stroke-width="1.6"/>
+<rect x="210" y="13" width="10" height="75" fill="url(#hatch)" stroke="#111" stroke-width="1.6"/>
+<rect x="210" y="158" width="10" height="75" fill="url(#hatch)" stroke="#111" stroke-width="1.6"/>
+<rect x="860" y="13" width="10" height="145" fill="url(#hatch)" stroke="#111" stroke-width="1.6"/>
+<rect x="860" y="228" width="10" height="5" fill="url(#hatch)" stroke="#111" stroke-width="1.6"/>
+<rect x="300" y="233" width="150" height="14" fill="#fff" stroke="#111" stroke-width="1.4"/><rect x="300" y="237.76" width="150" height="4.48" fill="#fff" stroke="#111" stroke-width="1.2"/>
+<rect x="1190" y="23" width="10" height="200" fill="#fff" stroke="#111" stroke-width="1.4"/><rect x="1193.4" y="23" width="3.2" height="200" fill="#fff" stroke="#111" stroke-width="1.2"/>
+<rect x="530" y="233" width="100" height="14" fill="#fff"/>
+<line x1="530" y1="233" x2="530" y2="247" stroke="#111" stroke-width="1.2"/>
+<line x1="630" y1="233" x2="630" y2="247" stroke="#111" stroke-width="1.2"/>
+<line x1="630" y1="247" x2="630" y2="347" stroke="#111" stroke-width="4"/>
+<path d="M 530 247 A 100 100 0 0 0 630 347" fill="none" stroke="#111" stroke-width="1" stroke-dasharray="6 5"/>
+<line x1="220" y1="88" x2="290" y2="88" stroke="#111" stroke-width="4"/>
+<path d="M 220 158 A 70 70 0 0 0 290 88" fill="none" stroke="#111" stroke-width="1" stroke-dasharray="6 5"/>
+<line x1="870" y1="228" x2="940" y2="228" stroke="#111" stroke-width="4"/>
+<path d="M 940 228 A 70 70 0 0 0 870 158" fill="none" stroke="#111" stroke-width="1" stroke-dasharray="6 5"/>
+<text x="110" y="60" font-size="19" fill="#8a8a8a" text-anchor="middle" letter-spacing="1">САНУЗЕЛ</text>
+<text x="540" y="60" font-size="19" fill="#8a8a8a" text-anchor="middle" letter-spacing="1">КУХНЯ-ГОСТИНАЯ</text>
+<text x="1030" y="60" font-size="19" fill="#8a8a8a" text-anchor="middle" letter-spacing="1">СПАЛЬНЯ</text>
+<text x="375" y="196" font-size="16" fill="#111" text-anchor="middle" font-weight="600">О-1</text><text x="375" y="215" font-size="14" fill="#444" text-anchor="middle">150×210, поворотно-откидное</text>
+<text x="580" y="145" font-size="16" fill="#111" text-anchor="middle" font-weight="600">Д-1</text><text x="580" y="164" font-size="14" fill="#444" text-anchor="middle">100×210, наружу</text>
+<text x="295" y="118" font-size="16" fill="#111" text-anchor="start" font-weight="600">Д-2</text><text x="295" y="137" font-size="14" fill="#444" text-anchor="start">70×210</text>
+<text x="950" y="112" font-size="16" fill="#111" text-anchor="start" font-weight="600">Д-3</text><text x="950" y="131" font-size="14" fill="#444" text-anchor="start">70×210</text>
+<text x="1035" y="205" font-size="16" fill="#111" text-anchor="middle" font-weight="600">О-2</text><text x="1035" y="224" font-size="14" fill="#444" text-anchor="middle">200×220, h подок. = 20</text>
+<line x1="0" y1="0" x2="0" y2="-122" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="1200" y1="0" x2="1200" y2="-122" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="0" y1="-112" x2="1200" y2="-112" stroke="#1c4f8f" stroke-width="1.2"/>
+<line x1="-7" y1="-105" x2="7" y2="-119" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="1193" y1="-105" x2="1207" y2="-119" stroke="#1c4f8f" stroke-width="1.4"/>
+<text x="600" y="-121" font-size="18" fill="#1c4f8f" text-anchor="middle">1200</text>
+<line x1="0" y1="0" x2="0" y2="-68" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="10" y1="0" x2="10" y2="-68" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="210" y1="0" x2="210" y2="-68" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="220" y1="0" x2="220" y2="-68" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="860" y1="0" x2="860" y2="-68" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="870" y1="0" x2="870" y2="-68" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="1190" y1="0" x2="1190" y2="-68" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="1200" y1="0" x2="1200" y2="-68" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="0" y1="-58" x2="1200" y2="-58" stroke="#1c4f8f" stroke-width="1.2"/>
+<line x1="-7" y1="-51" x2="7" y2="-65" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="3" y1="-51" x2="17" y2="-65" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="203" y1="-51" x2="217" y2="-65" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="213" y1="-51" x2="227" y2="-65" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="853" y1="-51" x2="867" y2="-65" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="863" y1="-51" x2="877" y2="-65" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="1183" y1="-51" x2="1197" y2="-65" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="1193" y1="-51" x2="1207" y2="-65" stroke="#1c4f8f" stroke-width="1.4"/>
+<text transform="translate(10,-70) rotate(-90)" font-size="14" fill="#1c4f8f" text-anchor="start">10</text>
+<text x="110" y="-67" font-size="18" fill="#1c4f8f" text-anchor="middle">200</text>
+<text transform="translate(220,-70) rotate(-90)" font-size="14" fill="#1c4f8f" text-anchor="start">10</text>
+<text x="540" y="-67" font-size="18" fill="#1c4f8f" text-anchor="middle">640</text>
+<text transform="translate(870,-70) rotate(-90)" font-size="14" fill="#1c4f8f" text-anchor="start">10</text>
+<text x="1030" y="-67" font-size="18" fill="#1c4f8f" text-anchor="middle">320</text>
+<text transform="translate(1200,-70) rotate(-90)" font-size="14" fill="#1c4f8f" text-anchor="start">10</text>
+<line x1="220" y1="247" x2="220" y2="319" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="300" y1="247" x2="300" y2="319" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="450" y1="247" x2="450" y2="319" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="530" y1="247" x2="530" y2="319" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="630" y1="247" x2="630" y2="319" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="860" y1="247" x2="860" y2="319" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="220" y1="309" x2="860" y2="309" stroke="#1c4f8f" stroke-width="1.2"/>
+<line x1="213" y1="316" x2="227" y2="302" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="293" y1="316" x2="307" y2="302" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="443" y1="316" x2="457" y2="302" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="523" y1="316" x2="537" y2="302" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="623" y1="316" x2="637" y2="302" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="853" y1="316" x2="867" y2="302" stroke="#1c4f8f" stroke-width="1.4"/>
+<text x="260" y="300" font-size="18" fill="#1c4f8f" text-anchor="middle">80</text>
+<text x="375" y="300" font-size="18" fill="#1c4f8f" text-anchor="middle">150</text>
+<text x="490" y="300" font-size="18" fill="#1c4f8f" text-anchor="middle">80</text>
+<text x="580" y="300" font-size="18" fill="#1c4f8f" text-anchor="middle">100</text>
+<text x="745" y="300" font-size="18" fill="#1c4f8f" text-anchor="middle">230</text>
+<line x1="0" y1="247" x2="0" y2="379" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="300" y1="247" x2="300" y2="379" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="450" y1="247" x2="450" y2="379" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="530" y1="247" x2="530" y2="379" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="630" y1="247" x2="630" y2="379" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="1200" y1="247" x2="1200" y2="379" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="0" y1="369" x2="1200" y2="369" stroke="#1c4f8f" stroke-width="1.2"/>
+<line x1="-7" y1="376" x2="7" y2="362" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="293" y1="376" x2="307" y2="362" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="443" y1="376" x2="457" y2="362" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="523" y1="376" x2="537" y2="362" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="623" y1="376" x2="637" y2="362" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="1193" y1="376" x2="1207" y2="362" stroke="#1c4f8f" stroke-width="1.4"/>
+<text x="150" y="360" font-size="18" fill="#1c4f8f" text-anchor="middle">300</text>
+<text x="375" y="360" font-size="18" fill="#1c4f8f" text-anchor="middle">150</text>
+<text x="490" y="360" font-size="18" fill="#1c4f8f" text-anchor="middle">80</text>
+<text x="580" y="360" font-size="18" fill="#1c4f8f" text-anchor="middle">100</text>
+<text x="915" y="360" font-size="18" fill="#1c4f8f" text-anchor="middle">570</text>
+<line x1="0" y1="0" x2="-62" y2="0" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="0" y1="13" x2="-62" y2="13" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="0" y1="233" x2="-62" y2="233" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="0" y1="247" x2="-62" y2="247" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="-52" y1="0" x2="-52" y2="247" stroke="#1c4f8f" stroke-width="1.2"/>
+<line x1="-59" y1="7" x2="-45" y2="-7" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="-59" y1="20" x2="-45" y2="6" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="-59" y1="240" x2="-45" y2="226" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="-59" y1="254" x2="-45" y2="240" stroke="#1c4f8f" stroke-width="1.4"/>
+<text x="-68" y="11.5" font-size="14" fill="#1c4f8f" text-anchor="end">13</text>
+<text transform="translate(-61,123) rotate(-90)" font-size="18" fill="#1c4f8f" text-anchor="middle">220</text>
+<text x="-68" y="245" font-size="14" fill="#1c4f8f" text-anchor="end">14</text>
+<line x1="0" y1="0" x2="-122" y2="0" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="0" y1="247" x2="-122" y2="247" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="-112" y1="0" x2="-112" y2="247" stroke="#1c4f8f" stroke-width="1.2"/>
+<line x1="-119" y1="7" x2="-105" y2="-7" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="-119" y1="254" x2="-105" y2="240" stroke="#1c4f8f" stroke-width="1.4"/>
+<text transform="translate(-121,123.5) rotate(-90)" font-size="18" fill="#1c4f8f" text-anchor="middle">247</text>
+<line x1="1200" y1="0" x2="1272" y2="0" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="1200" y1="23" x2="1272" y2="23" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="1200" y1="223" x2="1272" y2="223" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="1200" y1="247" x2="1272" y2="247" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="1262" y1="0" x2="1262" y2="247" stroke="#1c4f8f" stroke-width="1.2"/>
+<line x1="1255" y1="7" x2="1269" y2="-7" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="1255" y1="30" x2="1269" y2="16" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="1255" y1="230" x2="1269" y2="216" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="1255" y1="254" x2="1269" y2="240" stroke="#1c4f8f" stroke-width="1.4"/>
+<text x="1246" y="16.5" font-size="14" fill="#1c4f8f" text-anchor="end">23</text>
+<text transform="translate(1253,123) rotate(-90)" font-size="18" fill="#1c4f8f" text-anchor="middle">200</text>
+<text x="1246" y="240" font-size="14" fill="#1c4f8f" text-anchor="end">24</text>
+<line x1="210" y1="13" x2="178" y2="13" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="210" y1="88" x2="178" y2="88" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="210" y1="158" x2="178" y2="158" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="210" y1="233" x2="178" y2="233" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="188" y1="13" x2="188" y2="233" stroke="#1c4f8f" stroke-width="1.2"/>
+<line x1="181" y1="20" x2="195" y2="6" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="181" y1="95" x2="195" y2="81" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="181" y1="165" x2="195" y2="151" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="181" y1="240" x2="195" y2="226" stroke="#1c4f8f" stroke-width="1.4"/>
+<text transform="translate(179,50.5) rotate(-90)" font-size="18" fill="#1c4f8f" text-anchor="middle">75</text>
+<text transform="translate(179,123) rotate(-90)" font-size="18" fill="#1c4f8f" text-anchor="middle">70</text>
+<text transform="translate(179,195.5) rotate(-90)" font-size="18" fill="#1c4f8f" text-anchor="middle">75</text>
+<line x1="860" y1="13" x2="828" y2="13" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="860" y1="158" x2="828" y2="158" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="860" y1="228" x2="828" y2="228" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="860" y1="233" x2="828" y2="233" stroke="#1c4f8f" stroke-width="0.7" opacity="0.55"/>
+<line x1="838" y1="13" x2="838" y2="233" stroke="#1c4f8f" stroke-width="1.2"/>
+<line x1="831" y1="20" x2="845" y2="6" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="831" y1="165" x2="845" y2="151" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="831" y1="235" x2="845" y2="221" stroke="#1c4f8f" stroke-width="1.4"/>
+<line x1="831" y1="240" x2="845" y2="226" stroke="#1c4f8f" stroke-width="1.4"/>
+<text transform="translate(829,85.5) rotate(-90)" font-size="18" fill="#1c4f8f" text-anchor="middle">145</text>
+<text transform="translate(829,193) rotate(-90)" font-size="18" fill="#1c4f8f" text-anchor="middle">70</text>
+<text x="822" y="235.5" font-size="14" fill="#1c4f8f" text-anchor="end">5</text>
+<text x="0" y="443" font-size="22" fill="#111" font-weight="700">КОНТЕЙНЕР 1200 × 247 — план: стены, перегородки, окна, двери</text>
+<text x="0" y="473" font-size="15" fill="#444" font-weight="400">Размеры в сантиметрах, по чистовой отделке. Высота помещений 250.</text>
+<text x="0" y="497" font-size="15" fill="#444" font-weight="400">Стены: длинные 13 и 14, торцевые 10; перегородки 10.</text>
+<text x="0" y="521" font-size="15" fill="#444" font-weight="400">Помещения (чистовые): 200×220 = 4,40 м²   |   640×220 = 14,08 м²   |   320×220 = 7,04 м²</text>
+</svg>

@@ -48,7 +48,9 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom,
   splitLengthwise, mergeLengthwise, moveLengthwise, elevation,
   bayAt, splitAt, splitLengthwiseAt, nearestSide, opPosAt,
-  modelToSpecs, modelTotals, modelIssues } from "../src/model.js";
+  modelToSpecs, modelTotals, modelIssues, MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
+// «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
+import { totals2, issues2 } from "../src/spec2.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
 const APP_BUILD = "2026-08-30.9";
@@ -271,6 +273,7 @@ function serializeState(){
     { work_id: "purchases",       data: purchases       },
     { work_id: "stock",           data: stock           },
     { work_id: "specSheets",      data: specSheets      },
+    { work_id: "specSheets2",     data: specSheets2     },
     { work_id: "winTypes",        data: winTypes        },
     { work_id: "purchased",       data: purchased       },
     { work_id: "arrived",         data: arrived         },
@@ -320,6 +323,7 @@ function applyState(items){
   purchases       = arr("purchases",       purchases);
   stock           = arr("stock",           stock);
   specSheets      = arr("specSheets",      specSheets);
+  specSheets2     = arr("specSheets2",     specSheets2);
   winTypes        = arr("winTypes",        winTypes);
   purchased       = obj("purchased",       purchased);
   arrived         = obj("arrived",         arrived);
@@ -1465,6 +1469,7 @@ const TAB_DEFS=[
   {k:"marketing", n:"📣 Маркетинг"},
   {k:"kp",        n:"📋 КП"},
   {k:"spec",      n:"🏠 Спецификация"},
+  {k:"spec2",     n:"🧪 Спецификация 2"},
   {k:"voiceai",   n:"🎙 Голосовой ИИ"},
   {k:"issues",    n:"❓ Вопросы"},
   {k:"history",   n:"🕘 История"},
@@ -2088,8 +2093,12 @@ let modelPlaceType="";     // какое изделие ставим инстр�
 let modelZoom=1;           // 1 = вписать по ширине
 let modelStageTab=0;       // 0 = все этапы
 let specSheets=[];
+// «Спецификация 2» — опытный раздел (см. src/spec2.js). Листы держим ОТДЕЛЬНО: по
+// боевым спецификациям уже заведены договора, объекты и транши, и эксперимент,
+// который пишет в них, — это не эксперимент, а авария.
+let specSheets2=[];
 let specOpenId=null;      // открытая спецификация (null = список)
-let specNew={name:"",kind:"banya",clientId:"",planId:"",model:""};
+let specNew={name:"",kind:"banya",clientId:"",planId:"",model:"",preset:""};
 let specShowNew=false;
 let specBaseOpen=false;   // раскрыт ли список «входит всегда» в карточке спецификации
 // Карточка спецификации умеет показывать одно и то же четырьмя способами: списком,
@@ -2394,6 +2403,7 @@ function specOwner(id){
       || objects.find(function(x){return x.id===id;})
       || (typeof dbPlans!=="undefined"&&dbPlans.find(function(x){return x.id===id;}))
       || (typeof specSheets!=="undefined"&&specSheets.find(function(x){return x.id===id;}))
+      || (typeof specSheets2!=="undefined"&&specSheets2.find(function(x){return x.id===id;}))
       || null;
 }
 // title — редактор один на четыре сущности (шаблон, объект, планировка, спецификация),
@@ -4380,7 +4390,7 @@ function moreSheet(allTabs,accessible,picked){
 }
 
 function tabContentHtml(){
-  return tab==="assign"?tObjects():tab==="myday"?tMyDay():tab==="sheetlist"?tSheetList():tab==="wizard"?tWizardTab():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tab==="kp"?tKP():tab==="spec"?tSpec():tab==="voiceai"?tVoiceAi():tab==="issues"?tIssues():tab==="history"?tHistory():tCRM();
+  return tab==="assign"?tObjects():tab==="myday"?tMyDay():tab==="sheetlist"?tSheetList():tab==="wizard"?tWizardTab():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tab==="kp"?tKP():tab==="spec"?tSpec():tab==="spec2"?tSpec2():tab==="voiceai"?tVoiceAi():tab==="issues"?tIssues():tab==="history"?tHistory():tCRM();
 }
 
 function render(){
@@ -9467,7 +9477,23 @@ function kpStages(t){ // [{name,color,cost,price,works}]
 // опции, и цена пересчитывается на каждый выбор. Из готовой спецификации заводится
 // договор и создаётся объект — раньше объект копировался из фиксированного шаблона,
 // и всё, что клиент выбрал при продаже, до стройки не доезжало.
-function specSheet(id){ return (specSheets||[]).find(function(x){return x.id===id;})||null; }
+// Поиск идёт по обоим разделам: договор, объект и карточка ссылаются на лист по id,
+// и им всё равно, в боевой он коллекции или в опытной.
+function specSheet(id){
+  return (specSheets||[]).find(function(x){return x.id===id;})||
+         (specSheets2||[]).find(function(x){return x.id===id;})||null;
+}
+// Лист из опытного раздела. Проверяем принадлежностью к коллекции, а не флагом в
+// самой записи: флаг переживает копирование, и дубль боевого листа молча считался бы
+// опытным (и наоборот).
+function specIs2(sh){ return !!sh&&(specSheets2||[]).some(function(x){return x.id===sh.id;}); }
+// Куда писать правку списка. Одна точка на добавление/удаление — иначе «дублировать»
+// в опытном разделе кладёт копию в боевой.
+function specPut(sh,two){ if(two)specSheets2=specSheets2.concat([sh]); else specSheets=specSheets.concat([sh]); }
+function specDrop(id){
+  specSheets=specSheets.filter(function(x){return x.id!==id;});
+  specSheets2=specSheets2.filter(function(x){return x.id!==id;});
+}
 // Планировки того же вида: у планировок две категории (дом / баня), у смет три вида.
 function specPlanCat(kind){ return kind==="house"?"house":"banya"; }
 // Плитки планировок с миниатюрами. Селект показывал только имя, а имя у планировки
@@ -9500,7 +9526,10 @@ function specPlanTiles(kind, sel, action){
   return h+'</div>';
 }
 
-function specTot(sh){ return sheetTotals(sh, estimates, expProducts); }
+// Деньги у обоих разделов общие (см. src/spec2.js) — расходится только критерий
+// готовности. Развилка одна и здесь: панель не должна знать, чем они отличаются.
+function specTot(sh){ return specIs2(sh)?totals2(sh, estimates, expProducts):sheetTotals(sh, estimates, expProducts); }
+function specIssuesOf(sh){ return specIs2(sh)?issues2(sh, estimates, expProducts):sheetIssues(sh, estimates, expProducts); }
 const SPEC_SURFACE={floor:"пол", wall:"стены", ceil:"потолок"};
 // Что физически входит в позицию. Одна формулировка на экран продавца и на печать
 // клиенту: расхождение здесь означает, что в кабинете обещали одно, а на бумаге другое.
@@ -9713,12 +9742,36 @@ function modelElevSvg(sh){
   return '<svg viewBox="'+vb+'" style="width:100%;height:auto;display:block;user-select:none">'+g+'</svg>';
 }
 
+// Заготовки планировок (src/model.js): типовой контейнер уже начерчен — отсеки,
+// длины и проёмы. Пустая коробка остаётся рядом: она нужна, когда дом свой.
+function modelPresetBtns(action){
+  if(!MODEL_PRESETS.length)return "";
+  return '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-bottom:8px">'+
+    MODEL_PRESETS.map(function(pr){
+      return '<button data-a="'+action+'" data-k="'+pr.k+'" style="text-align:left;border:1.5px solid #8e44ad;background:#8e44ad;color:#fff;border-radius:9px;padding:7px 12px;font-size:11.5px;font-weight:700;cursor:pointer">📐 '+esc(pr.n)+
+        (pr.note?'<div style="font-size:9.5px;font-weight:600;opacity:.85;margin-top:1px">'+esc(pr.note)+'</div>':'')+'</button>';
+    }).join("")+'</div>';
+}
+// Та же заготовка в форме создания: здесь она не применяется сразу, а выбирается —
+// модель соберётся в момент «Создать».
+function specPresetPickHtml(){
+  if(!MODEL_PRESETS.length)return "";
+  return '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px">'+
+    MODEL_PRESETS.map(function(pr){
+      const on=specNew.preset===pr.k;
+      return '<button data-a="spec-n-preset" data-k="'+pr.k+'" style="text-align:left;border:1.5px solid '+(on?"#8e44ad":"#dde6f0")+';background:'+(on?"#8e44ad":"#fff")+';color:'+(on?"#fff":"#5a7a9a")+';border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">📐 '+esc(pr.n)+
+        (pr.note?'<div style="font-size:9.5px;font-weight:600;opacity:.8;margin-top:1px">'+esc(pr.note)+'</div>':'')+'</button>';
+    }).join("")+'</div>';
+}
+
 function specModelHtml(sh){
   const RUk=function(n){return Math.round(n).toLocaleString("ru-RU")+" ₽";};
   const m=sh.model;
   if(!m){
     return '<div style="background:#fff;border:1px dashed #8e44ad55;border-radius:14px;padding:16px;margin-bottom:10px;text-align:center">'+
       '<div style="font-size:12.5px;color:#5a7a9a;line-height:1.5;margin-bottom:10px">Дом из контейнера можно собрать моделью: коробка нужного типоразмера, перегородки двигаются, окна и двери ставятся в стены. Площади и смета пересчитываются на каждое движение.</div>'+
+      modelPresetBtns("model-preset")+
+      (MODEL_PRESETS.length?'<div style="font-size:10.5px;color:#a0b4c8;margin-bottom:8px">или пустая коробка:</div>':'')+
       '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center">'+
         CONTAINERS.map(function(c){
           return '<button data-a="model-create" data-k="'+c.k+'" style="padding:9px 14px;background:#8e44ad;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">📦 '+esc(c.n)+'</button>';
@@ -9738,6 +9791,7 @@ function specModelHtml(sh){
       const on=m.type===c.k;
       return '<button data-a="model-type" data-k="'+c.k+'" style="border:1.5px solid '+(on?"#8e44ad":"#dde6f0")+';background:'+(on?"#8e44ad":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">'+esc(c.n)+'</button>';
     }).join("")+'</div>';
+  h+=modelPresetBtns("model-preset");
   h+='<div style="display:flex;align-items:center;gap:8px;background:#f6f8fa;border-radius:9px;padding:7px 10px;margin-bottom:9px">'+
       '<span style="font-size:11px;color:#5a7a9a;flex:1">Отделка стен съедает по</span>'+
       '<input data-a="model-finish" value="'+((m.finish==null?FINISH_THICK:m.finish))+'" type="number" step="1" inputmode="numeric" style="width:70px;padding:6px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12.5px;outline:none;box-sizing:border-box;text-align:right">'+
@@ -10070,9 +10124,57 @@ function specBuildStages(sh){
   });
 }
 
+// Форма создания — одна на оба раздела. Отличие «Спецификации 2» в том, откуда
+// берётся дом: там сразу коробка контейнера, планировки из базы не предлагаются.
+function specNewFormHtml(two){
+  const col=two?"#8e44ad":"#16a085";
+  let h='<div style="background:#fff;border:2px solid '+col+';border-radius:14px;padding:14px;margin-bottom:12px">'+
+    '<div style="font-size:10px;font-weight:700;color:'+col+';letter-spacing:0.5px;margin-bottom:8px">'+(two?"НОВАЯ СПЕЦИФИКАЦИЯ 2 · ОПЫТ":"НОВАЯ СПЕЦИФИКАЦИЯ")+'</div>'+
+    '<input id="spec-n-name" value="'+esc(specNew.name)+'" placeholder="Название (например: Баня Ивановых)" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:8px">'+
+    '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">'+EST_KINDS.map(function(kd){
+      const on=specNew.kind===kd.k;
+      return '<button data-a="spec-n-kind" data-k="'+kd.k+'" style="border:1.5px solid '+(on?col:"#dde6f0")+';background:'+(on?col:"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:7px 11px;font-size:11.5px;font-weight:700;cursor:pointer">'+kd.emoji+' '+esc(kd.n)+'</button>';
+    }).join("")+'</div>';
+  if(!two){
+    h+='<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:5px">ПЛАНИРОВКА '+(dbPlans.length?'':'· в базе пока пусто')+'</div>'+
+      specPlanTiles(specNew.kind, specNew.planId, "spec-n-plan-pick")+
+      '<div style="font-size:10px;color:#a0b4c8;margin:2px 0 8px;line-height:1.4">Можно выбрать позже или загрузить чертёж клиента прямо в спецификацию.</div>'+
+      // Дом из контейнера собирается моделью, а не планировкой: коробка известна,
+      // и дальше это перегородки и проёмы. Предлагаем здесь же, иначе про модель
+      // узнают, только открыв карточку.
+      '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:5px">ИЛИ СОБРАТЬ МОДЕЛЬЮ КОНТЕЙНЕРА</div>';
+  } else {
+    h+='<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:5px">ДОМ ИЗ КОНТЕЙНЕРА</div>';
+  }
+  // Заготовка — уже начерченный дом: типовой контейнер быстрее взять готовым и
+  // подвинуть, чем чертить перегородки заново каждому клиенту.
+  h+=specPresetPickHtml()+
+    '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:4px">'+
+      CONTAINERS.map(function(c){
+        const on=specNew.model===c.k&&!specNew.preset;
+        return '<button data-a="spec-n-model" data-k="'+c.k+'" style="border:1.5px solid '+(on?"#8e44ad":"#dde6f0")+';background:'+(on?"#8e44ad":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">📦 '+esc(c.n)+'</button>';
+      }).join("")+
+    '</div>'+
+    '<div style="font-size:10px;color:#a0b4c8;margin:2px 0 9px;line-height:1.4">'+
+      (specNew.preset?'Заготовку можно двигать как обычную модель — перегородки и проёмы уже стоят.'
+        :(specNew.model?'Перегородки и проёмы расставите в карточке — площади и смета пересчитаются сами.'
+          :'Пустая коробка нужного типоразмера: перегородки двигаются, окна и двери ставятся в стены.'))+'</div>'+
+    '<select id="spec-n-client" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:10px">'+
+      '<option value="">— клиент из CRM (необязательно) —</option>'+
+      crmClients.map(function(c){return '<option value="'+c.id+'">'+esc(c.name||"")+'</option>';}).join("")+
+    '</select>'+
+    '<div style="display:flex;gap:8px">'+
+      '<button data-a="spec-create" data-two="'+(two?"1":"")+'" style="flex:1;padding:10px;background:'+col+';border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">Создать</button>'+
+      '<button data-a="spec-new-cancel" style="padding:10px 16px;background:#fff;border:1px solid #d0dae8;border-radius:9px;cursor:pointer;color:#7a9aaa;font-size:13px">Отмена</button>'+
+    '</div>'+
+  '</div>';
+  return h;
+}
+
 function tSpec(){
-  const RUk=function(n){return Math.round(n).toLocaleString("ru-RU")+" ₽";};
-  if(specOpenId){ const sh=specSheet(specOpenId); if(sh)return tSpecCard(sh); specOpenId=null; }
+  // Лист опытного раздела здесь не открываем — он живёт в своей вкладке. И не
+  // сбрасываем specOpenId: переключение вкладок не должно закрывать чужую карточку.
+  if(specOpenId){ const sh=specSheet(specOpenId); if(sh){ if(!specIs2(sh))return tSpecCard(sh); } else specOpenId=null; }
 
   let h='<div>';
   h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">'+
@@ -10081,46 +10183,21 @@ function tSpec(){
     '<button data-a="spec-new" style="padding:8px 14px;background:#16a085;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:12px;font-weight:700;flex-shrink:0">+ Спецификация</button>'+
   '</div>';
 
-  if(specShowNew){
-    h+='<div style="background:#fff;border:2px solid #16a085;border-radius:14px;padding:14px;margin-bottom:12px">'+
-      '<div style="font-size:10px;font-weight:700;color:#16a085;letter-spacing:0.5px;margin-bottom:8px">НОВАЯ СПЕЦИФИКАЦИЯ</div>'+
-      '<input id="spec-n-name" value="'+esc(specNew.name)+'" placeholder="Название (например: Баня Ивановых)" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:8px">'+
-      '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">'+EST_KINDS.map(function(kd){
-        const on=specNew.kind===kd.k;
-        return '<button data-a="spec-n-kind" data-k="'+kd.k+'" style="border:1.5px solid '+(on?"#16a085":"#dde6f0")+';background:'+(on?"#16a085":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:7px 11px;font-size:11.5px;font-weight:700;cursor:pointer">'+kd.emoji+' '+esc(kd.n)+'</button>';
-      }).join("")+'</div>'+
-      '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:5px">ПЛАНИРОВКА '+(dbPlans.length?'':'· в базе пока пусто')+'</div>'+
-      specPlanTiles(specNew.kind, specNew.planId, "spec-n-plan-pick")+
-      '<div style="font-size:10px;color:#a0b4c8;margin:2px 0 8px;line-height:1.4">Можно выбрать позже или загрузить чертёж клиента прямо в спецификацию.</div>'+
-      // Дом из контейнера собирается моделью, а не планировкой: коробка известна,
-      // и дальше это перегородки и проёмы. Предлагаем здесь же, иначе про модель
-      // узнают, только открыв карточку.
-      '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:5px">ИЛИ СОБРАТЬ МОДЕЛЬЮ КОНТЕЙНЕРА</div>'+
-      '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:4px">'+
-        CONTAINERS.map(function(c){
-          const on=specNew.model===c.k;
-          return '<button data-a="spec-n-model" data-k="'+c.k+'" style="border:1.5px solid '+(on?"#8e44ad":"#dde6f0")+';background:'+(on?"#8e44ad":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">📦 '+esc(c.n)+'</button>';
-        }).join("")+
-      '</div>'+
-      '<div style="font-size:10px;color:#a0b4c8;margin:2px 0 9px;line-height:1.4">'+
-        (specNew.model?'Перегородки и проёмы расставите в карточке — площади и смета пересчитаются сами.':'Коробка нужного типоразмера, перегородки двигаются, окна и двери ставятся в стены.')+'</div>'+
-      '<select id="spec-n-client" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:10px">'+
-        '<option value="">— клиент из CRM (необязательно) —</option>'+
-        crmClients.map(function(c){return '<option value="'+c.id+'">'+esc(c.name||"")+'</option>';}).join("")+
-      '</select>'+
-      '<div style="display:flex;gap:8px">'+
-        '<button data-a="spec-create" style="flex:1;padding:10px;background:#16a085;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">Создать</button>'+
-        '<button data-a="spec-new-cancel" style="padding:10px 16px;background:#fff;border:1px solid #d0dae8;border-radius:9px;cursor:pointer;color:#7a9aaa;font-size:13px">Отмена</button>'+
-      '</div>'+
-    '</div>';
-  }
+  if(specShowNew)h+=specNewFormHtml(false);
 
   if(!specSheets.length){
     h+='<div style="text-align:center;padding:30px 16px;color:#9aabbf;font-size:13px;border:1px dashed #d0dae8;border-radius:14px;line-height:1.5">Спецификаций пока нет.<br>Начните с планировки — портал посчитает площади и соберёт цену.</div>';
     return h+'</div>';
   }
+  h+=specListHtml(specSheets);
+  return h+'</div>';
+}
+
+// Строки списка — общие у обоих разделов: расходиться должна логика, а не вёрстка.
+function specListHtml(list){
+  const RUk=function(n){return Math.round(n).toLocaleString("ru-RU")+" ₽";};
   const ST={draft:{n:"черновик",c:"#7a8b99",bg:"#eef2f7"},sold:{n:"продана",c:"#27ae60",bg:"#eafaf0"}};
-  h+=specSheets.slice().reverse().map(function(sh){
+  return list.slice().reverse().map(function(sh){
     const t=specTot(sh), st=ST[sh.status||"draft"]||ST.draft;
     const cl=crmClients.find(function(c){return c.id===sh.clientId;});
     const kd=estKindMeta(sh.kind);
@@ -10141,6 +10218,32 @@ function tSpec(){
       '</div>'+
     '</div>';
   }).join("");
+}
+
+// ═══ ВКЛАДКА «СПЕЦИФИКАЦИЯ 2» (ОПЫТНАЯ) ══════════════════════════════════════
+// Тот же экран продажи, но с двумя отличиями: листы лежат отдельно (specSheets2,
+// см. src/spec2.js) и дом здесь начинается с модели контейнера, а не с планировки.
+// Карточка — общая с боевым разделом: опыт должен быть про логику, а не про то,
+// что вторая копия вёрстки отстала от первой.
+function tSpec2(){
+  if(specOpenId){ const sh=specSheet(specOpenId); if(sh){ if(specIs2(sh))return tSpecCard(sh); } else specOpenId=null; }
+
+  let h='<div>';
+  h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">'+
+    '<div style="flex:1"><div style="font-size:11px;color:#8e44ad;font-weight:700;letter-spacing:1px">🧪 СПЕЦИФИКАЦИЯ 2 · ОПЫТНЫЙ РАЗДЕЛ</div>'+
+    '<div style="font-size:12px;color:#5a7a9a;margin-top:2px">Дом собирается от модели контейнера. Листы отдельные — боевые спецификации отсюда не трогаются.</div></div>'+
+    '<button data-a="spec-new" data-two="1" style="padding:8px 14px;background:#8e44ad;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:12px;font-weight:700;flex-shrink:0">+ Спецификация</button>'+
+  '</div>';
+  h+='<div style="background:#f6f2fa;border:1px solid #8e44ad33;border-radius:11px;padding:9px 12px;margin-bottom:12px;font-size:11.5px;color:#5a4a6a;line-height:1.5">'+
+    'Раздел для проб: здесь можно менять правила, не задевая продаж. Цена считается тем же модулем, что и в боевом разделе, — договор и объект по обоим соберутся одинаково.</div>';
+
+  if(specShowNew)h+=specNewFormHtml(true);
+
+  if(!specSheets2.length){
+    h+='<div style="text-align:center;padding:30px 16px;color:#9aabbf;font-size:13px;border:1px dashed #d0dae8;border-radius:14px;line-height:1.5">Здесь пока пусто.<br>Начните с заготовки — контейнер соберётся сразу с перегородками и проёмами.</div>';
+    return h+'</div>';
+  }
+  h+=specListHtml(specSheets2);
   return h+'</div>';
 }
 
@@ -18236,11 +18339,20 @@ function bind(){
     else if(a==="fin-clear-selection"){el.onclick=()=>{finSelectedContractIds=[];render();};}
     else if(a==="fin-select-all"){el.onclick=()=>{finSelectedContractIds=contractDocs.map(function(c){return c.id;});render();};}
     // ─── Спецификация ──────────────────────────────────────────────────────
-    else if(a==="spec-new"){el.onclick=()=>{ specShowNew=!specShowNew; specNew={name:"",kind:estKind||"banya",clientId:"",planId:"",model:""}; render(); };}
+    else if(a==="spec-new"){el.onclick=()=>{ specShowNew=!specShowNew; specNew={name:"",kind:estKind||"banya",clientId:"",planId:"",model:"",preset:""}; render(); };}
     else if(a==="spec-new-cancel"){el.onclick=()=>{ specShowNew=false; render(); };}
     else if(a==="spec-n-kind"){el.onclick=()=>{
       specNew.name=(document.getElementById("spec-n-name")||{}).value||specNew.name;
       specNew.kind=el.dataset.k; specNew.planId="";   // планировки у видов разные
+      render();
+    };}
+    // Заготовка и пустая коробка — взаимоисключающие ответы на «откуда дом»: держать
+    // выбранными оба значит обещать две разные модели одной кнопкой «Создать».
+    else if(a==="spec-n-preset"){el.onclick=()=>{
+      specNew.name=(document.getElementById("spec-n-name")||{}).value||specNew.name;
+      const k=el.dataset.k||"";
+      specNew.preset=(specNew.preset===k)?"":k;
+      if(specNew.preset){ specNew.model=""; specNew.planId=""; }
       render();
     };}
     else if(a==="spec-create"){el.onclick=()=>{
@@ -18248,6 +18360,7 @@ function bind(){
       const planId=specNew.planId||"";
       const clientId=(document.getElementById("spec-n-client")||{}).value||"";
       if(!name){ alert("Назовите спецификацию — по этому имени её будут искать."); return; }
+      const two=!!el.dataset.two;
       const id=gid();
       const sh={ id:id, name:name, kind:specNew.kind||"banya", clientId:clientId, planId:planId,
         specs:{height:2.5,rooms:[],openings:[]}, rooms:{}, global:{}, qty:{},
@@ -18258,8 +18371,14 @@ function bind(){
       if(planId)specApplyPlan(sh, planId);
       // Модель важнее планировки: она сама задаёт помещения, а планировка остаётся
       // чертежом клиента рядом.
-      if(specNew.model){ sh.model=emptyModel(specNew.model); sh.model.rooms[0].id=gid(); modelSync(sh); }
-      specSheets=specSheets.concat([sh]);
+      // Заготовка важнее пустой коробки: она и есть готовая модель, вместе с проёмами
+      // и изделиями, которых не хватало в справочнике.
+      if(specNew.preset){
+        const r=presetModel(specNew.preset, winTypes, gid);
+        if(r){ sh.model=r.model; winTypes=r.winTypes; modelSync(sh); }
+      }
+      else if(specNew.model){ sh.model=emptyModel(specNew.model); sh.model.rooms[0].id=gid(); modelSync(sh); }
+      specPut(sh, two);
       specShowNew=false; specOpenId=id;
       // Первую спецификацию собирают мастером: по шагам видно, что вообще нужно
       // решить. Дальше продавец живёт в списке — там правка одной комнаты не
@@ -18689,6 +18808,17 @@ function bind(){
         el.onpointermove=move; el.onpointerup=up; el.onpointercancel=up;
       };
     }
+    // Заготовка в карточке заменяет модель целиком, поэтому спрашиваем: id помещений
+    // станут другими, и выбранная по комнатам отделка повиснет в пустоте — её и
+    // сбрасываем, как при смене планировки.
+    else if(a==="model-preset"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh)return;
+      const pr=modelPreset(el.dataset.k); if(!pr)return;
+      if(sh.model&&!confirm("Взять заготовку «"+pr.n+"»?\n\nТекущая модель заменится целиком, выбранная по комнатам отделка сбросится."))return;
+      const r=presetModel(pr, winTypes, gid); if(!r)return;
+      sh.model=r.model; winTypes=r.winTypes; sh.rooms={};
+      modelSync(sh); fl();
+    };}
     // ─── Типовые изделия ───────────────────────────────────────────────────
     else if(a==="wt-new"){el.onclick=()=>{ winTypeNew={kind:"win",n:"",w:"",h:"",cost:""}; render(); };}
     else if(a==="wt-cancel"){el.onclick=()=>{ winTypeNew=null; render(); };}
@@ -18720,7 +18850,7 @@ function bind(){
     };}
     else if(a==="wt-del"){el.onclick=()=>{
       const id=el.dataset.id;
-      const used=specSheets.some(function(x){return ((x.model||{}).openings||[]).some(function(o){return o.typeId===id;});});
+      const used=specSheets.concat(specSheets2).some(function(x){return ((x.model||{}).openings||[]).some(function(o){return o.typeId===id;});});
       if(used&&!confirm("Это изделие стоит в проёмах спецификаций.\n\nУдалить? Проёмы останутся без цены."))return;
       winTypes=winTypes.filter(function(t){return t.id!==id;});
       fl();
@@ -18732,7 +18862,7 @@ function bind(){
       const sh=specSheet(el.dataset.id); if(!sh)return;
       const t=specTot(sh);
       if(!t.price){ alert("Спецификация пустая — нечего класть в договор."); return; }
-      const issues=sheetIssues(sh, estimates, expProducts);
+      const issues=specIssuesOf(sh);
       if(issues.length&&!confirm("В спецификации не всё собрано:\n\n"+issues.slice(0,5).map(function(x){return "• "+x;}).join("\n")+"\n\nВсё равно завести договор на "+t.price.toLocaleString("ru-RU")+" ₽?"))return;
       if(sh.contractId&&contractDocs.some(function(c){return c.id===sh.contractId;})){
         if(!confirm("По этой спецификации договор уже заведён.\n\nЗавести ещё один?"))return;
@@ -18783,13 +18913,13 @@ function bind(){
       const c=JSON.parse(JSON.stringify(sh));
       c.id=gid(); c.name=(sh.name||"Спецификация")+" (копия)"; c.status="draft";
       delete c.contractId; delete c.objId;
-      specSheets=specSheets.concat([c]); specOpenId=c.id; fl();
+      specPut(c, specIs2(sh)); specOpenId=c.id; fl();
     };}
     else if(a==="spec-del"){el.onclick=()=>{
       const sh=specSheet(el.dataset.id); if(!sh)return;
       if(sh.objId&&!confirm("По этой спецификации уже создан объект.\n\nУдалить её? Объект останется, но связь потеряется."))return;
       if(!sh.objId&&!confirm("Удалить спецификацию «"+(sh.name||"")+"»? Это действие необратимо."))return;
-      specSheets=specSheets.filter(function(x){return x.id!==sh.id;});
+      specDrop(sh.id);
       specOpenId=null; fl();
     };}
     else if(a==="kp-pick"){el.onclick=()=>{ const id=el.dataset.tid; kpTemplateId=id; kpExpanded=Object.assign({},kpExpanded,{[id]:true}); render(); };}

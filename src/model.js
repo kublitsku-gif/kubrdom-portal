@@ -52,6 +52,86 @@ export function emptyModel(k) {
   };
 }
 
+// ─── ГОТОВЫЕ ПЛАНИРОВКИ ──────────────────────────────────────────────────────
+// Заготовка — уже начерченный дом: отсеки со своими длинами и проёмы в стенах.
+// Типовой контейнер продают повторно, и собирать его перегородку за перегородкой
+// с нуля каждому клиенту незачем: тап — и дальше это обычная модель, которую
+// двигают как любую другую.
+//
+// Длины тут ПО КОРОБКЕ (то, что модель хранит в rooms[].len), а не чистовые: у
+// крайних отсеков отделка съедает ещё и торец, поэтому чистовым 2000 мм на чертеже
+// соответствует 2076 по коробке. Считать наоборот нельзя — площади разъедутся с
+// чертежом ровно на толщину обшивки.
+//
+// Проём ссылается на изделие не по id, а по НОМЕРУ в `needs`: заготовка живёт в
+// коде, справочник изделий — в данных портала, и связать их можно только размером.
+export const MODEL_PRESETS = [
+  {
+    k: "c12-san-liv-bed",
+    n: "12 м · санузел / кухня-гостиная / спальня",
+    note: "По чертежу 1200 × 247 см: 4,40 + 14,08 + 7,04 м²",
+    // Обмер — docs/plan-container-1200.svg (чертёж заказчика, переведённый в размеры).
+    // Высота — ЧИСТОВАЯ (2500 в 40HC после пирога пола и потолка): спецификация
+    // берёт h как высоту помещения, и по ней же считается площадь стен.
+    type: "40hc", l: 11952, w: 2352, h: 2500, wallThick: WALL_THICK, finish: FINISH_THICK,
+    rooms: [
+      { name: "Санузел",        len: 2076, pts: { door: 1 } },
+      { name: "Кухня-гостиная", len: 6400, pts: {} },
+      { name: "Спальня",        len: 3276, pts: { door: 1 } },
+    ],
+    // Двери в перегородках проёмами не описываются — проёмы модель ставит только
+    // на стены коробки. Поэтому межкомнатные двери лежат в раскладке помещений
+    // (pts.door выше), и «монтаж двери» считается той же машинкой, что розетки.
+    needs: [
+      { kind: "win",  n: "Окно 1500×2100 поворотно-откидное", w: 1500, h: 2100, cost: 0 },
+      { kind: "door", n: "Дверь входная 1000×2100",           w: 1000, h: 2100, cost: 0 },
+      { kind: "win",  n: "Витраж 2000×2200 панорамный",       w: 2000, h: 2200, cost: 0 },
+    ],
+    openings: [
+      { side: "s", pos: 2976, sill: 0,   need: 0 },   // окно: 800 от стены санузла
+      { side: "s", pos: 5276, sill: 0,   need: 1 },   // вход: 800 от окна
+      { side: "e", pos: 176,  sill: 200, need: 2 },   // витраж в торце спальни
+    ],
+  },
+];
+
+export function modelPreset(k) {
+  return MODEL_PRESETS.find(function (p) { return p.k === k; }) || null;
+}
+
+// Заготовка → модель плюс изделия, которых для неё не хватает в справочнике.
+// Изделие ищем по РАЗМЕРУ и виду, а не по имени: имена правят и дублируют, а окно
+// 1500×2100 остаётся тем же окном. Нашлось — берём вместе с его ценой, чужую цену
+// заготовка не навязывает; не нашлось — заводим с нулевой, чтобы её вписал человек.
+export function presetModel(preset, winTypes, newId) {
+  const p = (typeof preset === "string") ? modelPreset(preset) : preset;
+  if (!p) return null;
+  let seq = 0;
+  const gen = (typeof newId === "function") ? newId : function () { return p.k + "-" + (++seq); };
+  const types = (winTypes || []).slice();
+  const ids = (p.needs || []).map(function (nd) {
+    const has = types.find(function (t) {
+      return t && (t.kind || "win") === (nd.kind || "win") &&
+        Number(t.w) === Number(nd.w) && Number(t.h) === Number(nd.h);
+    });
+    if (has) return has.id;
+    const t = { id: gen(), kind: nd.kind || "win", n: nd.n, w: nd.w, h: nd.h, cost: Number(nd.cost) || 0 };
+    types.push(t);
+    return t.id;
+  });
+  const model = {
+    type: p.type, l: p.l, w: p.w, h: p.h,
+    wallThick: p.wallThick, finish: p.finish,
+    rooms: (p.rooms || []).map(function (r) {
+      return { id: gen(), name: r.name, len: r.len, pts: Object.assign({}, r.pts || {}) };
+    }),
+    openings: (p.openings || []).map(function (o) {
+      return { id: gen(), side: o.side, pos: o.pos, sill: o.sill, typeId: ids[o.need] };
+    }).filter(function (o) { return !!o.typeId; }),
+  };
+  return { model: model, winTypes: types };
+}
+
 // Габариты по типоразмеру. Свои размеры остаются, если тип «свой».
 export function applyContainer(model, k) {
   const c = containerMeta(k);
