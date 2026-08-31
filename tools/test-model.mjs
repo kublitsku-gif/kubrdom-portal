@@ -11,6 +11,9 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   splitLengthwise, mergeLengthwise, moveLengthwise, elevation,
   bayAt, splitAt, splitLengthwiseAt, nearestSide, opPosAt,
   openingCounts, modelToSpecs, modelTotals, modelIssues, modelAreas } from '../src/model.js'
+// Смета — сосед по деньгам: проверяем, что площадь непрямоугольной комнаты доходит
+// до расчёта, а не теряется по дороге.
+import { roomArea } from '../src/spec.js'
 import { SPEC_POINTS } from '../src/spec.js'
 
 let failed = 0
@@ -141,9 +144,13 @@ function house() {
   const rooms = modelRooms(m)
   ok('ширина уменьшилась на две обшивки', rooms[0].finW === m.w - FINISH_THICK * 2,
     String(rooms[0].finW) + ' при контейнере ' + m.w)
-  ok('у торцевого помещения ушла и внешняя стена', rooms[0].finL === rooms[0].len - FINISH_THICK,
-    String(rooms[0].finL) + ' / ' + rooms[0].len)
-  ok('у среднего помещения торцов нет', rooms[1].finL === rooms[1].len)
+  // Помещение теперь меряется по ЧИСТОВОМУ полю: `len` — это и есть длина комнаты,
+  // а длина отсека по коробке живёт в modelBays. У торцевого отсека обшивка съедает
+  // ещё и торец, у среднего — нет.
+  const bays = modelBays(m)
+  ok('у торцевого помещения ушла и внешняя стена', rooms[0].finL === bays[0].len - FINISH_THICK,
+    String(rooms[0].finL) + ' при отсеке ' + bays[0].len)
+  ok('у среднего помещения торцов нет', rooms[1].finL === bays[1].len)
 
   const bare = modelRooms(Object.assign({}, m, { finish: 0 }))
   ok('без отделки считаем по железу', bare[0].finW === m.w && bare[0].area > rooms[0].area,
@@ -240,7 +247,11 @@ function house() {
 
   const lw = splitLengthwiseAt(m, 'a', 1200, 'wc')
   ok('продольная стена — на своей отметке', lw.rooms[0].sub.at === 1200, String(lw.rooms[0].sub.at))
-  ok('и не ближе минимума к стене', splitLengthwiseAt(m, 'a', 50, 'wc').rooms[0].sub.at === MIN_ROOM)
+  // Минимум — про КОМНАТУ, в которой можно стоять, поэтому отметка отсчитывается от
+  // чистовой стены: 900 мм просвета плюс обшивка, а не 900 мм вместе с ней.
+  ok('и не ближе минимума к стене',
+    splitLengthwiseAt(m, 'a', 50, 'wc').rooms[0].sub.at === FINISH_THICK + MIN_ROOM,
+    String(splitLengthwiseAt(m, 'a', 50, 'wc').rooms[0].sub.at))
 
   // Проём ставят тапом рядом со стеной: сторона определяется тем, к какой ближе.
   ok('верх — северная стена', nearestSide(m, 6000, 100) === 'n')
@@ -339,6 +350,47 @@ function house() {
   m.openings = [{ id: 'o1', side: 'w', pos: 2000, typeId: 't_win' }]
   ok('проём за стеной — предупреждение', modelIssues(m, TYPES).some((x) => /за стену/i.test(x)),
     JSON.stringify(modelIssues(m, TYPES)))
+}
+
+// ── Нестандартное помещение ──────────────────────────────────────────────────
+// Стена, не дошедшая до соседней, помещение НЕ делит: комната становится
+// Г-образной. Ширины и длины у неё нет, а деньги считаются по площади и периметру —
+// поэтому в смету уходит площадь напрямую, а ширина с длиной остаются нулями.
+// Перемножить габарит значило бы выставить счёт за метры, которых нет.
+{
+  console.log('Нестандартное помещение')
+  const m = emptyModel('40hc')
+  m.rooms[0].id = 'r1'
+  const plain = modelRooms(m)[0]
+  m.walls = [{ id: 'w1', x: 4000, y: FINISH_THICK, w: 100, h: 1200 }]
+  const r = modelRooms(m)[0]
+
+  ok('стена-огрызок помещение не разделила', modelRooms(m).length === 1, String(modelRooms(m).length))
+  ok('комната опознана непрямоугольной', r.rect === false)
+  ok('площадь уменьшилась на стену',
+    Math.abs(r.area - (plain.area - 100 * 1200 / 1e6)) < 0.011, plain.area + ' → ' + r.area)
+  ok('периметр вырос на обе стороны огрызка',
+    Math.abs(r.wallLen - (plain.wallLen + 2 * 1.2)) < 0.011, plain.wallLen + ' → ' + r.wallLen)
+
+  const specs = modelToSpecs(m, [])
+  ok('в смету ушла площадь, а не габарит', specs.rooms[0].floor === r.area && specs.rooms[0].w === 0,
+    JSON.stringify(specs.rooms[0]))
+  ok('и смета считает по ней пол', roomArea(specs.rooms[0], specs.height, 'floor') === r.area)
+  ok('а стены — по периметру',
+    roomArea(specs.rooms[0], specs.height, 'wall') === Math.round(r.wallLen * specs.height * 100) / 100)
+
+  // Замкнутая выгородка — уже отдельное помещение, и метры у него свои.
+  m.walls = [
+    { id: 'a', x: 4000, y: FINISH_THICK, w: 100, h: 1200 },
+    { id: 'b', x: 5500, y: FINISH_THICK, w: 100, h: 1200 },
+    { id: 'c', x: 4000, y: FINISH_THICK + 1100, w: 1600, h: 100 },
+  ]
+  const two = modelRooms(m)
+  ok('замкнутая кладовка стала помещением', two.length === 2, String(two.length))
+  ok('её площадь честная', two.some((x) => x.rect && Math.abs(x.area - 1400 * 1100 / 1e6) < 0.011),
+    JSON.stringify(two.map((x) => [x.rect, x.area])))
+  ok('сумма площадей не потерялась',
+    Math.abs(two.reduce((a, x) => a + x.area, 0) - modelTotals(m, []).floorArea) < 0.011)
 }
 
 console.log(failed ? `\n✘ провалено проверок: ${failed}` : '\n✓ все проверки прошли')

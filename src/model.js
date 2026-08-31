@@ -1,3 +1,5 @@
+import { regions } from "./geom.js";
+
 // ─── МОДЕЛЬ КОНТЕЙНЕРА ───────────────────────────────────────────────────────
 // Дом из морского контейнера — это коробка фиксированного размера, разделённая
 // перегородками, с проёмами в стенах. Больше в нём ничего нет, и этого достаточно,
@@ -173,38 +175,95 @@ function scaleRooms(rooms, total) {
 }
 
 // Помещения с координатами: x0/x1 — от начала контейнера, мм.
-export function modelRooms(model) {
+// Стены планировки — всё, что делит пол: обшивка коробки, перегородки между
+// отсеками, продольные перегородки и свободные стены, нарисованные руками. Одно
+// место, где планировка превращается в геометрию: по этому же списку рисуется
+// чертёж, и разъехаться чертежу с расчётом больше нечем.
+//
+// Свободная стена (`model.walls`) — прямоугольник в тех же миллиметрах. Она может
+// не доходить до соседней стены: тогда помещение не делится, а становится
+// Г-образным, и это ровно то, ради чего геометрия считается заливкой.
+export function modelWalls(model) {
   const m = model || {};
   const fin = (m.finish == null) ? FINISH_THICK : (Number(m.finish) || 0);
   const th = Number(m.wallThick) || 0;
   const W = Number(m.w) || 0;
-  const src = m.rooms || [];
-  const out = [];
-  let x = 0;
-  src.forEach(function (bay, i) {
-    const len = Math.max(0, Number(bay.len) || 0);
-    const endL = (i === 0 ? fin : 0), endR = (i === src.length - 1 ? fin : 0);
-    const fl = Math.max(0, len - endL - endR);
-    const mk = function (r, y0, y1, sub) {
-      const fw = Math.max(0, (y1 - y0) - fin * 2);
-      out.push({
-        id: r.id, name: r.name || "Помещение", bayId: bay.id, sub: !!sub,
-        len: len, x0: x, x1: x + len, y0: y0, y1: y1,
-        pts: r.pts || {}, finW: fw, finL: fl,
-        area: Math.round(fl * fw / 1000 / 1000 * 100) / 100,
-        wallLen: Math.round((fl + fw) * 2) / 1000,
-      });
-    };
-    if (bay.sub) {
-      const at = Math.min(Math.max(Number(bay.sub.at) || 0, MIN_ROOM), W - th - MIN_ROOM);
-      mk(bay, 0, at, false);
-      mk(bay.sub, at + th, W, true);
-    } else {
-      mk(bay, 0, W, false);
+  const L = totalLength(m);
+  const out = [
+    { kind: "shell", x: 0, y: 0, w: L, h: fin },
+    { kind: "shell", x: 0, y: W - fin, w: L, h: fin },
+    { kind: "shell", x: 0, y: fin, w: fin, h: Math.max(0, W - fin * 2) },
+    { kind: "shell", x: L - fin, y: fin, w: fin, h: Math.max(0, W - fin * 2) },
+  ];
+  modelBays(m).forEach(function (b, i, all) {
+    if (i < all.length - 1) out.push({ kind: "part", x: b.x1, y: fin, w: th, h: Math.max(0, W - fin * 2) });
+    // Продольная перегородка (санузел в углу) идёт по чистовой длине своего отсека.
+    if (b.sub) {
+      const x0 = Math.max(b.x0, fin), x1 = Math.min(b.x1, L - fin);
+      out.push({ kind: "part", x: x0, y: Number(b.sub.at) || 0, w: Math.max(0, x1 - x0), h: th });
     }
-    x += len + th;
+  });
+  (m.walls || []).forEach(function (w) {
+    out.push({ kind: "free", id: w.id, x: Number(w.x) || 0, y: Number(w.y) || 0,
+      w: Math.max(0, Number(w.w) || 0), h: Math.max(0, Number(w.h) || 0) });
   });
   return out;
+}
+
+// Кому принадлежит область: имя, отделка и раскладка живут в записи помещения, а
+// не в самой геометрии — иначе любое движение стены обнуляло бы выбранную отделку.
+// Сначала спрашиваем явные записи (`model.spots`, их заводит редактор для комнат,
+// которых в отсеках нет), потом отсек, внутри которого оказалась область.
+function roomOwner(model, reg) {
+  const m = model || {};
+  const th = Number(m.wallThick) || 0;
+  const inside = function (px, py) {
+    return reg.cells.some(function (c) { return px >= c.x && px <= c.x + c.w && py >= c.y && py <= c.y + c.h; });
+  };
+  const spot = (m.spots || []).find(function (s) { return inside(Number(s.x) || 0, Number(s.y) || 0); });
+  if (spot) return { id: spot.id, name: spot.name, pts: spot.pts || {}, bayId: spot.bayId || "", sub: false };
+
+  const bay = modelBays(m).find(function (b) { return reg.label.x >= b.x0 && reg.label.x <= b.x1; });
+  if (bay) {
+    const src = (m.rooms || []).find(function (r) { return r.id === bay.id; }) || {};
+    if (bay.sub && reg.label.y > (Number(bay.sub.at) || 0) + th) {
+      return { id: bay.sub.id, name: bay.sub.name, pts: bay.sub.pts || {}, bayId: bay.id, sub: true };
+    }
+    return { id: src.id || bay.id, name: src.name, pts: src.pts || {}, bayId: bay.id, sub: false };
+  }
+  // Область, за которую никто не отвечает: имя ей даст человек, а до тех пор она
+  // всё равно должна считаться — иначе её метры пропадут из сметы.
+  return { id: "reg:" + Math.round(reg.label.x) + ":" + Math.round(reg.label.y), name: "", pts: {}, bayId: "", sub: false };
+}
+
+// Помещения: то, что осталось между стенами. Считает `regions` (src/geom.js), здесь
+// только опознание — какая запись какой области принадлежит.
+//
+// x0/x1/y0/y1 — габарит области в ЧИСТОВЫХ размерах. У прямоугольной комнаты это
+// она сама, у Г-образной — описанный прямоугольник; площадь и периметр в обоих
+// случаях настоящие, поэтому смета считается по ним, а не по габариту.
+export function modelRooms(model) {
+  const m = model || {};
+  const W = Number(m.w) || 0;
+  const L = totalLength(m);
+  const regs = regions(L, W, modelWalls(m));
+  const out = regs.map(function (reg) {
+    const own = roomOwner(m, reg);
+    const fw = reg.y1 - reg.y0, fl = reg.x1 - reg.x0;
+    return {
+      id: own.id, name: own.name || "Помещение", bayId: own.bayId, sub: own.sub,
+      len: fl, x0: reg.x0, x1: reg.x1, y0: reg.y0, y1: reg.y1,
+      pts: own.pts || {},
+      // Прямоугольная комната описывается шириной и длиной — по ним же её считает
+      // смета. У Г-образной таких размеров нет: там честны только площадь и периметр.
+      rect: reg.rect, finW: reg.rect ? fw : 0, finL: reg.rect ? fl : 0,
+      area: Math.round(reg.area / 1000 / 1000 * 100) / 100,
+      wallLen: Math.round(reg.perimeter) / 1000,
+      label: reg.label, cells: reg.cells,
+    };
+  });
+  // Порядок — слева направо и сверху вниз: так их читают на плане и в списке.
+  return out.sort(function (a, b) { return (a.x0 - b.x0) || (a.y0 - b.y0); });
 }
 
 // Отсеки с координатами — нужны плану и переносу границ.
@@ -264,10 +323,13 @@ export function openingRoom(model, op) {
     return inBay.find(function (r) { return pos >= r.y0 && pos <= r.y1; }) || inBay[0] || null;
   }
   // Стена принадлежит той комнате, которая её касается: у отсека с продольной
-  // перегородкой северная стена у одной комнаты, южная — у другой.
+  // перегородкой северная стена у одной комнаты, южная — у другой. Комнаты меряются
+  // по ЧИСТОВЫМ размерам, поэтому «касается» — это «вплотную к обшивке», а не
+  // «ровно в нуле»: на нуле стоит железо контейнера, а не пол комнаты.
+  const fin = ((model || {}).finish == null) ? FINISH_THICK : (Number((model || {}).finish) || 0);
   const touches = function (r) {
-    if (side === "n") return r.y0 === 0;
-    if (side === "s") return r.y1 === W;
+    if (side === "n") return r.y0 <= fin;
+    if (side === "s") return r.y1 >= W - fin;
     return true;
   };
   if (side === "w" || side === "e") {
@@ -402,8 +464,9 @@ export function splitLengthwiseAt(model, bayId, y, newId) {
   const i = rooms.findIndex(function (r) { return r.id === bayId; });
   if (i < 0 || rooms[i].sub) return model;
   const W = Number(model.w) || 0, th = Number(model.wallThick) || 0;
-  const at = Math.round(Math.max(MIN_ROOM, Math.min(W - th - MIN_ROOM, y)));
-  if (W - th < MIN_ROOM * 2) return model;
+  const fin = (model.finish == null) ? FINISH_THICK : (Number(model.finish) || 0);
+  const at = Math.round(Math.max(fin + MIN_ROOM, Math.min(W - fin - th - MIN_ROOM, y)));
+  if (W - th - fin * 2 < MIN_ROOM * 2) return model;
   const bay = Object.assign({}, rooms[i], { sub: { id: newId, name: "Помещение", pts: {}, at: at } });
   return Object.assign({}, model, { rooms: rooms.slice(0, i).concat([bay], rooms.slice(i + 1)) });
 }
@@ -446,7 +509,8 @@ export function moveLengthwise(model, bayId, deltaMm) {
   if (i < 0 || !rooms[i].sub) return model;
   const W = Number(model.w) || 0, th = Number(model.wallThick) || 0;
   const cur = Number(rooms[i].sub.at) || 0;
-  const at = Math.max(MIN_ROOM, Math.min(W - th - MIN_ROOM, cur + Math.round(Number(deltaMm) || 0)));
+  const fin = (model.finish == null) ? FINISH_THICK : (Number(model.finish) || 0);
+  const at = Math.max(fin + MIN_ROOM, Math.min(W - fin - th - MIN_ROOM, cur + Math.round(Number(deltaMm) || 0)));
   if (at === cur) return model;
   const bay = Object.assign({}, rooms[i], { sub: Object.assign({}, rooms[i].sub, { at: at }) });
   return Object.assign({}, model, { rooms: rooms.slice(0, i).concat([bay], rooms.slice(i + 1)) });
@@ -478,10 +542,15 @@ export function modelToSpecs(model, winTypes) {
     height: Math.round((Number(m.h) || 0) / 10) / 100,
     rooms: modelRooms(m).map(function (r) {
       const pts = Object.assign({}, r.pts || {}, counts[r.id] || {});
+      // У прямоугольной комнаты смета считает площадь как ширину на длину — так она
+      // считала всегда, и трогать это незачем. У Г-образной таких размеров нет:
+      // передаём площадь напрямую (`floor`), а ширину и длину оставляем нулями,
+      // иначе смета перемножит габарит и выставит счёт за метры, которых нет.
       return {
         id: r.id, name: r.name, pts: pts,
         w: Math.round(r.finW / 10) / 100,
         l: Math.round(r.finL / 10) / 100,
+        floor: r.area,
         wallLen: r.wallLen,
       };
     }),
@@ -528,7 +597,8 @@ export function elevation(model, side, winTypes, points) {
   const bays = modelBays(m);
   let wallRooms;
   if (along) {
-    wallRooms = rooms.filter(function (r) { return side === "n" ? r.y0 === 0 : r.y1 === W; })
+    const fin = (m.finish == null) ? FINISH_THICK : (Number(m.finish) || 0);
+    wallRooms = rooms.filter(function (r) { return side === "n" ? r.y0 <= fin : r.y1 >= W - fin; })
       .map(function (r) { return { room: r, a: r.x0, b: r.x1 }; });
   } else {
     const bay = (side === "w") ? bays[0] : bays[bays.length - 1];
@@ -631,20 +701,9 @@ export function modelScheme(model, winTypes) {
   const byType = {};
   (winTypes || []).forEach(function (t) { if (t && t.id) byType[t.id] = t; });
 
-  const walls = [
-    { kind: "shell", x: 0, y: 0, w: L, h: fin },
-    { kind: "shell", x: 0, y: W - fin, w: L, h: fin },
-    { kind: "shell", x: 0, y: fin, w: fin, h: Math.max(0, W - fin * 2) },
-    { kind: "shell", x: L - fin, y: fin, w: fin, h: Math.max(0, W - fin * 2) },
-  ];
-  bays.forEach(function (b, i) {
-    if (i < bays.length - 1) walls.push({ kind: "part", x: b.x1, y: fin, w: th, h: Math.max(0, W - fin * 2) });
-    // Продольная перегородка (санузел в углу) идёт по чистовой длине своего отсека.
-    if (b.sub) {
-      const x0 = Math.max(b.x0, fin), x1 = Math.min(b.x1, L - fin);
-      walls.push({ kind: "part", x: x0, y: Number(b.sub.at) || 0, w: Math.max(0, x1 - x0), h: th });
-    }
-  });
+  // Стены — те же, по которым считаются помещения (`modelWalls`): чертёж и расчёт
+  // обязаны читать одну геометрию, иначе они разойдутся на первой же правке.
+  const walls = modelWalls(m);
 
   // Створка двери: петли на одном откосе, полотно поперёк стены, дуга — путь створки.
   // Считаем её здесь, а не в панели: куда открывается дверь — свойство проёма, а не
