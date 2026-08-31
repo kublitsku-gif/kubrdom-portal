@@ -1,4 +1,4 @@
-import { regions } from "./geom.js";
+import { regions, wallOutline } from "./geom.js";
 
 // ─── МОДЕЛЬ КОНТЕЙНЕРА ───────────────────────────────────────────────────────
 // Дом из морского контейнера — это коробка фиксированного размера, разделённая
@@ -208,6 +208,77 @@ export function modelWalls(model) {
       w: Math.max(0, Number(w.w) || 0), h: Math.max(0, Number(w.h) || 0) });
   });
   return out;
+}
+
+// ─── СВОБОДНЫЕ СТЕНЫ ─────────────────────────────────────────────────────────
+// Стена, проведённая рукой, обязана встать в чертёж так, будто её ставил чертёжник:
+// концами В ГРАНЬ соседней стены, без щели и без торчащего хвоста. Рука в такое не
+// попадает, поэтому попадает код: концы и ось прилипают к ближайшим граням, а хвост,
+// перелезший через встреченную стену, подрезается по её дальней грани.
+//
+// Щель в один миллиметр — это не «почти закрыто», а проход: заливка справедливо
+// считает комнату одной, и кладовка молча не замыкается. Ради этого всё и делается.
+export const WALL_SNAP = 220;
+
+function faces(walls, vertical) {
+  return walls.reduce(function (a, w) {
+    const isVert = w.h > w.w;
+    if (isVert !== vertical) return a;             // ловим только перпендикулярные
+    return a.concat(vertical ? [w.x, w.x + w.w] : [w.y, w.y + w.h]);
+  }, []);
+}
+function nearest(v, cands, limit) {
+  let best = v, d = limit;
+  cands.forEach(function (c) { const dd = Math.abs(c - v); if (dd < d) { d = dd; best = c; } });
+  return Math.round(best);
+}
+
+// Прилипание. Возвращает новый прямоугольник — тот же, если липнуть не к чему.
+export function snapWall(model, rect) {
+  const walls = modelWalls(model);
+  const th = Number((model || {}).wallThick) || 0;
+  const horiz = (Number(rect.w) || 0) >= (Number(rect.h) || 0);
+  if (horiz) {
+    const x0 = nearest(rect.x, faces(walls, true), WALL_SNAP);
+    const x1 = nearest(rect.x + rect.w, faces(walls, true), WALL_SNAP);
+    return { x: Math.min(x0, x1), y: nearest(rect.y, faces(walls, false), WALL_SNAP),
+      w: Math.abs(x1 - x0), h: th || rect.h };
+  }
+  const y0 = nearest(rect.y, faces(walls, false), WALL_SNAP);
+  const y1 = nearest(rect.y + rect.h, faces(walls, false), WALL_SNAP);
+  return { x: nearest(rect.x, faces(walls, true), WALL_SNAP), y: Math.min(y0, y1),
+    w: th || rect.w, h: Math.abs(y1 - y0) };
+}
+
+// Подрезка хвоста: если стена перелезла через встреченную перпендикулярную и торчит
+// за неё меньше, чем на допуск прилипания, — это промах руки, а не замысел.
+function trim(wall, cross) {
+  const vert = wall.h > wall.w;
+  const a0 = vert ? wall.y : wall.x, a1 = vert ? wall.y + wall.h : wall.x + wall.w;
+  const c0 = vert ? cross.y : cross.x, c1 = vert ? cross.y + cross.h : cross.x + cross.w;
+  // Пересекаются ли они вообще по второй оси — иначе это не угол, а разные места.
+  const b0 = vert ? wall.x : wall.y, b1 = vert ? wall.x + wall.w : wall.y + wall.h;
+  const d0 = vert ? cross.x : cross.y, d1 = vert ? cross.x + cross.w : cross.y + cross.h;
+  if (b1 <= d0 || d1 <= b0) return wall;
+  let lo = a0, hi = a1;
+  if (a1 > c1 && a1 - c1 <= WALL_SNAP && a0 < c1) hi = c1;
+  if (a0 < c0 && c0 - a0 <= WALL_SNAP && a1 > c0) lo = c0;
+  if (lo === a0 && hi === a1) return wall;
+  return vert ? Object.assign({}, wall, { y: lo, h: hi - lo })
+    : Object.assign({}, wall, { x: lo, w: hi - lo });
+}
+
+// Поставить стену: прилипание, подрезка своего хвоста и хвостов соседей.
+export function addWall(model, rect, id) {
+  const m = model || {};
+  const put = snapWall(m, rect);
+  const th = Number(m.wallThick) || 0;
+  if (put.w <= th && put.h <= th) return m;        // тап без длины — не стена
+  const others = (m.walls || []);
+  const fixed = others.reduce(function (w, o) { return trim(w, o); }, put);
+  const next = others.map(function (o) { return trim(o, fixed); })
+    .concat([Object.assign({ id: id }, fixed)]);
+  return Object.assign({}, m, { walls: next });
 }
 
 // Кому принадлежит область: имя, отделка и раскладка живут в записи помещения, а не
@@ -747,6 +818,9 @@ export function modelScheme(model, winTypes) {
   // Стены — те же, по которым считаются помещения (`modelWalls`): чертёж и расчёт
   // обязаны читать одну геометрию, иначе они разойдутся на первой же правке.
   const walls = modelWalls(m);
+  // И их общий контур: на чертеже стена, сросшаяся с соседней, — одно тело, без
+  // линии на стыке. Панель обводит по нему, а штриховку кладёт по прямоугольникам.
+  const outline = wallOutline(L, W, walls);
 
   // Створка двери: петли на одном откосе, полотно поперёк стены, дуга — путь створки.
   // Считаем её здесь, а не в панели: куда открывается дверь — свойство проёма, а не
@@ -853,7 +927,7 @@ export function modelScheme(model, winTypes) {
   });
 
   return { l: L, w: W, finish: fin, wallThick: th,
-    walls: walls, openings: openings, labels: labels, dims: dims };
+    walls: walls, outline: outline, openings: openings, labels: labels, dims: dims };
 }
 
 // Что мешает считать по модели. Продавец должен видеть это до клиента.

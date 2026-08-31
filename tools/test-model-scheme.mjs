@@ -189,9 +189,17 @@ const sum = (a) => a.reduce((x, y) => x + y, 0)
     JSON.stringify(sc.labels.map((x) => x.name)))
   ok('подпись стоит внутри своей комнаты',
     sc.labels.every((x) => x.x > 0 && x.x < sc.l && x.y > 0 && x.y < sc.w))
-  ok('в схеме только стены, проёмы, подписи и размеры',
-    Object.keys(sc).sort().join(' ') === 'dims finish l labels openings w wallThick walls',
+  ok('в схеме только стены, их контур, проёмы, подписи и размеры',
+    Object.keys(sc).sort().join(' ') === 'dims finish l labels openings outline w wallThick walls',
     Object.keys(sc).sort().join(' '))
+  // Контур — обводка стен как ОДНОГО тела: обводить каждую стену отдельно значит
+  // рисовать линию на каждом стыке, а сросшиеся стены на чертеже линией не делятся.
+  ok('контур замкнут по коробке', sc.outline.length > 0 &&
+    sc.outline.every((s) => s.x1 === s.x2 || s.y1 === s.y2), String(sc.outline.length))
+  ok('и не проходит внутри стены',
+    !sc.outline.some((s) => sc.walls.some((w) =>
+      Math.min(s.x1, s.x2) > w.x && Math.max(s.x1, s.x2) < w.x + w.w &&
+      Math.min(s.y1, s.y2) > w.y && Math.max(s.y1, s.y2) < w.y + w.h)))
 }
 
 console.log(failed ? `\n✘ провалено проверок: ${failed}` : '\n✓ все проверки прошли')

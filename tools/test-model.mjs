@@ -6,7 +6,7 @@
 // сумма помещений не должна разъезжаться с контейнером, перегородка не должна
 // съедать помещение до нуля, а id помещений обязаны переживать правки — на них
 // висит раскладка и выбранная отделка.
-import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyContainer, modelRooms,
+import { CONTAINERS, MIN_ROOM, FINISH_THICK, addWall, containerMeta, emptyModel, applyContainer, modelRooms,
   modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom,
   splitLengthwise, mergeLengthwise, moveLengthwise, elevation,
   bayAt, splitAt, splitLengthwiseAt, nearestSide, opPosAt,
@@ -391,6 +391,44 @@ function house() {
     JSON.stringify(two.map((x) => [x.rect, x.area])))
   ok('сумма площадей не потерялась',
     Math.abs(two.reduce((a, x) => a + x.area, 0) - modelTotals(m, []).floorArea) < 0.011)
+}
+
+// ── Стены встают как у чертёжника ────────────────────────────────────────────
+// Рука не попадает в грань соседней стены — попадает код. Щель в миллиметр это не
+// «почти закрыто», а проход: комната останется одной, и кладовка молча не
+// замкнётся. Хвост, перелезший через встреченную стену, — тоже промах руки.
+{
+  console.log('Прилипание и углы')
+  const m0 = emptyModel('40hc')
+  m0.rooms[0].id = 'r1'
+
+  // Кривой прямоугольник: концы мимо на десятки миллиметров, хвосты торчат.
+  let m = addWall(m0, { x: 5200, y: 10, w: 100, h: 1290 }, 'a')
+  m = addWall(m, { x: 7000, y: 30, w: 100, h: 1310 }, 'b')
+  m = addWall(m, { x: 5150, y: 1200, w: 1990, h: 100 }, 'c')
+  const [a, b, c] = m.walls
+
+  ok('ось прилипла к грани коробки', a.y === 0 && b.y === 0, JSON.stringify([a.y, b.y]))
+  ok('поперечная стена дотянулась до дальней грани стойки',
+    c.x + c.w === b.x + b.w, (c.x + c.w) + ' против ' + (b.x + b.w))
+  ok('и начинается ровно на первой', c.x === a.x, c.x + ' против ' + a.x)
+  ok('хвосты стоек подрезаны по поперечной',
+    a.y + a.h === c.y + c.h && b.y + b.h === c.y + c.h,
+    JSON.stringify([a.y + a.h, b.y + b.h, c.y + c.h]))
+
+  // Ради чего всё: угол сошёлся — значит кладовка замкнулась.
+  const rooms = modelRooms(m)
+  ok('комнат стало две', rooms.length === 2, JSON.stringify(rooms.map((r) => r.area)))
+  ok('кладовка отдельная и прямоугольная', rooms.some((r) => r.rect && r.area < 3),
+    JSON.stringify(rooms.map((r) => [r.rect, r.area])))
+  ok('а большая комната — Г-образная', rooms.some((r) => !r.rect))
+  // Имя стоит на полу своей комнаты, а не на стене и не в вырезанном углу.
+  rooms.forEach((r) => ok('«' + r.name + '»: подпись внутри комнаты',
+    r.cells.some((cl) => r.label.x > cl.x && r.label.x < cl.x + cl.w &&
+      r.label.y > cl.y && r.label.y < cl.y + cl.h), JSON.stringify(r.label)))
+
+  // Тап без длины стеной не становится.
+  ok('тап стену не ставит', addWall(m, { x: 3000, y: 1000, w: 0, h: 100 }, 'z') === m)
 }
 
 console.log(failed ? `\n✘ провалено проверок: ${failed}` : '\n✓ все проверки прошли')

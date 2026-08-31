@@ -130,12 +130,70 @@ function measure(cells, g) {
     }),
     area: area, perimeter: perimeter,
     x0: x0, y0: y0, x1: x1, y1: y1,
-    // Точка подписи — центр самой крупной клетки: он гарантированно ВНУТРИ
-    // помещения. Центр габарита у Г-образной комнаты попадает в стену или к соседям.
-    label: { x: (xs[best.i] + xs[best.i + 1]) / 2, y: (ys[best.j] + ys[best.j + 1]) / 2 },
+    // Точка подписи — середина САМОГО КРУПНОГО ПРЯМОУГОЛЬНИКА, который влезает в
+    // помещение. Центр габарита у Г-образной комнаты попадает в вырезанный угол, а
+    // центр отдельной клетки — к самой стене: сетка режется по чужим стенам, и
+    // клетка бывает узкой полоской вдоль края.
+    label: (function () {
+      const b = bestRect(at, g);
+      return b ? { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2 }
+        : { x: (xs[best.i] + xs[best.i + 1]) / 2, y: (ys[best.j] + ys[best.j + 1]) / 2 };
+    })(),
+    fit: bestRect(at, g),
     // Прямоугольная ли область: если да, «ширина × длина» остаётся честной подписью.
     rect: cells.length > 0 && area === (x1 - x0) * (y1 - y0),
   };
+}
+
+// Самый крупный прямоугольник, вписанный в область. Классическая задача про
+// наибольший прямоугольник в гистограмме, только столбцы и строки разной ширины —
+// это и есть наша сетка. Нужен для подписи: имя комнаты должно стоять на её полу,
+// а не на стене и не в вырезанном углу.
+function bestRect(at, g) {
+  const { xs, ys, nx, ny } = g;
+  const height = new Array(nx).fill(0);
+  let best = null, bestArea = 0;
+  for (let j = 0; j < ny; j++) {
+    const ch = ys[j + 1] - ys[j];
+    for (let i = 0; i < nx; i++) height[i] = at[i + ":" + j] ? height[i] + ch : 0;
+    // Стек хранит столбцы, от которых ещё может продолжиться прямоугольник.
+    const stack = [];
+    for (let i = 0; i <= nx; i++) {
+      const h = (i < nx) ? height[i] : 0;
+      let start = i;
+      while (stack.length && stack[stack.length - 1].h >= h) {
+        const it = stack.pop();
+        const area = (xs[i] - xs[it.i]) * it.h;
+        if (area > bestArea) {
+          bestArea = area;
+          best = { x0: xs[it.i], x1: xs[i], y0: ys[j + 1] - it.h, y1: ys[j + 1] };
+        }
+        start = it.i;
+      }
+      if (i < nx) stack.push({ i: start, h: h });
+    }
+  }
+  return best;
+}
+
+// Контур всех стен как ОДНОГО тела. Стены рисуются по одной, и на стыке остаётся
+// линия — на чертеже это читается как «здесь стык двух стен», хотя стена монолитная.
+// Берём ту же сетку: рисуем только те рёбра клетки-стены, за которыми стены нет.
+export function wallOutline(planW, planH, walls) {
+  const g = grid(planW, planH, walls);
+  const { xs, ys, nx, ny, solid } = g;
+  const at = function (i, j) { return i >= 0 && j >= 0 && i < nx && j < ny && solid[i * ny + j]; };
+  const out = [];
+  for (let i = 0; i < nx; i++) {
+    for (let j = 0; j < ny; j++) {
+      if (!at(i, j)) continue;
+      if (!at(i - 1, j)) out.push({ x1: xs[i], y1: ys[j], x2: xs[i], y2: ys[j + 1] });
+      if (!at(i + 1, j)) out.push({ x1: xs[i + 1], y1: ys[j], x2: xs[i + 1], y2: ys[j + 1] });
+      if (!at(i, j - 1)) out.push({ x1: xs[i], y1: ys[j], x2: xs[i + 1], y2: ys[j] });
+      if (!at(i, j + 1)) out.push({ x1: xs[i], y1: ys[j + 1], x2: xs[i + 1], y2: ys[j + 1] });
+    }
+  }
+  return out;
 }
 
 // В какой области лежит точка. По ней помещение узнаёт себя после правки стен:

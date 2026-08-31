@@ -48,7 +48,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom,
   splitLengthwise, mergeLengthwise, moveLengthwise, elevation,
   bayAt, splitAt, splitLengthwiseAt, nearestSide, opPosAt,
-  modelToSpecs, modelTotals, modelIssues, modelScheme, modelAreas, modelWalls, partitionAt, INNER_DOOR,
+  modelToSpecs, modelTotals, modelIssues, modelScheme, modelAreas, modelWalls, snapWall, addWall, partitionAt, INNER_DOOR,
   MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2 } from "../src/spec2.js";
@@ -10650,9 +10650,14 @@ function schemeParts(sc){
   let g='<defs><pattern id="sch-hatch" width="150" height="150" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">'+
     '<rect width="150" height="150" fill="#eef1f5"/><line x1="0" y1="0" x2="0" y2="150" stroke="#9aabbf" stroke-width="20"/></pattern></defs>';
 
-  // Стены и перегородки
+  // Стены: штриховка по прямоугольникам, обводка — по ОБЩЕМУ контуру. Обводить
+  // каждую стену отдельно значит рисовать линию на каждом стыке, а сросшиеся стены
+  // на чертеже — одно тело.
   sc.walls.forEach(function(w){
-    g+='<rect x="'+w.x+'" y="'+w.y+'" width="'+w.w+'" height="'+w.h+'" fill="url(#sch-hatch)" stroke="#0d1b2e" stroke-width="30"/>';
+    g+='<rect x="'+w.x+'" y="'+w.y+'" width="'+w.w+'" height="'+w.h+'" fill="url(#sch-hatch)"/>';
+  });
+  (sc.outline||[]).forEach(function(s){
+    g+='<line x1="'+s.x1+'" y1="'+s.y1+'" x2="'+s.x2+'" y2="'+s.y2+'" stroke="#0d1b2e" stroke-width="30" stroke-linecap="square"/>';
   });
   // Проёмы: окно — рамой со створкой, дверь — полотном и дугой
   sc.openings.forEach(function(op){
@@ -19322,48 +19327,38 @@ function bind(){
         const at=function(e){
           return { x:vb[0]+(e.clientX-box.left)/box.width*vb[2], y:vb[1]+(e.clientY-box.top)/box.height*vb[3] };
         };
-        // Отметки соседних стен: к ним и прилипаем — и осью, и концами.
-        const ws=modelWalls(m);
-        const xs=ws.reduce(function(a,w){return a.concat([w.x, w.x+w.w]);},[]);
-        const ys=ws.reduce(function(a,w){return a.concat([w.y, w.y+w.h]);},[]);
-        const snap=function(v, list){
-          let best=v, d=SNAP;
-          list.forEach(function(t){ const dd=Math.abs(t-v); if(dd<d){ d=dd; best=t; } });
-          return Math.round(best);
-        };
         const p0=at(ev);
-        let rect=null, node=null;
+        let raw=null, node=null;
         ev.preventDefault();
         try{ el.setPointerCapture(ev.pointerId); }catch(e){}
+        // Стены в контейнере осевые: ведём по той оси, вдоль которой рука прошла
+        // дальше. Косая стена здесь не бывает, а «почти горизонтальная» — это просто
+        // горизонтальная, нарисованная рукой. Прилипание и углы считает модель
+        // (snapWall/addWall): показывать одно, а ставить другое нельзя.
         const shape=function(p1){
-          // Стены в контейнере осевые: ведём по той оси, вдоль которой рука прошла
-          // дальше. Косая стена здесь не бывает, а «почти горизонтальная» — это
-          // просто горизонтальная, нарисованная рукой.
           const dx=Math.abs(p1.x-p0.x), dy=Math.abs(p1.y-p0.y);
-          if(dx>=dy){
-            const y=snap(p0.y, ys);
-            const x0=snap(Math.min(p0.x,p1.x), xs), x1=snap(Math.max(p0.x,p1.x), xs);
-            return { x:x0, y:y, w:Math.max(0,x1-x0), h:TH };
-          }
-          const x=snap(p0.x, xs);
-          const y0=snap(Math.min(p0.y,p1.y), ys), y1=snap(Math.max(p0.y,p1.y), ys);
-          return { x:x, y:y0, w:TH, h:Math.max(0,y1-y0) };
+          return (dx>=dy)
+            ? { x:Math.min(p0.x,p1.x), y:p0.y, w:dx, h:TH }
+            : { x:p0.x, y:Math.min(p0.y,p1.y), w:TH, h:dy };
         };
         const move=function(e){
-          rect=shape(at(e));
+          raw=shape(at(e));
+          const put=snapWall(m, raw);
           if(!node){
             node=document.createElementNS("http://www.w3.org/2000/svg","rect");
             node.setAttribute("fill","#16a085"); node.setAttribute("opacity","0.55");
             el.appendChild(node);
           }
-          node.setAttribute("x",rect.x); node.setAttribute("y",rect.y);
-          node.setAttribute("width",rect.w); node.setAttribute("height",rect.h);
+          node.setAttribute("x",put.x); node.setAttribute("y",put.y);
+          node.setAttribute("width",put.w); node.setAttribute("height",put.h);
         };
         const up=function(){
           el.onpointermove=null; el.onpointerup=null; el.onpointercancel=null;
           if(node&&node.parentNode)node.parentNode.removeChild(node);
-          if(!rect||(rect.w<=TH&&rect.h<=TH)){ render(); return; }   // тап без длины — не стена
-          sh.model.walls=(sh.model.walls||[]).concat([{ id:gid(), x:rect.x, y:rect.y, w:rect.w, h:rect.h }]);
+          if(!raw){ render(); return; }
+          const next=addWall(sh.model, raw, gid());
+          if(next===sh.model){ render(); return; }      // тап без длины — не стена
+          sh.model=next;
           modelTool="sel";
           modelSync(sh); fl();
         };
