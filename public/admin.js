@@ -9776,7 +9776,9 @@ function modelAreasPanel(sh){
       '</div>';
     g+=inBay.map(function(r){
       return '<div style="'+(inBay.length>1?'border-left:2px solid '+(r.sub?"#e8975a":"#b07cd6")+';padding-left:8px;margin-bottom:8px':'')+'">'+
-        '<input data-a="model-room-name" data-id="'+r.id+'" value="'+esc(r.name||"")+'" placeholder="Название" style="width:100%;background:transparent;border:none;outline:none;color:#fff;font-size:13.5px;font-weight:700;padding:0 0 5px;box-sizing:border-box">'+
+        // Имя — поле ввода, и оно обязано быть на него похоже: без подчёркивания
+        // это читается как заголовок, и «Помещение» переименовать не догадываются.
+        '<input data-a="model-room-name" data-id="'+r.id+'" value="'+esc(r.name||"")+'" placeholder="Название" title="Название помещения — можно править" style="width:100%;background:transparent;border:none;border-bottom:1px dashed rgba(255,255,255,.28);outline:none;color:#fff;font-size:13.5px;font-weight:700;padding:0 0 4px;margin-bottom:4px;box-sizing:border-box">'+
         '<div style="font-size:10.5px;color:#7f97ae;margin-bottom:7px">'+numRu(r.l)+' × '+numRu(r.w)+' м · высота '+numRu(r.h)+' м</div>'+
         '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px">'+
           cell("ПОЛ",r.floor," м²")+cell("ПОТОЛОК",r.ceil," м²")+cell("СТЕНЫ",r.wallNet," м²")+

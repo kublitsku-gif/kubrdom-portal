@@ -67,6 +67,12 @@ const ids = () => { let i = 0; return () => 'id' + (++i) }
   ok('дверь спальни — 1450', parts[1].pos - model.finish === 1450, String(parts[1].pos))
   ok('петли и сторона открывания заданы',
     parts.every((o) => o.hinge && o.into), JSON.stringify(parts.map((o) => [o.hinge, o.into])))
+  // Размер межкомнатной двери — решение заказчика (700×2050), а не «как у входной»:
+  // по нему заказывают полотно, и разъехаться ему с чертежом нельзя.
+  const partT = parts.map((o) => winTypes.find((t) => t.id === o.typeId))
+  ok('межкомнатные двери 700×2050',
+    partT.every((t) => t && t.w === 700 && t.h === 2050), JSON.stringify(partT.map((t) => t && [t.w, t.h])))
+  ok('и это одно изделие на обе', partT[0] === partT[1])
   const specs = modelToSpecs(model, winTypes)
   const doors = specs.rooms.reduce((a, r) => a + (r.pts.door || 0), 0)
   ok('всего дверей три, без задвоения', doors === 3, JSON.stringify(specs.rooms.map((r) => r.pts)))
