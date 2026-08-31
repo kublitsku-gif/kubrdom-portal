@@ -46,13 +46,20 @@ const { model, winTypes } = presetModel('c12-san-liv-bed', [], ids())
   ok('с другой стороны видно другие проёмы', kinds(a).reveal !== kinds(b).reveal,
     kinds(a).reveal + ' и ' + kinds(b).reveal)
 
-  // Прозрачные стены — обхождение по умолчанию: смотрят на дом чаще со стороны
-  // фасада, и «окон не видно» — это про снятую вместе с ними стену.
-  const ghost = isoScene(model, winTypes, { yaw: 215, tilt: 55 })
-  ok('по умолчанию ближняя стена прозрачная, а не снятая', kinds(ghost).ghost > 0, JSON.stringify(kinds(ghost)))
-  ok('и её окна видно', (kinds(ghost).glass || 0) > (kinds(b).glass || 0),
-    kinds(ghost).glass + ' против ' + kinds(b).glass)
-  ok('сквозь неё видно и комнаты', kinds(ghost).floor === kinds(b).floor)
+  // По умолчанию дом показывается ЦЕЛЫМ: гофрированный морской контейнер с крышей.
+  // Так его видит клиент, подъехав к участку, и так он ждёт его на картинке.
+  const solid = isoScene(model, winTypes, { yaw: 215, tilt: 55 })
+  ok('по умолчанию дом целый', !kinds(solid).ghost, JSON.stringify(kinds(solid)))
+  ok('у него есть крыша', kinds(solid).roof > 0)
+  ok('и гофра на стенах', kinds(solid).rib > 10, String(kinds(solid).rib))
+  ok('его окна на месте', (kinds(solid).glass || 0) > 0)
+
+  // Прозрачная стена — компромисс: видно и дом, и планировку сразу.
+  const ghost = isoScene(model, winTypes, { yaw: 215, tilt: 55, walls: 'ghost' })
+  ok('в «сквозь стены» ближняя стена прозрачная', kinds(ghost).ghost > 0, JSON.stringify(kinds(ghost)))
+  ok('её проёмы обведены рамкой', kinds(ghost).frame > 0)
+  ok('и крыша не мешает смотреть внутрь', !kinds(ghost).roof)
+  ok('сквозь неё видно комнаты', kinds(ghost).floor === kinds(b).floor)
 }
 
 // ── 3. Проём — дырка, а не наклейка ──────────────────────────────────────────

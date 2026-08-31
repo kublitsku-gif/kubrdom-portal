@@ -13,6 +13,8 @@
 import { modelScheme, modelRooms } from "./model.js";
 
 const RAD = Math.PI / 180;
+const ROOF = 160;         // толщина крыши
+const RIB = 260;          // шаг гофры морского контейнера
 
 // Камера смотрит на дом сбоку и сверху: `yaw` — поворот вокруг вертикали,
 // `tilt` — подъём над горизонтом (90° — вид строго сверху, то есть план).
@@ -42,10 +44,11 @@ function face(project, pts, shade, kind, holes) {
   return {
     kind: kind,
     shade: shade,
-    // Глубина грани — её САМЫЙ ДАЛЬНИЙ угол. По среднему стена, стоящая наискось,
-    // проигрывала соседней и уезжала за неё; по дальнему углу порядок совпадает с
-    // тем, что видит глаз.
-    depth: flat.reduce(function (a, p) { return Math.max(a, p.d); }, -Infinity),
+    // Глубина грани — её САМЫЙ БЛИЖНИЙ угол. Не средний: стена, стоящая наискось,
+    // по среднему проигрывала соседней и уезжала за неё. И не дальний: у стены во
+    // всю длину дома дальний угол лежит за двенадцать метров, и такая стена уходила
+    // в конец очереди — перегородки рисовались поверх фасада.
+    depth: flat.reduce(function (a, p) { return Math.min(a, p.d); }, Infinity),
     pts: flat.map(function (p) { return [p.x, p.y]; }),
     holes: hs.map(function (h) { return h.map(function (p) { return [p.x, p.y]; }); }),
   };
@@ -78,6 +81,13 @@ function boxFaces(project, r, z0, z1, kind, skip, holesOn) {
     });
 }
 
+// Глубина плоскости по её углам. Рёбра гофры и рамки проёмов лежат НА грани стены,
+// и своей глубины у них, по сути, нет: берут её у грани и рисуются сразу за ней.
+// Иначе сортировка ставит их то до, то после стены — гофра пропадает через раз.
+function planeDepth(project, pts) {
+  return pts.reduce(function (a, p) { return Math.min(a, project(p[0], p[1], p[2]).d); }, Infinity);
+}
+
 // Проёмы этой стены: те, чей прямоугольник на плане лежит в её толще.
 function openingsOf(sc, wall) {
   return sc.openings.filter(function (o) {
@@ -98,7 +108,8 @@ export function isoScene(model, winTypes, opts) {
   const o = opts || {};
   const yaw = (o.yaw == null) ? 35 : Number(o.yaw);
   const tilt = (o.tilt == null) ? 55 : Number(o.tilt);
-  const cut = (o.walls === "cut");
+  const mode = o.walls || "solid";
+  const cut = (mode === "cut");
   const sc = modelScheme(model, winTypes);
   const H = Number((model || {}).h) || 0;
   const project = camera(yaw, tilt, sc.l / 2, sc.w / 2);
@@ -136,6 +147,7 @@ export function isoScene(model, winTypes, opts) {
       const ny = (w.w > w.h) ? ((w.y < sc.w / 2) ? -1 : 1) : 0;
       near = (nx * view.x + ny * view.y) < -0.15;
       if (near && cut) return;
+      if (mode === "solid") near = false;         // снаружи стена — обычная стена
     }
     const ops = openingsOf(sc, w);
     const along = w.w > w.h;                 // стена вдоль оси X
@@ -161,6 +173,26 @@ export function isoScene(model, winTypes, opts) {
       });
     }).forEach(function (f) { faces.push(f); });
 
+    // Гофра морского контейнера: рёбра по наружной грани коробки. Без них дом
+    // читается картонной коробкой — гофра его главная примета. Рисуем отрезками в
+    // тех же координатах, что и всё остальное: на повороте они остаются на стене,
+    // а не ползут по экрану, как это делал бы узор SVG.
+    if (shell && mode === "solid") {
+      const outX = (w.w > w.h) ? 0 : ((w.x < sc.l / 2) ? -1 : 1);
+      const outY = (w.w > w.h) ? ((w.y < sc.w / 2) ? -1 : 1) : 0;
+      if ((outX * view.x + outY * view.y) < 0) {          // наружная грань видна
+        const b = along ? ((outY < 0) ? w.y : w.y + w.h) : ((outX < 0) ? w.x : w.x + w.w);
+        const a0 = along ? w.x : w.y, a1 = along ? w.x + w.w : w.y + w.h;
+        const pt0 = function (a, z) { return along ? [a, b, z] : [b, a, z]; };
+        const dz = planeDepth(project, [pt0(a0, 0), pt0(a1, 0), pt0(a1, H), pt0(a0, H)]);
+        for (let a = a0 + RIB; a < a1 - 1; a += RIB) {
+          const rib = face(project, [pt0(a, 0), pt0(a, H)], 1, "rib");
+          rib.depth = dz;                       // ребро живёт на своей грани
+          faces.push(rib);
+        }
+      }
+    }
+
     // Проём — дырка в стене: обе её плоскости и откосы по толщине. Без откосов
     // стена выглядит бумажной, а по ним на площадке видно, что она толстая.
     ops.forEach(function (op) {
@@ -170,7 +202,7 @@ export function isoScene(model, winTypes, opts) {
       const pt = function (a, b, z) { return along ? [a, b, z] : [b, a, z]; };
       // Откосы: низ, верх и два боковых. В прозрачной стене они превращаются в муть —
       // там достаточно самого проёма и стекла.
-      if (!near) {
+      if (mode !== "ghost" || !near) {
         faces.push(face(project, [pt(a0, b0, z0), pt(a1, b0, z0), pt(a1, b1, z0), pt(a0, b1, z0)], 0.86, "reveal"));
         faces.push(face(project, [pt(a0, b0, z1), pt(a1, b0, z1), pt(a1, b1, z1), pt(a0, b1, z1)], 0.72, "reveal"));
         faces.push(face(project, [pt(a0, b0, z0), pt(a0, b1, z0), pt(a0, b1, z1), pt(a0, b0, z1)], 0.8, "reveal"));
@@ -180,7 +212,10 @@ export function isoScene(model, winTypes, opts) {
       // одинаково бледные. Обводим его рамкой — как оконный переплёт на фасаде.
       if (near) {
         const b = (along ? ((view.y < 0) ? w.y : w.y + w.h) : ((view.x < 0) ? w.x : w.x + w.w));
-        faces.push(face(project, [pt(a0, b, z0), pt(a1, b, z0), pt(a1, b, z1), pt(a0, b, z1)], 1, "frame"));
+        const fr = face(project, [pt(a0, b, z0), pt(a1, b, z0), pt(a1, b, z1), pt(a0, b, z1)], 1, "frame");
+        fr.depth = planeDepth(project, [pt(w.x, b, 0), pt(w.x + w.w, b, 0)].concat(
+          along ? [[w.x + w.w, b, H], [w.x, b, H]] : [[b, w.y + w.h, H], [b, w.y, H]]));
+        faces.push(fr);
       }
       // Стекло — посередине толщины; у двери его нет, там проём насквозь.
       if (op.kind !== "door") {
@@ -190,11 +225,23 @@ export function isoScene(model, winTypes, opts) {
     });
   });
 
+  // Крыша. Есть только у целого дома: в кукольном и в «сквозь стены» она закрывает
+  // ровно то, ради чего туда смотрят.
+  if (mode === "solid") {
+    boxFaces(project, { x: 0, y: 0, w: sc.l, h: sc.w }, H, H + ROOF, "roof", function (n) {
+      return (n[2] === 0) && (n[0] * view.x + n[1] * view.y) > 0;
+    }).forEach(function (f) { faces.push(f); });
+  }
+
   // Пол рисуется первым — весь, целиком. Камера смотрит сверху, и ни одна плоскость
   // пола не может закрыть стену, которая на ней стоит; а по одной только глубине
   // дальний пол иногда обгонял ближнюю перегородку и стирал её.
   const rank = function (f) { return (f.kind === "slab" || f.kind === "floor") ? 0 : 1; };
-  faces.sort(function (a, b) { return (rank(a) - rank(b)) || (b.depth - a.depth); });
+  // На одной глубине первой идёт сама грань, за ней — то, что на ней лежит.
+  const layer = function (f) { return (f.kind === "rib" || f.kind === "frame") ? 1 : 0; };
+  faces.sort(function (a, b) {
+    return (rank(a) - rank(b)) || (b.depth - a.depth) || (layer(a) - layer(b));
+  });
 
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   faces.forEach(function (f) {

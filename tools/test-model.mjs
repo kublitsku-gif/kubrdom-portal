@@ -6,7 +6,7 @@
 // сумма помещений не должна разъезжаться с контейнером, перегородка не должна
 // съедать помещение до нуля, а id помещений обязаны переживать правки — на них
 // висит раскладка и выбранная отделка.
-import { CONTAINERS, MIN_ROOM, FINISH_THICK, addWall, containerMeta, emptyModel, applyContainer, modelRooms,
+import { CONTAINERS, MIN_ROOM, FINISH_THICK, addWall, modelScheme, containerMeta, emptyModel, applyContainer, modelRooms,
   modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom,
   splitLengthwise, mergeLengthwise, moveLengthwise, elevation,
   bayAt, splitAt, splitLengthwiseAt, nearestSide, opPosAt,
@@ -429,6 +429,45 @@ function house() {
 
   // Тап без длины стеной не становится.
   ok('тап стену не ставит', addWall(m, { x: 3000, y: 1000, w: 0, h: 100 }, 'z') === m)
+}
+
+// ── Верх проёмов на одной линии ──────────────────────────────────────────────
+// Окна и двери стоят под ОДНОЙ перемычкой: на фасаде разнобой по верху читается
+// как ошибка монтажа даже теми, кто чертежей не знает. Поэтому подоконник не
+// задают — задают верх, а низ из него вычитается.
+{
+  console.log('Верх проёмов')
+  const types = [
+    { id: 'w15', kind: 'win', n: 'Окно 1500×1500', w: 1500, h: 1500, cost: 0 },
+    { id: 'w21', kind: 'win', n: 'Окно 1500×2100', w: 1500, h: 2100, cost: 0 },
+    { id: 'd20', kind: 'door', n: 'Дверь 900×2000', w: 900, h: 2000, cost: 0 },
+    { id: 'big', kind: 'win', n: 'Витраж 2000×2600', w: 2000, h: 2600, cost: 0 },
+  ]
+  const m = Object.assign(emptyModel('40hc'), { h: 2500 })
+  m.rooms[0].id = 'r1'
+  m.openings = [
+    { id: 'o1', side: 's', pos: 1000, typeId: 'w15' },
+    { id: 'o2', side: 's', pos: 4000, typeId: 'w21' },
+    { id: 'o3', side: 's', pos: 7000, typeId: 'd20' },
+    { id: 'o4', side: 's', pos: 9000, typeId: 'big' },
+    { id: 'o5', side: 'n', pos: 1000, sill: 1800, typeId: 'w15' },   // задан руками
+  ]
+  const by = {}
+  modelScheme(m, types).openings.forEach((o) => { by[o.id] = o })
+
+  ok('окна выровнены по верху', by.o1.sill + by.o1.height === by.o2.sill + by.o2.height,
+    (by.o1.sill + by.o1.height) + ' и ' + (by.o2.sill + by.o2.height))
+  ok('верх — перемычка 2100', by.o1.sill + by.o1.height === 2100, String(by.o1.sill + by.o1.height))
+  ok('дверь стоит на полу', by.o3.sill === 0, String(by.o3.sill))
+  // Изделие выше перемычки вниз уже не опустить: оно встаёт от пола, и его верх
+  // выше линии — это не сбой, а физика.
+  ok('витраж выше перемычки встаёт от пола', by.o4.sill === 0 && by.o4.height === 2600)
+  // Заданный руками подоконник уважаем, но сквозь потолок не пускаем: окно,
+  // торчащее в крышу, — то, из-за чего этот расчёт и переписан.
+  ok('заданный подоконник прижат под потолок', by.o5.sill === 2500 - 1500, String(by.o5.sill))
+  ok('ни один проём не выше потолка',
+    modelScheme(m, types).openings.every((o) => o.sill + o.height <= 2600),
+    JSON.stringify(modelScheme(m, types).openings.map((o) => o.sill + o.height)))
 }
 
 console.log(failed ? `\n✘ провалено проверок: ${failed}` : '\n✓ все проверки прошли')

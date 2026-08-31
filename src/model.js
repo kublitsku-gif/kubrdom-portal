@@ -326,6 +326,31 @@ export function modelWalls(model) {
 // считает комнату одной, и кладовка молча не замыкается. Ради этого всё и делается.
 export const WALL_SNAP = 220;
 
+// ─── ВЕРХ ПРОЁМОВ ────────────────────────────────────────────────────────────
+// Окна и двери в доме стоят под ОДНОЙ перемычкой: на фасаде это первое, что видно,
+// и разнобой по верху читается как ошибка монтажа даже теми, кто чертежей не знает.
+// Поэтому подоконник не задают — задают верх, а низ из него вычитается.
+//
+// 2100 — обычная высота дверного проёма, к ней и равняются окна. Изделие выше
+// перемычки (панорамный витраж) вниз уже не опустить: оно встаёт от пола, и его
+// верх оказывается выше линии — это не сбой, а физика.
+export const OPENING_HEAD = 2100;
+
+export function headHeight(model) {
+  const m = model || {};
+  const H = Number(m.h) || 0;
+  const head = Number(m.head) || OPENING_HEAD;
+  return H ? Math.min(head, H - 50) : head;
+}
+
+// Низ проёма по линии верха. Проём выше перемычки прижимается к полу, а торчать
+// сквозь потолок ему не даём: на чертеже такое окно выглядит как дыра в крыше.
+export function headSill(model, openingHeight) {
+  const H = Number((model || {}).h) || 0;
+  const h = Number(openingHeight) || 0;
+  return Math.max(0, Math.min(headHeight(model) - h, H ? (H - h) : Infinity));
+}
+
 function faces(walls, vertical) {
   return walls.reduce(function (a, w) {
     const isVert = w.h > w.w;
@@ -944,7 +969,13 @@ export function modelScheme(model, winTypes) {
   const openings = (m.openings || []).map(function (op) {
     const t = byType[op.typeId] || { n: "Проём", w: 0, h: 0, kind: "win" };
     const wd = Number(t.w) || 0, pos = Number(op.pos) || 0;
-    const sill = (op.sill == null) ? ((t.kind === "door") ? 0 : 900) : (Number(op.sill) || 0);
+    // Верх проёмов держим на одной линии; заданный руками подоконник уважаем, но
+    // сквозь потолок не пускаем — окно, торчащее в крышу, чертёж не рисует.
+    const th0 = Number(t.h) || 0;
+    // Дверь стоит НА ПОЛУ — её низ не выравнивают ни по какой линии; если полотно
+    // ниже перемычки, ниже оказывается и его верх, и это правда о полотне.
+    const sill = (op.sill == null) ? ((t.kind === "door") ? 0 : headSill(m, th0))
+      : Math.max(0, Math.min(Number(op.sill) || 0, (Number(m.h) || 0) ? ((Number(m.h) || 0) - th0) : Infinity));
     let box = null, out = null, along = true;
     if (op.side === "part") {
       const p = partitionAt(m, op.after);
