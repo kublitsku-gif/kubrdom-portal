@@ -91,6 +91,14 @@ const { model, winTypes } = presetModel('c12-san-liv-bed', [], ids())
   ok('верхних граней стен под крышей нет', tops.length <= kinds(s).shell, String(tops.length))
 
   // Проём на глухой стене обводится рамкой: на тёмной гофре чёрная дыра сливается.
+  // Крыша идёт по габариту, а торцевые стены на плане чертят между продольными —
+  // в объёме из-за этого на углу вылезал зубец. Силуэт коробки и крыши обязан
+  // совпадать: «зазор в кровле» — это ровно он.
+  const leftOf = (kind) => Math.min.apply(null, s.faces.filter((f) => f.kind === kind)
+    .reduce((a, f) => a.concat(f.pts.map((p) => p[0])), []))
+  ok('крыша не выступает за стены', Math.abs(leftOf('roof') - leftOf('shell')) < 1,
+    leftOf('roof') + ' против ' + leftOf('shell'))
+
   ok('проём обведён рамкой и на глухой стене',
     isoScene(holed, types, { yaw: 215, tilt: 30 }).faces.some((f) => f.kind === 'frame'))
 }

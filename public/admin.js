@@ -48,7 +48,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom,
   splitLengthwise, mergeLengthwise, moveLengthwise, elevation,
   bayAt, splitAt, splitLengthwiseAt, nearestSide, opPosAt,
-  modelToSpecs, modelTotals, modelIssues, modelScheme, modelAreas, modelWalls, snapWall, addWall, headSill, partitionAt, INNER_DOOR,
+  modelToSpecs, modelTotals, modelIssues, modelScheme, modelAreas, modelWalls, snapWall, addWall, headSill, alignHeads, partitionAt, INNER_DOOR,
   WIN_CATALOG, winCatItem, winFace, winTypeFrom,
   MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
@@ -10088,6 +10088,7 @@ function modelFullOverlay(){
       }).join("")+
       '<span style="flex:1"></span>'+
       '<span style="font-size:11.5px;color:#7f97ae">поворот '+Math.round(((modelYaw%360)+360)%360)+'° · наклон '+modelTilt+'°</span>'+
+      '<button data-a="model-align-heads" title="Подвесить окна под общую перемычку — по самой высокой двери" style="border:1.5px solid rgba(255,255,255,.25);background:transparent;color:#fff;border-radius:9px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer">⇱ Верх по линии</button>'+
       '<button data-a="model-iso-reset" style="border:1.5px solid rgba(255,255,255,.25);background:transparent;color:#fff;border-radius:9px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer">↺ Как было</button>'+
     '</div>';
     h+='<div style="flex:1;min-height:0;display:flex;flex-wrap:wrap;align-items:stretch">'+
@@ -10387,7 +10388,7 @@ function specModelHtml(sh){
         // У двери в перегородке подоконника нет, зато у ЛЮБОЙ двери есть то, чего
         // не угадать: в какую сторону открывается створка и на каком откосе петли.
         (op.side==="part"?''
-          : '<input data-a="model-op-sill" data-id="'+op.id+'" value="'+numInp(op.sill==null?((t.kind==="door")?0:headSill(m, t.h)):op.sill)+'" type="number" step="0.05" inputmode="decimal" title="Высота низа проёма от пола, м" style="width:64px;padding:6px 7px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;text-align:right">')+
+          : '<input data-a="model-op-sill" data-id="'+op.id+'" value="'+numInp(op.sill==null?((t.kind==="door")?0:headSill(m, t.h, winTypes)):op.sill)+'" type="number" step="0.05" inputmode="decimal" title="Высота низа проёма от пола, м" style="width:64px;padding:6px 7px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;text-align:right">')+
         (t.kind==="door"
           ? '<button data-a="model-op-into" data-id="'+op.id+'" title="Открывать в другую сторону" style="width:30px;height:28px;border:1px solid #8e44ad55;background:#fff;border-radius:7px;cursor:pointer;color:#8e44ad;font-size:13px;flex-shrink:0">⇅</button>'+
             '<button data-a="model-op-hinge" data-id="'+op.id+'" title="Петли на другой откос" style="width:30px;height:28px;border:1px solid #8e44ad55;background:#fff;border-radius:7px;cursor:pointer;color:#8e44ad;font-size:13px;flex-shrink:0">⇄</button>'
@@ -10720,7 +10721,9 @@ function specListHtml(list){
 // ═══ ДОМ В ОБЪЁМЕ ════════════════════════════════════════════════════════════
 // Чертёж отвечает строителю, объём — клиенту: тот не обязан уметь читать план.
 // Сцену считает `isoScene` (src/iso.js), здесь только цвет и SVG.
-const ISO_COLOR={ slab:"#2b343d", floor:"#e6ecf4", shell:"#3a4753", ghost:"#5b6b7c", part:"#c9d4e0", reveal:"#f2f6fa", glass:"#a9c9e8", roof:"#46535f" };
+// Крыша того же цвета, что и стены: контейнер — одно тело, и разный цвет на стыке
+// читается как отдельная плита, положенная сверху. Разницу даёт освещённость грани.
+const ISO_COLOR={ slab:"#2b343d", floor:"#e6ecf4", shell:"#3a4753", ghost:"#5b6b7c", part:"#c9d4e0", reveal:"#f2f6fa", glass:"#a9c9e8", roof:"#3a4753" };
 const ISO_OPACITY={ glass:0.5, ghost:0.18 };
 
 // Освещённость — множитель к цвету грани: без него коробка читается плоским пятном.
@@ -19542,7 +19545,7 @@ function bind(){
         if(!pt){ alert("В модели нет перегородок — сначала поставьте стену поперёк."); return; }
         op.after=pt.id; modelPart=pt.id; op.into=1; op.hinge="start";
       } else {
-        op.sill=(t.kind==="door")?0:headSill(sh.model, t.h);
+        op.sill=(t.kind==="door")?0:headSill(sh.model, t.h, winTypes);
       }
       sh.model.openings=(sh.model.openings||[]).concat([op]);
       modelSync(sh); fl();
@@ -19749,7 +19752,7 @@ function bind(){
           const side=nearestSide(m, Math.max(0,Math.min(L,x)), Math.max(0,Math.min(W,y)));
           sh.model.openings=(sh.model.openings||[]).concat([{
             id:gid(), side:side, pos:opPosAt(m, side, x, y, t.w),
-            sill:(t.kind==="door")?0:headSill(m, t.h), typeId:t.id,
+            sill:(t.kind==="door")?0:headSill(m, t.h, winTypes), typeId:t.id,
           }]);
           modelSide=side;
         }
@@ -19758,6 +19761,11 @@ function bind(){
       };
     }
     else if(a==="model-view"){el.onclick=()=>{ modelView=el.dataset.v; render(); };}
+    else if(a==="model-align-heads"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      sh.model=alignHeads(sh.model, winTypes);
+      modelSync(sh); fl();
+    };}
     else if(a==="model-iso-walls"){el.onclick=()=>{ modelIsoWalls=el.dataset.w; render(); };}
     else if(a==="model-iso-reset"){el.onclick=()=>{ modelYaw=35; modelTilt=55; render(); };}
     else if(a==="model-iso"){

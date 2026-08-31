@@ -336,19 +336,45 @@ export const WALL_SNAP = 220;
 // верх оказывается выше линии — это не сбой, а физика.
 export const OPENING_HEAD = 2100;
 
-export function headHeight(model) {
+// Перемычку задаёт САМАЯ ВЫСОКАЯ ДВЕРЬ: дверь стоит на полу и короче себя быть не
+// может, поэтому линию верха диктует она, а окна под неё подвешиваются. Без дверей
+// берём обычные 2100.
+export function headHeight(model, winTypes) {
   const m = model || {};
   const H = Number(m.h) || 0;
-  const head = Number(m.head) || OPENING_HEAD;
+  const byType = {};
+  (winTypes || []).forEach(function (t) { if (t && t.id) byType[t.id] = t; });
+  const doors = (m.openings || []).map(function (op) { return byType[op.typeId]; })
+    .filter(function (t) { return t && (t.kind === "door"); })
+    .map(function (t) { return Number(t.h) || 0; });
+  const head = Number(m.head) || Math.max(OPENING_HEAD, doors.length ? Math.max.apply(null, doors) : 0);
   return H ? Math.min(head, H - 50) : head;
 }
 
 // Низ проёма по линии верха. Проём выше перемычки прижимается к полу, а торчать
 // сквозь потолок ему не даём: на чертеже такое окно выглядит как дыра в крыше.
-export function headSill(model, openingHeight) {
+export function headSill(model, openingHeight, winTypes) {
   const H = Number((model || {}).h) || 0;
   const h = Number(openingHeight) || 0;
-  return Math.max(0, Math.min(headHeight(model) - h, H ? (H - h) : Infinity));
+  return Math.max(0, Math.min(headHeight(model, winTypes) - h, H ? (H - h) : Infinity));
+}
+
+// Выровнять верх всех проёмов по перемычке. Отдельным действием, а не молча при
+// каждом расчёте: подоконник бывает задан осознанно (высокое окно в санузле), и
+// стирать его без спроса — та же беда, что и разнобой по верху.
+export function alignHeads(model, winTypes) {
+  const m = model || {};
+  const byType = {};
+  (winTypes || []).forEach(function (t) { if (t && t.id) byType[t.id] = t; });
+  return Object.assign({}, m, {
+    openings: (m.openings || []).map(function (op) {
+      const t = byType[op.typeId];
+      if (!t) return op;
+      return Object.assign({}, op, {
+        sill: (t.kind === "door") ? 0 : headSill(m, Number(t.h) || 0, winTypes),
+      });
+    }),
+  });
 }
 
 function faces(walls, vertical) {
@@ -974,7 +1000,7 @@ export function modelScheme(model, winTypes) {
     const th0 = Number(t.h) || 0;
     // Дверь стоит НА ПОЛУ — её низ не выравнивают ни по какой линии; если полотно
     // ниже перемычки, ниже оказывается и его верх, и это правда о полотне.
-    const sill = (op.sill == null) ? ((t.kind === "door") ? 0 : headSill(m, th0))
+    const sill = (op.sill == null) ? ((t.kind === "door") ? 0 : headSill(m, th0, winTypes))
       : Math.max(0, Math.min(Number(op.sill) || 0, (Number(m.h) || 0) ? ((Number(m.h) || 0) - th0) : Infinity));
     let box = null, out = null, along = true;
     if (op.side === "part") {

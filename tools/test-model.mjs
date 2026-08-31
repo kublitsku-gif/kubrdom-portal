@@ -6,7 +6,7 @@
 // сумма помещений не должна разъезжаться с контейнером, перегородка не должна
 // съедать помещение до нуля, а id помещений обязаны переживать правки — на них
 // висит раскладка и выбранная отделка.
-import { CONTAINERS, MIN_ROOM, FINISH_THICK, addWall, modelScheme, containerMeta, emptyModel, applyContainer, modelRooms,
+import { CONTAINERS, MIN_ROOM, FINISH_THICK, addWall, modelScheme, alignHeads, headHeight, containerMeta, emptyModel, applyContainer, modelRooms,
   modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom,
   splitLengthwise, mergeLengthwise, moveLengthwise, elevation,
   bayAt, splitAt, splitLengthwiseAt, nearestSide, opPosAt,
@@ -465,6 +465,19 @@ function house() {
   // Заданный руками подоконник уважаем, но сквозь потолок не пускаем: окно,
   // торчащее в крышу, — то, из-за чего этот расчёт и переписан.
   ok('заданный подоконник прижат под потолок', by.o5.sill === 2500 - 1500, String(by.o5.sill))
+  // Выравнивание одной кнопкой: подоконники, записанные руками (или прежним
+  // умолчанием в 900), пересчитываются по перемычке. Отдельным действием, а не
+  // молча: высокое окно в санузле ставят осознанно.
+  const aligned = alignHeads(m, types)
+  const tops = {}
+  modelScheme(aligned, types).openings.forEach((o) => { tops[o.id] = o.sill + o.height })
+  ok('после выравнивания окна под одной перемычкой', tops.o1 === tops.o2 && tops.o1 === 2100,
+    JSON.stringify(tops))
+  ok('и заданный руками подоконник тоже выровнен', tops.o5 === 2100, String(tops.o5))
+  ok('дверь осталась на полу', modelScheme(aligned, types).openings.find((o) => o.id === 'o3').sill === 0)
+  ok('перемычку задаёт самая высокая дверь',
+    headHeight(Object.assign({}, m, { openings: [{ id: 'd', side: 's', pos: 0, typeId: 'd20' }] }), types) === 2100)
+
   ok('ни один проём не выше потолка',
     modelScheme(m, types).openings.every((o) => o.sill + o.height <= 2600),
     JSON.stringify(modelScheme(m, types).openings.map((o) => o.sill + o.height)))
