@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // «Спецификация 2» — опытный раздел (src/spec2.js).
 //
-// Смысл раздела — пробовать другие правила, не задевая продаж. Поэтому сторожим
-// две вещи, на которых такой опыт и ломается: деньги обязаны совпадать с боевым
-// расчётом (иначе клиенту назовут одну цену, а в договор уйдёт другая), а
-// «готово» обязано считаться по-своему — тут дом начинается с модели контейнера.
+// Раздел намеренно пустой: экран отделки остался в боевой «Спецификации». Поэтому
+// сторожим ровно две вещи. Деньги обязаны совпадать с боевым расчётом (иначе клиенту
+// назовут одну цену, а в договор уйдёт другая), а «чего не хватает» обязано спрашивать
+// МОДЕЛЬ, а не отделку: предупреждение про невыбранные стены здесь было бы про экран,
+// которого в разделе нет.
 import { sheetTotals, sheetIssues } from '../src/spec.js'
 import { totals2, issues2 } from '../src/spec2.js'
 import { presetModel, modelToSpecs } from '../src/model.js'
@@ -33,7 +34,7 @@ function sheet2() {
   const specs = modelToSpecs(model, winTypes)
   const rooms = {}
   specs.rooms.forEach((r) => { rooms[r.id] = { 'Стены': 'e_mdf', 'Пол': 'e_lam' } })
-  return { id: 's2', kind: 'house', name: 'Опыт', markup: 30, model, specs, rooms, global: {}, qty: {} }
+  return { id: 's2', kind: 'house', name: 'Опыт', markup: 30, model, specs, rooms, global: {}, qty: {}, winTypes }
 }
 
 // ── 1. Деньги общие с боевым разделом ────────────────────────────────────────
@@ -48,26 +49,33 @@ function sheet2() {
   ok('наценка применена', a.price === Math.round(a.cost * 1.3), a.price + ' ≠ ' + Math.round(a.cost * 1.3))
 }
 
-// ── 2. Готовность считается по-своему ────────────────────────────────────────
+// ── 2. Готовность спрашивают у модели ────────────────────────────────────────
 {
-  console.log('Что мешает продавать')
-  const noModel = { id: 's0', kind: 'house', specs: { height: 2.5, rooms: [] }, rooms: {}, global: {}, qty: {} }
-  const iss = issues2(noModel, EST, PRODUCTS)
-  ok('без модели раздел говорит об этом первым', /модель контейнера/i.test(iss[0]), JSON.stringify(iss))
-  ok('и не повторяет «нет помещений» второй строкой', !iss.some((x) => /^Нет помещений/.test(x)), JSON.stringify(iss))
-  ok('боевой раздел при этом говорит про помещения',
-    sheetIssues(noModel, EST, PRODUCTS).some((x) => /^Нет помещений/.test(x)))
+  console.log('Что мешает считать')
+  const empty = { id: 's0', kind: 'house', specs: { height: 2.5, rooms: [] }, rooms: {}, global: {}, qty: {} }
+  const iss = issues2(empty, [])
+  ok('без модели — одна строка про модель', iss.length === 1 && /модель контейнера/i.test(iss[0]), JSON.stringify(iss))
+  ok('про отделку и себестоимость молчим', !iss.some((x) => /отделк|себестоимость|вариант/i.test(x)), JSON.stringify(iss))
+  ok('боевой раздел при этом говорит своё',
+    sheetIssues(empty, EST, PRODUCTS).some((x) => /^Нет помещений/.test(x)))
 
   const one = sheet2()
   one.model = Object.assign({}, one.model, { rooms: one.model.rooms.slice(0, 1) })
-  ok('одно помещение — перегородок ещё нет',
-    issues2(one, EST, PRODUCTS).some((x) => /перегородок/i.test(x)), JSON.stringify(issues2(one, EST, PRODUCTS)))
+  ok('одно помещение — перегородок нет',
+    issues2(one, []).some((x) => /перегородок/i.test(x)), JSON.stringify(issues2(one, [])))
+
+  // Претензии самой модели раздел передаёт как есть: проём без изделия — это цена,
+  // которая не посчитается, и молчать об этом нельзя.
+  const broken = sheet2()
+  broken.model = Object.assign({}, broken.model, {
+    openings: broken.model.openings.map((o) => Object.assign({}, o, { typeId: 'нет такого' })),
+  })
+  ok('проём без изделия виден',
+    issues2(broken, []).some((x) => /типового изделия/i.test(x)), JSON.stringify(issues2(broken, [])))
 
   const done = sheet2()
-  const left = issues2(done, EST, PRODUCTS)
-  ok('собранный лист претензий не вызывает', left.length === 0, JSON.stringify(left))
-  ok('и боевой расчёт тоже молчит', sheetIssues(done, EST, PRODUCTS).length === 0,
-    JSON.stringify(sheetIssues(done, EST, PRODUCTS)))
+  ok('собранная модель претензий не вызывает', issues2(done, done.winTypes).length === 0,
+    JSON.stringify(issues2(done, done.winTypes)))
 }
 
 console.log(failed ? `\n✘ провалено проверок: ${failed}` : '\n✓ все проверки прошли')

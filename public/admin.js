@@ -9529,7 +9529,7 @@ function specPlanTiles(kind, sel, action){
 // Деньги у обоих разделов общие (см. src/spec2.js) — расходится только критерий
 // готовности. Развилка одна и здесь: панель не должна знать, чем они отличаются.
 function specTot(sh){ return specIs2(sh)?totals2(sh, estimates, expProducts):sheetTotals(sh, estimates, expProducts); }
-function specIssuesOf(sh){ return specIs2(sh)?issues2(sh, estimates, expProducts):sheetIssues(sh, estimates, expProducts); }
+function specIssuesOf(sh){ return specIs2(sh)?issues2(sh, winTypes):sheetIssues(sh, estimates, expProducts); }
 const SPEC_SURFACE={floor:"пол", wall:"стены", ceil:"потолок"};
 // Что физически входит в позицию. Одна формулировка на экран продавца и на печать
 // клиенту: расхождение здесь означает, что в кабинете обещали одно, а на бумаге другое.
@@ -10194,11 +10194,13 @@ function tSpec(){
 }
 
 // Строки списка — общие у обоих разделов: расходиться должна логика, а не вёрстка.
-function specListHtml(list){
+// У опытного раздела справа не цена, а сам дом: экрана, который объясняет, из чего
+// цена собралась, там нет, и число без объяснения читать не по чему.
+function specListHtml(list,two){
   const RUk=function(n){return Math.round(n).toLocaleString("ru-RU")+" ₽";};
   const ST={draft:{n:"черновик",c:"#7a8b99",bg:"#eef2f7"},sold:{n:"продана",c:"#27ae60",bg:"#eafaf0"}};
   return list.slice().reverse().map(function(sh){
-    const t=specTot(sh), st=ST[sh.status||"draft"]||ST.draft;
+    const t=two?null:specTot(sh), st=ST[sh.status||"draft"]||ST.draft;
     const cl=crmClients.find(function(c){return c.id===sh.clientId;});
     const kd=estKindMeta(sh.kind);
     const rooms=((sh.specs||{}).rooms||[]).length;
@@ -10209,11 +10211,13 @@ function specListHtml(list){
           '<div style="font-size:14px;font-weight:700;color:#0d1b2e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(sh.name||"Спецификация")+'</div>'+
           '<div style="font-size:11px;color:#7a9aaa;margin-top:2px">'+(cl?esc(cl.name)+' · ':'')+
             (sh.model?'<span style="color:#8e44ad;font-weight:700">🧱 модель</span> · ':'')+
-            rooms+' помещ. · '+t.count+' поз.</div>'+
+            rooms+' помещ.'+(two?'':' · '+t.count+' поз.')+'</div>'+
         '</div>'+
         '<div style="text-align:right;flex-shrink:0">'+
-          '<div style="font-size:15px;font-weight:800;color:#16a085">'+RUk(t.price)+'</div>'+
-          '<span style="font-size:9.5px;font-weight:700;color:'+st.c+';background:'+st.bg+';border-radius:5px;padding:1px 7px">'+st.n+'</span>'+
+          (two
+            ? '<div style="font-size:13px;font-weight:800;color:#8e44ad">'+(sh.model?numRu(Math.round(modelTotals(sh.model,winTypes).floorArea*100)/100)+' м²':'нет модели')+'</div>'
+            : '<div style="font-size:15px;font-weight:800;color:#16a085">'+RUk(t.price)+'</div>'+
+              '<span style="font-size:9.5px;font-weight:700;color:'+st.c+';background:'+st.bg+';border-radius:5px;padding:1px 7px">'+st.n+'</span>')+
         '</div>'+
       '</div>'+
     '</div>';
@@ -10226,7 +10230,7 @@ function specListHtml(list){
 // Карточка — общая с боевым разделом: опыт должен быть про логику, а не про то,
 // что вторая копия вёрстки отстала от первой.
 function tSpec2(){
-  if(specOpenId){ const sh=specSheet(specOpenId); if(sh){ if(specIs2(sh))return tSpecCard(sh); } else specOpenId=null; }
+  if(specOpenId){ const sh=specSheet(specOpenId); if(sh){ if(specIs2(sh))return tSpec2Card(sh); } else specOpenId=null; }
 
   let h='<div>';
   h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">'+
@@ -10243,7 +10247,47 @@ function tSpec2(){
     h+='<div style="text-align:center;padding:30px 16px;color:#9aabbf;font-size:13px;border:1px dashed #d0dae8;border-radius:14px;line-height:1.5">Здесь пока пусто.<br>Начните с заготовки — контейнер соберётся сразу с перегородками и проёмами.</div>';
     return h+'</div>';
   }
-  h+=specListHtml(specSheets2);
+  h+=specListHtml(specSheets2,true);
+  return h+'</div>';
+}
+
+// ── Карточка опытного раздела ───────────────────────────────────────────────
+// Пустая намеренно: экран отделки, комплектации, матрица и мастер остались в боевой
+// «Спецификации». Здесь есть только то, без чего лист не существует, — имя, клиент,
+// модель контейнера и возможность его убрать. Всё остальное будет собрано заново,
+// и копия чужого экрана этому мешала бы больше, чем помогала.
+function tSpec2Card(sh){
+  const iss=specIssuesOf(sh);
+  let h='<div>';
+  h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">'+
+    '<button data-a="spec-back" style="padding:7px 13px;background:#fff;border:1px solid #d0dae8;border-radius:9px;cursor:pointer;font-size:12px;color:#5a7080">← Спецификации</button>'+
+    '<div style="flex:1;min-width:0;font-size:11px;color:#8e44ad;font-weight:700;letter-spacing:1px;text-align:right">🧪 ОПЫТ</div>'+
+  '</div>';
+
+  h+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
+    '<input id="spec-name" data-a="spec-name" value="'+esc(sh.name||"")+'" placeholder="Название спецификации" style="width:100%;border:none;outline:none;font-size:17px;font-weight:800;color:#0d1b2e;background:transparent;margin-bottom:7px">'+
+    '<select data-a="spec-client" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12.5px;outline:none;box-sizing:border-box">'+
+      '<option value="">— клиент —</option>'+
+      crmClients.map(function(c){return '<option value="'+c.id+'"'+(sh.clientId===c.id?" selected":"")+'>'+esc(c.name||"")+'</option>';}).join("")+
+    '</select>'+
+  '</div>';
+
+  // Дом — это модель контейнера. Редактор общий с боевым разделом: он про геометрию,
+  // а не про продажу, и второй такой же разошёлся бы с первым на первой правке.
+  h+=specModelHtml(sh);
+
+  if(iss.length){
+    h+='<div style="background:#fff3e0;border:1px solid #e67e2244;border-radius:12px;padding:10px 12px;margin-bottom:9px;font-size:11.5px;color:#8a5a1f;line-height:1.5">'+
+      iss.slice(0,5).map(function(x){return "• "+esc(x);}).join("<br>")+'</div>';
+  }
+
+  h+='<div style="border:1px dashed #8e44ad44;border-radius:12px;padding:14px;margin-bottom:12px;text-align:center;font-size:12px;color:#7a6a8a;line-height:1.5">'+
+    'Дальше здесь будет своя логика раздела.<br>Расчёт и правила живут в <b>src/spec2.js</b>.</div>';
+
+  h+='<div style="display:flex;gap:7px;margin-bottom:20px">'+
+    '<button data-a="spec-dup" data-id="'+sh.id+'" style="flex:1;padding:9px;background:#fff;border:1px solid #d0dae8;border-radius:9px;cursor:pointer;color:#5a7080;font-size:12px;font-weight:700">⧉ Дублировать</button>'+
+    '<button data-a="spec-del" data-id="'+sh.id+'" style="flex:1;padding:9px;background:#fff;border:1px solid #e74c3c55;border-radius:9px;cursor:pointer;color:#e74c3c;font-size:12px;font-weight:700">Удалить</button>'+
+  '</div>';
   return h+'</div>';
 }
 

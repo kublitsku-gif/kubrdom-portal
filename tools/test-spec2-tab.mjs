@@ -116,7 +116,48 @@ function create(p, { two, preset }) {
   t.ok('удалённый лист исчез из опытного раздела', p.q('specSheets2').length === 0)
 }
 
-// ── 5. Раздел уходит в облако ────────────────────────────────────────────────
+// ── 5. Карточка опытного раздела вычищена ────────────────────────────────────
+{
+  t.section('Что осталось в карточке')
+  const p = panel()
+  create(p, { two: true, preset: 'c12-san-liv-bed' })
+  const card = p.run('tSpec2()')
+  // Экрана продажи здесь нет — он остался в боевой «Спецификации».
+  // Боевая карточка того же вида — контроль: маркеры ниже там действительно есть,
+  // иначе проверка «нет такого» ничего не сторожит.
+  p.run('settings=Object.assign({},settings,{specPresets:[{id:"pr1",kind:"house",name:"Комфорт",rooms:{},global:{}}]});')
+  p.run('specView="sheet";specAcc={rooms:true,global:true,base:true,stages:true};')
+  p.run('specSheets=[{id:"a1",name:"Дом",kind:"house",specs:{height:2.5,rooms:[{id:"r1",name:"Зал",w:2,l:3,wallLen:10}]},rooms:{},global:{},qty:{},markup:30}];')
+  const live = p.run('tSpecCard(specSheets[0])')
+
+  const gone = [
+    ['вкладки Список/План/Матрица/Мастер', 'data-a="spec-view"'],
+    ['комплектации', 'data-a="spec-preset"'],
+    ['раскрывающиеся блоки', 'data-a="spec-acc"'],
+    ['выбор отделки по комнате', 'data-a="spec-pick-room"'],
+    ['печать клиенту', 'data-a="spec-print"'],
+    ['в договор и в объект', 'data-a="spec-to-contract"'],
+  ]
+  gone.forEach(([name, mark]) => {
+    t.ok('в боевой карточке есть ' + name, live.indexOf(mark) >= 0, mark)
+    t.ok('в опытной убрано: ' + name, card.indexOf(mark) < 0, mark)
+  })
+  // А без чего лист не существует — осталось.
+  const kept = [
+    ['имя листа', 'data-a="spec-name"'],
+    ['клиент', 'data-a="spec-client"'],
+    ['модель контейнера', 'data-a="model-full"'],
+    ['удаление', 'data-a="spec-del"'],
+  ]
+  kept.forEach(([name, mark]) => t.ok('осталось: ' + name, card.indexOf(mark) >= 0, mark))
+
+  // В списке опытного раздела вместо цены — сам дом.
+  p.run('specOpenId=null;')
+  const list = p.run('tSpec2()')
+  t.ok('в списке площадь, а не цена', /25,52 м²/.test(list) && list.indexOf('₽') < 0, list.slice(list.indexOf('spec-open'), list.indexOf('spec-open') + 400))
+}
+
+// ── 6. Раздел уходит в облако ────────────────────────────────────────────────
 {
   t.section('Синхронизация')
   const p = panel()
