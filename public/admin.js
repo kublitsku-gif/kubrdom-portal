@@ -53,6 +53,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2 } from "../src/spec2.js";
+import { isoScene } from "../src/iso.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
 const APP_BUILD = "2026-08-30.9";
@@ -2089,7 +2090,10 @@ let winTypeNew=null;       // форма нового изделия
 let modelKind="win";       // окна или двери: у каждого вида свои вкладки и свой список
 let modelSide="n";         // стена, на которую ставим проём (или "part" — перегородки)
 let modelPart="";          // какая именно перегородка выбрана: id отсека перед ней
-let modelView="plan";      // plan | elev — план сверху или развёртка стены
+let modelView="plan";      // plan | elev | iso — план, развёртка или дом в объёме
+// Камера объёмного вида. Живёт во вкладке, а не в модели: это взгляд человека на
+// дом, а не свойство дома — у второго смотрящего он свой.
+let modelYaw=35, modelTilt=55;
 let modelOpDrag=null;      // проём под пальцем
 let modelOpSel=null;       // проём, выбранный тапом: у него правят открывание
 let modelPosWarn=null;     // {id,msg} — введённое число не влезло в стену
@@ -10065,6 +10069,32 @@ function modelFullOverlay(){
         (lab?(opCount(m,"win")+' 🪟 · '+opCount(m,"door")+' 🚪'):((m.openings||[]).length+' проём.'))+' · '+RUk(tot.openingsCost)+'</span>'+
       '<button data-a="model-full-close" style="padding:7px 14px;background:rgba(255,255,255,.12);border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:12px;font-weight:700;flex-shrink:0">Готово</button>'+
     '</div>';
+  // Переключатель вида: чертить и смотреть — разные занятия, и путать их незачем.
+  const viewBtn=function(v,label){
+    const on=modelView===v;
+    return '<button data-a="model-view" data-v="'+v+'" style="border:1.5px solid '+(on?"#2980b9":"rgba(255,255,255,.18)")+';background:'+(on?"#2980b9":"transparent")+';color:#fff;border-radius:9px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer">'+label+'</button>';
+  };
+  if(modelView==="iso"){
+    h+='<div style="display:flex;align-items:center;gap:6px;padding:9px 14px;background:#122236;border-bottom:1px solid rgba(255,255,255,.08);flex-wrap:wrap;flex-shrink:0">'+
+      viewBtn("plan","🗺 План")+viewBtn("iso","🧊 3D")+
+      '<span style="flex:1"></span>'+
+      '<span style="font-size:11.5px;color:#7f97ae">поворот '+Math.round(((modelYaw%360)+360)%360)+'° · наклон '+modelTilt+'°</span>'+
+      '<button data-a="model-iso-reset" style="border:1.5px solid rgba(255,255,255,.25);background:transparent;color:#fff;border-radius:9px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer">↺ Как было</button>'+
+    '</div>';
+    h+='<div style="flex:1;min-height:0;display:flex;flex-wrap:wrap;align-items:stretch">'+
+        // Картинка занимает всю область просмотра, а вписывает себя сама
+        // (preserveAspectRatio). Через flex этого не добиться: у аксонометрии свой
+        // габарит на каждый угол поворота, и flex то растягивал её, то обрезал.
+        '<div style="flex:1 1 420px;min-width:0;min-height:240px;position:relative;overflow:hidden;background:#f4f7fa">'+
+          modelIsoSvg(sh, true)+
+        '</div>'+
+        modelAreasPanel(sh)+
+      '</div>';
+    h+='<div style="padding:9px 14px;background:#122236;color:#9fb3c8;font-size:12px;flex-shrink:0;display:flex;gap:10px;align-items:center">'+
+        '<span style="font-size:14px">🧊</span><span style="flex:1">Тяните по дому: вбок — поворот, вверх-вниз — наклон. Ближние стены сняты, чтобы было видно комнаты.</span>'+
+      '</div>';
+    return h+'</div>';
+  }
   // Инструменты
   h+='<div style="display:flex;align-items:center;gap:6px;padding:9px 14px;background:#122236;border-bottom:1px solid rgba(255,255,255,.08);flex-wrap:wrap;flex-shrink:0">'+
     modelTools(lab).map(function(t){
@@ -10078,6 +10108,7 @@ function modelFullOverlay(){
       return '<button data-a="model-undo"'+(can?'':' disabled')+' title="Вернуть последнее изменение планировки" style="display:flex;align-items:center;gap:6px;border:1.5px solid rgba(255,255,255,'+(can?'.35':'.12')+');background:transparent;color:'+(can?'#fff':'rgba(255,255,255,.3)')+';border-radius:9px;padding:7px 12px;font-size:12px;font-weight:700;cursor:'+(can?'pointer':'default')+'"><span>↶</span>Вернуть'+(can?' <span style="opacity:.6">'+modelHist.length+'</span>':'')+'</button>';
     })()+
     '<span style="flex:1"></span>'+
+    viewBtn("iso","🧊 3D")+
     [1,2,4].map(function(z){
       const on=modelZoom===z;
       return '<button data-a="model-zoom" data-z="'+z+'" style="border:1.5px solid '+(on?"#2980b9":"rgba(255,255,255,.18)")+';background:'+(on?"#2980b9":"transparent")+';color:#fff;border-radius:8px;padding:6px 10px;font-size:11.5px;font-weight:700;cursor:pointer">'+z+'×</button>';
@@ -10202,7 +10233,7 @@ function specModelHtml(sh){
   // План или развёртка. Высоту план показать не может в принципе, а именно по ней
   // электрик ставит подрозетники — поэтому это два вида одной модели, а не картинка.
   h+='<div style="display:flex;gap:5px;margin-bottom:7px">'+
-    [["plan","🗺 План сверху"],["elev","📏 Развёртка стены"]].map(function(v){
+    [["plan","🗺 План"],["elev","📏 Развёртка"],["iso","🧊 3D"]].map(function(v){
       const on=modelView===v[0];
       return '<button data-a="model-view" data-v="'+v[0]+'" style="flex:1;border:1.5px solid '+(on?"#0d1b2e":"#dde6f0")+';background:'+(on?"#0d1b2e":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:7px;font-size:11.5px;font-weight:700;cursor:pointer">'+v[1]+'</button>';
     }).join("")+
@@ -10216,7 +10247,9 @@ function specModelHtml(sh){
       }).join("")+'</div>';
   }
   h+='<div style="background:#f6f8fa;border:1px solid #e6ecf3;border-radius:11px;padding:10px;margin-bottom:9px;overflow-x:auto">'+
-    (modelView==="elev"?modelElevSvg(sh):modelPlanSvg(sh))+'</div>';
+    (modelView==="elev"?modelElevSvg(sh):(modelView==="iso"?modelIsoSvg(sh):modelPlanSvg(sh)))+
+    (modelView==="iso"?'<div style="font-size:10.5px;color:#9aabbf;text-align:center;padding-top:6px">Тяните по дому — он повернётся</div>':'')+
+  '</div>';
   h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(80px,1fr));gap:6px;margin-bottom:10px">'+
     [["пол",numRu(tot.floorArea)+" м²"],["перегородок",String(tot.partitions)]]
       .concat(lab?[["окон",String(opCount(m,"win"))],["дверей",String(opCount(m,"door"))]]
@@ -10673,6 +10706,44 @@ function specListHtml(list){
       '</div>'+
     '</div>';
   }).join("");
+}
+
+// ═══ ДОМ В ОБЪЁМЕ ════════════════════════════════════════════════════════════
+// Чертёж отвечает строителю, объём — клиенту: тот не обязан уметь читать план.
+// Сцену считает `isoScene` (src/iso.js), здесь только цвет и SVG.
+const ISO_COLOR={ slab:"#2b343d", floor:"#e6ecf4", shell:"#3a4753", part:"#c9d4e0", reveal:"#f2f6fa", glass:"#a9c9e8" };
+
+// Освещённость — множитель к цвету грани: без него коробка читается плоским пятном.
+function isoShade(hex, k){
+  const n=parseInt(hex.slice(1),16);
+  const c=[(n>>16)&255,(n>>8)&255,n&255].map(function(v){ return Math.max(0,Math.min(255,Math.round(v*k))); });
+  return "#"+c.map(function(v){ return (v<16?"0":"")+v.toString(16); }).join("");
+}
+function isoPath(f){
+  const ring=function(pts){ return "M "+pts.map(function(p){ return Math.round(p[0])+" "+Math.round(p[1]); }).join(" L ")+" Z"; };
+  return ring(f.pts)+(f.holes||[]).map(ring).join("");
+}
+
+function modelIsoSvg(sh, full){
+  const sc=isoScene(sh.model, winTypes, { yaw:modelYaw, tilt:modelTilt });
+  const PAD=600;
+  const vb=(sc.x0-PAD)+" "+(sc.y0-PAD)+" "+((sc.x1-sc.x0)+PAD*2)+" "+((sc.y1-sc.y0)+PAD*2);
+  let g="";
+  sc.faces.forEach(function(f){
+    const base=ISO_COLOR[f.kind]||"#cccccc";
+    const fill=(f.kind==="glass")?base:isoShade(base, f.shade);
+    g+='<path d="'+isoPath(f)+'" fill="'+fill+'" fill-rule="evenodd"'+
+      (f.kind==="glass"?' opacity="0.5"':'')+
+      ' stroke="#0d1b2e" stroke-width="'+(f.kind==="floor"?10:16)+'" stroke-opacity="'+(f.kind==="floor"?"0.10":"0.35")+'" stroke-linejoin="round"/>';
+  });
+  // На весь экран дом ВПИСЫВАЕМ в область просмотра (высота 100%), иначе при
+  // повороте он то упирается в края, то уезжает за них: у аксонометрии габарит
+  // меняется с каждым градусом. В карточке наоборот — высота по содержимому.
+  return '<svg data-a="model-iso" id="model-iso'+(full?"-full":"")+'" viewBox="'+vb+'" preserveAspectRatio="xMidYMid meet" '+
+    // SVG — ЗАМЕЩАЕМЫЙ элемент: left/right/bottom ему размера не задают, он берёт
+    // естественный и переполняет бокс. Размер пишем явно, вписывание делает
+    // preserveAspectRatio — тогда дом целиком виден при любом угле поворота.
+    'style="'+(full?"position:absolute;left:18px;top:18px;width:calc(100% - 36px);height:calc(100% - 36px)":"width:100%;height:auto")+';display:block;user-select:none;touch-action:none;cursor:grab">'+g+'</svg>';
 }
 
 // ═══ СХЕМА ПЛАНА ═════════════════════════════════════════════════════════════
@@ -19642,6 +19713,38 @@ function bind(){
       };
     }
     else if(a==="model-view"){el.onclick=()=>{ modelView=el.dataset.v; render(); };}
+    else if(a==="model-iso-reset"){el.onclick=()=>{ modelYaw=35; modelTilt=55; render(); };}
+    else if(a==="model-iso"){
+      // Вращение: тянем по дому. Во время жеста пересобираем ТОЛЬКО эту картинку —
+      // render() меняет innerHTML целиком и уносит элемент вместе с захватом
+      // указателя, а сцена из трёх десятков граней считается за доли миллисекунды.
+      el.onpointerdown=(ev)=>{
+        const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+        const x0=ev.clientX, y0=ev.clientY, yaw0=modelYaw, tilt0=modelTilt;
+        let moved=false;
+        ev.preventDefault();
+        try{ el.setPointerCapture(ev.pointerId); }catch(e){}
+        el.style.cursor="grabbing";
+        const move=function(e){
+          if(!moved&&Math.abs(e.clientX-x0)<TAP_PX&&Math.abs(e.clientY-y0)<TAP_PX)return;
+          moved=true;
+          modelYaw=Math.round(yaw0+(e.clientX-x0)*0.4);
+          // Наклон держим между «почти сверху» и «почти сбоку»: за этими границами
+          // дом вырождается в план и в фасад, для которых есть свои виды.
+          modelTilt=Math.max(12, Math.min(86, Math.round(tilt0-(e.clientY-y0)*0.3)));
+          const next=modelIsoSvg(sh, el.id==="model-iso-full");
+          const inner=next.slice(next.indexOf(">")+1, next.lastIndexOf("</svg>"));
+          el.setAttribute("viewBox", /viewBox="([^"]+)"/.exec(next)[1]);
+          el.innerHTML=inner;
+        };
+        const up=function(){
+          el.onpointermove=null; el.onpointerup=null; el.onpointercancel=null;
+          el.style.cursor="grab";
+          if(moved)render();
+        };
+        el.onpointermove=move; el.onpointerup=up; el.onpointercancel=up;
+      };
+    }
     else if(a==="model-split-w"){el.onclick=()=>{
       const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
       const before=JSON.stringify(sh.model.rooms);

@@ -657,4 +657,46 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
     p.q('modelRooms(specSheets[0].model).length') === rooms0, String(p.q('modelRooms(specSheets[0].model).length')))
 }
 
+// ── 17. Вкладка 3D ───────────────────────────────────────────────────────────
+// Чертёж отвечает строителю, объём — клиенту: он не обязан уметь читать план.
+// Сторожим то, из-за чего вкладка бесполезна: её должно быть видно, дом должен
+// вращаться, а вращение — не трогать саму модель.
+{
+  t.section('Вкладка 3D')
+  const p = panel()
+  const card = p.run('specModelHtml(specSheets[0])')
+  t.ok('вид предлагается в карточке', card.indexOf('data-a="model-view" data-v="iso"') >= 0)
+
+  click(p, { a: 'model-view', v: 'iso' })
+  t.ok('вид переключился', p.q('modelView') === 'iso')
+  const svg = p.run('modelIsoSvg(specSheets[0])')
+  t.ok('дом нарисован', svg.indexOf('data-a="model-iso"') >= 0 && svg.indexOf('<path') > 0)
+  t.ok('и вписан в рамку', /viewBox="[-\d.]+ [-\d.]+ [\d.]+ [\d.]+"/.test(svg))
+
+  click(p, { a: 'model-full' })
+  const ov = p.run('modelFullOverlay()')
+  t.ok('на весь экран — тоже дом', ov.indexOf('model-iso-full') >= 0)
+  t.ok('и без инструментов черчения', ov.indexOf('data-a="model-tool"') < 0,
+    'в объёме нечего чертить — там смотрят')
+
+  // Вращение: тянем по дому.
+  const yaw0 = p.q('modelYaw')
+  const before = JSON.stringify(p.q('specSheets[0].model'))
+  const view = p.dom.node({ a: 'model-iso' }, 'model-iso-full')
+  view.setAttribute = () => {}
+  view.style = {}
+  p.run('bind();')
+  view.onpointerdown({ clientX: 100, clientY: 100, pointerId: 1, preventDefault() {} })
+  view.onpointermove({ clientX: 200, clientY: 100 })
+  view.onpointerup()
+  t.ok('дом повернулся', p.q('modelYaw') !== yaw0, yaw0 + ' → ' + p.q('modelYaw'))
+  t.ok('а модель не тронута', JSON.stringify(p.q('specSheets[0].model')) === before,
+    'камера — это взгляд на дом, а не его свойство')
+
+  p.run('modelTilt=20;')
+  click(p, { a: 'model-iso-reset' })
+  t.ok('«как было» возвращает камеру', p.q('modelYaw') === 35 && p.q('modelTilt') === 55,
+    p.q('modelYaw') + ' / ' + p.q('modelTilt'))
+}
+
 t.done()
