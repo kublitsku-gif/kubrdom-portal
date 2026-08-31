@@ -10745,14 +10745,16 @@ function modelIsoSvg(sh, full){
   sc.faces.forEach(function(f){
     const base=ISO_COLOR[f.kind]||"#cccccc";
     const fill=(f.kind==="glass")?base:isoShade(base, f.shade);
-    // Гофра — линия по стене: у неё нет площади, только направление.
-    if(f.kind==="rib"){
-      g+='<path d="'+isoPath(f)+'" fill="none" stroke="#0d1b2e" stroke-width="26" stroke-opacity="0.22"/>';
+    // Гофра и рельсы — линии по стене: у них нет площади, только направление.
+    if(f.kind==="rib"||f.kind==="rail"){
+      g+='<path d="'+isoPath(f)+'" fill="none" stroke="#0d1b2e" stroke-width="'+(f.kind==="rail"?44:26)+'" stroke-opacity="'+(f.kind==="rail"?"0.38":"0.22")+'"/>';
       return;
     }
     // Рамка проёма на прозрачной стене — только контур: заливка там нечего скрывать.
     if(f.kind==="frame"){
-      g+='<path d="'+isoPath(f)+'" fill="none" stroke="#0d1b2e" stroke-width="34" stroke-opacity="0.75" stroke-linejoin="round"/>';
+      // На тёмной гофре чёрный контур не виден — обводим светлым, как алюминиевый
+      // отлив по периметру проёма.
+      g+='<path d="'+isoPath(f)+'" fill="none" stroke="#e8eef5" stroke-width="46" stroke-opacity="0.85" stroke-linejoin="round"/>';
       return;
     }
     const op=ISO_OPACITY[f.kind];

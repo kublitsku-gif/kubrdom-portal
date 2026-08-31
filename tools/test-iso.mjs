@@ -62,6 +62,39 @@ const { model, winTypes } = presetModel('c12-san-liv-bed', [], ids())
   ok('сквозь неё видно комнаты', kinds(ghost).floor === kinds(b).floor)
 }
 
+// ── 2б. Морской контейнер ────────────────────────────────────────────────────
+// Гофра — примета контейнера, но она принадлежит СТЕНЕ: в проёме стены нет, и
+// ребро там обрывается. Идёт она между верхним и нижним рельсом, а крыша с
+// корпусом — одна конструкция, без светлой полосы на стыке.
+{
+  console.log('Гофра и крыша')
+  const bare = Object.assign(emptyModel('40hc'), { h: 2500 })
+  bare.rooms[0].id = 'r1'
+  const types = [{ id: 'big', kind: 'win', n: 'Витраж 4000×2000', w: 4000, h: 2000, cost: 0 }]
+  const holed = Object.assign({}, bare, { openings: [{ id: 'o', side: 's', pos: 3000, typeId: 'big' }] })
+
+  // Меряем не число рёбер, а их общую длину: ребро в проёме не исчезает целиком,
+  // оно обрывается — над проёмом остаётся кусок, и счётчик этого не заметит.
+  const ribLen = (m) => isoScene(m, types, { yaw: 215, tilt: 30 }).faces
+    .filter((f) => f.kind === 'rib')
+    .reduce((a, f) => a + Math.hypot(f.pts[1][0] - f.pts[0][0], f.pts[1][1] - f.pts[0][1]), 0)
+  ok('гофра есть', ribLen(bare) > 1000, String(Math.round(ribLen(bare))))
+  ok('в проёме гофры нет', ribLen(holed) < ribLen(bare) - 1000,
+    Math.round(ribLen(bare)) + ' → ' + Math.round(ribLen(holed)))
+
+  const s = isoScene(bare, types, { yaw: 215, tilt: 30 })
+  ok('рельсы на месте', kinds(s).rail > 0, String(kinds(s).rail))
+  // Верх стены под крышей не рисуем: светлая полоса на стыке разбивает контейнер
+  // на две детали, а он одна конструкция.
+  const tops = s.faces.filter((f) => f.kind === 'shell' && f.pts.length === 4)
+  ok('крыша лежит на корпусе без зазора', kinds(s).roof > 0)
+  ok('верхних граней стен под крышей нет', tops.length <= kinds(s).shell, String(tops.length))
+
+  // Проём на глухой стене обводится рамкой: на тёмной гофре чёрная дыра сливается.
+  ok('проём обведён рамкой и на глухой стене',
+    isoScene(holed, types, { yaw: 215, tilt: 30 }).faces.some((f) => f.kind === 'frame'))
+}
+
 // ── 3. Проём — дырка, а не наклейка ──────────────────────────────────────────
 {
   console.log('Проёмы')

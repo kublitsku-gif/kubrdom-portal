@@ -15,6 +15,7 @@ import { modelScheme, modelRooms } from "./model.js";
 const RAD = Math.PI / 180;
 const ROOF = 160;         // толщина крыши
 const RIB = 260;          // шаг гофры морского контейнера
+const RAIL = 150;         // верхний и нижний рельс: гофра идёт между ними
 
 // Камера смотрит на дом сбоку и сверху: `yaw` — поворот вокруг вертикали,
 // `tilt` — подъём над горизонтом (90° — вид строго сверху, то есть план).
@@ -154,6 +155,9 @@ export function isoScene(model, winTypes, opts) {
     const kind = near ? "ghost" : (shell ? "shell" : "part");
 
     boxFaces(project, w, 0, H, kind, function (n) {
+      // Верх стены под крышей не рисуем: светлая полоса между ними разбивает
+      // контейнер на две детали, а он одна конструкция.
+      if (n[2] > 0 && mode === "solid") return true;
       // Грани, отвёрнутые от камеры, скрыты самой стеной — не рисуем их вовсе.
       // Для прозрачной это тем более верно: две полупрозрачные грани подряд дают
       // муть вместо стены, а видно сквозь неё одинаково хорошо и через одну.
@@ -185,10 +189,30 @@ export function isoScene(model, winTypes, opts) {
         const a0 = along ? w.x : w.y, a1 = along ? w.x + w.w : w.y + w.h;
         const pt0 = function (a, z) { return along ? [a, b, z] : [b, a, z]; };
         const dz = planeDepth(project, [pt0(a0, 0), pt0(a1, 0), pt0(a1, H), pt0(a0, H)]);
+        const put = function (pts, kind) {
+          const f = face(project, pts, 1, kind);
+          f.depth = dz;                          // всё это живёт на своей грани
+          faces.push(f);
+        };
+        // Рельсы: у контейнера гофра идёт МЕЖДУ верхним и нижним поясом, а не от
+        // земли до крыши. Без них рёбра выглядят полосками обоев.
+        put([pt0(a0, RAIL), pt0(a1, RAIL)], "rail");
+        put([pt0(a0, H - RAIL), pt0(a1, H - RAIL)], "rail");
+        // Ребро в проём не заходит: гофра — это стена, а в проёме стены нет.
+        // Поэтому ребро разрывается на кусок под подоконником и кусок над верхом.
+        const cuts = ops.map(function (op) {
+          const z0 = Number(op.sill) || 0;
+          return { a0: (along ? op.x : op.y), a1: (along ? op.x + op.w : op.y + op.h),
+            z0: z0, z1: z0 + (Number(op.height) || 0) };
+        });
         for (let a = a0 + RIB; a < a1 - 1; a += RIB) {
-          const rib = face(project, [pt0(a, 0), pt0(a, H)], 1, "rib");
-          rib.depth = dz;                       // ребро живёт на своей грани
-          faces.push(rib);
+          const hit = cuts.filter(function (c) { return a > c.a0 && a < c.a1; });
+          let z = RAIL;
+          hit.sort(function (p, q) { return p.z0 - q.z0; }).forEach(function (c) {
+            if (c.z0 > z) put([pt0(a, z), pt0(a, Math.min(c.z0, H - RAIL))], "rib");
+            z = Math.max(z, c.z1);
+          });
+          if (z < H - RAIL) put([pt0(a, z), pt0(a, H - RAIL)], "rib");
         }
       }
     }
@@ -208,13 +232,19 @@ export function isoScene(model, winTypes, opts) {
         faces.push(face(project, [pt(a0, b0, z0), pt(a0, b1, z0), pt(a0, b1, z1), pt(a0, b0, z1)], 0.8, "reveal"));
         faces.push(face(project, [pt(a1, b0, z0), pt(a1, b1, z0), pt(a1, b1, z1), pt(a1, b0, z1)], 0.8, "reveal"));
       }
-      // На прозрачной стене проём иначе не прочитать: и дырка, и сама стена там
-      // одинаково бледные. Обводим его рамкой — как оконный переплёт на фасаде.
-      if (near) {
-        const b = (along ? ((view.y < 0) ? w.y : w.y + w.h) : ((view.x < 0) ? w.x : w.x + w.w));
+      // Проём обводим рамкой всегда: на прозрачной стене дырка и стена одинаково
+      // бледные, а на тёмной гофре чёрный дверной проём просто сливается со стеной —
+      // «дверей не видно» ровно об этом.
+      if (near || (shell && mode === "solid")) {
+        // Рамка лежит на НАРУЖНОЙ грани стены — той, что видна снаружи. По знаку
+        // взгляда её выбирать нельзя: на половине ракурсов рамка садилась на
+        // дальнюю плоскость и вылезала кусками сквозь свою же стену.
+        const oX = (w.w > w.h) ? 0 : ((w.x < sc.l / 2) ? -1 : 1);
+        const oY = (w.w > w.h) ? ((w.y < sc.w / 2) ? -1 : 1) : 0;
+        const b = along ? ((oY < 0) ? w.y : w.y + w.h) : ((oX < 0) ? w.x : w.x + w.w);
         const fr = face(project, [pt(a0, b, z0), pt(a1, b, z0), pt(a1, b, z1), pt(a0, b, z1)], 1, "frame");
-        fr.depth = planeDepth(project, [pt(w.x, b, 0), pt(w.x + w.w, b, 0)].concat(
-          along ? [[w.x + w.w, b, H], [w.x, b, H]] : [[b, w.y + w.h, H], [b, w.y, H]]));
+        const fa0 = along ? w.x : w.y, fa1 = along ? w.x + w.w : w.y + w.h;
+        fr.depth = planeDepth(project, [pt(fa0, b, 0), pt(fa1, b, 0), pt(fa1, b, H), pt(fa0, b, H)]);
         faces.push(fr);
       }
       // Стекло — посередине толщины; у двери его нет, там проём насквозь.
