@@ -48,7 +48,8 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom,
   splitLengthwise, mergeLengthwise, moveLengthwise, elevation,
   bayAt, splitAt, splitLengthwiseAt, nearestSide, opPosAt,
-  modelToSpecs, modelTotals, modelIssues, modelScheme, modelAreas, modelWalls, snapWall, addWall, partitionAt, INNER_DOOR,
+  modelToSpecs, modelTotals, modelIssues, modelScheme, modelAreas, modelWalls, snapWall, addWall, partitionAt,
+  WIN_CATALOG, winCatItem, winFace, winTypeFrom,
   MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2 } from "../src/spec2.js";
@@ -2085,6 +2086,7 @@ let stock=[];
 //    markup, status:"draft"|"sold", contractId, objId, at, by}
 let winTypes=[];           // типовые окна и двери (справочник поставщика)
 let winTypeNew=null;       // форма нового изделия
+let modelKind="win";       // окна или двери: у каждого вида свои вкладки и свой список
 let modelSide="n";         // стена, на которую ставим проём (или "part" — перегородки)
 let modelPart="";          // какая именно перегородка выбрана: id отсека перед ней
 let modelView="plan";      // plan | elev — план сверху или развёртка стены
@@ -2092,8 +2094,11 @@ let modelOpDrag=null;      // проём под пальцем
 let modelOpSel=null;       // проём, выбранный тапом: у него правят открывание
 let modelPosWarn=null;     // {id,msg} — введённое число не влезло в стену
 let modelFull=false;       // редактор на весь экран
-let modelTool="sel";       // sel | wall | wallw | op | del
-let modelPlaceType="";     // какое изделие ставим инструментом «проём»
+let modelTool="sel";       // sel | wall | wallw | win | door | free | del
+// Что ставим — помним ОТДЕЛЬНО для окон и для дверей: инструменты разные, и
+// переключение на двери и обратно не должно терять выбранное окно.
+let modelPlace={win:"",door:""};
+let modelPlaceTab="mine";  // mine | cat — свои изделия или каталог поставщика
 let modelZoom=1;           // 1 = вписать по ширине
 let modelStageTab=0;       // 0 = все этапы
 let specSheets=[];
@@ -9564,15 +9569,9 @@ function specApplyPlan(sh, planId){
 // Двигаешь перегородку — меняются площади помещений, а вместе с ними отделка,
 // материалы и цена. Расчёт живёт в src/model.js, здесь только показ и мышь.
 
-// Типовые изделия из спецификации поставщика: их заказывают повторно, поэтому
-// достаточно один раз завести справочник, а дальше ставить в проём одним тапом.
-const WIN_PRESETS=[
-  {kind:"win",  n:"Окно 1300×1150 п/о",     w:1300, h:1150, cost:14555},
-  {kind:"win",  n:"Окно 1500×1200 п/о",     w:1500, h:1200, cost:16307},
-  {kind:"win",  n:"Окно 500×500",           w:500,  h:500,  cost:6576},
-  {kind:"win",  n:"Витраж 2160×2390 глухой",w:2160, h:2390, cost:22282},
-  {kind:"door", n:"Дверь входная 1000×2100",w:1000, h:2100, cost:27150},
-];
+// Каталог поставщика лежит в src/model.js: там же, где заготовки планировок, и
+// вместе с раскладкой створок — из неё рисуется мини-картинка изделия.
+function winCat(kind){ return WIN_CATALOG.filter(function(x){return (x.kind||"win")===kind;}); }
 function winType(id){ return (winTypes||[]).find(function(t){return t.id===id;})||null; }
 // Границы, в которых живёт проём, и точка отсчёта его положения. Одна арифметика на
 // жест, на поле и на ползунок: три места, считающие «докуда можно», разъедутся.
@@ -9587,13 +9586,79 @@ function opPosBase(m, op){
   return { min:min, max:Math.max(min, span-min-(Number(t.w)||0)) };
 }
 // Ищем по ВИДУ И РАЗМЕРУ, а не по имени: имена правят и дублируют, а полотно
-// 700×2050 остаётся тем же полотном.
-function findInnerDoor(){
+// 700×2050 остаётся тем же полотном. По этому же признаку каталог понимает, что
+// изделие в справочнике уже есть, и не заводит второе такое же.
+function findWinLike(kind, w, h){
   return (winTypes||[]).find(function(t){
-    return t&&(t.kind||"win")==="door"&&Number(t.w)===INNER_DOOR.w&&Number(t.h)===INNER_DOOR.h;
+    return t&&(t.kind||"win")===kind&&Number(t.w)===Number(w)&&Number(t.h)===Number(h);
   })||null;
 }
 function winKindMeta(k){ return k==="door"?{n:"Дверь",c:"#8e44ad",emoji:"🚪"}:{n:"Окно",c:"#2980b9",emoji:"🪟"}; }
+
+// Инструменты «Окна» и «Двери» ставят одно и то же — проём в стене, — но выбирают
+// из разных списков и живут в разных вкладках: у дверей есть перегородки, у окон
+// их нет, и общий список изделий в редакторе на телефоне не помещался.
+function modelPlaceKind(){ return (modelTool==="win"||modelTool==="door")?modelTool:""; }
+function modelPlaceId(){ const k=modelPlaceKind(); return k?(modelPlace[k]||""):""; }
+// Выбранное изделие могли удалить из справочника, пока инструмент был выключен.
+function modelPlacePick(kind){
+  const cur=modelPlace[kind];
+  const ok=(winTypes||[]).some(function(t){return t.id===cur&&(t.kind||"win")===kind;});
+  if(!ok){
+    const first=(winTypes||[]).find(function(t){return (t.kind||"win")===kind;});
+    modelPlace[kind]=first?first.id:"";
+  }
+  return modelPlace[kind];
+}
+
+// Мини-картинка изделия: рама, импосты и створки со значками открывания — тот же
+// чертёж, что в спецификации поставщика, размером с ноготь. Рисуется по раскладке
+// САМОГО изделия, поэтому показать не то окно она не может. Изделие, заведённое
+// руками, раскладки не знает — у него одна створка по виду, и это честно.
+function winFaceSvg(t, px, dark){
+  const f=winFace(t);
+  if(!f.w||!f.h)return "";
+  const box=Number(px)||46;
+  const k=Math.min(box/f.w, box/f.h);
+  const st=dark?"#8fb4d6":"#7a9aaa", gl=dark?"#16394f":"#dcf0fb", sw=dark?"#cfe4f5":"#2980b9";
+  // Профиль рисуем долей от изделия: у окна 500×500 и у витража 2160×2390 рама на
+  // картинке обязана выглядеть рамой, а не ниткой и не половиной стекла.
+  const prof=Math.max(18, Math.round(Math.min(f.w,f.h)*0.055));
+  const line=function(d,c,w){ return '<path d="'+d+'" fill="none" stroke="'+c+'" stroke-width="'+w+'" vector-effect="non-scaling-stroke"/>'; };
+  let g='<rect x="0" y="0" width="'+f.w+'" height="'+f.h+'" fill="'+(dark?"#0d2436":"#f2f7fb")+'" stroke="'+st+'" stroke-width="2" vector-effect="non-scaling-stroke"/>';
+  f.rows.forEach(function(r){ r.cells.forEach(function(c){
+    const x=c.x+prof, y=c.y+prof, w=c.w-prof*2, h=c.h-prof*2;
+    if(w<=0||h<=0)return;
+    g+='<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" fill="'+gl+'" stroke="'+st+'" stroke-width="1" vector-effect="non-scaling-stroke"/>';
+    const l=x, rr=x+w, tp=y, bt=y+h, mx=x+w/2, my=y+h/2;
+    // Поворотная створка: треугольник вершиной к ручке, основанием к петлям —
+    // так открывание и рисуют на чертеже изделия.
+    if(c.o==="p"||c.o==="po"){
+      const apex=(c.hg==="l")?rr:l, base=(c.hg==="l")?l:rr;
+      g+=line("M"+base+" "+tp+"L"+apex+" "+my+"L"+base+" "+bt, sw, 1);
+    }
+    // Откидная половина поворотно-откидной: вершина вверху, петли по низу створки.
+    if(c.o==="po")g+=line("M"+l+" "+bt+"L"+mx+" "+tp+"L"+rr+" "+bt, sw, 1);
+  });});
+  return '<svg viewBox="0 0 '+f.w+' '+f.h+'" width="'+Math.round(f.w*k)+'" height="'+Math.round(f.h*k)+'" preserveAspectRatio="xMidYMid meet" style="display:block;flex-shrink:0">'+g+'</svg>';
+}
+
+// Каталог поставщика карточками — для светлых мест панели (карточка модели и форма
+// нового изделия). Тап заводит изделие в справочник портала; уже заведённое видно
+// по подписи, и второй карточки от того же тапа не появится.
+function winCatCards(kind){
+  return winCat(kind).map(function(it){
+    const km=winKindMeta(it.kind), has=findWinLike(it.kind, it.w, it.h);
+    return '<button data-a="wt-cat-add" data-k="'+it.k+'" style="display:flex;align-items:center;gap:8px;text-align:left;border:1.5px solid '+km.c+(has?'':'55')+';background:#fff;border-radius:11px;padding:6px 11px 6px 7px;cursor:pointer">'+
+      winFaceSvg(it, 34)+
+      '<span style="display:block">'+
+        '<span style="display:block;font-size:11.5px;font-weight:700;color:#0d1b2e">'+esc(it.n)+'</span>'+
+        '<span style="display:block;font-size:10px;color:#9aabbf;margin-top:1px">'+esc(it.sys||"")+'</span>'+
+        '<span style="display:block;font-size:10.5px;font-weight:700;color:'+km.c+';margin-top:2px">'+(it.cost?Math.round(it.cost).toLocaleString("ru-RU")+" ₽":"цена своя")+(has?'<span style="color:#9aabbf;font-weight:600"> · в справочнике</span>':'')+'</span>'+
+      '</span>'+
+    '</button>';
+  }).join("");
+}
 
 // Модель — источник характеристик: помещения и раскладка приезжают из неё, поэтому
 // спецификация считается тем же кодом, что и раньше. Файл планировки не трогаем —
@@ -9637,6 +9702,9 @@ const MODEL_SIDES=[["n","Левая длинная"],["s","Правая длин
 // Перегородки живут только в списке проёмов. На развёртке их нет: развёртка — это
 // вид на стену коробки изнутри, а перегородка стоит поперёк и в такой вид не попадает.
 const MODEL_OP_SIDES=MODEL_SIDES.concat([["part","Перегородки"]]);
+// Перегородки — вкладка ДВЕРЕЙ: окно во внутренней стене это внутреннее остекление,
+// его модель не считает и рисовать не умеет, а пустая вкладка обещала бы обратное.
+function modelKindSides(kind){ return (kind==="door")?MODEL_OP_SIDES:MODEL_SIDES; }
 // Промах по перегородке в пределах этого допуска считается попаданием: сама она
 // 100 мм, и пальцем в неё на телефоне не попасть.
 const PART_HIT=260;
@@ -9756,7 +9824,8 @@ const MODEL_TOOLS=[
   ["sel",  "🖐", "Двигать",        "Тяните перегородки и проёмы"],
   ["wall", "┃",  "Стена поперёк",  "Тап по плану — стена в этом месте"],
   ["wallw","━",  "Стена вдоль",    "Тап внутри отсека — санузел в углу"],
-  ["op",   "🪟", "Проём",          "Тап у стены — окно или дверь; тап по перегородке — межкомнатная дверь"],
+  ["win",  "🪟", "Окна",           "Тап у стены — окно в этом месте"],
+  ["door", "🚪", "Двери",          "Тап у стены — входная дверь; тап по перегородке — межкомнатная"],
   ["free", "▬",  "Стена куском",   "Проведите линию — стена любой длины; комната станет Г-образной"],
   ["del",  "🗑", "Убрать",         "Тап по проёму, перегородке или стене"],
 ];
@@ -9880,6 +9949,67 @@ function modelSwingBar(sh){
   '</div>';
 }
 
+// Сколько в модели окон и сколько дверей. Считаем по справочнику: вид знает
+// изделие, а не проём — одна и та же дырка в стене бывает и тем, и другим.
+function opCount(m, kind){
+  return (m.openings||[]).filter(function(op){
+    const t=winType(op.typeId);
+    return t&&(t.kind||"win")===kind;
+  }).length;
+}
+
+// Выбор изделия для инструментов «Окна» и «Двери». Две вкладки: «Мои изделия» —
+// справочник этого портала, «Каталог» — то, что привозит поставщик, с картинками.
+//
+// Картинка здесь не украшение: продавец и бригадир держат в голове окно, а не
+// строку «1300×1150 п/о», и глухая половина слева отличает изделие от соседнего в
+// списке вернее любого имени. Каталог для окон и для дверей свой — в первой же
+// вкладке видно ровно то, что сейчас ставят.
+function modelPlaceBar(){
+  const kind=modelPlaceKind(); if(!kind)return "";
+  const km=winKindMeta(kind);
+  const mine=(winTypes||[]).filter(function(t){return (t.kind||"win")===kind;});
+  const cat=winCat(kind);
+  const cur=modelPlacePick(kind);
+  const tab=(modelPlaceTab==="cat"||!mine.length)?"cat":"mine";
+  let h='<div style="padding:8px 14px;background:#0f2033;border-bottom:1px solid rgba(255,255,255,.08);flex-shrink:0">';
+  h+='<div style="display:flex;gap:6px;align-items:center;margin-bottom:'+(tab==="cat"?"8px":"7px")+'">'+
+    [["mine","Мои изделия",mine.length],["cat","Каталог",cat.length]].map(function(v){
+      const on=tab===v[0];
+      return '<button data-a="model-place-tab" data-v="'+v[0]+'" style="border:1.5px solid '+(on?km.c:"rgba(255,255,255,.18)")+';background:'+(on?km.c:"transparent")+';color:#fff;border-radius:9px;padding:6px 12px;font-size:11.5px;font-weight:700;cursor:pointer">'+esc(v[1])+' <span style="opacity:.65">'+v[2]+'</span></button>';
+    }).join("")+
+    '<span style="flex:1"></span>'+
+    '<span style="font-size:11px;color:#7f97ae;white-space:nowrap">ставим '+esc(km.n.toLowerCase())+'</span>'+
+  '</div>';
+  if(tab==="cat"){
+    h+='<div style="display:flex;gap:7px;overflow-x:auto;padding-bottom:2px">'+
+      cat.map(function(it){
+        // Изделие каталога, уже заведённое в справочнике, — то же изделие: узнаём
+        // его по виду и размеру, чтобы вторым тапом не завести дубль.
+        const has=findWinLike(it.kind, it.w, it.h);
+        const on=has&&has.id===cur;
+        return '<button data-a="wt-cat-add" data-k="'+it.k+'" style="display:flex;align-items:center;gap:9px;flex-shrink:0;text-align:left;border:1.5px solid '+(on?km.c:"rgba(255,255,255,.18)")+';background:'+(on?km.c+"22":"transparent")+';border-radius:11px;padding:7px 12px 7px 8px;cursor:pointer">'+
+          winFaceSvg(it, 40, true)+
+          '<span style="display:block">'+
+            '<span style="display:block;font-size:11.5px;font-weight:700;color:#fff">'+esc(it.n)+'</span>'+
+            '<span style="display:block;font-size:10px;color:#7f97ae;margin-top:1px">'+esc(it.sys||"")+'</span>'+
+            '<span style="display:block;font-size:10.5px;font-weight:700;color:'+(it.cost?"#7fd3b4":"#e6a35a")+';margin-top:2px">'+(it.cost?Math.round(it.cost).toLocaleString("ru-RU")+" ₽":"цену впишете сами")+(has?'<span style="color:#7f97ae;font-weight:600"> · в справочнике</span>':'')+'</span>'+
+          '</span>'+
+        '</button>';
+      }).join("")+
+    '</div>';
+  } else {
+    h+='<div style="display:flex;gap:6px;align-items:center;overflow-x:auto;padding-bottom:2px">'+
+      mine.map(function(t){
+        const on=cur===t.id;
+        return '<button data-a="model-place-type" data-t="'+t.id+'" style="display:flex;align-items:center;gap:7px;flex-shrink:0;border:1.5px solid '+(on?km.c:"rgba(255,255,255,.18)")+';background:'+(on?km.c:"transparent")+';color:#fff;border-radius:9px;padding:5px 11px 5px 6px;font-size:11.5px;font-weight:700;cursor:pointer">'+
+          winFaceSvg(t, 26, true)+esc(t.n)+'</button>';
+      }).join("")+
+    '</div>';
+  }
+  return h+'</div>';
+}
+
 function modelFullOverlay(){
   const sh=specSheet(specOpenId); if(!sh||!sh.model)return "";
   const m=sh.model, tot=modelTotals(m, winTypes);
@@ -9889,7 +10019,7 @@ function modelFullOverlay(){
   // Шапка
   h+='<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:#0d1b2e;border-bottom:1px solid rgba(255,255,255,.12);flex-shrink:0">'+
       '<span style="font-size:13px;font-weight:800;color:#fff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🧱 '+esc(sh.name||"Модель")+'</span>'+
-      '<span style="font-size:11px;color:#9fb3c8;white-space:nowrap">'+numRu(tot.floorArea)+' м² · '+tot.partitions+' перегор. · '+(m.openings||[]).length+' проём. · '+RUk(tot.openingsCost)+'</span>'+
+      '<span style="font-size:11px;color:#9fb3c8;white-space:nowrap">'+numRu(tot.floorArea)+' м² · '+tot.partitions+' перегор. · '+opCount(m,"win")+' 🪟 · '+opCount(m,"door")+' 🚪 · '+RUk(tot.openingsCost)+'</span>'+
       '<button data-a="model-full-close" style="padding:7px 14px;background:rgba(255,255,255,.12);border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:12px;font-weight:700;flex-shrink:0">Готово</button>'+
     '</div>';
   // Инструменты
@@ -9910,21 +10040,8 @@ function modelFullOverlay(){
       return '<button data-a="model-zoom" data-z="'+z+'" style="border:1.5px solid '+(on?"#2980b9":"rgba(255,255,255,.18)")+';background:'+(on?"#2980b9":"transparent")+';color:#fff;border-radius:8px;padding:6px 10px;font-size:11.5px;font-weight:700;cursor:pointer">'+z+'×</button>';
     }).join("")+
   '</div>';
-  // Выбор изделия — виден только когда ставим проём: иначе это шум.
-  if(modelTool==="op"){
-    h+='<div style="display:flex;align-items:center;gap:6px;padding:8px 14px;background:#0f2033;border-bottom:1px solid rgba(255,255,255,.08);overflow-x:auto;flex-shrink:0">'+
-      (winTypes.length
-        ? winTypes.map(function(t){
-            const on=modelPlaceType===t.id, km=winKindMeta(t.kind);
-            return '<button data-a="model-place-type" data-t="'+t.id+'" style="flex-shrink:0;border:1.5px solid '+(on?km.c:"rgba(255,255,255,.18)")+';background:'+(on?km.c:"transparent")+';color:#fff;border-radius:9px;padding:6px 11px;font-size:11.5px;font-weight:700;cursor:pointer">'+km.emoji+' '+esc(t.n)+'</button>';
-          }).join("")
-        : '<span style="font-size:12px;color:#9fb3c8">Изделий пока нет — заведите первое кнопкой справа или в карточке, блок «Типовые изделия».</span>')+
-      // Дверь между комнатами ставить нечем, пока такого полотна нет в справочнике:
-      // лист, собранный до появления межкомнатных дверей, их и не знает. Заводим
-      // тут же — уходить из редактора за одной строкой справочника незачем.
-      (findInnerDoor()?'':'<button data-a="model-inner-door" title="Завести стандартное межкомнатное полотно и выбрать его" style="flex-shrink:0;border:1.5px dashed #8e44ad;background:transparent;color:#c79ae0;border-radius:9px;padding:6px 11px;font-size:11.5px;font-weight:700;cursor:pointer">+ 🚪 '+esc(INNER_DOOR.n)+'</button>')+
-    '</div>';
-  }
+  // Выбор изделия — виден только когда ставим окно или дверь: иначе это шум.
+  h+=modelPlaceBar();
   // Открывание выбранной двери. Створка — это не оформление: по ней видно, что
   // дверь заденет, и её сторону нельзя ни угадать, ни вывести из модели. Панель
   // висит только у выбранной двери: постоянный ряд кнопок здесь был бы шумом.
@@ -9941,7 +10058,7 @@ function modelFullOverlay(){
   // Подсказка
   h+='<div style="padding:9px 14px;background:#122236;color:#9fb3c8;font-size:12px;flex-shrink:0;display:flex;gap:10px;align-items:center">'+
       '<span style="font-size:14px">'+tm[1]+'</span><span style="flex:1">'+esc(tm[3])+'</span>'+
-      (modelTool==="op"&&!modelPlaceType?'<span style="color:#e67e22;font-weight:700">выберите изделие сверху</span>':'')+
+      (modelPlaceKind()&&!modelPlaceId()?'<span style="color:#e67e22;font-weight:700">выберите изделие сверху</span>':'')+
     '</div>';
   return h+'</div>';
 }
@@ -10052,8 +10169,8 @@ function specModelHtml(sh){
   }
   h+='<div style="background:#f6f8fa;border:1px solid #e6ecf3;border-radius:11px;padding:10px;margin-bottom:9px;overflow-x:auto">'+
     (modelView==="elev"?modelElevSvg(sh):modelPlanSvg(sh))+'</div>';
-  h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px">'+
-    [["пол",numRu(tot.floorArea)+" м²"],["перегородок",String(tot.partitions)],["проёмов",String((m.openings||[]).length)],["изделия",RUk(tot.openingsCost)]]
+  h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(80px,1fr));gap:6px;margin-bottom:10px">'+
+    [["пол",numRu(tot.floorArea)+" м²"],["перегородок",String(tot.partitions)],["окон",String(opCount(m,"win"))],["дверей",String(opCount(m,"door"))],["изделия",RUk(tot.openingsCost)]]
       .map(function(x){return '<div style="text-align:center;background:#f6f8fa;border-radius:9px;padding:6px 4px"><div style="font-size:9px;color:#9aabbf;font-weight:700">'+x[0].toUpperCase()+'</div><div style="font-size:12.5px;font-weight:800;color:#0d1b2e">'+x[1]+'</div></div>';}).join("")+
   '</div>';
   if(iss.length){
@@ -10100,10 +10217,20 @@ function specModelHtml(sh){
     });
     h+='</div>';
   });
-  // Проёмы
-  h+='<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin:10px 0 6px">ОКНА И ДВЕРИ</div>';
+  // Окна и двери. Вид — ПЕРВАЯ вкладка, а не строка в общем списке: у них разные
+  // стены (окно в перегородку не ставят), разные изделия и разные вопросы к каждому
+  // проёму, а общий список заставлял искать своё среди чужого.
+  h+='<div style="display:flex;gap:5px;margin:10px 0 7px">'+
+    ["win","door"].map(function(k){
+      const on=modelKind===k, km=winKindMeta(k);
+      return '<button data-a="model-kind" data-k="'+k+'" style="flex:1;border:1.5px solid '+(on?km.c:"#dde6f0")+';background:'+(on?km.c:"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:7px;font-size:11.5px;font-weight:700;cursor:pointer">'+km.emoji+' '+(k==="door"?"Двери":"Окна")+' <span style="opacity:.75">'+opCount(m,k)+'</span></button>';
+    }).join("")+'</div>';
+  // Стены у каждого вида свои: вкладки «Перегородки» у окон нет — окно во внутренней
+  // стене это уже не окно, а внутреннее остекление, которого модель не знает.
+  const sides=modelKindSides(modelKind);
+  if(!sides.some(function(sd){return sd[0]===modelSide;}))modelSide=sides[0][0];
   h+='<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:7px">'+
-    MODEL_OP_SIDES.map(function(sd){
+    sides.map(function(sd){
       const on=modelSide===sd[0];
       return '<button data-a="model-side" data-s="'+sd[0]+'" style="border:1.5px solid '+(on?"#2980b9":"#dde6f0")+';background:'+(on?"#2980b9":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">'+esc(sd[1])+'</button>';
     }).join("")+'</div>';
@@ -10123,18 +10250,26 @@ function specModelHtml(sh){
         }).join("")+'</div>';
     }
   }
+  const kindTypes=(winTypes||[]).filter(function(t){return (t.kind||"win")===modelKind;});
   if(modelSide==="part"&&!parts.length){ /* ставить проём некуда */ }
-  else if(!winTypes.length){
-    h+='<div style="font-size:11.5px;color:#9aabbf;line-height:1.45;margin-bottom:7px">Сначала заведите типовые изделия — из них и ставятся проёмы.</div>';
+  else if(!kindTypes.length){
+    // Пустой справочник — не тупик: каталог поставщика лежит тут же, и изделие
+    // заводится тем же тапом, которым его ставят.
+    h+='<div style="font-size:11.5px;color:#9aabbf;line-height:1.45;margin-bottom:6px">'+(modelKind==="door"?"Дверей":"Окон")+' в справочнике ещё нет — возьмите из каталога:</div>'+
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'+winCatCards(modelKind)+'</div>';
   } else {
     h+='<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">'+
-      winTypes.map(function(t){
+      kindTypes.map(function(t){
         const km=winKindMeta(t.kind);
-        return '<button data-a="model-op-add" data-t="'+t.id+'" style="border:1.5px solid '+km.c+'55;background:#fff;color:'+km.c+';border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">+ '+km.emoji+' '+esc(t.n)+'</button>';
+        return '<button data-a="model-op-add" data-t="'+t.id+'" style="display:flex;align-items:center;gap:6px;border:1.5px solid '+km.c+'55;background:#fff;color:'+km.c+';border-radius:9px;padding:5px 10px 5px 6px;font-size:11px;font-weight:700;cursor:pointer">'+winFaceSvg(t,22)+'+ '+esc(t.n)+'</button>';
       }).join("")+'</div>';
   }
+  // Список — только проёмы своего вида: вкладка «Окна» показывает окна, и разбирать
+  // среди них двери не нужно.
   const ops=(m.openings||[]).filter(function(op){
-    return op.side===modelSide && (modelSide!=="part" || op.after===modelPart);
+    const t=winType(op.typeId);
+    return op.side===modelSide && (modelSide!=="part" || op.after===modelPart) &&
+      (t?((t.kind||"win")===modelKind):(modelKind==="win"));
   });
   if(ops.length){
     const len=sideLength(m, modelSide);
@@ -10160,7 +10295,8 @@ function specModelHtml(sh){
       '</div>';
     }).join("");
   } else {
-    h+='<div style="font-size:11.5px;color:#c0ccd8;margin-bottom:6px">'+(modelSide==="part"?"В этой перегородке проёмов нет.":"На этой стене проёмов нет.")+'</div>';
+    const nothing=(modelKind==="door")?"дверей нет":"окон нет";
+    h+='<div style="font-size:11.5px;color:#c0ccd8;margin-bottom:6px">'+(modelSide==="part"?("В этой перегородке "+nothing+"."):("На этой стене "+nothing+"."))+'</div>';
   }
   // Справочник типовых изделий
   h+='<div style="display:flex;align-items:center;gap:8px;margin:12px 0 6px">'+
@@ -10185,12 +10321,8 @@ function specModelHtml(sh){
         '<button data-a="wt-save" style="flex:1;padding:9px;background:#2980b9;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700">Сохранить</button>'+
         '<button data-a="wt-cancel" style="padding:9px 14px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:12.5px">Отмена</button>'+
       '</div>'+
-      '<div style="font-size:10px;color:#9aabbf;margin-top:8px;line-height:1.4">Из спецификации поставщика:</div>'+
-      '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:5px">'+
-        WIN_PRESETS.map(function(pr,i){
-          return '<button data-a="wt-preset" data-i="'+i+'" style="border:1px dashed #2980b955;background:#fff;color:#2980b9;border-radius:8px;padding:5px 9px;font-size:10.5px;font-weight:700;cursor:pointer">'+winKindMeta(pr.kind).emoji+' '+esc(pr.n)+'</button>';
-        }).join("")+
-      '</div>'+
+      '<div style="font-size:10px;color:#9aabbf;margin-top:9px;line-height:1.4">Или из каталога поставщика — размер, цена и раскладка уже заведены:</div>'+
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">'+winCatCards((winTypeNew.kind||"win"))+'</div>'+
     '</div>';
   }
   if(winTypes.length){
@@ -10198,8 +10330,8 @@ function specModelHtml(sh){
       const km=winKindMeta(t.kind);
       const used=(m.openings||[]).filter(function(o){return o.typeId===t.id;}).length;
       return '<div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-bottom:1px solid #f4f7fb">'+
-        '<span style="font-size:13px">'+km.emoji+'</span>'+
-        '<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(t.n)+'</div>'+
+        winFaceSvg(t, 26)+
+        '<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+km.emoji+' '+esc(t.n)+'</div>'+
         '<div style="font-size:10px;color:#9aabbf">'+(t.w||0)+'×'+(t.h||0)+' мм'+(used?' · в модели '+used:'')+'</div></div>'+
         '<span style="font-size:12px;font-weight:700;color:#0d1b2e;white-space:nowrap">'+RUk(t.cost||0)+'</span>'+
         '<button data-a="wt-del" data-id="'+t.id+'" style="width:26px;height:26px;border:1px solid #e74c3c33;background:#fff;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">🗑</button>'+
@@ -19178,6 +19310,13 @@ function bind(){
       render();
     };}
     else if(a==="model-part"){el.onclick=()=>{ modelPart=el.dataset.id; render(); };}
+    else if(a==="model-kind"){el.onclick=()=>{
+      modelKind=(el.dataset.k==="door")?"door":"win";
+      // У окон вкладки «Перегородки» нет: уходя с неё, возвращаемся на первую стену.
+      const sides=modelKindSides(modelKind);
+      if(!sides.some(function(sd){return sd[0]===modelSide;}))modelSide=sides[0][0];
+      render();
+    };}
     // Сторона открывания и откос с петлями: угадать их нельзя, а нарисованная не в
     // ту комнату створка — это неверный чертёж у бригады на руках.
     else if(a==="model-op-unsel"){el.onclick=()=>{ modelOpSel=null; modelPosWarn=null; render(); };}
@@ -19265,7 +19404,15 @@ function bind(){
     else if(a==="model-full-close"){el.onclick=()=>{ modelFull=false; render(); };}
     else if(a==="model-tool"){el.onclick=()=>{
       modelTool=el.dataset.k;
-      if(modelTool==="op"&&!modelPlaceType&&winTypes.length)modelPlaceType=winTypes[0].id;
+      // Инструмент задаёт вид: включили «Двери» — и список внизу, и вкладки стен
+      // говорят про двери. Иначе ставишь дверь, а панель показывает окна.
+      const k=modelPlaceKind();
+      if(k){
+        modelKind=k;
+        if(!modelPlacePick(k))modelPlaceTab="cat";   // своих изделий нет — сразу каталог
+        const sides=modelKindSides(k);
+        if(!sides.some(function(sd){return sd[0]===modelSide;}))modelSide=sides[0][0];
+      }
       render();
     };}
     else if(a==="model-undo"){el.onclick=()=>{
@@ -19278,17 +19425,12 @@ function bind(){
       modelSync(sh); fl();
     };}
     else if(a==="model-zoom"){el.onclick=()=>{ modelZoom=parseInt(el.dataset.z,10)||1; render(); };}
-    else if(a==="model-inner-door"){el.onclick=()=>{
-      const has=findInnerDoor();
-      if(!has){
-        // Цена нулевая: её ставит человек, а выдумывать её за него — врать смете.
-        winTypes=winTypes.concat([Object.assign({id:gid(), cost:0}, INNER_DOOR)]);
-      }
-      modelPlaceType=(has||winTypes[winTypes.length-1]).id;
-      modelTool="op";
-      fl();
+    else if(a==="model-place-tab"){el.onclick=()=>{ modelPlaceTab=el.dataset.v; render(); };}
+    else if(a==="model-place-type"){el.onclick=()=>{
+      const t=winType(el.dataset.t); if(!t)return;
+      modelPlace[(t.kind||"win")]=t.id;
+      render();
     };}
-    else if(a==="model-place-type"){el.onclick=()=>{ modelPlaceType=el.dataset.t; render(); };}
     else if(a==="model-op-hit"){el.onclick=()=>{
       // В режиме «убрать» тап по проёму его удаляет; в остальных — просто выделяет.
       if(modelTool!=="del")return;
@@ -19397,15 +19539,19 @@ function bind(){
           const before=JSON.stringify(m.rooms);
           sh.model=splitLengthwiseAt(m, bay.id, y, gid());
           if(JSON.stringify(sh.model.rooms)===before){ alert("Контейнер слишком узкий для продольной перегородки."); return; }
-        } else if(modelTool==="op"){
-          const t=winType(modelPlaceType);
+        } else if(modelPlaceKind()){
+          const t=winType(modelPlaceId());
           if(!t){ alert("Выберите изделие в панели сверху."); return; }
           // Тап пришёлся на перегородку — проём ставим В НЕЁ. Так и ставят
           // межкомнатную дверь: показывают стену, в которой она стоит. Раньше
           // тап по перегородке уезжал на ближайшую НАРУЖНУЮ стену, и дверь между
           // комнатами поставить на плане было нечем.
+          // Окно перегородку не замечает: внутреннего остекления модель не знает,
+          // и тап рядом с ней ставит окно в ближайшую стену коробки, как и раньше.
           const TH=Number(m.wallThick)||0;
-          const pt=modelParts(m).find(function(q){ return Math.abs(x-(q.x+TH/2))<=TH/2+PART_HIT; });
+          const pt=(modelPlaceKind()==="door")
+            ? modelParts(m).find(function(q){ return Math.abs(x-(q.x+TH/2))<=TH/2+PART_HIT; })
+            : null;
           if(pt){
             const max=Math.max(0, W-(Number(t.w)||0));
             sh.model.openings=(sh.model.openings||[]).concat([{
@@ -19558,9 +19704,16 @@ function bind(){
       });
       render();
     };}
-    else if(a==="wt-preset"){el.onclick=()=>{
-      const pr=WIN_PRESETS[parseInt(el.dataset.i,10)]; if(!pr)return;
-      winTypes=winTypes.concat([{id:gid(),kind:pr.kind,n:pr.n,w:pr.w,h:pr.h,cost:pr.cost}]);
+    // Изделие каталога → справочник портала. Уже заведённое НЕ дублируем: то же
+    // изделие второй строкой развело бы по двум ценам один и тот же заказ.
+    else if(a==="wt-cat-add"){el.onclick=()=>{
+      const it=winCatItem(el.dataset.k); if(!it)return;
+      const kind=(it.kind==="door")?"door":"win";
+      let t=findWinLike(kind, it.w, it.h);
+      if(!t){ t=winTypeFrom(it, gid()); winTypes=winTypes.concat([t]); }
+      modelPlace[kind]=t.id;
+      modelKind=kind;
+      winTypeNew=null;
       fl();
     };}
     else if(a==="wt-save"){el.onclick=()=>{
