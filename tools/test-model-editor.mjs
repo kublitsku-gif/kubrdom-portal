@@ -501,4 +501,71 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
     String(p.q('specSheets[0].model.openings.filter(function(o){return o.id===' + JSON.stringify(door.id) + ';})[0].pos')))
 }
 
+// ── 16. Стена куском: нестандартное помещение ────────────────────────────────
+// Стена, проведённая рукой, помещений не делит — она делает комнату Г-образной, а
+// замкнутая тремя стенами кладовка становится своей комнатой. Сторожим и жест, и
+// то, ради чего он нужен: площади. И прилипание — без него щель в миллиметр
+// оставляет проход, и кладовка молча не замыкается.
+{
+  t.section('Стена куском')
+  const p = panel()
+  click(p, { a: 'model-full' })
+  click(p, { a: 'model-tool', k: 'free' })
+  t.ok('инструмент включён', p.q('modelTool') === 'free')
+
+  const plan = p.run('modelPlanSvg(specSheets[0], true)')
+  const vb = /viewBox="([-\d]+) ([-\d]+) (\d+) (\d+)"/.exec(plan).slice(1).map(Number)
+  const PX = 1200
+  const canvas = p.dom.node({ a: 'model-canvas', vb: vb.join(' ') })
+  canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: PX, height: PX * vb[3] / vb[2] })
+  canvas.appendChild = () => {}
+  const at = (xmm, ymm) => ({ clientX: (xmm - vb[0]) / vb[2] * PX, clientY: (ymm - vb[1]) / vb[2] * PX })
+  const draw = (x0, y0, x1, y1) => {
+    p.run('bind();')
+    canvas.onpointerdown(Object.assign({ pointerId: 1, preventDefault() {} }, at(x0, y0)))
+    canvas.onpointermove(at(x1, y1))
+    canvas.onpointerup()
+  }
+
+  const fin = p.q('specSheets[0].model.finish')
+  const rooms0 = p.q('modelRooms(specSheets[0].model).length')
+  draw(5200, 200, 5200, 1300)
+  const walls = p.q('specSheets[0].model.walls')
+  t.ok('стена появилась', walls.length === 1, JSON.stringify(walls))
+  t.ok('и она вертикальная, толщиной перегородки',
+    walls[0].w === p.q('specSheets[0].model.wallThick') && walls[0].h > 900, JSON.stringify(walls[0]))
+  t.ok('верх прилип к чистовой стене', walls[0].y === fin, String(walls[0].y))
+  t.ok('помещений не прибавилось', p.q('modelRooms(specSheets[0].model).length') === rooms0,
+    'стена-огрызок комнату не делит')
+  const cut = p.q('modelRooms(specSheets[0].model).find(function(r){return !r.rect;})')
+  t.ok('комната стала Г-образной', !!cut, JSON.stringify(p.q('modelRooms(specSheets[0].model).map(function(r){return r.rect;})')))
+  t.ok('инструмент вернулся к «Двигать»', p.q('modelTool') === 'sel', 'стену проводят по одной')
+
+  // Замыкаем кладовку: ещё две стены, концы прилипают к уже нарисованным.
+  click(p, { a: 'model-tool', k: 'free' }); draw(7000, 200, 7000, 1300)
+  click(p, { a: 'model-tool', k: 'free' }); draw(5200, 1300, 7000, 1300)
+  const rooms = p.q('modelRooms(specSheets[0].model)')
+  t.ok('кладовка замкнулась в помещение', rooms.length === rooms0 + 1,
+    JSON.stringify(rooms.map((r) => [r.name, r.area])))
+  const nook = rooms.find((r) => r.area < 3)
+  t.ok('её площадь посчитана', !!nook && nook.area > 1, JSON.stringify(nook && nook.area))
+  t.ok('и она попала в панель площадей',
+    p.run('modelAreasPanel(specSheets[0])').indexOf('ВЫГОРОЖЕНО СТЕНАМИ') > 0)
+
+  // Имя вырезанной комнаты живёт в своей записи с якорем внутри неё.
+  const inp = p.dom.node({ a: 'model-room-name', id: nook.id })
+  p.run('bind();')
+  inp.value = 'Кладовая'; inp.oninput()
+  t.ok('имя сохранилось', p.q('specSheets[0].model.spots').length === 1, JSON.stringify(p.q('specSheets[0].model.spots')))
+  t.ok('и держится на комнате',
+    p.q('modelRooms(specSheets[0].model).some(function(r){return r.name==="Кладовая";})'))
+
+  // Убрать стену — тапом в режиме «Убрать».
+  click(p, { a: 'model-tool', k: 'del' })
+  click(p, { a: 'model-free-hit', id: p.q('specSheets[0].model.walls')[2].id })
+  t.ok('стена убрана', p.q('specSheets[0].model.walls').length === 2)
+  t.ok('и кладовка снова стала частью комнаты',
+    p.q('modelRooms(specSheets[0].model).length') === rooms0, String(p.q('modelRooms(specSheets[0].model).length')))
+}
+
 t.done()

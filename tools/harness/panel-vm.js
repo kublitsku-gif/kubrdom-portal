@@ -67,6 +67,9 @@ function makeDoc(base) {
     querySelectorAll: (sel) => nodes.filter((el) => match(sel, el)),
     querySelector: (sel) => nodes.find((el) => match(sel, el)) || null,
     createElement: () => element(),
+    // Рисование стены создаёт SVG-узел предпросмотра: без этого жест падает в тесте
+    // на первом же движении, хотя в браузере работает.
+    createElementNS: () => element(),
     body: { appendChild: (c) => { register(c); return c }, removeChild() {}, style: {} },
   }
   return {

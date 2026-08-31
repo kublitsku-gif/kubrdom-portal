@@ -48,7 +48,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom,
   splitLengthwise, mergeLengthwise, moveLengthwise, elevation,
   bayAt, splitAt, splitLengthwiseAt, nearestSide, opPosAt,
-  modelToSpecs, modelTotals, modelIssues, modelScheme, modelAreas, partitionAt, INNER_DOOR,
+  modelToSpecs, modelTotals, modelIssues, modelScheme, modelAreas, modelWalls, partitionAt, INNER_DOOR,
   MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2 } from "../src/spec2.js";
@@ -9700,6 +9700,11 @@ function modelPlanSvg(sh, full){
       '<text x="'+(x+TH/2)+'" y="'+(HY+80)+'" text-anchor="middle" font-size="240" fill="#fff" font-weight="800">⇄</text>'+
     '</g>';
   });
+  // Свободные стены: сам чертёж их уже нарисовал (modelWalls), здесь только зона
+  // попадания — стена в 100 мм пальцем не берётся.
+  (m.walls||[]).forEach(function(w){
+    g+='<rect data-a="model-free-hit" data-id="'+esc(w.id)+'" x="'+(Number(w.x)-140)+'" y="'+(Number(w.y)-140)+'" width="'+(Number(w.w)+280)+'" height="'+(Number(w.h)+280)+'" rx="60" fill="#16a085" opacity="'+(del?"0.22":"0.07")+'"/>';
+  });
   // Проёмы двигают прямо на чертеже вдоль своей стены. Сам проём нарисован в толще
   // стены — семь сантиметров, пальцем не попасть, — поэтому ручка шире стены, но
   // прозрачная, и растёт ВНУТРЬ коробки: снаружи лежат размерные цепочки.
@@ -9752,8 +9757,12 @@ const MODEL_TOOLS=[
   ["wall", "┃",  "Стена поперёк",  "Тап по плану — стена в этом месте"],
   ["wallw","━",  "Стена вдоль",    "Тап внутри отсека — санузел в углу"],
   ["op",   "🪟", "Проём",          "Тап у стены — окно или дверь; тап по перегородке — межкомнатная дверь"],
-  ["del",  "🗑", "Убрать",         "Тап по проёму или перегородке"],
+  ["free", "▬",  "Стена куском",   "Проведите линию — стена любой длины; комната станет Г-образной"],
+  ["del",  "🗑", "Убрать",         "Тап по проёму, перегородке или стене"],
 ];
+// Прилипание концов и оси стены к соседям. Без него кладовка не замыкается: щель
+// в один миллиметр — это проход, и заливка справедливо считает комнату одной.
+const SNAP=220;
 // В поле type="number" значение обязано быть с ТОЧКОЙ: значение с запятой браузер
 // считает невалидным и показывает поле пустым. Ввод потом принимает обе формы.
 function numInp(mm){ return String(Math.round((Number(mm)||0)/10)/100); }
@@ -9771,6 +9780,23 @@ function modelAreasPanel(sh){
     return '<div style="text-align:center;background:rgba(255,255,255,.06);border-radius:8px;padding:5px 4px">'+
       '<div style="font-size:8.5px;color:#7f97ae;font-weight:700;letter-spacing:0.4px">'+label+'</div>'+
       '<div style="font-size:12.5px;font-weight:800;color:#fff">'+numRu(val)+(unit||'')+'</div></div>';
+  };
+  // Карточка помещения — одна и та же для отсека и для комнаты, вырезанной стенами.
+  // У непрямоугольной «ширина × длина» не пишется: такого размера у неё просто нет,
+  // и подставить туда габарит значило бы соврать в первой же строке.
+  const roomCard=function(r, striped){
+    return '<div style="'+(striped?'border-left:2px solid '+(r.sub?"#e8975a":"#b07cd6")+';padding-left:8px;margin-bottom:8px':'margin-bottom:8px')+'">'+
+      // Имя — поле ввода, и оно обязано быть на него похоже: без подчёркивания
+      // это читается как заголовок, и «Помещение» переименовать не догадываются.
+      '<input data-a="model-room-name" data-id="'+r.id+'" value="'+esc(r.name||"")+'" placeholder="Название" title="Название помещения — можно править" style="width:100%;background:transparent;border:none;border-bottom:1px dashed rgba(255,255,255,.28);outline:none;color:#fff;font-size:13.5px;font-weight:700;padding:0 0 4px;margin-bottom:4px;box-sizing:border-box">'+
+      '<div style="font-size:10.5px;color:#7f97ae;margin-bottom:7px">'+
+        (r.rect?(numRu(r.l)+' × '+numRu(r.w)+' м'):('Г-образное · '+numRu(r.floor)+' м²'))+
+        ' · высота '+numRu(r.h)+' м</div>'+
+      '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px">'+
+        cell("ПОЛ",r.floor," м²")+cell("ПОТОЛОК",r.ceil," м²")+cell("СТЕНЫ",r.wallNet," м²")+
+      '</div>'+
+      '<div style="font-size:9.5px;color:#6f8aa3;margin-top:6px;line-height:1.4">стены с проёмами '+numRu(r.wallGross)+' м², проёмы '+numRu(r.openings)+' м², периметр '+numRu(r.perimeter)+' м</div>'+
+    '</div>';
   };
   const btn=function(action,id,title,glyph,col){
     return '<button data-a="'+action+'" data-id="'+id+'" title="'+esc(title)+'" style="width:30px;height:30px;border:1px solid '+col+'66;background:transparent;border-radius:8px;cursor:pointer;color:'+col+';font-size:14px;flex-shrink:0">'+glyph+'</button>';
@@ -9795,20 +9821,18 @@ function modelAreasPanel(sh){
                :btn("model-split-w", b.id, "Продольная перегородка — санузел в углу", "⊞", "#e8975a"))+
         (i<bays.length-1?btn("model-merge", b.id, "Убрать перегородку справа", "✕", "#e8746a"):'')+
       '</div>';
-    g+=inBay.map(function(r){
-      return '<div style="'+(inBay.length>1?'border-left:2px solid '+(r.sub?"#e8975a":"#b07cd6")+';padding-left:8px;margin-bottom:8px':'')+'">'+
-        // Имя — поле ввода, и оно обязано быть на него похоже: без подчёркивания
-        // это читается как заголовок, и «Помещение» переименовать не догадываются.
-        '<input data-a="model-room-name" data-id="'+r.id+'" value="'+esc(r.name||"")+'" placeholder="Название" title="Название помещения — можно править" style="width:100%;background:transparent;border:none;border-bottom:1px dashed rgba(255,255,255,.28);outline:none;color:#fff;font-size:13.5px;font-weight:700;padding:0 0 4px;margin-bottom:4px;box-sizing:border-box">'+
-        '<div style="font-size:10.5px;color:#7f97ae;margin-bottom:7px">'+numRu(r.l)+' × '+numRu(r.w)+' м · высота '+numRu(r.h)+' м</div>'+
-        '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px">'+
-          cell("ПОЛ",r.floor," м²")+cell("ПОТОЛОК",r.ceil," м²")+cell("СТЕНЫ",r.wallNet," м²")+
-        '</div>'+
-        '<div style="font-size:9.5px;color:#6f8aa3;margin-top:6px;line-height:1.4">стены с проёмами '+numRu(r.wallGross)+' м², проёмы '+numRu(r.openings)+' м², периметр '+numRu(r.perimeter)+' м</div>'+
-      '</div>';
-    }).join("");
+    g+=inBay.map(function(r){ return roomCard(r, inBay.length>1); }).join("");
     return g+'</div>';
   }).join("");
+  // Комнаты, вырезанные свободными стенами, ни в одном отсеке не лежат — но метры у
+  // них такие же настоящие, и без своей группы они молча выпадают из панели.
+  const loose=A.rooms.filter(function(r){ return !bays.some(function(b){return b.id===r.bayId;}); });
+  if(loose.length){
+    h+='<div style="border:1px solid rgba(22,160,133,.35);border-radius:11px;padding:9px 10px;margin-bottom:8px">'+
+      '<div style="font-size:9.5px;font-weight:700;color:#16a085;letter-spacing:0.4px;margin-bottom:8px">ВЫГОРОЖЕНО СТЕНАМИ</div>'+
+      loose.map(function(r){ return roomCard(r, false); }).join("")+
+    '</div>';
+  }
   h+='<div style="border-top:1px solid rgba(255,255,255,.12);margin-top:4px;padding-top:9px">'+
       '<div style="font-size:10px;font-weight:700;color:#8ea6bd;letter-spacing:0.6px;margin-bottom:7px">ВСЕГО ПО ДОМУ</div>'+
       '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px">'+
@@ -10663,7 +10687,10 @@ function schemeParts(sc){
   });
   // Имена помещений: без них чертёж читают, водя пальцем по цепочкам.
   sc.labels.forEach(function(r){
-    g+='<text x="'+r.x+'" y="'+(sc.finish+(sc.w-sc.finish*2)*0.34)+'" font-size="190" fill="#9aabbf" font-weight="700" text-anchor="middle" stroke="#fff" stroke-width="80" paint-order="stroke" stroke-linejoin="round">'+
+    // Прямоугольная комната подписывается на привычной трети высоты, непрямоугольная —
+    // в своей точке: только там гарантированно её собственный пол.
+    const ly=r.rect?(sc.finish+(sc.w-sc.finish*2)*0.34):r.y;
+    g+='<text x="'+r.x+'" y="'+ly+'" font-size="190" fill="#9aabbf" font-weight="700" text-anchor="middle" stroke="#fff" stroke-width="80" paint-order="stroke" stroke-linejoin="round">'+
       esc(String(r.name||"").toUpperCase())+'</text>';
   });
   // Цепочки дверей в перегородках стоят у своей перегородки, внутри плана — и с той
@@ -19082,7 +19109,21 @@ function bind(){
       // в обоих местах, иначе половина имён не правится вовсе.
       let r=(sh.model.rooms||[]).find(function(x){return x.id===el.dataset.id;});
       if(!r)(sh.model.rooms||[]).forEach(function(b){ if(b.sub&&b.sub.id===el.dataset.id)r=b.sub; });
-      if(!r)return;
+      // Комната, вырезанная свободной стеной, ни в одном отсеке не лежит: её имя,
+      // раскладка и отделка живут в собственной записи с якорем — точкой ВНУТРИ
+      // комнаты. Номер области для этого не годится: он меняется от любой правки.
+      if(!r){
+        const reg=modelRooms(sh.model).find(function(x){return x.id===el.dataset.id;});
+        if(!reg)return;
+        const spots=(sh.model.spots||[]).slice();
+        const at=spots.findIndex(function(x){return x.id===el.dataset.id;});
+        if(at>=0)spots[at]=Object.assign({},spots[at],{name:el.value});
+        else spots.push({ id:el.dataset.id, name:el.value, pts:reg.pts||{},
+          x:Math.round(reg.label.x), y:Math.round(reg.label.y) });
+        sh.model.spots=spots;
+        modelSync(sh); scheduleSave();
+        return;
+      }
       r.name=el.value; modelSync(sh); scheduleSave();
     };}
     else if(a==="model-room-len"){el.onchange=()=>{
@@ -19266,6 +19307,73 @@ function bind(){
       if(modelTool!=="del")return;
       const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
       sh.model=mergeLengthwise(sh.model, el.dataset.id);
+      modelSync(sh); fl();
+    };}
+    else if(a==="model-canvas"&&modelTool==="free"){
+      // Стену проводят пальцем: нажали — повели — отпустили. Пока ведут, рисуем
+      // саму стену прямо в SVG, без render(): перерисовка уносит элемент с
+      // захваченным указателем, и жест обрывается на первом же движении.
+      el.onpointerdown=(ev)=>{
+        const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+        const vb=String(el.dataset.vb||"").split(" ").map(Number);
+        const box=el.getBoundingClientRect();
+        if(!box.width||vb.length!==4)return;
+        const m=sh.model, TH=Number(m.wallThick)||0;
+        const at=function(e){
+          return { x:vb[0]+(e.clientX-box.left)/box.width*vb[2], y:vb[1]+(e.clientY-box.top)/box.height*vb[3] };
+        };
+        // Отметки соседних стен: к ним и прилипаем — и осью, и концами.
+        const ws=modelWalls(m);
+        const xs=ws.reduce(function(a,w){return a.concat([w.x, w.x+w.w]);},[]);
+        const ys=ws.reduce(function(a,w){return a.concat([w.y, w.y+w.h]);},[]);
+        const snap=function(v, list){
+          let best=v, d=SNAP;
+          list.forEach(function(t){ const dd=Math.abs(t-v); if(dd<d){ d=dd; best=t; } });
+          return Math.round(best);
+        };
+        const p0=at(ev);
+        let rect=null, node=null;
+        ev.preventDefault();
+        try{ el.setPointerCapture(ev.pointerId); }catch(e){}
+        const shape=function(p1){
+          // Стены в контейнере осевые: ведём по той оси, вдоль которой рука прошла
+          // дальше. Косая стена здесь не бывает, а «почти горизонтальная» — это
+          // просто горизонтальная, нарисованная рукой.
+          const dx=Math.abs(p1.x-p0.x), dy=Math.abs(p1.y-p0.y);
+          if(dx>=dy){
+            const y=snap(p0.y, ys);
+            const x0=snap(Math.min(p0.x,p1.x), xs), x1=snap(Math.max(p0.x,p1.x), xs);
+            return { x:x0, y:y, w:Math.max(0,x1-x0), h:TH };
+          }
+          const x=snap(p0.x, xs);
+          const y0=snap(Math.min(p0.y,p1.y), ys), y1=snap(Math.max(p0.y,p1.y), ys);
+          return { x:x, y:y0, w:TH, h:Math.max(0,y1-y0) };
+        };
+        const move=function(e){
+          rect=shape(at(e));
+          if(!node){
+            node=document.createElementNS("http://www.w3.org/2000/svg","rect");
+            node.setAttribute("fill","#16a085"); node.setAttribute("opacity","0.55");
+            el.appendChild(node);
+          }
+          node.setAttribute("x",rect.x); node.setAttribute("y",rect.y);
+          node.setAttribute("width",rect.w); node.setAttribute("height",rect.h);
+        };
+        const up=function(){
+          el.onpointermove=null; el.onpointerup=null; el.onpointercancel=null;
+          if(node&&node.parentNode)node.parentNode.removeChild(node);
+          if(!rect||(rect.w<=TH&&rect.h<=TH)){ render(); return; }   // тап без длины — не стена
+          sh.model.walls=(sh.model.walls||[]).concat([{ id:gid(), x:rect.x, y:rect.y, w:rect.w, h:rect.h }]);
+          modelTool="sel";
+          modelSync(sh); fl();
+        };
+        el.onpointermove=move; el.onpointerup=up; el.onpointercancel=up;
+      };
+    }
+    else if(a==="model-free-hit"){el.onclick=()=>{
+      if(modelTool!=="del")return;
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      sh.model.walls=(sh.model.walls||[]).filter(function(w){return w.id!==el.dataset.id;});
       modelSync(sh); fl();
     };}
     else if(a==="model-canvas"){

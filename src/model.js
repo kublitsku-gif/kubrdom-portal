@@ -210,30 +210,72 @@ export function modelWalls(model) {
   return out;
 }
 
-// Кому принадлежит область: имя, отделка и раскладка живут в записи помещения, а
-// не в самой геометрии — иначе любое движение стены обнуляло бы выбранную отделку.
-// Сначала спрашиваем явные записи (`model.spots`, их заводит редактор для комнат,
-// которых в отсеках нет), потом отсек, внутри которого оказалась область.
-function roomOwner(model, reg) {
+// Кому принадлежит область: имя, отделка и раскладка живут в записи помещения, а не
+// в самой геометрии — иначе любое движение стены обнуляло бы выбранную отделку.
+//
+// Раздаём личности РАЗОМ и по якорям, а не «какая область попала в отсек»: стоит
+// вырезать стеной кладовку, и в границы отсека попадут две области. Обе получили бы
+// один id — один и тот же выбор отделки на две разные комнаты и потерянные метры
+// в смете. Имя отсека достаётся самой крупной его комнате, а вырезанные получают
+// свои записи, как только человек их назовёт.
+function assignRooms(model, regs) {
   const m = model || {};
   const th = Number(m.wallThick) || 0;
-  const inside = function (px, py) {
+  const has = function (reg, px, py) {
     return reg.cells.some(function (c) { return px >= c.x && px <= c.x + c.w && py >= c.y && py <= c.y + c.h; });
   };
-  const spot = (m.spots || []).find(function (s) { return inside(Number(s.x) || 0, Number(s.y) || 0); });
-  if (spot) return { id: spot.id, name: spot.name, pts: spot.pts || {}, bayId: spot.bayId || "", sub: false };
+  const owner = new Array(regs.length).fill(null);
+  const usedId = {};
+  const claimAt = function (px, py, rec) {
+    if (!rec.id || usedId[rec.id]) return;
+    const i = regs.findIndex(function (r, idx) { return !owner[idx] && has(r, px, py); });
+    if (i < 0) return;
+    owner[i] = rec;
+    usedId[rec.id] = 1;
+  };
+  // Имя отсека достаётся САМОЙ КРУПНОЙ его комнате. Точка-якорь для этого не годится:
+  // вырезанная кладовка накрывает середину отсека не реже, чем сама комната, и
+  // «Кухня-гостиная» оказывалась подписью к кладовке в два метра.
+  const claimBiggest = function (fits, rec) {
+    if (!rec.id || usedId[rec.id]) return;
+    let best = -1, bestArea = -1;
+    regs.forEach(function (r, idx) {
+      if (owner[idx] || !fits(r)) return;
+      if (r.area > bestArea) { bestArea = r.area; best = idx; }
+    });
+    if (best < 0) return;
+    owner[best] = rec;
+    usedId[rec.id] = 1;
+  };
 
-  const bay = modelBays(m).find(function (b) { return reg.label.x >= b.x0 && reg.label.x <= b.x1; });
-  if (bay) {
-    const src = (m.rooms || []).find(function (r) { return r.id === bay.id; }) || {};
-    if (bay.sub && reg.label.y > (Number(bay.sub.at) || 0) + th) {
-      return { id: bay.sub.id, name: bay.sub.name, pts: bay.sub.pts || {}, bayId: bay.id, sub: true };
+  // Явные записи (их заводит редактор для комнат, вырезанных стенами) — первыми:
+  // человек уже сказал, что это за комната, и отсек не вправе это перебить.
+  (m.spots || []).forEach(function (sp) {
+    claimAt(Number(sp.x) || 0, Number(sp.y) || 0,
+      { id: sp.id, name: sp.name, pts: sp.pts || {}, bayId: "", sub: false });
+  });
+
+  modelBays(m).forEach(function (b) {
+    const src = (m.rooms || []).find(function (r) { return r.id === b.id; }) || {};
+    const inBay = function (r) { return r.label.x >= b.x0 && r.label.x <= b.x1; };
+    if (b.sub) {
+      const at = Number(b.sub.at) || 0;
+      claimBiggest(function (r) { return inBay(r) && r.label.y < at; },
+        { id: src.id || b.id, name: src.name, pts: src.pts || {}, bayId: b.id, sub: false });
+      claimBiggest(function (r) { return inBay(r) && r.label.y > at + th; },
+        { id: b.sub.id, name: b.sub.name, pts: b.sub.pts || {}, bayId: b.id, sub: true });
+    } else {
+      claimBiggest(inBay, { id: src.id || b.id, name: src.name, pts: src.pts || {}, bayId: b.id, sub: false });
     }
-    return { id: src.id || bay.id, name: src.name, pts: src.pts || {}, bayId: bay.id, sub: false };
-  }
+  });
+
   // Область, за которую никто не отвечает: имя ей даст человек, а до тех пор она
-  // всё равно должна считаться — иначе её метры пропадут из сметы.
-  return { id: "reg:" + Math.round(reg.label.x) + ":" + Math.round(reg.label.y), name: "", pts: {}, bayId: "", sub: false };
+  // всё равно должна считаться — иначе её метры пропадут из сметы. Ключ — точка
+  // внутри неё: он переживает перерисовку, пока комнату не двигали.
+  return regs.map(function (reg, i) {
+    return owner[i] || { id: "reg:" + Math.round(reg.label.x) + ":" + Math.round(reg.label.y),
+      name: "", pts: {}, bayId: "", sub: false };
+  });
 }
 
 // Помещения: то, что осталось между стенами. Считает `regions` (src/geom.js), здесь
@@ -247,8 +289,9 @@ export function modelRooms(model) {
   const W = Number(m.w) || 0;
   const L = totalLength(m);
   const regs = regions(L, W, modelWalls(m));
-  const out = regs.map(function (reg) {
-    const own = roomOwner(m, reg);
+  const owners = assignRooms(m, regs);
+  const out = regs.map(function (reg, i) {
+    const own = owners[i];
     const fw = reg.y1 - reg.y0, fl = reg.x1 - reg.x0;
     return {
       id: own.id, name: own.name || "Помещение", bayId: own.bayId, sub: own.sub,
@@ -664,7 +707,7 @@ export function modelAreas(model, winTypes) {
     const gross = r2(r.wallLen * H / 1000);
     const ops = r2(opArea[r.id] || 0);
     return {
-      id: r.id, name: r.name, bayId: r.bayId, sub: !!r.sub,
+      id: r.id, name: r.name, bayId: r.bayId, sub: !!r.sub, rect: r.rect,
       w: r2(r.finW / 1000), l: r2(r.finL / 1000), h: r2(H / 1000),
       perimeter: r.wallLen,
       floor: r.area, ceil: r.area,
@@ -761,7 +804,9 @@ export function modelScheme(model, winTypes) {
   // Имена помещений: без них чертёж читают, водя пальцем по цепочкам. Площадей и
   // мебели на схеме по-прежнему нет — это разные документы.
   const labels = modelRooms(m).map(function (r) {
-    return { id: r.id, name: r.name, x: (r.x0 + r.x1) / 2, y: (r.y0 + r.y1) / 2 };
+    // Точка подписи — из геометрии, а не центр габарита: у Г-образной комнаты центр
+    // габарита лежит в вырезанной кладовке, и подпись садится на чужую комнату.
+    return { id: r.id, name: r.name, rect: r.rect, x: r.label.x, y: r.label.y };
   });
 
   // Размерная цепочка — набор отметок и длин между ними. Считаем отсюда, чтобы
