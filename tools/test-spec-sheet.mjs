@@ -504,8 +504,42 @@ function assembled(p) {
     p.run('modelPlanSvg(specSheet(' + JSON.stringify(id) + '),true)').indexOf('model-drag"') < 0,
     'иначе они перехватывают тап по стене')
   p.run('modelTool="sel";')
-  t.ok('в режиме «двигать» ручки на месте',
-    p.run('modelPlanSvg(specSheet(' + JSON.stringify(id) + '),true)').indexOf('model-drag') > 0)
+  const plan = p.run('modelPlanSvg(specSheet(' + JSON.stringify(id) + '),true)')
+  t.ok('в режиме «двигать» ручки на месте', plan.indexOf('model-drag') > 0)
+
+  // Чертёж в редакторе — ТОТ ЖЕ, что уходит клиенту: штриховка стен и размерные
+  // цепочки. Своя картинка у редактора означала бы два изображения одной модели, и
+  // какое из них правда — выяснялось бы на площадке.
+  const scheme = p.run('modelSchemeSvg(specSheet(' + JSON.stringify(id) + ').model, winTypes)')
+  t.ok('редактор рисует чертёж, а не свою картинку', plan.indexOf('sch-hatch') > 0)
+  const dims = (h) => (h.match(/>\d{3,5}</g) || []).join(' ')
+  t.ok('с теми же размерами, что на чертеже для печати',
+    dims(scheme) !== '' && dims(plan).indexOf(dims(scheme)) >= 0, dims(plan) + ' vs ' + dims(scheme))
+  // Площадей на чертеже нет: они живут в панели рядом и меняются во время жеста.
+  t.ok('площадей на чертеже нет', plan.indexOf('м²') < 0)
+
+  // Жест целиком: палец проехал N пикселей — перегородка обязана проехать ровно
+  // столько миллиметров, сколько чертежа под этими пикселями. Здесь и ловится
+  // ошибка масштаба: считать мм/пиксель по длине дома нельзя, холст шире неё на
+  // поля под цепочками, и перегородка отстаёт от пальца.
+  const vbw = /data-vbw="(\d+)"/.exec(plan)
+  const vb = /viewBox="[-\d]+ [-\d]+ (\d+) \d+"/.exec(plan)
+  t.ok('масштаб жеста берётся с холста', !!vbw && !!vb && vbw[1] === vb[1],
+    (vbw && vbw[1]) + ' ≠ ' + (vb && vb[1]))
+  t.ok('и холст шире дома — на поля под цепочки',
+    !!vb && Number(vb[1]) > p.q('totalLength(specSheet(' + JSON.stringify(id) + ').model)'))
+
+  const SVG_PX = 1000, DRAG_PX = 50
+  const handle = p.dom.node({ a: 'model-drag', i: '0' })
+  handle.ownerSVGElement = { dataset: { vbw: vbw[1] }, getBoundingClientRect: () => ({ width: SVG_PX, height: 200 }) }
+  p.run('bind();')
+  const lenBefore = p.q('specSheet(' + JSON.stringify(id) + ').model.rooms[0].len')
+  handle.onpointerdown({ clientX: 0, clientY: 0, pointerId: 1, preventDefault() {} })
+  handle.onpointermove({ clientX: DRAG_PX, clientY: 0 })
+  handle.onpointerup()
+  const moved = p.q('specSheet(' + JSON.stringify(id) + ').model.rooms[0].len') - lenBefore
+  const want = Math.round(DRAG_PX * Number(vbw[1]) / SVG_PX)
+  t.ok('перегородка едет ровно за пальцем', Math.abs(moved - want) <= 1, moved + ' мм вместо ' + want)
   p.run('modelFull=false;')
 
   // Развёртка стены — второй вид той же модели.

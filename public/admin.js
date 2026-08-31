@@ -9602,81 +9602,95 @@ function modelParts(m){
   });
 }
 
-// План сверху. Рисуем в миллиметрах модели: viewBox сам приводит их к экрану,
-// поэтому перетаскивание считается в мм и не зависит от размера телефона.
+// План в редакторе — ТОТ ЖЕ чертёж, что уходит клиенту: стены штриховкой, проёмы
+// марками, размерные цепочки под габаритом. Рисует его общий `schemeParts`
+// (см. «СХЕМА ПЛАНА» ниже), поэтому подвинутая здесь перегородка меняет и чертёж,
+// и цепочки под ним. Своя картинка у редактора держалась ровно до того дня, когда
+// по ней начинают строить: два изображения одной модели расходятся, и какое из них
+// правда — выясняется на площадке.
+//
+// Редактируемость — прозрачный слой ручек ПОВЕРХ чертежа, а не другой рисунок.
+// Площадей здесь нет: они живут в панели справа, живьём во время перетаскивания.
+// Рисуем в миллиметрах модели: viewBox сам приводит их к экрану, поэтому жест
+// считается в мм и не зависит от размера телефона.
 function modelPlanSvg(sh, full){
   const m=sh.model, W=Number(m.w)||0, L=totalLength(m), TH=Number(m.wallThick)||0;
+  const fin=(m.finish==null?FINISH_THICK:Number(m.finish)||0);
+  const base=schemeParts(modelScheme(m, winTypes));
   // В оверлее рисование идёт инструментами, и ручки перетаскивания мешают попадать
   // тапом по стене — показываем их только в режиме «двигать».
   const drag=!full||modelTool==="sel";
-  const rooms=modelRooms(m), bays=modelBays(m);
-  const PAD=700;
-  const vb=(-PAD)+" "+(-PAD)+" "+(L+PAD*2)+" "+(W+PAD*2);
-  let g='';
-  g+='<rect x="0" y="0" width="'+L+'" height="'+W+'" fill="#f7fafc" stroke="#0d1b2e" stroke-width="60"/>';
-  rooms.forEach(function(r){
-    const cx=r.x0+(r.x1-r.x0)/2, cy=r.y0+(r.y1-r.y0)/2, tall=(r.y1-r.y0)>900;
-    g+='<rect x="'+r.x0+'" y="'+r.y0+'" width="'+(r.x1-r.x0)+'" height="'+(r.y1-r.y0)+'" fill="#ffffff"/>';
-    g+='<text x="'+cx+'" y="'+(cy-(tall?110:20))+'" text-anchor="middle" font-size="200" font-weight="700" fill="#0d1b2e">'+esc(r.name||"Помещение")+'</text>';
-    if(tall)g+='<text x="'+cx+'" y="'+(cy+180)+'" text-anchor="middle" font-size="175" fill="#7a9aaa">'+numRu(r.area)+' м²</text>';
-  });
+  const del=full&&modelTool==="del";
+  const bays=modelBays(m);
+  // Ручка стоит НИЖЕ имён помещений и марок проёмов: по центру она ложится ровно
+  // на имя, и в узком отсеке его не прочитать.
+  const HY=Math.round(W*0.72);
+  let g=base.g;
   // Продольные перегородки и ручка их переноса
   bays.forEach(function(b){
     if(!b.sub)return;
     const at=Number(b.sub.at)||0;
-    g+='<rect data-a="model-wallw-hit" data-id="'+b.id+'" x="'+b.x0+'" y="'+(at-120)+'" width="'+b.len+'" height="'+(TH+240)+'" fill="#e67e22"/>';
-    const cx=b.x0+b.len/2;
+    g+='<rect data-a="model-wallw-hit" data-id="'+b.id+'" x="'+b.x0+'" y="'+(at-140)+'" width="'+b.len+'" height="'+(TH+280)+'" fill="#e67e22" opacity="'+(del?"0.22":"0.07")+'"/>';
     if(!drag)return;
+    const cx=b.x0+b.len/2;
     g+='<g data-a="model-drag-w" data-id="'+b.id+'" data-w="'+W+'" style="cursor:ns-resize">'+
-      '<rect x="'+(cx-320)+'" y="'+(at-260)+'" width="640" height="'+(TH+520)+'" rx="120" fill="#e67e22" opacity="0.92"/>'+
-      '<text x="'+cx+'" y="'+(at+TH/2+90)+'" text-anchor="middle" font-size="280" fill="#fff" font-weight="800">⇅</text>'+
+      '<rect x="'+(cx-230)+'" y="'+(at-180)+'" width="460" height="'+(TH+360)+'" rx="90" fill="#e67e22" opacity="0.9"/>'+
+      '<text x="'+cx+'" y="'+(at+TH/2+75)+'" text-anchor="middle" font-size="230" fill="#fff" font-weight="800">⇅</text>'+
     '</g>';
   });
   // Поперечные перегородки
   bays.forEach(function(b,i){
     if(i>=bays.length-1)return;
     const x=b.x1;
-    g+='<rect data-a="model-wall-hit" data-i="'+i+'" x="'+(x-120)+'" y="0" width="'+(TH+240)+'" height="'+W+'" fill="#8e44ad"/>';
+    g+='<rect data-a="model-wall-hit" data-i="'+i+'" x="'+(x-140)+'" y="0" width="'+(TH+280)+'" height="'+W+'" fill="#8e44ad" opacity="'+(del?"0.22":"0.07")+'"/>';
     if(!drag)return;
-    g+='<g data-a="model-drag" data-i="'+i+'" data-len="'+L+'" style="cursor:ew-resize">'+
-      '<rect x="'+(x-260)+'" y="'+(W/2-320)+'" width="'+(TH+520)+'" height="640" rx="120" fill="#8e44ad" opacity="0.92"/>'+
-      '<text x="'+(x+TH/2)+'" y="'+(W/2+90)+'" text-anchor="middle" font-size="300" fill="#fff" font-weight="800">⇄</text>'+
+    g+='<g data-a="model-drag" data-i="'+i+'" style="cursor:ew-resize">'+
+      '<rect x="'+(x-180)+'" y="'+(HY-230)+'" width="'+(TH+360)+'" height="460" rx="90" fill="#8e44ad" opacity="0.9"/>'+
+      '<text x="'+(x+TH/2)+'" y="'+(HY+80)+'" text-anchor="middle" font-size="240" fill="#fff" font-weight="800">⇄</text>'+
     '</g>';
   });
-  // Проёмы — их двигают прямо на плане вдоль своей стены
+  // Проёмы двигают прямо на чертеже вдоль своей стены. Сам проём нарисован в толще
+  // стены — семь сантиметров, пальцем не попасть, — поэтому ручка шире стены, но
+  // прозрачная, и растёт ВНУТРЬ коробки: снаружи лежат размерные цепочки.
   (m.openings||[]).forEach(function(op){
     const t=winType(op.typeId); if(!t)return;
     const km=winKindMeta(t.kind), ln=Number(t.w)||0, pos=Number(op.pos)||0;
-    // Проём в перегородке: рисуем на своей стене, но без ручки — тянуть его общим
-    // жестом нельзя, у него другая ось и своя перегородка.
+    const on=modelOpDrag===op.id;
+    const tint=on?"0.3":(del?"0.2":"0.08");
+    // Проём в перегородке едет по своей перегородке — у него другая ось.
     if(op.side==="part"){
-      const pt=partitionAt(m, op.after);
-      if(!pt)return;
-      const on=modelOpDrag===op.id;
-      g+='<g data-a="'+(drag?"model-op-drag":"model-op-hit")+'" data-id="'+op.id+'" data-side="part" data-span="'+W+'" data-w="'+ln+'" data-len="'+L+'" data-cw="'+W+'" style="cursor:ns-resize">'+
-        '<rect x="'+(pt.x-160)+'" y="'+(pos-60)+'" width="'+(pt.w+320)+'" height="'+(ln+120)+'" fill="'+km.c+'" opacity="'+(on?"0.35":"0.12")+'" rx="60"/>'+
-        '<rect x="'+(pt.x-30)+'" y="'+pos+'" width="'+(pt.w+60)+'" height="'+ln+'" fill="#fff" stroke="'+km.c+'" stroke-width="40"/>'+
-        '<text x="'+(pt.x+260)+'" y="'+(pos+ln/2+70)+'" font-size="190" fill="'+km.c+'" font-weight="700">'+numRu(Math.round(ln/10)/100)+'</text>'+
+      const pt=partitionAt(m, op.after); if(!pt)return;
+      g+='<g data-a="'+(drag?"model-op-drag":"model-op-hit")+'" data-id="'+op.id+'" data-side="part" data-span="'+W+'" data-w="'+ln+'" data-cw="'+W+'" style="cursor:ns-resize">'+
+        '<rect x="'+(pt.x-190)+'" y="'+pos+'" width="'+(pt.w+380)+'" height="'+ln+'" rx="60" fill="'+km.c+'" opacity="'+tint+'"/>'+
       '</g>';
       return;
     }
-    const along=(op.side==="n"||op.side==="s");
+    const along=(op.side==="n"||op.side==="s"), IN=380, OUT=70;
     let x,y,ww,hh;
-    if(op.side==="n"){ x=pos; y=-110; ww=ln; hh=220; }
-    else if(op.side==="s"){ x=pos; y=W-110; ww=ln; hh=220; }
-    else if(op.side==="w"){ x=-110; y=pos; ww=220; hh=ln; }
-    else { x=L-110; y=pos; ww=220; hh=ln; }
-    const on=modelOpDrag===op.id;
-    g+='<g data-a="'+(drag?"model-op-drag":"model-op-hit")+'" data-id="'+op.id+'" data-side="'+op.side+'" data-span="'+sideLength(m,op.side)+'" data-w="'+ln+'" data-len="'+L+'" data-cw="'+W+'" style="cursor:'+(along?"ew-resize":"ns-resize")+'">'+
-      '<rect x="'+(x-60)+'" y="'+(y-60)+'" width="'+(ww+120)+'" height="'+(hh+120)+'" fill="'+km.c+'" opacity="'+(on?"0.35":"0.12")+'" rx="60"/>'+
-      '<rect x="'+x+'" y="'+y+'" width="'+ww+'" height="'+hh+'" fill="'+km.c+'" rx="50"/>'+
-      '<text x="'+(x+ww/2)+'" y="'+(y+(along?(op.side==="n"?-130:hh+240):hh/2+70))+'" text-anchor="middle" font-size="190" fill="'+km.c+'" font-weight="700">'+numRu(Math.round(ln/10)/100)+'</text>'+
+    if(op.side==="n"){ x=pos; y=-OUT; ww=ln; hh=fin+IN+OUT; }
+    else if(op.side==="s"){ x=pos; y=W-fin-IN; ww=ln; hh=fin+IN+OUT; }
+    else if(op.side==="w"){ x=-OUT; y=pos; ww=fin+IN+OUT; hh=ln; }
+    else { x=L-fin-IN; y=pos; ww=fin+IN+OUT; hh=ln; }
+    g+='<g data-a="'+(drag?"model-op-drag":"model-op-hit")+'" data-id="'+op.id+'" data-side="'+op.side+'" data-span="'+sideLength(m,op.side)+'" data-w="'+ln+'" data-cw="'+W+'" style="cursor:'+(along?"ew-resize":"ns-resize")+'">'+
+      '<rect x="'+x+'" y="'+y+'" width="'+ww+'" height="'+hh+'" rx="60" fill="'+km.c+'" opacity="'+tint+'"/>'+
     '</g>';
   });
-  g+='<text x="'+(L/2)+'" y="'+(W+560)+'" text-anchor="middle" font-size="200" fill="#9aabbf">'+numRu(Math.round(L/10)/100)+' × '+numRu(Math.round(W/10)/100)+' м · высота '+numRu(Math.round((Number(m.h)||0)/10)/100)+' м</text>';
-  return '<svg '+(full?'id="model-svg-full" data-a="model-canvas" data-vb="'+vb+'"':'id="model-svg"')+
-    ' viewBox="'+vb+'" style="width:100%;height:auto;display:block;touch-action:pan-y;user-select:none;'+
+  return '<svg '+(full?'id="model-svg-full" data-a="model-canvas"':'id="model-svg"')+
+    ' data-vb="'+base.vb+'" data-vbw="'+base.vbw+'"'+
+    ' viewBox="'+base.vb+'" style="width:100%;'+(full?'':'min-width:560px;')+'height:auto;display:block;touch-action:pan-y;user-select:none;'+
     (full&&modelTool!=="sel"?"cursor:crosshair":"")+'">'+g+'</svg>';
+}
+
+// Пиксели жеста в миллиметры модели. Считаем по ШИРИНЕ viewBox, а не по длине
+// дома: вокруг чертежа лежат размерные цепочки, и холст шире дома на их поля.
+// Раньше здесь стояла длина модели — перегородка отставала от пальца на эти поля,
+// а с цепочками отставала бы вдвое сильнее.
+function planMmPerPx(el){
+  const svg=el.ownerSVGElement||document.getElementById("model-svg-full")||document.getElementById("model-svg");
+  if(!svg)return 0;
+  const box=svg.getBoundingClientRect();
+  const vbw=Number(svg.dataset.vbw)||0;
+  return (vbw&&box.width)?(vbw/box.width):0;
 }
 
 // Полноэкранный редактор. Панель свёрстана в колонку 480 px под телефон, а
@@ -9908,7 +9922,7 @@ function specModelHtml(sh){
         return '<button data-a="model-side" data-s="'+sd[0]+'" style="border:1.5px solid '+(on?"#2980b9":"#dde6f0")+';background:'+(on?"#2980b9":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">'+esc(sd[1])+'</button>';
       }).join("")+'</div>';
   }
-  h+='<div style="background:#f6f8fa;border:1px solid #e6ecf3;border-radius:11px;padding:10px;margin-bottom:9px">'+
+  h+='<div style="background:#f6f8fa;border:1px solid #e6ecf3;border-radius:11px;padding:10px;margin-bottom:9px;overflow-x:auto">'+
     (modelView==="elev"?modelElevSvg(sh):modelPlanSvg(sh))+'</div>';
   h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px">'+
     [["пол",numRu(tot.floorArea)+" м²"],["перегородок",String(tot.partitions)],["проёмов",String((m.openings||[]).length)],["изделия",RUk(tot.openingsCost)]]
@@ -10400,8 +10414,10 @@ function schDoorSwing(op){
     '<path d="M '+J.x+' '+J.y+' A '+wd+' '+wd+' 0 0 '+(d>0?1:0)+' '+T.x+' '+T.y+'" fill="none" stroke="#0d1b2e" stroke-width="22" stroke-dasharray="120 90"/>';
 }
 
-function modelSchemeSvg(model, types){
-  const sc=modelScheme(model, types);
+// Чертёж как набор слоёв: разметка плюс поля, которые заняли размерные цепочки.
+// Отдаём это, а не готовый <svg>, потому что редактор рисует поверх ТОГО ЖЕ холста
+// свой слой ручек и обязан считать координаты в том же viewBox.
+function schemeParts(sc){
   const L=sc.l, W=sc.w;
   const byS=function(sd){ return sc.dims.filter(function(d){return d.side===sd;}); };
   const top=byS("top"), bottom=byS("bottom"), left=byS("left"), right=byS("right");
@@ -10455,8 +10471,12 @@ function modelSchemeSvg(model, types){
   left.forEach(function(ch,i){ g+=schChainV(ch, -(SCH_FIRST+i*SCH_GAP), 1); });
   right.forEach(function(ch,i){ g+=schChainV(ch, L+SCH_FIRST+i*SCH_GAP, -1); });
 
-  const vb=(-pL)+" "+(-pT)+" "+(L+pL+pR)+" "+(W+pT+pB);
-  return '<svg viewBox="'+vb+'" style="width:100%;height:auto;display:block;user-select:none">'+g+'</svg>';
+  return { g:g, vb:(-pL)+" "+(-pT)+" "+(L+pL+pR)+" "+(W+pT+pB), vbw:(L+pL+pR) };
+}
+
+function modelSchemeSvg(model, types){
+  const f=schemeParts(modelScheme(model, types));
+  return '<svg viewBox="'+f.vb+'" style="width:100%;min-width:560px;height:auto;display:block;user-select:none">'+f.g+'</svg>';
 }
 
 // ═══ ВКЛАДКА «СПЕЦИФИКАЦИЯ 2» ════════════════════════════════════════════════
@@ -19057,11 +19077,8 @@ function bind(){
       // Продольная перегородка: та же арифметика, но по ширине контейнера.
       el.onpointerdown=(ev)=>{
         const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
-        const svg=el.ownerSVGElement||document.getElementById("model-svg"); if(!svg)return;
-        const box=svg.getBoundingClientRect();
-        // Масштаб берём по ширине картинки: viewBox сохраняет пропорции, поэтому
-        // мм на пиксель одинаковы по обеим осям.
-        const mmPerPx=(totalLength(sh.model)+1400)/Math.max(1,box.width);
+        // Масштаб один по обеим осям: viewBox сохраняет пропорции.
+        const mmPerPx=planMmPerPx(el); if(!mmPerPx)return;
         const y0=ev.clientY; let d=0;
         ev.preventDefault();
         try{ el.setPointerCapture(ev.pointerId); }catch(e){}
@@ -19080,10 +19097,9 @@ function bind(){
       // иначе прокрутка страницы переставляла бы окна.
       el.onpointerdown=(ev)=>{
         const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
-        const svg=el.ownerSVGElement||document.getElementById("model-svg"); if(!svg)return;
         const op=(sh.model.openings||[]).find(function(o){return o.id===el.dataset.id;}); if(!op)return;
         const along=(op.side==="n"||op.side==="s");
-        const mmPerPx=(Number(el.dataset.len)+1400)/Math.max(1,svg.getBoundingClientRect().width);
+        const mmPerPx=planMmPerPx(el); if(!mmPerPx)return;
         const span=Number(el.dataset.span)||0, wid=Number(el.dataset.w)||0;
         const start=Number(op.pos)||0;
         const c0=along?ev.clientX:ev.clientY;
@@ -19112,9 +19128,8 @@ function bind(){
       // их к экрану, поэтому жест одинаково работает на телефоне и на мониторе.
       el.onpointerdown=(ev)=>{
         const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
-        const svg=el.ownerSVGElement||document.getElementById("model-svg"); if(!svg)return;
         const i=parseInt(el.dataset.i,10);
-        const mmPerPx=(Number(el.dataset.len)||1)/Math.max(1,svg.getBoundingClientRect().width);
+        const mmPerPx=planMmPerPx(el); if(!mmPerPx)return;
         const x0=ev.clientX; let d=0;
         ev.preventDefault();
         try{ el.setPointerCapture(ev.pointerId); }catch(e){}
