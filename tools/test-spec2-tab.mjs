@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // Вкладка «Спецификация 2» и заготовки планировок (public/admin.js).
 //
-// Расчёт сторожат test-spec2 и test-model-preset. Здесь — то, что живёт только в
-// панели и ломается тише всего: опытный лист обязан лечь в СВОЙ раздел (иначе
-// эксперимент попадает в проданные спецификации), заготовка обязана приехать
-// вместе с изделиями, а карточка одного раздела не должна открываться в другом.
+// Раздел намеренно пустой, и «пустой» — это тоже требование: любой унаследованный
+// экран решал бы за будущую логику, как ей выглядеть. Поэтому здесь сторожим две
+// вещи: что на вкладке действительно ничего нет и что живой раздел от этого не
+// пострадал, — а ещё что заготовка контейнера доезжает до листа целиком.
 import { boot, reporter } from './harness/panel-vm.js'
 
 const t = reporter()
@@ -14,6 +14,7 @@ const EST = [
   { id: 'e_mdf', kind: 'house', name: 'Стены МДФ', stage: 2, optScope: 'room', optGroup: 'Стены', optLabel: 'МДФ', optSurface: 'wall',
     lines: [{ pid: 'p_mdf', qty: 1 }] },
 ]
+const SHEET2 = { id: 'old2', name: 'Опыт', kind: 'house', specs: { height: 2.5, rooms: [] }, rooms: {}, global: {}, qty: {}, markup: 30 }
 
 function panel() {
   const p = boot({})
@@ -26,8 +27,8 @@ function panel() {
 }
 
 // Создание так, как это делает человек: имя → заготовка → «Создать».
-function create(p, { two, preset }) {
-  p.dom.field('spec-n-name', two ? 'Опыт' : 'Боевая')
+function create(p, preset) {
+  p.dom.field('spec-n-name', 'Дом Иванова')
   p.dom.field('spec-n-client', '')
   p.run('specNew=Object.assign({},specNew,{kind:"house"});')
   if (preset) {
@@ -35,139 +36,86 @@ function create(p, { two, preset }) {
     p.run('bind();')
     tile.onclick()
   }
-  const btn = p.dom.node({ a: 'spec-create', two: two ? '1' : '' })
+  const btn = p.dom.node({ a: 'spec-create' })
   p.run('bind();')
   btn.onclick()
 }
 
-// ── 1. Опытный лист ложится в свой раздел ────────────────────────────────────
+// ── 1. Вкладка пуста ─────────────────────────────────────────────────────────
 {
-  t.section('Куда попадает новый лист')
+  t.section('Вкладка «Спецификация 2»')
   const p = panel()
-  create(p, { two: true, preset: 'c12-san-liv-bed' })
-  t.ok('в боевом разделе пусто', p.q('specSheets').length === 0, JSON.stringify(p.q('specSheets.length')))
-  t.ok('лист в опытном разделе', p.q('specSheets2').length === 1)
-  const sh = p.q('specSheets2')[0]
-  t.ok('карточка открылась', p.q('specOpenId') === sh.id)
-  t.ok('панель считает его опытным', p.q('specIs2(specSheets2[0])') === true)
-  t.ok('и не считает опытным боевой', p.q('specIs2({id:"нет такого"})') === false)
-
-  create(p, { two: false, preset: '' })
-  t.ok('обычная спецификация — в боевой раздел', p.q('specSheets').length === 1 && p.q('specSheets2').length === 1)
+  const empty = p.run('tSpec2()')
+  t.ok('ничего не рисует', empty === '<div></div>', JSON.stringify(empty))
+  // Даже если листы в разделе есть — экрана для них нет.
+  p.run('specSheets2=[' + JSON.stringify(SHEET2) + '];specOpenId="old2";')
+  const withData = p.run('tSpec2()')
+  t.ok('лист в разделе её не наполняет', withData === '<div></div>', JSON.stringify(withData).slice(0, 200))
+  const marks = ['spec-new', 'spec-create', 'spec-open', 'spec-back', 'spec-del', 'model-preset']
+  marks.forEach((m) => t.ok('нет ' + m, withData.indexOf('data-a="' + m + '"') < 0))
 }
 
-// ── 2. Заготовка приезжает моделью и изделиями ───────────────────────────────
+// ── 2. Живой раздел не задет ─────────────────────────────────────────────────
+{
+  t.section('Боевая «Спецификация»')
+  const p = panel()
+  p.run('specSheets2=[' + JSON.stringify(SHEET2) + '];specOpenId="old2";')
+  const list = p.run('tSpec()')
+  t.ok('опытный лист в боевом списке не показывается', list.indexOf('data-id="old2"') < 0)
+  t.ok('и его карточку боевая вкладка не открывает', list.indexOf('data-a="spec-back"') < 0)
+  t.ok('и не закрывает её насильно', p.q('specOpenId') === 'old2')
+
+  p.run('specOpenId=null;specShowNew=true;')
+  const form = p.run('tSpec()')
+  t.ok('форма создания на месте', form.indexOf('data-a="spec-create"') >= 0)
+  t.ok('планировки из базы предлагаются', form.indexOf('data-a="spec-n-plan-pick"') >= 0)
+  t.ok('заготовка контейнера предлагается', form.indexOf('data-a="spec-n-preset"') >= 0)
+}
+
+// ── 3. Заготовка доезжает до листа ───────────────────────────────────────────
 {
   t.section('Заготовка контейнера')
   const p = panel()
-  create(p, { two: true, preset: 'c12-san-liv-bed' })
-  const sh = p.q('specSheets2')[0]
+  p.run('specShowNew=true;')
+  create(p, 'c12-san-liv-bed')
+  const sh = p.q('specSheets')[0]
+  t.ok('лист заведён в боевом разделе', p.q('specSheets').length === 1 && p.q('specSheets2').length === 0)
   t.ok('модель собрана', !!sh.model && sh.model.rooms.length === 3, JSON.stringify((sh.model || {}).rooms || null))
   t.ok('проёмы на месте', (sh.model.openings || []).length === 3)
   t.ok('изделия заведены в справочник', p.q('winTypes').length === 3, String(p.q('winTypes').length))
-  t.ok('у каждого проёма своё изделие',
-    sh.model.openings.every((o) => p.q('winTypes').some((w) => w.id === o.typeId)))
-  // Числа с чертежа доезжают до спецификации — из них считается смета и цена.
   const areas = (sh.specs.rooms || []).map((r) => Math.round(r.w * r.l * 100) / 100)
-  t.ok('площади помещений 4,4 / 14,08 / 7,04', String(areas) === '4.4,14.08,7.04', String(areas))
-  t.ok('высота 2,5 м', sh.specs.height === 2.5, String(sh.specs.height))
+  t.ok('площади с чертежа 4,4 / 14,08 / 7,04', String(areas) === '4.4,14.08,7.04', String(areas))
 
-  // Пустая коробка — по-прежнему отдельный ответ на «откуда дом».
-  const q = panel()
-  q.run('specNew=Object.assign({},specNew,{kind:"house",model:"40hc",preset:""});')
-  q.dom.field('spec-n-name', 'Пустая'); q.dom.field('spec-n-client', '')
-  const b = q.dom.node({ a: 'spec-create', two: '1' }); q.run('bind();'); b.onclick()
-  const empty = q.q('specSheets2')[0]
-  t.ok('пустая коробка — одно помещение без проёмов',
-    empty.model.rooms.length === 1 && !(empty.model.openings || []).length)
-}
-
-// ── 3. Заготовка в открытой карточке ─────────────────────────────────────────
-{
-  t.section('Заменить модель заготовкой')
-  const p = panel()
-  create(p, { two: true, preset: '' })
-  p.run('specSheets2[0].rooms={r_old:{"Стены":"e_mdf"}};')
+  // Та же заготовка из карточки заменяет модель целиком.
+  p.run('specOpenId=' + JSON.stringify(sh.id) + ';specSheets[0].rooms={r_old:{"Стены":"e_mdf"}};')
   const btn = p.dom.node({ a: 'model-preset', k: 'c12-san-liv-bed' })
   p.run('bind();')
   btn.onclick()
-  const sh = p.q('specSheets2')[0]
-  t.ok('модель встала', !!sh.model && sh.model.rooms.length === 3)
-  // id помещений стали другими — выбор по старым комнатам повис бы в пустоте.
-  t.ok('выбор по комнатам сброшен', Object.keys(sh.rooms || {}).length === 0, JSON.stringify(sh.rooms))
-  t.ok('изделия не задвоились при повторном применении', (btn.onclick(), p.q('winTypes').length === 3),
-    String(p.q('winTypes').length))
+  t.ok('выбор по комнатам сброшен', Object.keys(p.q('specSheets')[0].rooms || {}).length === 0)
+  t.ok('изделия не задвоились', p.q('winTypes').length === 3, String(p.q('winTypes').length))
 }
 
-// ── 4. Разделы не открывают карточки друг друга ──────────────────────────────
+// ── 4. Раздел как данные ─────────────────────────────────────────────────────
 {
-  t.section('Границы разделов')
+  t.section('Данные опытного раздела')
   const p = panel()
-  create(p, { two: true, preset: 'c12-san-liv-bed' })
-  const openId = p.q('specOpenId')
-  const inSpec = p.run('tSpec()')
-  t.ok('боевая вкладка показывает список, а не чужую карточку', inSpec.indexOf('data-a="spec-back"') < 0)
-  t.ok('и не закрывает её', p.q('specOpenId') === openId)
-  const inSpec2 = p.run('tSpec2()')
-  t.ok('опытная вкладка показывает карточку', inSpec2.indexOf('data-a="spec-back"') >= 0)
+  p.run('specSheets2=[' + JSON.stringify(SHEET2) + '];')
+  t.ok('лист находится по id', p.q('(specSheet("old2")||{}).id') === 'old2')
+  t.ok('и опознаётся как опытный', p.q('specIs2(specSheets2[0])') === true)
+  // Удаление обязано доставать лист из обеих коллекций: экрана у раздела нет, но
+  // заведённые раньше листы никуда не делись.
+  p.run('specDrop("old2");')
+  t.ok('удаление достаёт его из опытного раздела', p.q('specSheets2').length === 0)
 
-  // Удаление ищет лист в обоих разделах — иначе «удалил», а он остался.
-  p.run('specOpenId=null;specDrop(' + JSON.stringify(openId) + ');')
-  t.ok('удалённый лист исчез из опытного раздела', p.q('specSheets2').length === 0)
-}
+  // Изделие, стоящее в проёме опытного листа, считается занятым.
+  p.run('specSheets2=[{id:"x1",model:{openings:[{id:"o",typeId:"w1"}]}}];winTypes=[{id:"w1",kind:"win",n:"Окно",w:1500,h:2100,cost:0}];')
+  const used = p.q('specSheets.concat(specSheets2).some(function(x){return ((x.model||{}).openings||[]).some(function(o){return o.typeId==="w1";});})')
+  t.ok('изделие из опытного листа виден занятым', used === true)
 
-// ── 5. Карточка опытного раздела вычищена ────────────────────────────────────
-{
-  t.section('Что осталось в карточке')
-  const p = panel()
-  create(p, { two: true, preset: 'c12-san-liv-bed' })
-  const card = p.run('tSpec2()')
-  // Экрана продажи здесь нет — он остался в боевой «Спецификации».
-  // Боевая карточка того же вида — контроль: маркеры ниже там действительно есть,
-  // иначе проверка «нет такого» ничего не сторожит.
-  p.run('settings=Object.assign({},settings,{specPresets:[{id:"pr1",kind:"house",name:"Комфорт",rooms:{},global:{}}]});')
-  p.run('specView="sheet";specAcc={rooms:true,global:true,base:true,stages:true};')
-  p.run('specSheets=[{id:"a1",name:"Дом",kind:"house",specs:{height:2.5,rooms:[{id:"r1",name:"Зал",w:2,l:3,wallLen:10}]},rooms:{},global:{},qty:{},markup:30}];')
-  const live = p.run('tSpecCard(specSheets[0])')
-
-  const gone = [
-    ['вкладки Список/План/Матрица/Мастер', 'data-a="spec-view"'],
-    ['комплектации', 'data-a="spec-preset"'],
-    ['раскрывающиеся блоки', 'data-a="spec-acc"'],
-    ['выбор отделки по комнате', 'data-a="spec-pick-room"'],
-    ['печать клиенту', 'data-a="spec-print"'],
-    ['в договор и в объект', 'data-a="spec-to-contract"'],
-  ]
-  gone.forEach(([name, mark]) => {
-    t.ok('в боевой карточке есть ' + name, live.indexOf(mark) >= 0, mark)
-    t.ok('в опытной убрано: ' + name, card.indexOf(mark) < 0, mark)
-  })
-  // А без чего лист не существует — осталось.
-  const kept = [
-    ['имя листа', 'data-a="spec-name"'],
-    ['клиент', 'data-a="spec-client"'],
-    ['модель контейнера', 'data-a="model-full"'],
-    ['удаление', 'data-a="spec-del"'],
-  ]
-  kept.forEach(([name, mark]) => t.ok('осталось: ' + name, card.indexOf(mark) >= 0, mark))
-
-  // В списке опытного раздела вместо цены — сам дом.
-  p.run('specOpenId=null;')
-  const list = p.run('tSpec2()')
-  t.ok('в списке площадь, а не цена', /25,52 м²/.test(list) && list.indexOf('₽') < 0, list.slice(list.indexOf('spec-open'), list.indexOf('spec-open') + 400))
-}
-
-// ── 6. Раздел уходит в облако ────────────────────────────────────────────────
-{
-  t.section('Синхронизация')
-  const p = panel()
-  create(p, { two: true, preset: 'c12-san-liv-bed' })
   const keys = p.q('serializeState().map(function(x){return x.work_id;})')
-  t.ok('specSheets2 есть в снимке', keys.indexOf('specSheets2') >= 0, JSON.stringify(keys))
-  t.ok('боевой раздел на месте', keys.indexOf('specSheets') >= 0)
-  // Пришедший с сервера раздел применяется, а не игнорируется.
+  t.ok('specSheets2 уходит в облако', keys.indexOf('specSheets2') >= 0)
   p.run('applyState([{work_id:"specSheets2",data:[{id:"z1",name:"С сервера"}]}]);')
-  t.ok('снимок с сервера применён', p.q('specSheets2').length === 1 && p.q('specSheets2')[0].id === 'z1')
+  t.ok('и приходит обратно', p.q('specSheets2').length === 1 && p.q('specSheets2')[0].id === 'z1')
 }
 
 t.done()
