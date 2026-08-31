@@ -64,7 +64,7 @@ export function grid(planW, planH, walls) {
 // диагональ соседством не считается, иначе комнаты «протекали» бы через угол стены.
 export function regions(planW, planH, walls) {
   const g = grid(planW, planH, walls);
-  const { xs, ys, nx, ny, solid } = g;
+  const { nx, ny, solid } = g;
   const mark = new Array(nx * ny).fill(-1);
   const out = [];
 
@@ -100,7 +100,7 @@ export function regions(planW, planH, walls) {
 // считается площадь стен под отделку, и для Г-образной комнаты он больше, чем
 // у прямоугольника той же площади. В этом вся разница, ради которой всё затеяно.
 function measure(cells, g) {
-  const { xs, ys, nx, ny, solid } = g;
+  const { xs, ys, nx, ny } = g;
   const at = {};
   cells.forEach(function (c) { at[c.i + ":" + c.j] = 1; });
   const inside = function (i, j) { return i >= 0 && j >= 0 && i < nx && j < ny && at[i + ":" + j]; };
