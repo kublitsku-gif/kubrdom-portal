@@ -141,6 +141,72 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
     String(after))
 }
 
+// ── 7. Панель — это ещё и управление ────────────────────────────────────────
+{
+  t.section('Править, не выходя из полного экрана')
+  const p = panel()
+  click(p, { a: 'model-full' })
+  const ov = p.run('modelFullOverlay()')
+  t.ok('длина отсека правится числом', ov.indexOf('data-a="model-room-len"') >= 0)
+  // Поле type="number" значение с запятой не принимает и показывает пустое поле —
+  // длина выглядела незаполненной и в панели, и в карточке.
+  const lens = (ov.match(/data-a="model-room-len"[^>]*value="([^"]*)"/g) || [])
+    .map((x) => x.match(/value="([^"]*)"/)[1])
+  t.ok('и поле не пустое', lens.length === 3 && lens.every((v) => v !== ''), JSON.stringify(lens))
+  t.ok('значение с точкой, а не с запятой', lens.every((v) => v.indexOf(',') < 0 && isFinite(Number(v))),
+    JSON.stringify(lens))
+  t.ok('и это настоящая длина', lens[0] === '2.08', lens[0])
+  const cardLens = (p.run('specModelHtml(specSheets[0])').match(/data-a="model-room-len"[^>]*value="([^"]*)"/g) || [])
+    .map((x) => x.match(/value="([^"]*)"/)[1])
+  t.ok('в карточке то же самое', cardLens.join(' ') === lens.join(' '), JSON.stringify(cardLens))
+  t.ok('есть деление поперёк', ov.indexOf('data-a="model-split"') >= 0)
+  t.ok('есть продольная перегородка', ov.indexOf('data-a="model-split-w"') >= 0)
+  t.ok('есть снятие перегородки', ov.indexOf('data-a="model-merge"') >= 0)
+  // У последнего отсека перегородки справа нет — и кнопки быть не должно.
+  const bays = p.q('modelBays(specSheets[0].model).map(function(b){return b.id;})')
+  const last = bays[bays.length - 1]
+  t.ok('у последнего отсека «убрать» не предлагается',
+    ov.indexOf('data-a="model-merge" data-id="' + last + '"') < 0)
+
+  // Длина отсека — это перенос миллиметров у соседа: сумма с контейнером не расходится.
+  const before = p.q('totalLength(specSheets[0].model)')
+  const el = p.dom.node({ a: 'model-room-len', id: bays[0] })
+  el.value = '2,41'
+  p.run('bind();')
+  el.onchange()
+  t.ok('длина применилась', Math.abs(p.q('modelBays(specSheets[0].model)[0].len') - 2410) < 10,
+    String(p.q('modelBays(specSheets[0].model)[0].len')))
+  t.ok('габарит контейнера не поехал', p.q('totalLength(specSheets[0].model)') === before)
+  t.ok('площади пересчитались', /2,33|2,34/.test(p.run('modelFullOverlay()')) ||
+    p.q('modelAreas(specSheets[0].model, winTypes).rooms[0].l') > 2.3)
+
+  // Деление прямо из панели.
+  const n0 = p.q('specSheets[0].model.rooms.length')
+  click(p, { a: 'model-split', id: bays[1] })
+  t.ok('отсек разделился', p.q('specSheets[0].model.rooms.length') === n0 + 1)
+}
+
+// ── 8. После стены снова можно двигать ──────────────────────────────────────
+{
+  t.section('Инструмент возвращается в «Двигать»')
+  const p = panel()
+  click(p, { a: 'model-full' })
+  click(p, { a: 'model-tool', k: 'wall' })
+  t.ok('режим рисования включён', p.q('modelTool') === 'wall')
+  t.ok('в нём ручек нет', p.run('modelPlanSvg(specSheets[0], true)').indexOf('data-a="model-drag"') < 0)
+  // Ставим стену тем же путём, что и палец: через холст.
+  const canvas = p.dom.node({ a: 'model-canvas', vb: '-700 -700 13352 3752' })
+  canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1000, height: 281 })
+  p.run('bind();')
+  canvas.onclick({ clientX: 500, clientY: 140 })
+  t.ok('стена поставлена', p.q('specSheets[0].model.rooms.length') === 4,
+    String(p.q('specSheets[0].model.rooms.length')))
+  // Стену ставят по одной: остаться в режиме рисования значит спрятать ручки и
+  // оставить человека думать, что двигать вообще нельзя.
+  t.ok('и режим вернулся к «Двигать»', p.q('modelTool') === 'sel', p.q('modelTool'))
+  t.ok('ручки снова на месте', p.run('modelPlanSvg(specSheets[0], true)').indexOf('data-a="model-drag"') >= 0)
+}
+
 // ── 7. Имя второй комнаты в отсеке ──────────────────────────────────────────
 {
   t.section('Санузел в углу')

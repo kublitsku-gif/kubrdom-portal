@@ -591,7 +591,7 @@ export function modelAreas(model, winTypes) {
     const gross = r2(r.wallLen * H / 1000);
     const ops = r2(opArea[r.id] || 0);
     return {
-      id: r.id, name: r.name,
+      id: r.id, name: r.name, bayId: r.bayId, sub: !!r.sub,
       w: r2(r.finW / 1000), l: r2(r.finL / 1000), h: r2(H / 1000),
       perimeter: r.wallLen,
       floor: r.area, ceil: r.area,

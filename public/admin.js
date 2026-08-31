@@ -9689,33 +9689,58 @@ const MODEL_TOOLS=[
   ["op",   "🪟", "Проём",          "Тап у стены — окно или дверь в этом месте"],
   ["del",  "🗑", "Убрать",         "Тап по проёму или перегородке"],
 ];
+// В поле type="number" значение обязано быть с ТОЧКОЙ: значение с запятой браузер
+// считает невалидным и показывает поле пустым. Ввод потом принимает обе формы.
+function numInp(mm){ return String(Math.round((Number(mm)||0)/10)/100); }
+
 function modelToolMeta(k){ return MODEL_TOOLS.find(function(t){return t[0]===k;})||MODEL_TOOLS[0]; }
 
 // Площади помещений: пол, потолок и стены. Числа считает модель (`modelAreas`),
 // панель их только показывает — те же цифры уходят в отделку и в смету, и своя
 // копия формулы здесь означала бы, что на экране одно, а в договоре другое.
 function modelAreasPanel(sh){
-  const A=modelAreas(sh.model, winTypes);
+  const m=sh.model;
+  const A=modelAreas(m, winTypes);
+  const bays=modelBays(m);
   const cell=function(label,val,unit){
     return '<div style="text-align:center;background:rgba(255,255,255,.06);border-radius:8px;padding:5px 4px">'+
       '<div style="font-size:8.5px;color:#7f97ae;font-weight:700;letter-spacing:0.4px">'+label+'</div>'+
       '<div style="font-size:12.5px;font-weight:800;color:#fff">'+numRu(val)+(unit||'')+'</div></div>';
   };
-  let h='<div style="flex:0 0 330px;min-width:280px;overflow:auto;background:#0f2033;border-left:1px solid rgba(255,255,255,.08);padding:12px 13px">';
+  const btn=function(action,id,title,glyph,col){
+    return '<button data-a="'+action+'" data-id="'+id+'" title="'+esc(title)+'" style="width:30px;height:30px;border:1px solid '+col+'66;background:transparent;border-radius:8px;cursor:pointer;color:'+col+';font-size:14px;flex-shrink:0">'+glyph+'</button>';
+  };
+  let h='<div style="flex:0 0 340px;min-width:290px;overflow:auto;background:#0f2033;border-left:1px solid rgba(255,255,255,.08);padding:12px 13px">';
   h+='<div style="font-size:10px;font-weight:700;color:#8ea6bd;letter-spacing:0.6px;margin-bottom:8px">ПОМЕЩЕНИЯ И ПЛОЩАДИ</div>';
   if(!A.rooms.length){
     h+='<div style="font-size:12px;color:#7f97ae;line-height:1.5">Помещений нет. Поставьте стену поперёк — отсек разделится.</div>';
     return h+'</div>';
   }
-  h+=A.rooms.map(function(r){
-    return '<div style="border:1px solid rgba(255,255,255,.1);border-radius:11px;padding:9px 10px;margin-bottom:8px">'+
-      '<input data-a="model-room-name" data-id="'+r.id+'" value="'+esc(r.name||"")+'" placeholder="Название" style="width:100%;background:transparent;border:none;outline:none;color:#fff;font-size:13.5px;font-weight:700;padding:0 0 5px;box-sizing:border-box">'+
-      '<div style="font-size:10.5px;color:#7f97ae;margin-bottom:7px">'+numRu(r.l)+' × '+numRu(r.w)+' м · высота '+numRu(r.h)+' м</div>'+
-      '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px">'+
-        cell("ПОЛ",r.floor," м²")+cell("ПОТОЛОК",r.ceil," м²")+cell("СТЕНЫ",r.wallNet," м²")+
-      '</div>'+
-      '<div style="font-size:9.5px;color:#6f8aa3;margin-top:6px;line-height:1.4">стены с проёмами '+numRu(r.wallGross)+' м², проёмы '+numRu(r.openings)+' м², периметр '+numRu(r.perimeter)+' м</div>'+
-    '</div>';
+  // Отсек, а не комната: перегородка, длина и деление — свойства отсека, и кнопки
+  // должны стоять там же, где число, которое они меняют.
+  h+=bays.map(function(b,i){
+    const inBay=A.rooms.filter(function(r){return r.bayId===b.id;});
+    const bay=(m.rooms||[]).find(function(x){return x.id===b.id;})||{};
+    let g='<div style="border:1px solid rgba(255,255,255,.1);border-radius:11px;padding:9px 10px;margin-bottom:8px">';
+    g+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">'+
+        '<span style="font-size:9.5px;font-weight:700;color:#7f97ae;letter-spacing:0.4px;flex:1">ОТСЕК '+(i+1)+'</span>'+
+        '<input data-a="model-room-len" data-id="'+b.id+'" value="'+numInp(b.len)+'" type="number" step="0.01" inputmode="decimal" title="Длина отсека, м" style="width:78px;padding:5px 7px;border-radius:7px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:#fff;font-size:12.5px;outline:none;box-sizing:border-box;text-align:right">'+
+        btn("model-split", b.id, "Разделить поперёк", "⊟", "#b07cd6")+
+        (bay.sub?btn("model-merge-w", b.id, "Убрать продольную перегородку", "⇕", "#e8975a")
+               :btn("model-split-w", b.id, "Продольная перегородка — санузел в углу", "⊞", "#e8975a"))+
+        (i<bays.length-1?btn("model-merge", b.id, "Убрать перегородку справа", "✕", "#e8746a"):'')+
+      '</div>';
+    g+=inBay.map(function(r){
+      return '<div style="'+(inBay.length>1?'border-left:2px solid '+(r.sub?"#e8975a":"#b07cd6")+';padding-left:8px;margin-bottom:8px':'')+'">'+
+        '<input data-a="model-room-name" data-id="'+r.id+'" value="'+esc(r.name||"")+'" placeholder="Название" style="width:100%;background:transparent;border:none;outline:none;color:#fff;font-size:13.5px;font-weight:700;padding:0 0 5px;box-sizing:border-box">'+
+        '<div style="font-size:10.5px;color:#7f97ae;margin-bottom:7px">'+numRu(r.l)+' × '+numRu(r.w)+' м · высота '+numRu(r.h)+' м</div>'+
+        '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px">'+
+          cell("ПОЛ",r.floor," м²")+cell("ПОТОЛОК",r.ceil," м²")+cell("СТЕНЫ",r.wallNet," м²")+
+        '</div>'+
+        '<div style="font-size:9.5px;color:#6f8aa3;margin-top:6px;line-height:1.4">стены с проёмами '+numRu(r.wallGross)+' м², проёмы '+numRu(r.openings)+' м², периметр '+numRu(r.perimeter)+' м</div>'+
+      '</div>';
+    }).join("");
+    return g+'</div>';
   }).join("");
   h+='<div style="border-top:1px solid rgba(255,255,255,.12);margin-top:4px;padding-top:9px">'+
       '<div style="font-size:10px;font-weight:700;color:#8ea6bd;letter-spacing:0.6px;margin-bottom:7px">ВСЕГО ПО ДОМУ</div>'+
@@ -9915,7 +9940,7 @@ function specModelHtml(sh){
     h+='<div style="border:1px solid #e6ecf3;border-radius:11px;padding:9px 10px;margin-bottom:7px">';
     h+='<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">'+
         '<span style="font-size:10px;font-weight:700;color:#9aabbf;flex:1">ОТСЕК '+(i+1)+' · '+numRu(Math.round(b.len/10)/100)+' м</span>'+
-        '<input data-a="model-room-len" data-id="'+b.id+'" value="'+numRu(Math.round(b.len/10)/100)+'" type="number" step="0.01" inputmode="decimal" style="width:76px;padding:6px 8px;border-radius:8px;border:1px solid #d0dae8;font-size:12.5px;outline:none;box-sizing:border-box;text-align:right">'+
+        '<input data-a="model-room-len" data-id="'+b.id+'" value="'+numInp(b.len)+'" type="number" step="0.01" inputmode="decimal" style="width:76px;padding:6px 8px;border-radius:8px;border:1px solid #d0dae8;font-size:12.5px;outline:none;box-sizing:border-box;text-align:right">'+
         '<button data-a="model-split" data-id="'+b.id+'" title="Поперечная перегородка" style="width:30px;height:30px;border:1px solid #8e44ad55;background:#fff;border-radius:8px;cursor:pointer;color:#8e44ad;font-size:14px;flex-shrink:0">⊟</button>'+
         (b.sub
           ? '<button data-a="model-merge-w" data-id="'+b.id+'" title="Убрать продольную перегородку" style="width:30px;height:30px;border:1px solid #e67e2255;background:#fff;border-radius:8px;cursor:pointer;color:#e67e22;font-size:13px;flex-shrink:0">⇕</button>'
@@ -9983,7 +10008,7 @@ function specModelHtml(sh){
         (op.side==="part"
           ? '<button data-a="model-op-into" data-id="'+op.id+'" title="В какую сторону открывается" style="width:30px;height:28px;border:1px solid #8e44ad55;background:#fff;border-radius:7px;cursor:pointer;color:#8e44ad;font-size:13px;flex-shrink:0">'+((Number(op.into)||1)>=0?"→":"←")+'</button>'+
             '<button data-a="model-op-hinge" data-id="'+op.id+'" title="На каком откосе петли" style="width:30px;height:28px;border:1px solid #8e44ad55;background:#fff;border-radius:7px;cursor:pointer;color:#8e44ad;font-size:13px;flex-shrink:0">'+((op.hinge==="end")?"↓":"↑")+'</button>'
-          : '<input data-a="model-op-sill" data-id="'+op.id+'" value="'+numRu(Math.round((op.sill==null?(t.kind==="door"?0:900):op.sill)/10)/100)+'" type="number" step="0.05" inputmode="decimal" title="Высота низа проёма от пола, м" style="width:64px;padding:6px 7px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;text-align:right">')+
+          : '<input data-a="model-op-sill" data-id="'+op.id+'" value="'+numInp(op.sill==null?(t.kind==="door"?0:900):op.sill)+'" type="number" step="0.05" inputmode="decimal" title="Высота низа проёма от пола, м" style="width:64px;padding:6px 7px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;text-align:right">')+
         '<input data-a="model-op-pos" data-id="'+op.id+'" type="range" min="0" max="'+Math.max(0,len-(Number(t.w)||0))+'" step="10" value="'+(Number(op.pos)||0)+'" style="flex:1.2;min-width:80px">'+
         '<button data-a="model-op-del" data-id="'+op.id+'" style="width:28px;height:28px;border:1px solid #e74c3c44;background:#fff;border-radius:7px;cursor:pointer;color:#e74c3c;font-size:12px;flex-shrink:0">🗑</button>'+
       '</div>';
@@ -19004,6 +19029,7 @@ function bind(){
           }]);
           modelSide=side;
         }
+        if(modelTool==="wall"||modelTool==="wallw")modelTool="sel";
         modelSync(sh); fl();
       };
     }
