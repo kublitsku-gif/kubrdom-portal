@@ -25,17 +25,19 @@ function panel() {
   return p
 }
 const click = (p, dataset) => { const el = p.dom.node(dataset); p.run('bind();'); el.onclick(); return el }
+// Лист опытного раздела «Спецификация 2»: те же перегородки и проёмы, но окна и
+// двери разведены по своим инструментам. Боевые листы этой обкатки не видят.
+function lab() {
+  const p = panel()
+  click(p, { a: 'spec2-edit' })
+  return p
+}
 const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return o.side==="part";})')
 
 // ── 1. Вкладка есть и показывает свою перегородку ────────────────────────────
 {
   t.section('Вкладка «Перегородки»')
   const p = panel()
-  // Перегородки — вкладка ДВЕРЕЙ: окно во внутренней стене модель не считает, и в
-  // окнах такой вкладки нет вовсе.
-  const wins = p.run('specModelHtml(specSheets[0])')
-  t.ok('у окон перегородок нет', wins.indexOf('data-a="model-side" data-s="part"') < 0)
-  click(p, { a: 'model-kind', k: 'door' })
   const card = p.run('specModelHtml(specSheets[0])')
   t.ok('вкладка предлагается', card.indexOf('data-a="model-side" data-s="part"') >= 0)
 
@@ -57,7 +59,6 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
 {
   t.section('Куда открывается')
   const p = panel()
-  click(p, { a: 'model-kind', k: 'door' })
   click(p, { a: 'model-side', s: 'part' })
   const id = doors(p)[0].id
   t.ok('по умолчанию — в сторону конца, петли на первом откосе',
@@ -75,7 +76,6 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
 {
   t.section('Добавить и убрать')
   const p = panel()
-  click(p, { a: 'model-kind', k: 'door' })
   click(p, { a: 'model-side', s: 'part' })
   // Переключаемся на ВТОРУЮ перегородку и ставим дверь туда.
   const second = p.q('specSheets[0].model.rooms[1].id')
@@ -98,7 +98,6 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   t.section('Развёртка')
   const p = panel()
   p.run('modelView="elev";')
-  click(p, { a: 'model-kind', k: 'door' })
   click(p, { a: 'model-side', s: 'part' })
   // Развёртка — вид на стену коробки изнутри, перегородка стоит поперёк и в него
   // не попадает. Молча показать чужую стену было бы хуже, чем вернуть план.
@@ -113,7 +112,7 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
 {
   t.section('Когда перегородок нет')
   const p = panel()
-  p.run('specSheets[0].model=emptyModel("40hc");specSheets[0].model.rooms[0].id="one";modelKind="door";modelSide="part";')
+  p.run('specSheets[0].model=emptyModel("40hc");specSheets[0].model.rooms[0].id="one";modelSide="part";')
   const view = p.run('specModelHtml(specSheets[0])')
   t.ok('честно говорим, что ставить некуда', /Перегородок в модели нет/.test(view))
   t.ok('кнопок «добавить проём» не показываем', view.indexOf('data-a="model-op-add"') < 0)
@@ -134,15 +133,44 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   t.ok('имя помещения правится прямо там', ov.indexOf('data-a="model-room-name"') >= 0)
   t.ok('числа настоящие', /25,52/.test(ov), 'нет общей площади пола')
 
-  // Инструмент «Окна» показывает СВОИ изделия — двери из этого списка убраны.
-  click(p, { a: 'model-tool', k: 'win' })
+  // Боевой редактор остался прежним: один инструмент «Проём» и общий ряд изделий.
+  t.ok('у боевого листа инструмент один', /data-a="model-tool" data-k="op"/.test(ov))
+  t.ok('и окон с дверями врозь в нём нет',
+    ov.indexOf('data-a="model-tool" data-k="win"') < 0 && ov.indexOf('data-a="model-tool" data-k="door"') < 0)
+  click(p, { a: 'model-tool', k: 'op' })
   const ops = p.run('modelFullOverlay()')
-  t.ok('свои изделия предлагаются', ops.indexOf('data-a="model-place-type"') >= 0)
+  t.ok('изделия предлагаются одним рядом', ops.indexOf('data-a="model-place-type"') >= 0)
   t.ok('в нём есть окно с чертежа', /Окно 1500×2100/.test(ops))
-  t.ok('а входной двери в окнах нет', ops.indexOf('Дверь входная 1000×2100') < 0)
+  t.ok('и дверь тоже — список общий', /Дверь входная 1000×2100/.test(ops))
+  t.ok('вкладок «Мои изделия / Каталог» в боевом нет', ops.indexOf('data-a="model-place-tab"') < 0)
+
+  // Двинули перегородку — площади в панели поехали следом.
+  const before = p.q('modelAreas(specSheets[0].model, winTypes).rooms[0].floor')
+  p.run('specSheets[0].model=moveBoundary(specSheets[0].model,0,500);')
+  const after = p.q('modelAreas(specSheets[0].model, winTypes).rooms[0].floor')
+  t.ok('перенос границы меняет площадь', after > before, before + ' -> ' + after)
+  t.ok('и панель показывает новое число', p.run('modelFullOverlay()').indexOf(String(after).replace('.', ',')) >= 0,
+    String(after))
+}
+
+// ── 6б. Опытный раздел: окна и двери врозь, со своим каталогом ───────────────
+// «Спецификация 2» обкатывает разделение на своих листах: у окна и двери разные
+// списки изделий, разные стены и свой каталог поставщика с мини-картинками.
+{
+  t.section('Опытный редактор: окна и двери')
+  const p = lab()
+  const ov = p.run('modelFullOverlay()')
+  t.ok('инструментов два', /data-a="model-tool" data-k="win"/.test(ov) && /data-a="model-tool" data-k="door"/.test(ov))
+  t.ok('и общего «Проёма» больше нет', ov.indexOf('data-a="model-tool" data-k="op"') < 0)
+
+  click(p, { a: 'model-tool', k: 'win' })
+  const wins = p.run('modelFullOverlay()')
+  t.ok('свои изделия предлагаются', wins.indexOf('data-a="model-place-type"') >= 0)
+  t.ok('в нём есть окно с чертежа', /Окно 1500×2100/.test(wins))
+  t.ok('а входной двери в окнах нет', wins.indexOf('Дверь входная 1000×2100') < 0)
   t.ok('вид переключился на окна', p.q('modelKind') === 'win')
 
-  // ...и вторая вкладка — каталог поставщика, с картинкой у каждого изделия.
+  // Вторая вкладка — каталог поставщика, с картинкой у каждого изделия.
   click(p, { a: 'model-place-tab', v: 'cat' })
   const cat = p.run('modelFullOverlay()')
   t.ok('каталог предлагается', cat.indexOf('data-a="wt-cat-add"') >= 0)
@@ -155,16 +183,21 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   const dcat = p.run('modelFullOverlay()')
   t.ok('в дверях — двери', /Дверь входная 1000×2100/.test(dcat) && /Дверь межкомнатная 700×2050/.test(dcat))
   t.ok('и ни одного окна', dcat.indexOf('Витраж 2160×2390') < 0)
-  click(p, { a: 'model-tool', k: 'win' })
-  click(p, { a: 'model-place-tab', v: 'mine' })
 
-  // Двинули перегородку — площади в панели поехали следом.
-  const before = p.q('modelAreas(specSheets[0].model, winTypes).rooms[0].floor')
-  p.run('specSheets[0].model=moveBoundary(specSheets[0].model,0,500);')
-  const after = p.q('modelAreas(specSheets[0].model, winTypes).rooms[0].floor')
-  t.ok('перенос границы меняет площадь', after > before, before + ' -> ' + after)
-  t.ok('и панель показывает новое число', p.run('modelFullOverlay()').indexOf(String(after).replace('.', ',')) >= 0,
-    String(after))
+  // Карточка листа следует за инструментом: вид первой вкладкой, перегородки
+  // только у дверей, счётчики врозь.
+  const card = p.run('specModelHtml(specSheet(specOpenId))')
+  t.ok('вид — первая вкладка', /data-a="model-kind" data-k="win"/.test(card) && /data-a="model-kind" data-k="door"/.test(card))
+  t.ok('у дверей есть перегородки', card.indexOf('data-a="model-side" data-s="part"') >= 0)
+  click(p, { a: 'model-kind', k: 'win' })
+  const wcard = p.run('specModelHtml(specSheet(specOpenId))')
+  t.ok('у окон перегородок нет', wcard.indexOf('data-a="model-side" data-s="part"') < 0)
+  t.ok('и счётчик разведён по видам', /ОКОН/.test(wcard) && /ДВЕРЕЙ/.test(wcard) && wcard.indexOf('ПРОЁМОВ') < 0)
+
+  // А боевая карточка этих вкладок не знает.
+  const live = p.run('specModelHtml(specSheets[0])')
+  t.ok('боевая карточка прежняя',
+    live.indexOf('data-a="model-kind"') < 0 && /ПРОЁМОВ/.test(live) && /ОКНА И ДВЕРИ/.test(live))
 }
 
 // ── 7. Панель — это ещё и управление ────────────────────────────────────────
@@ -320,34 +353,35 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   t.ok('переименование историю не засоряет', /data-a="model-undo" disabled/.test(p.run('modelFullOverlay()')))
 }
 
-// ── 11. Полотно межкомнатной двери заводится из каталога ─────────────────────
-// Лист «из прошлого» такого изделия не знает: в своих изделиях его нет, и поставить
-// дверь между комнатами нечем. Каталог поставщика лежит соседней вкладкой того же
-// инструмента — уходить за одной строкой справочника в карточку не нужно.
+// ── 11. Полотно межкомнатной двери заводится из редактора ────────────────────
+// Лист «из прошлого» такого изделия не знает: в ряду изделий его нет, и поставить
+// дверь между комнатами нечем. Уходить за одной строкой справочника в карточку —
+// это выйти из редактора посреди работы, поэтому полотно заводится кнопкой рядом.
 {
   t.section('Завести межкомнатное полотно')
   const p = panel()
   p.run('specSheets[0].model.openings=specSheets[0].model.openings.filter(function(o){return o.side!=="part";});' +
     'winTypes=winTypes.filter(function(t){return !(t.kind==="door"&&t.w===700);});modelSync(specSheets[0]);')
   click(p, { a: 'model-full' })
-  click(p, { a: 'model-tool', k: 'door' })
-  click(p, { a: 'model-place-tab', v: 'cat' })
+  click(p, { a: 'model-tool', k: 'op' })
   const bar = p.run('modelFullOverlay()')
-  t.ok('каталог дверей предлагает полотно', /data-a="wt-cat-add" data-k="inner-700x2050"/.test(bar))
+  t.ok('кнопка «завести полотно» предлагается', /data-a="wt-cat-add" data-k="inner-700x2050"/.test(bar))
 
   click(p, { a: 'wt-cat-add', k: 'inner-700x2050' })
   const d = p.q('winTypes.filter(function(t){return t.kind==="door"&&t.w===700;})')
   t.ok('полотно заведено 700×2050', d.length === 1 && d[0].h === 2050, JSON.stringify(d))
   t.ok('цена нулевая — её ставит человек', d[0].cost === 0, String(d[0].cost))
-  t.ok('и оно сразу выбрано для установки', p.q('modelPlace.door') === d[0].id)
-  t.ok('инструмент остался «Двери»', p.q('modelTool') === 'door')
+  t.ok('и оно сразу выбрано для установки', p.q('modelPlaceType') === d[0].id)
+  t.ok('инструмент — «Проём»', p.q('modelTool') === 'op')
 
-  // Второй тап по той же карточке дубля не заводит: то же изделие двумя строками
-  // развело бы по двум ценам один и тот же заказ.
+  // Второй тап дубля не заводит: то же изделие двумя строками развело бы по двум
+  // ценам один и тот же заказ, поэтому кнопка и пропадает.
+  t.ok('второй раз кнопка не предлагается',
+    p.run('modelFullOverlay()').indexOf('data-k="inner-700x2050"') < 0)
+  click(p, { a: 'wt-new' })
   click(p, { a: 'wt-cat-add', k: 'inner-700x2050' })
-  t.ok('второй тап дубля не заводит',
+  t.ok('и повтором дубля не завести',
     p.q('winTypes.filter(function(t){return t.kind==="door"&&t.w===700;}).length') === 1)
-  t.ok('и карточка помечена как заведённая', /в справочнике/.test(p.run('modelFullOverlay()')))
 
   // И этим полотном дверь ставится тапом по перегородке.
   const plan = p.run('modelPlanSvg(specSheets[0], true)')
