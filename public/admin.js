@@ -10785,6 +10785,7 @@ const SCH_OVER=130;        // выносная линия переходит р�
 // полочки высотой нельзя по той же причине — разводим стороной, куда уходит полка.
 const SCH_LEAD=300;
 const SCH_GAPTXT=90;       // просвет между цифрой и линией, над которой она стоит
+const SWING_GAP=240;       // просвет между дугой открывания и размерной линией
 
 // Ширина полки — под своё число: полка короче цифры выглядит обрывком.
 function schShelfW(t){ return Math.max(320, Math.round(String(t).length*0.62*SCH_SMALL)+140); }
@@ -10887,7 +10888,6 @@ function schemeParts(sc){
     reach.left=Math.max(reach.left, -t.x);
     reach.right=Math.max(reach.right, t.x-L);
   });
-  const SWING_GAP=240;   // просвет между дугой и размерной линией
   const first=function(side){ return SCH_FIRST+(reach[side]>0?Math.round(reach[side])+SWING_GAP:0); };
   const pad=function(list, side){
     if(!list.length)return 600+(reach[side]>0?Math.round(reach[side]):0);
@@ -10969,9 +10969,17 @@ function schemeParts(sc){
   // Цепочки дверей в перегородках стоят у своей перегородки, внутри плана — и с той
   // её стороны, где БОЛЬШЕ места. В санузле шириной два метра цепочка ложится
   // поверх его же названия, а в соседней гостиной ей просторно.
+  //
+  // Если с этой же стороны распахивается створка, цепочку отодвигаем ЗА размах
+  // двери: дуга, перечёркивающая размерную линию, — та же каша, что и дверь поверх
+  // габаритной цепочки, только внутри плана.
   sc.dims.filter(function(d){return d.side==="part";}).forEach(function(ch){
-    if(chainSide[ch.at]>0) g+=schChainV(ch, ch.at+th+260, -1, null, 1);
-    else g+=schChainV(ch, ch.at-260, 1, null, 1);
+    const side=chainSide[ch.at]>0?1:-1;
+    const door=sc.openings.find(function(o){ return o.side==="part"&&o.x===ch.at&&o.swing; });
+    const swingSide=door?((door.swing.tip.x>door.x)?1:-1):0;
+    const clear=(swingSide===side&&door)?(Number(door.width)||0)+SWING_GAP:0;
+    if(side>0) g+=schChainV(ch, ch.at+th+260+clear, -1, null, 1);
+    else g+=schChainV(ch, ch.at-260-clear, 1, null, 1);
   });
   // Размерные цепочки. Выносные линии идут от самой коробки — так на чертеже
   // видно, что именно измерено, а не «числа где-то сверху».

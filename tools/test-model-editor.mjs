@@ -699,4 +699,32 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
     p.q('modelYaw') + ' / ' + p.q('modelTilt'))
 }
 
+// ── 18. Створка не лезет на размеры ──────────────────────────────────────────
+// Дуга открывания, перечёркивающая размерную линию, — та же каша, что дверь поверх
+// габаритной цепочки, только внутри плана. Цепочка двери в перегородке обязана
+// стоять ЗА размахом створки, если распахивается в ту же сторону.
+{
+  t.section('Цепочка и створка')
+  const p = panel()
+  const plan = () => p.run('modelSchemeSvg(specSheets[0].model, winTypes)')
+  const doors = () => p.q('modelScheme(specSheets[0].model, winTypes).openings.filter(function(o){return o.side==="part"&&o.swing;})')
+  // Вертикальные размерные линии внутри плана — те самые цепочки дверей.
+  const chainXs = (svg) => [...svg.matchAll(/<line x1="([-\d.]+)" y1="[-\d.]+" x2="([-\d.]+)"[^>]*stroke-width="24"/g)]
+    .filter((m) => m[1] === m[2]).map((m) => Number(m[1]))
+
+  const crosses = (svg) => doors().some((d) => {
+    const lo = Math.min(d.x, d.swing.tip.x), hi = Math.max(d.x + d.w, d.swing.tip.x)
+    return chainXs(svg).some((x) => x > lo && x < hi)
+  })
+  t.ok('дверь есть и она распахнута', doors().length > 0, String(doors().length))
+  t.ok('размерная линия не проходит сквозь створку', !crosses(plan()),
+    JSON.stringify(chainXs(plan())) + ' против ' + JSON.stringify(doors().map((d) => [d.x, d.swing.tip.x])))
+
+  // Разворачиваем створку в другую сторону — цепочка обязана уступить снова.
+  const id = doors()[0].id
+  click(p, { a: 'model-op-into', id: id })
+  t.ok('после разворота створки — тоже не проходит', !crosses(plan()),
+    JSON.stringify(chainXs(plan())) + ' против ' + JSON.stringify(doors().map((d) => [d.x, d.swing.tip.x])))
+}
+
 t.done()
