@@ -15,12 +15,19 @@ const OUT = path.join(ROOT, 'tools', '.cache', 'admin.test.cjs')
 
 // Бандл собираем один раз на процесс: esbuild быстрый, но десяток вызовов подряд
 // заметен, а исходник за время прогона не меняется.
+//
+// Пишем в файл СВОЕГО процесса и переносим на общий: наборы гоняются каждый своим
+// процессом, и запись esbuild прямо в общий файл не атомарна — сосед успевал
+// прочитать половину бандла и падал набором, которого никто не ломал. Перенос
+// атомарен: читающий видит либо прошлый файл целиком, либо новый целиком.
 let bundle = null
 function bundled() {
   if (bundle) return bundle
   fs.mkdirSync(path.dirname(OUT), { recursive: true })
+  const tmp = OUT + '.' + process.pid
   execFileSync('npx', ['esbuild', path.join(ROOT, 'public', 'admin.js'), '--target=es2017', '--bundle',
-    '--format=cjs', '--outfile=' + OUT, '--allow-overwrite'], { stdio: ['ignore', 'ignore', 'inherit'] })
+    '--format=cjs', '--outfile=' + tmp, '--allow-overwrite'], { stdio: ['ignore', 'ignore', 'inherit'] })
+  fs.renameSync(tmp, OUT)
   bundle = fs.readFileSync(OUT, 'utf8')
   return bundle
 }
