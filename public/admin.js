@@ -4352,6 +4352,14 @@ function navMeta(k,allTabs){
   const sp=nm.indexOf(" ");
   return sp>0?{icon:nm.slice(0,sp),label:nm.slice(sp+1)}:{icon:"•",label:nm};
 }
+// Счётчик «сколько ждёт меня» — красный и ЯРКИЙ: это то, ради чего в раздел
+// заходят. Цвет один на ленту, панель и плитки: разными оттенками одно и то же
+// число читается как разные состояния.
+const BADGE_RED="#ff3b30";
+function navBadgeHtml(n, pos){
+  return '<span style="position:absolute;'+pos+';background:'+BADGE_RED+';color:#fff;border-radius:10px;padding:1px 6px;font-size:10px;font-weight:800;line-height:1.5;'+
+    'box-shadow:0 0 0 2px #fff, 0 1px 3px rgba(255,59,48,.45)">'+n+'</span>';
+}
 // Сколько внимания ждёт раздел. Один источник и для ленты, и для панели, и для плиток.
 function tabBadgeCount(k){
   if(k==="crm")return crmUnansweredCount()||0;
@@ -4377,7 +4385,7 @@ function moreSheet(allTabs,accessible,picked){
     return '<button '+act+' style="position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:12px 6px;border-radius:13px;cursor:'+(moreEdit?"grab":"pointer")+';border:1.5px solid '+bd+';background:'+bg+';min-height:76px;width:100%">'+
       '<span style="font-size:21px;line-height:1">'+m.icon+'</span>'+
       '<span style="font-size:10.5px;font-weight:'+(cur&&!moreEdit?700:600)+';color:'+(cur&&!moreEdit?"#2980b9":"#5a7080")+';text-align:center;line-height:1.25">'+esc(m.label)+'</span>'+
-      (badge&&!moreEdit?'<span style="position:absolute;top:6px;right:6px;background:#c0392b;color:#fff;border-radius:9px;padding:1px 6px;font-size:10px;font-weight:800">'+badge+'</span>':"")+
+      (badge&&!moreEdit?navBadgeHtml(badge, "top:6px;right:6px"):"")+
     '</button>';
   };
 
@@ -4730,10 +4738,15 @@ function page(){
   <div style="max-width:480px;margin:0 auto;background:#ffffff;border-top:1px solid #e2e8f0;display:flex;padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px));pointer-events:auto;box-shadow:0 -1px 10px rgba(13,27,46,0.06)">
   ${_bottomItems.map(function(it){
     const k=it[0],label=it[1],icon=it[2],on=tab===k;
+    // Счётчик стоит РЯДОМ с иконкой, а не внутри неё: у неактивной вкладки иконка
+    // приглушена фильтром, а `filter` красит и потомков — цифра гасла вместе с ней,
+    // хотя она и есть причина сюда зайти.
+    const nb=tabBadgeCount(k);
     return '<button data-a="tab" data-k="'+k+'" style="flex:1;min-width:0;border:none;background:transparent;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 2px;-webkit-tap-highlight-color:transparent">'
-      +'<span style="position:relative;font-size:22px;line-height:1;transition:transform 0.12s;transform:scale('+(on?"1.06":"1")+');filter:'+(on?"none":"grayscale(45%) opacity(0.7)")+'">'+icon
-        +(k==="issues"&&issuesMineOpen().length?'<span style="position:absolute;top:-3px;left:14px;background:#c0392b;color:#fff;border-radius:9px;padding:0 5px;font-size:10px;font-weight:800;line-height:1.5">'+issuesMineOpen().length+'</span>':'')
-        +'</span>'
+      +'<span style="position:relative;display:inline-flex;line-height:1">'
+        +'<span style="font-size:22px;line-height:1;transition:transform 0.12s;transform:scale('+(on?"1.06":"1")+');filter:'+(on?"none":"grayscale(45%) opacity(0.7)")+'">'+icon+'</span>'
+        +(nb?navBadgeHtml(nb, "top:-5px;left:13px"):'')
+      +'</span>'
       +'<span style="font-size:10px;font-weight:'+(on?700:500)+';color:'+(on?"#2980b9":"#8a97a6")+';letter-spacing:0.1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">'+esc(label)+'</span>'
       +'</button>';
   }).join("")}
@@ -4772,7 +4785,7 @@ ${showPinChange?`<div style="background:#fff;border-bottom:1px solid #eef2f7;pad
     // Бейдж считает ТОЛЬКО адресованное мне и незакрытое: если он горит всегда,
     // его перестают замечать за неделю.
     const _b=tabBadgeCount(k);
-    const _badge=_b?`<span style="margin-left:6px;background:${k==="crm"?"#e74c3c":"#c0392b"};color:#fff;border-radius:9px;padding:1px 6px;font-size:10px;font-weight:800">${_b}</span>`:"";
+    const _badge=_b?`<span style="margin-left:6px;background:${BADGE_RED};color:#fff;border-radius:9px;padding:1px 6px;font-size:10px;font-weight:800">${_b}</span>`:"";
     const tabBtn=`<button data-a="tab" data-k="${k}" style="flex-shrink:0;padding:9px 14px;border:none;border-radius:10px;background:${active?"#2980b9":"#f0f4f8"};cursor:pointer;font-size:12.5px;font-weight:${active?700:600};color:${active?"#fff":"#5a7080"};white-space:nowrap;box-shadow:${active?"0 2px 8px rgba(41,128,185,0.3)":"none"};transition:all 0.15s;letter-spacing:0.2px">${n}${_badge}</button>`;
     return isAdmin
       ? `<div draggable="true" data-a="tab-drag" data-k="${k}" data-i="${i}" style="flex-shrink:0;cursor:grab">${tabBtn}</div>`
