@@ -181,8 +181,15 @@ const sum = (a) => a.reduce((x, y) => x + y, 0)
   const { model, winTypes } = presetModel('c12-san-liv-bed', [], ids())
   const sc = modelScheme(model, winTypes)
   const flat = JSON.stringify(sc)
-  ok('площадей нет', flat.indexOf('"area"') < 0 && flat.indexOf('"floorArea"') < 0)
   ok('раскладки (розетки, мебель) нет', flat.indexOf('"pts"') < 0)
+  // Площадь у подписи ЕСТЬ: по ней рисуется план для клиента, который меряет дом
+  // метрами, а не цепочками. На рабочем чертеже её по-прежнему не печатают —
+  // это сторожит `test-spec2-tab` на самом SVG.
+  ok('площадь есть у имени помещения',
+    sc.labels.every((x) => typeof x.area === 'number' && x.area > 0), JSON.stringify(sc.labels[0]))
+  ok('и границы комнаты — тоже',
+    sc.labels.every((x) => x.x0 < x.x1 && x.x >= x.x0 && x.x <= x.x1))
+  ok('общей площади дома на схеме нет', flat.indexOf('"floorArea"') < 0)
   // Имена помещений НУЖНЫ: без них чертёж читают, водя пальцем по цепочкам.
   ok('имена помещений на месте',
     modelRooms(model).every((r) => sc.labels.some((x) => x.name === r.name)),

@@ -2110,6 +2110,7 @@ let modelPlaceTab="mine";  // mine | cat — свои изделия или ка
 let modelPlaceType="";     // боевой инструмент «Проём»: одно изделие на оба вида
 let modelZoom=1;           // 1 = вписать по ширине
 let schemeZoom=0;          // схема плана крупно: 0 — закрыта, иначе кратность
+let schemeView="dim";      // чей чертёж: dim — рабочий с размерами, plain — клиенту
 let modelStageTab=0;       // 0 = все этапы
 let specSheets=[];
 // «Спецификация 2» — опытный раздел (см. src/spec2.js). Листы держим ОТДЕЛЬНО: по
@@ -10811,6 +10812,27 @@ function schText(x,y,t,size,anchor,rot){
 // ПОЛОЧКУ: наклонная выноска от размерной линии, горизонтальная полка и цифра над
 // ней. Читается всегда горизонтально и ни на что не налезает — в отличие от
 // повёрнутого на 90° числа, которым это место занимали раньше.
+// Марка проёма (Д-1 и габарит под ней). Мельче имени помещения: это подпись к
+// проёму, а не заголовок комнаты, и в крупном кегле она спорила с именем за одно
+// поле — «ПОМЕЩЕНИЕ» ложилось прямо на «Д-2 700×2050».
+const SCH_MARK=150, SCH_MARK_SUB=125;
+// Коробка, которую займёт текст. Ширину буквы SVG заранее не отдаёт, поэтому берём
+// долю от кегля: для проверки «не налезло ли» этой точности хватает, а замер в
+// браузере потребовал бы уже нарисованного чертежа — то есть был бы поздно.
+function schTextBox(x, y, str, size, anchor, vert){
+  const w=String(str||"").length*size*0.62, h=size*1.15;
+  // Повёрнутый текст занимает те же буквы, но поперёк: ширина и высота меняются.
+  const bw=vert?h:w, bh=vert?w:h;
+  const x0=vert?(x-bw/2):(anchor==="start"?x:(anchor==="end"?x-bw:x-bw/2));
+  const y0=vert?(y-bh/2):(y-size*0.8);
+  return { x0:x0, y0:y0, x1:x0+bw, y1:y0+bh };
+}
+// Пересекаются ли две коробки. Зазор — чтобы подписи не только не налезали, но и
+// не липли друг к другу: вплотную стоящие «ПОМЕЩЕНИЕ» и «Д-2» читаются как одна.
+function schHit(a, b, gap){
+  const G=(gap==null)?60:gap;
+  return !(a.x1+G<b.x0 || b.x1+G<a.x0 || a.y1+G<b.y0 || b.y1+G<a.y0);
+}
 const SCH_NARROW=900;      // уже — подпись уходит на полочку
 const SCH_TXT=215;         // высота цифры
 const SCH_SMALL=190;       // цифра на полочке
@@ -10903,7 +10925,15 @@ function schDoorSwing(op){
 // Чертёж как набор слоёв: разметка плюс поля, которые заняли размерные цепочки.
 // Отдаём это, а не готовый <svg>, потому что редактор рисует поверх ТОГО ЖЕ холста
 // свой слой ручек и обязан считать координаты в том же viewBox.
-function schemeParts(sc){
+// Один и тот же чертёж читают двое, и читают по-разному. Бригаде нужны размеры:
+// цепочки, марки проёмов, отметки — по ним размечают и заказывают. Клиенту нужен
+// ответ на другой вопрос — «какие комнаты и сколько метров»; цепочки ему шум, в
+// котором тонет имя комнаты. Поэтому вид — параметр чертежа, а не второй чертёж:
+// геометрия одна, спорить между собой двум копиям нечем.
+//   "dim"   — рабочий: размеры и марки
+//   "plain" — для клиента: имя помещения и площадь пола
+function schemeParts(sc, view){
+  const plain=(view==="plain");
   const L=sc.l, W=sc.w;
   const byS=function(sd){ return sc.dims.filter(function(d){return d.side===sd;}); };
   const top=byS("top"), bottom=byS("bottom"), left=byS("left"), right=byS("right");
@@ -10960,6 +10990,11 @@ function schemeParts(sc){
     chainSide[at]=(swing&&room(-swing)>=CHAIN_ROOM)?(-swing):(((hi-(at+th))>(at-lo))?1:-1);
   });
 
+  // Всё, что уже занято подписями: марки проёмов и цепочки внутри плана. Имя
+  // помещения ставится последним и обходит занятое — двигать марку нельзя, она
+  // принадлежит своему проёму, а имени всё равно, где внутри своей комнаты стоять.
+  const busy=[];
+
   let g='<defs><pattern id="sch-hatch" width="150" height="150" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">'+
     '<rect width="150" height="150" fill="#eef1f5"/><line x1="0" y1="0" x2="0" y2="150" stroke="#9aabbf" stroke-width="20"/></pattern></defs>';
 
@@ -10986,7 +11021,9 @@ function schemeParts(sc){
         ? '<line x1="'+op.x+'" y1="'+cy0+'" x2="'+(op.x+op.w)+'" y2="'+cy0+'" stroke="#0d1b2e" stroke-width="16"/>'
         : '<line x1="'+cx0+'" y1="'+op.y+'" x2="'+cx0+'" y2="'+(op.y+op.h)+'" stroke="#0d1b2e" stroke-width="16"/>';
     }
-    // Марка и размер — как на чертеже: Д-1 сверху, габарит проёма под ней.
+    // Марка и размер — как на чертеже: Д-1 сверху, габарит проёма под ней. Марка
+    // мельче имени помещения: это подпись К ПРОЁМУ, а не заголовок комнаты, и
+    // крупной она спорила с именем за одно и то же поле внутри стен.
     const cx=op.x+op.w/2, cy=op.y+op.h/2;
     const part=(op.side==="part");
     const vert=(op.side==="w"||op.side==="e");
@@ -10997,19 +11034,91 @@ function schemeParts(sc){
     const rot=vert?' transform="rotate(-90 '+lx+' '+ly+')"':'';
     const anch=part?(dirX>0?"start":"end"):"middle";
     const halo=' stroke="#fff" stroke-width="70" paint-order="stroke" stroke-linejoin="round"';
-    g+='<text x="'+lx+'" y="'+ly+'" font-size="180" fill="#0d1b2e" font-weight="700" text-anchor="'+anch+'"'+halo+rot+'>'+esc(op.mark)+'</text>'+
-      '<text x="'+(vert?lx+200:lx)+'" y="'+(vert?ly:ly+195)+'" font-size="150" fill="#5a7a9a" text-anchor="'+anch+'"'+halo+
+    const sub=op.width+"×"+op.height+(op.sill?" · h"+op.sill:"");
+    if(plain){ g+='</g>'; return; }   // клиенту марка ни о чём не говорит
+    // Место, которое марка занимает на чертеже: имя помещения обязано его обойти,
+    // а посчитать его больше негде — ширину текста SVG сам не отдаёт.
+    busy.push(schTextBox(lx, ly, op.mark, SCH_MARK, anch, vert)); 
+    busy.push(schTextBox(vert?lx+200:lx, vert?ly:ly+195, sub, SCH_MARK_SUB, anch, vert));
+    g+='<text x="'+lx+'" y="'+ly+'" font-size="'+SCH_MARK+'" fill="#0d1b2e" font-weight="700" text-anchor="'+anch+'"'+halo+rot+'>'+esc(op.mark)+'</text>'+
+      '<text x="'+(vert?lx+200:lx)+'" y="'+(vert?ly:ly+195)+'" font-size="'+SCH_MARK_SUB+'" fill="#5a7a9a" text-anchor="'+anch+'"'+halo+
       (vert?' transform="rotate(-90 '+(lx+200)+' '+ly+')"':'')+'>'+
-      esc(op.width+"×"+op.height+(op.sill?" · h"+op.sill:""))+'</text>';
+      esc(sub)+'</text>';
     g+='</g>';
   });
+  // Цепочка двери в перегородке стоит ВНУТРИ плана, вдоль своей перегородки, и
+  // занимает всю высоту комнаты. Её место считаем до имён: подвинуть имя по высоте
+  // против такой цепочки нельзя — только вдоль комнаты, и для этого её надо знать.
+  const innerChains=plain?[]:sc.dims.filter(function(d){return d.side==="part";}).map(function(ch){
+    const side=chainSide[ch.at]>0?1:-1;
+    const door=sc.openings.find(function(o){ return o.side==="part"&&o.x===ch.at&&o.swing; });
+    const swingSide=door?((door.swing.tip.x>door.x)?1:-1):0;
+    const clear=(swingSide===side&&door)?(Number(door.width)||0)+SWING_GAP:0;
+    const cx=(side>0)?(ch.at+th+260+clear):(ch.at-260-clear);
+    return { ch:ch, side:side, cx:cx };
+  });
+  innerChains.forEach(function(c){
+    // Занимают место не «цепочка целиком», а её ЦИФРЫ: между полочками остаются
+    // просветы, и имени комнаты их хватает. Полосой во всю высоту мы бы закрыли
+    // всю комнату и имя оставалось бы там, где мешает.
+    const dir=c.side>0?-1:1;
+    const ticks=c.ch.ticks, mid=(ticks[0]+ticks[ticks.length-1])/2;
+    busy.push({ x0:c.cx-150, y0:ticks[0], x1:c.cx+150, y1:ticks[ticks.length-1] });
+    c.ch.segs.forEach(function(len,i){
+      const cy=(ticks[i]+ticks[i+1])/2;
+      if(len<SCH_NARROW){
+        // Узкий отрезок уводит число на полочку — она уходит от перегородки в
+        // комнату, и это самое дальнее, куда цепочка залезает.
+        const kx=c.cx-dir*SCH_LEAD, ex=kx-dir*schShelfW(len);
+        const ky=cy+Math.round(SCH_LEAD*0.55)*((cy<mid)?1:-1);
+        busy.push(schTextBox((kx+ex)/2, ky-SCH_GAPTXT, String(len), SCH_SMALL, "middle", false));
+      } else {
+        busy.push(schTextBox(c.cx-dir*SCH_GAPTXT, cy, String(len), SCH_TXT, "middle", true));
+      }
+    });
+  });
   // Имена помещений: без них чертёж читают, водя пальцем по цепочкам.
+  //
+  // Имя УСТУПАЕТ марке проёма: марка привязана к своему проёму и уехать от него не
+  // может, а имени всё равно, на какой высоте комнаты стоять. Наложенные друг на
+  // друга «ПОМЕЩЕНИЕ» и «Д-2 700×2050» не читаются оба сразу — и это не мелочь
+  // вёрстки: по марке на чертеже находят изделие в спецификации.
   sc.labels.forEach(function(r){
     // Прямоугольная комната подписывается на привычной трети высоты, непрямоугольная —
     // в своей точке: только там гарантированно её собственный пол.
-    const ly=r.rect?(sc.finish+(sc.w-sc.finish*2)*0.34):r.y;
-    g+='<text x="'+r.x+'" y="'+ly+'" font-size="190" fill="#9aabbf" font-weight="700" text-anchor="middle" stroke="#fff" stroke-width="80" paint-order="stroke" stroke-linejoin="round">'+
-      esc(String(r.name||"").toUpperCase())+'</text>';
+    const inner=sc.w-sc.finish*2;
+    const name=String(r.name||"").toUpperCase();
+    const at=function(k){ return sc.finish+inner*k; };
+    const size=plain?210:190;
+    let lx=r.x, ly=r.rect?(plain?at(0.46):at(0.34)):r.y;
+    // В клиентском виде подписи спорить не с кем: ни марок, ни цепочек на плане нет.
+    // В рабочем имя ищет свободное место — сперва по высоте комнаты, потом вдоль неё,
+    // не выходя за собственные стены: имя, уехавшее в соседнюю комнату, хуже наложения.
+    if(r.rect&&!plain){
+      const half=schTextBox(0,0,name,size,"middle",false);
+      const w2=(half.x1-half.x0)/2;
+      const lo=(r.x0==null?r.x:r.x0)+w2+120, hi=(r.x1==null?r.x:r.x1)-w2-120;
+      const xs=[r.x].concat(hi>lo?[Math.max(lo,Math.min(hi,r.x-900)), Math.max(lo,Math.min(hi,r.x+900)), lo, hi]:[]);
+      const ys=[0.34,0.62,0.20,0.78,0.46].map(at);
+      // Сначала ищем место с запасом — подписи, стоящие впритык, читаются как одна.
+      // Не нашлось ни одного просторного — берём хотя бы непересекающееся: тесно
+      // лучше, чем поверх цифры.
+      let done=false;
+      [260,60].forEach(function(gap){ if(done)return;
+        ys.forEach(function(y){ if(done)return; xs.forEach(function(x){
+          if(done)return;
+          const box=schTextBox(x, y, name, size, "middle", false);
+          if(!busy.some(function(b){ return schHit(b, box, gap); })){ lx=x; ly=y; done=true; }
+        }); });
+      });
+    }
+    g+='<text x="'+lx+'" y="'+ly+'" font-size="'+size+'" fill="'+(plain?"#5a7a9a":"#9aabbf")+'" font-weight="700" text-anchor="middle" stroke="#fff" stroke-width="80" paint-order="stroke" stroke-linejoin="round">'+
+      esc(name)+'</text>';
+    // Площадь пола — вместо размеров: клиент меряет дом метрами, а не цепочками.
+    if(plain&&r.area!=null){
+      g+='<text x="'+lx+'" y="'+(ly+300)+'" font-size="185" fill="#8e44ad" font-weight="700" text-anchor="middle" stroke="#fff" stroke-width="80" paint-order="stroke" stroke-linejoin="round">'+
+        esc(numRu(r.area))+' м²</text>';
+    }
   });
   // Цепочки дверей в перегородках стоят у своей перегородки, внутри плана — и с той
   // её стороны, где БОЛЬШЕ места. В санузле шириной два метра цепочка ложится
@@ -11018,19 +11127,15 @@ function schemeParts(sc){
   // Если с этой же стороны распахивается створка, цепочку отодвигаем ЗА размах
   // двери: дуга, перечёркивающая размерную линию, — та же каша, что и дверь поверх
   // габаритной цепочки, только внутри плана.
-  sc.dims.filter(function(d){return d.side==="part";}).forEach(function(ch){
-    const side=chainSide[ch.at]>0?1:-1;
-    const door=sc.openings.find(function(o){ return o.side==="part"&&o.x===ch.at&&o.swing; });
-    const swingSide=door?((door.swing.tip.x>door.x)?1:-1):0;
-    const clear=(swingSide===side&&door)?(Number(door.width)||0)+SWING_GAP:0;
-    if(side>0) g+=schChainV(ch, ch.at+th+260+clear, -1, null, 1);
-    else g+=schChainV(ch, ch.at-260-clear, 1, null, 1);
+  innerChains.forEach(function(c){
+    g+=schChainV(c.ch, c.cx, c.side>0?-1:1, null, 1);
   });
   // Размерные цепочки. Выносные линии идут от самой коробки — так на чертеже
   // видно, что именно измерено, а не «числа где-то сверху».
   // `out` = +1: полка уходит от чертежа (у крайней цепочки там свободно);
   // −1: к чертежу (у внутренней снаружи стоит следующая цепочка).
   const outer=function(list,i){ return i===list.length-1?1:-1; };
+  if(plain)return { g:g, vb:(-pL)+" "+(-pT)+" "+(L+pL+pR)+" "+(W+pT+pB), vbw:(L+pL+pR) };
   // Выносные идут от коробки — но не сквозь створку: линия, перечёркнутая дугой,
   // и есть та самая некрасивая каша. На стороне с распахнутой дверью они начинаются
   // за самым дальним размахом, одинаково для всей стороны: вразнобой хуже, чем чуть
@@ -11048,8 +11153,8 @@ function schemeParts(sc){
 // На вкладке он МИНИАТЮРА (minW=0): 12-метровая схема, уезжающая вправо, читается
 // как поломка вёрстки, а не как чертёж — её листают вслепую и не видят целиком.
 // Разглядывают её в оверлее по тапу, там прокрутка уместна и есть чем увеличить.
-function modelSchemeSvg(model, types, minW){
-  const f=schemeParts(modelScheme(model, types));
+function modelSchemeSvg(model, types, minW, view){
+  const f=schemeParts(modelScheme(model, types), view);
   const mw=(minW==null)?560:(Number(minW)||0);
   return '<svg viewBox="'+f.vb+'" style="width:100%;'+(mw?'min-width:'+mw+'px;':'')+'height:auto;display:block;user-select:none">'+f.g+'</svg>';
 }
@@ -11062,6 +11167,23 @@ function modelSchemeSvg(model, types, minW){
 // Раздел правит ОДИН рабочий лист: модель живёт в снимке, а не в коде, иначе
 // править её можно было бы только правкой заготовки — и правка терялась бы у всех.
 function spec2Sheet(){ return (specSheets2||[])[0]||null; }
+
+// Два вида одного чертежа: рабочий с размерами и лист для клиента. Ни один не
+// «главнее» — это один дом, показанный тому, кто его читает.
+const SCHEME_VIEWS=[
+  ["dim",   "📐 Размеры",    "цепочки, марки проёмов — по ним размечают и заказывают"],
+  ["plain", "🏠 Планировка", "имена помещений и площадь пола — лист для клиента"],
+];
+function schemeViewMeta(){ return SCHEME_VIEWS.find(function(v){return v[0]===schemeView;})||SCHEME_VIEWS[0]; }
+function schemeViewTabs(){
+  return '<div style="display:flex;gap:5px;margin-bottom:8px">'+
+    SCHEME_VIEWS.map(function(v){
+      const on=schemeView===v[0];
+      return '<button data-a="spec2-scheme-view" data-v="'+v[0]+'" style="flex:1;border:1.5px solid '+(on?"#8e44ad":"#dde6f0")+';background:'+(on?"#8e44ad":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:8px;font-size:12px;font-weight:700;cursor:pointer">'+esc(v[1])+'</button>';
+    }).join("")+
+  '</div>'+
+  '<div style="font-size:10.5px;color:#9aabbf;line-height:1.45;margin-bottom:8px">'+esc(schemeViewMeta()[2])+'</div>';
+}
 
 // Схема крупно. Миниатюра на вкладке отвечает на вопрос «что это за дом», а
 // разглядывают чертёж здесь: оверлей выходит из колонки 480 px на весь экран, и
@@ -11082,11 +11204,21 @@ function spec2SchemeOverlay(){
       }).join("")+
       '<button data-a="spec2-scheme-close" style="padding:7px 14px;background:rgba(255,255,255,.12);border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:12px;font-weight:700;flex-shrink:0">Готово</button>'+
     '</div>'+
+    // Вид переключается и здесь: разглядывают чертёж крупно, и уходить за этим
+    // обратно на вкладку значит закрыть то, что разглядывал.
+    '<div style="display:flex;gap:6px;padding:8px 14px;border-bottom:1px solid rgba(255,255,255,.08);flex-shrink:0">'+
+      SCHEME_VIEWS.map(function(v){
+        const on=schemeView===v[0];
+        return '<button data-a="spec2-scheme-view" data-v="'+v[0]+'" style="border:1.5px solid '+(on?"#8e44ad":"rgba(255,255,255,.18)")+';background:'+(on?"#8e44ad":"transparent")+';color:#fff;border-radius:9px;padding:6px 12px;font-size:11.5px;font-weight:700;cursor:pointer">'+esc(v[1])+'</button>';
+      }).join("")+
+      '<span style="flex:1"></span>'+
+      '<span style="font-size:11px;color:#7f97ae;white-space:nowrap;align-self:center">'+esc(schemeViewMeta()[2])+'</span>'+
+    '</div>'+
     // 1× — чертёж целиком по ширине экрана, дальше он растёт и едет вбок. Белый лист
     // под ним: схема — это бумага, и на тёмном фоне тонкие линии теряются.
     '<div style="flex:1;min-height:0;overflow:auto;background:#f4f7fa;padding:16px">'+
       '<div style="width:'+(schemeZoom*100)+'%;min-width:100%">'+
-        modelSchemeSvg(built.model, built.winTypes, 0)+
+        modelSchemeSvg(built.model, built.winTypes, 0, schemeView)+
       '</div>'+
     '</div>';
 }
@@ -11112,8 +11244,11 @@ function tSpec2(){
     '</div>'+
     '<button data-a="spec2-edit" style="padding:9px 15px;background:#8e44ad;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700;flex-shrink:0">⛶ '+(sh?"Редактировать":"Открыть редактор")+'</button>'+
   '</div>';
-  h+='<div data-a="spec2-scheme" title="Открыть крупно" style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:12px;margin-bottom:9px;cursor:zoom-in">'+
-      modelSchemeSvg(built.model, built.winTypes, 0)+
+  // Один чертёж, два читателя: бригаде размеры, клиенту имена и метры. Вкладка
+  // выбирает, чей это сейчас лист, — второй чертёж заводить не надо, геометрия одна.
+  h+=schemeViewTabs()+
+    '<div data-a="spec2-scheme" title="Открыть крупно" style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:12px;margin-bottom:9px;cursor:zoom-in">'+
+      modelSchemeSvg(built.model, built.winTypes, 0, schemeView)+
       '<div style="font-size:10.5px;color:#9aabbf;text-align:center;margin-top:8px">тап — открыть крупно</div>'+
     '</div>';
   // Площади рядом со схемой: их считают по этому же чертежу, и держать их на
@@ -19629,6 +19764,7 @@ function bind(){
     else if(a==="spec2-scheme"){el.onclick=()=>{ schemeZoom=1; render(); };}
     else if(a==="spec2-scheme-zoom"){el.onclick=()=>{ schemeZoom=parseInt(el.dataset.z,10)||1; render(); };}
     else if(a==="spec2-scheme-close"){el.onclick=()=>{ schemeZoom=0; render(); };}
+    else if(a==="spec2-scheme-view"){el.onclick=()=>{ schemeView=(el.dataset.v==="plain")?"plain":"dim"; render(); };}
     else if(a==="model-tool"){el.onclick=()=>{
       modelTool=el.dataset.k;
       if(modelTool==="op"&&!modelPlaceType&&winTypes.length)modelPlaceType=winTypes[0].id;

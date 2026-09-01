@@ -90,6 +90,74 @@ function create(p, preset) {
   t.ok('«Готово» закрывает', p.q('schemeZoom') === 0)
 }
 
+// ── 1в. Два вида одного чертежа ──────────────────────────────────────────────
+// Рабочему нужны размеры, клиенту — комнаты и метры. Это один дом, показанный
+// по-разному: вторая копия чертежа разошлась бы с первой на первой же правке.
+{
+  t.section('Размеры и планировка')
+  const p = panel()
+  t.ok('по умолчанию — рабочий вид', p.q('schemeView') === 'dim')
+  const dim = p.run('tSpec2()')
+  t.ok('вкладки предлагаются',
+    /data-a="spec2-scheme-view" data-v="dim"/.test(dim) && /data-a="spec2-scheme-view" data-v="plain"/.test(dim))
+  const dsvg = dim.slice(dim.indexOf('<svg'), dim.indexOf('</svg>') + 6)
+  t.ok('в рабочем есть цепочки и марки', /<text[^>]*>11952</.test(dsvg) && />Д-1</.test(dsvg))
+  t.ok('и нет площадей — это чертёж, а не план для клиента', dsvg.indexOf('м²') < 0)
+
+  const v = p.dom.node({ a: 'spec2-scheme-view', v: 'plain' }); p.run('bind();'); v.onclick()
+  t.ok('вид переключился', p.q('schemeView') === 'plain')
+  const pl = p.run('tSpec2()')
+  const psvg = pl.slice(pl.indexOf('<svg'), pl.indexOf('</svg>') + 6)
+  t.ok('у клиента имена помещений', /СПАЛЬНЯ/.test(psvg) && /КУХНЯ-ГОСТИНАЯ/.test(psvg))
+  t.ok('и площадь пола каждой', />14,08 м²</.test(psvg) && />7,04 м²</.test(psvg), psvg.slice(0, 0))
+  t.ok('размеров нет', psvg.indexOf('>11952<') < 0 && psvg.indexOf('>2200<') < 0)
+  t.ok('марок проёмов тоже нет', psvg.indexOf('>Д-1<') < 0 && psvg.indexOf('>О-1<') < 0)
+  // Сами окна и двери на плане остаются: клиент читает, где вход и куда открывается.
+  t.ok('но проёмы нарисованы', (psvg.match(/stroke-dasharray/g) || []).length > 0)
+}
+
+// ── 1г. Подписи не налезают друг на друга ────────────────────────────────────
+// Имя помещения и марка проёма спорят за одно поле внутри стен. Наложенные, они не
+// читаются оба сразу — а по марке на чертеже находят изделие в спецификации.
+{
+  t.section('Подписи не сталкиваются')
+  const p = panel()
+  // Комната с длинным именем и дверью в перегородке — тот самый случай.
+  p.run('specSheets2=[];')
+  const btn = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); btn.onclick()
+  p.run('specSheets2[0].model.rooms[2].name="Помещение";modelSync(specSheets2[0]);')
+  const svg = p.run('modelSchemeSvg(specSheets2[0].model, winTypes, 0, "dim")')
+
+  // Коробки текста — по тем же правилам, по которым их считает панель.
+  const boxes = []
+  const re = /<text ([^>]*)>([^<]*)<\/text>/g
+  let m
+  while ((m = re.exec(svg))) {
+    const at = m[1]
+    const num = (k) => { const r = new RegExp(k + '="(-?[\\d.]+)"').exec(at); return r ? Number(r[1]) : 0 }
+    const size = num('font-size') || 100
+    const vert = / transform="rotate/.test(at)
+    const anchor = (/text-anchor="([a-z]+)"/.exec(at) || [])[1] || 'middle'
+    const txt = m[2]
+    if (!txt.trim()) continue
+    const w = txt.length * size * 0.62, h = size * 1.15
+    const bw = vert ? h : w, bh = vert ? w : h
+    const x = num('x'), y = num('y')
+    const x0 = vert ? x - bw / 2 : (anchor === 'start' ? x : (anchor === 'end' ? x - bw : x - bw / 2))
+    const y0 = vert ? y - bh / 2 : y - size * 0.8
+    boxes.push({ txt: txt, size: size, x0: x0, y0: y0, x1: x0 + bw, y1: y0 + bh })
+  }
+  const hit = (a, b) => !(a.x1 < b.x0 || b.x1 < a.x0 || a.y1 < b.y0 || b.y1 < a.y0)
+  const names = boxes.filter((b) => /^[А-ЯЁ -]+$/.test(b.txt) && b.size >= 180)
+  t.ok('имена помещений нашлись', names.length >= 3, String(names.length))
+  const clashes = []
+  names.forEach((n) => boxes.forEach((b) => {
+    if (b === n) return
+    if (hit(n, b)) clashes.push(n.txt + ' × ' + b.txt)
+  }))
+  t.ok('ни одно имя не легло на чужую подпись', clashes.length === 0, clashes.join(' | '))
+}
+
 // ── 1.5 Рабочий лист становится источником схемы ─────────────────────────────
 {
   t.section('Рабочий лист раздела')
