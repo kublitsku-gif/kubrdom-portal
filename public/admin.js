@@ -2121,6 +2121,7 @@ let schemeZoom=0;          // схема плана крупно: 0 — закр
 let schemeView="dim";      // чей чертёж: dim — рабочий с размерами, plain — клиенту
 let nodeTab="n1";          // какой узел раскрыт под чертежом
 let spec2Tab="scheme";     // что смотрим в разделе: чертёж или смету по нему
+let estWhyOpen="";         // у какой сметы раскрыт редактор правила прямо в строке
 let modelStageTab=0;       // 0 = все этапы
 let specSheets=[];
 // «Спецификация 2» — опытный раздел (см. src/spec2.js). Листы держим ОТДЕЛЬНО: по
@@ -12107,8 +12108,86 @@ function spec2RulesHtml(built, sh, pr){
 // Тело сметы одно на два экрана: опытный раздел и карточка проекта. Второй экран
 // с теми же числами разошёлся бы с первым на первой же правке.
 // `live` — лист, из которого можно заводить объект и договор (у заготовки его нет).
+// ── ПРАВИЛО ПРЯМО В СТРОКЕ СМЕТЫ ────────────────────────────────────────────
+// Чип «на весь дом» под строкой — это и есть правило, по которому она посчитана.
+// Читать его там, а править в другой вкладке, — значит каждый раз искать нужное
+// правило среди сорока чужих. Поэтому чип тапается и разворачивает тот же
+// редактор, что в «Правилах»: одно правило, два места, где на него смотрят.
+function ruleOfEst(estId, kind){
+  return (buildRules||[]).find(function(r){
+    return r&&r.estId===estId&&(r.kind||"banya")===(kind||"house");
+  })||null;
+}
+// Правила видит всё, кроме боевых спецификаций: по ним заведены договора,
+// объекты и транши, и молча изменить их сумму нельзя.
+function canRuleSheet(sh){ return !!sh&&!(specSheets||[]).some(function(x){return x.id===sh.id;}); }
+// Заводим правило лениво — по первой правке. Открытый редактор данных не создаёт:
+// человек мог просто посмотреть, откуда взялось число.
+function estRuleSet(estId, kind, field, value){
+  let r=ruleOfEst(estId, kind);
+  if(!r){
+    // Новое правило повторяет нынешний счёт («на весь дом»), поэтому первый тап
+    // ничего не меняет в цене — меняет его следующий выбор.
+    r={ id:gid(), kind:kind||"house", estId:estId, what:"house", k:"", scope:"room", room:"", qty:1, stage:0, off:false };
+    buildRules=buildRules.concat([r]);
+  }
+  ruleSet(r.id, function(x){
+    if(field==="what"){
+      x.what=value||"surface";
+      x.k=(x.what==="surface")?"wall":"";
+    } else if(field==="qty"){
+      const v=parseFloat(String(value).replace(",","."));
+      x.qty=(isFinite(v)&&v>0)?v:1;
+    } else if(field==="stage"){ x.stage=parseInt(value,10)||0; }
+    else x[field]=value||"";
+  });
+}
+function estWhyEditor(p, sh){
+  const kind=sh.kind||"house";
+  const r=ruleOfEst(p.estId, kind);
+  const cur=r||{ what:"house", k:"", scope:"room", room:"", qty:1, stage:0 };
+  const need=(RULE_WHATS.find(function(x){return x.k===(cur.what||"house");})||{}).need||"";
+  const chips=function(f, list, val){
+    return '<div style="display:flex;flex-wrap:wrap;gap:4px">'+
+      list.map(function(x){
+        const on=String(val)===String(x[0]);
+        return '<button data-a="est-rule-set" data-est="'+p.estId+'" data-f="'+f+'" data-v="'+esc(String(x[0]))+'" style="border:1.5px solid '+(on?RULE_COL:"#dde6f0")+';background:'+(on?RULE_COL:"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:8px;padding:5px 9px;font-size:11px;font-weight:700;cursor:pointer">'+esc(x[1])+'</button>';
+      }).join("")+
+    '</div>';
+  };
+  let h='<div style="background:#faf7fd;border:1px solid #e2d4ee;border-radius:11px;padding:10px 11px;margin-top:7px">'+
+    '<div style="font-size:9.5px;font-weight:700;color:'+RULE_COL+';letter-spacing:0.5px;margin-bottom:6px">ЧЕМ МЕРЯЕТСЯ ЭТА СТРОКА</div>'+
+    chips("what", RULE_WHATS.map(function(x){return [x.k,x.n];}), cur.what||"house");
+  if(need==="surface")h+=ruleLab("ПОВЕРХНОСТЬ")+chips("k", RULE_SURFACES, cur.k||"");
+  if(need==="point")h+=ruleLab("ТОЧКА РАСКЛАДКИ")+chips("k", SPEC_POINTS.map(function(pt){return [pt.k, pt.emoji+" "+pt.n];}), cur.k||"");
+  if(need)h+=ruleLab("СЧИТАТЬ")+chips("scope", RULE_SCOPES, cur.scope||"room");
+  h+='<div style="display:flex;gap:6px;margin-top:8px">'+
+      '<div style="flex:1;min-width:0">'+ruleLab("ТОЛЬКО В ПОМЕЩЕНИЯХ (ЧАСТЬ ИМЕНИ)")+
+        '<input data-a="est-rule-room" data-est="'+p.estId+'" value="'+esc(cur.room||"")+'" placeholder="все помещения" style="width:100%;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box">'+
+      '</div>'+
+      '<div style="width:92px;flex-shrink:0">'+ruleLab("МНОЖИТЕЛЬ")+
+        '<input data-a="est-rule-qty" data-est="'+p.estId+'" type="number" step="0.1" min="0.1" value="'+String(Number(cur.qty)||1)+'" style="width:100%;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box">'+
+      '</div>'+
+    '</div>'+
+    ruleLab("ЭТАП")+
+    chips("stage", [["0","из сметы"]].concat(EST_STAGES.map(function(st){return [String(st.n), st.short];})), String(Number(cur.stage)||0))+
+    '<div style="display:flex;gap:6px;margin-top:9px;flex-wrap:wrap">'+
+      (r?'<button data-a="est-rule-del" data-est="'+p.estId+'" style="padding:7px 11px;background:#fff;border:1px solid #f0d5d0;border-radius:8px;cursor:pointer;color:#c0392b;font-size:11px;font-weight:700">Убрать правило</button>':'')+
+      '<button data-a="est-why" data-est="'+p.estId+'" style="padding:7px 11px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:11px;font-weight:700">Свернуть</button>'+
+      '<button data-a="spec2-tab" data-v="rules" style="padding:7px 11px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:11px;font-weight:700">Все правила</button>'+
+    '</div>'+
+    '<div style="font-size:10px;color:#a08ab8;line-height:1.45;margin-top:7px">'+
+      (r?'Правило считает эту смету вместо обязательной строки. Убрать правило — вернуть счёт «как в справочнике».'
+        :'Пока правила нет: строка входит в дом как обязательная. Первый же выбор заведёт правило.')+
+    '</div>'+
+  '</div>';
+  return h;
+}
+
 function estBodyHtml(sh, types, live, actions){
   const w=works2(sh, Object.assign(specCtx(sh), { winTypes:types }));
+  const canRule=canRuleSheet(sh);
+  const seen={};
   let h='';
   // Деньги сверху: с них начинается любой разговор про смету, и лезть за итогом
   // в конец списка из сорока строк никто не будет.
@@ -12140,15 +12219,22 @@ function estBodyHtml(sh, types, live, actions){
         '</div>'+
         st.positions.map(function(p){
           const mats=specMatsText(p);
+          // Редактор раскрываем у ПЕРВОЙ строки этой сметы: правило по помещениям
+          // даёт их несколько, и три одинаковых редактора подряд — это не выбор.
+          const first=seen[p.estId]!==true; if(p.estId)seen[p.estId]=true;
+          const open=canRule&&first&&p.estId&&estWhyOpen===p.estId;
           return '<div style="padding:7px 0;border-top:1px solid #f4f7fb">'+
             '<div style="display:flex;align-items:baseline;gap:8px">'+
               '<span style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#0d1b2e">'+esc(p.name)+'</span>'+
               '<span style="font-size:12px;font-weight:700;color:#0d1b2e;white-space:nowrap">'+Math.round(p.cost).toLocaleString("ru-RU")+' ₽</span>'+
             '</div>'+
             '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:4px">'+
-              '<span style="background:#eef6ff;color:#2980b9;border-radius:7px;padding:2px 7px;font-size:10.5px;font-weight:700">'+esc(p.why)+'</span>'+
+              (canRule&&p.estId
+                ? '<button data-a="est-why" data-est="'+p.estId+'" title="Чем меряется эта строка" style="background:'+(open?RULE_COL:"#eef6ff")+';color:'+(open?"#fff":"#2980b9")+';border:none;border-radius:7px;padding:3px 8px;font-size:10.5px;font-weight:700;cursor:pointer">'+esc(p.why)+' ⚙</button>'
+                : '<span style="background:#eef6ff;color:#2980b9;border-radius:7px;padding:2px 7px;font-size:10.5px;font-weight:700">'+esc(p.why)+'</span>')+
             '</div>'+
             (mats?'<div style="font-size:10.5px;color:#9aabbf;line-height:1.45;margin-top:4px">'+esc(mats)+'</div>':'')+
+            (open?estWhyEditor(p, sh):'')+
           '</div>';
         }).join("")+
       '</div>';
@@ -21000,6 +21086,32 @@ function bind(){
     // Правила сборки. Правка пишется сразу в раздел снимка: отдельной кнопки
     // «сохранить» в панели нет нигде, и заводить её здесь значило бы объяснять,
     // почему этот экран не такой, как все.
+    // ── Правило прямо в строке сметы ───────────────────────────────────────
+    else if(a==="est-why"){el.onclick=()=>{
+      const id=el.dataset.est||"";
+      estWhyOpen=(estWhyOpen===id)?"":id;
+      render();
+    };}
+    else if(a==="est-rule-set"){el.onclick=()=>{
+      const sh=schemeSheet()||spec2Sheet();
+      estRuleSet(el.dataset.est, (sh&&sh.kind)||"house", el.dataset.f, el.dataset.v);
+    };}
+    else if(a==="est-rule-room"){el.onchange=()=>{
+      const sh=schemeSheet()||spec2Sheet();
+      estRuleSet(el.dataset.est, (sh&&sh.kind)||"house", "room", el.value);
+    };}
+    else if(a==="est-rule-qty"){el.onchange=()=>{
+      const sh=schemeSheet()||spec2Sheet();
+      estRuleSet(el.dataset.est, (sh&&sh.kind)||"house", "qty", el.value);
+    };}
+    else if(a==="est-rule-del"){el.onclick=()=>{
+      const sh=schemeSheet()||spec2Sheet();
+      const r=ruleOfEst(el.dataset.est, (sh&&sh.kind)||"house");
+      if(!r)return;
+      if(!confirm("Убрать правило?\n\nСтрока вернётся к счёту «как в справочнике»."))return;
+      buildRules=buildRules.filter(function(x){return x.id!==r.id;});
+      fl();
+    };}
     // ── ПРОЕКТЫ ────────────────────────────────────────────────────────────
     else if(a==="proj-new"){el.onclick=()=>{ projNew={name:"",preset:MODEL_PRESETS[0].k,clientId:""}; render(); };}
     else if(a==="proj-new-cancel"){el.onclick=()=>{ projNew=null; render(); };}

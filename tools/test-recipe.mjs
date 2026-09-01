@@ -139,7 +139,20 @@ const R = (o) => Object.assign({ id: 'r1', kind: 'house', what: 'surface', k: 'w
   const rules = [R({ estId: 'e_osb' })]
   const base = sheetPositions(probeSheet(SHEET, TYPES), EST, PRODUCTS)
   const all = allPositions(SHEET, { estimates: EST, products: PRODUCTS, winTypes: TYPES, rules: rules })
-  t.ok('обе половины на месте', all.length === base.length + run(rules).length)
+  // Правило для сметы ЗАМЕНЯЕТ её обязательную строку: «на весь дом» и «по стенам
+  // каждого помещения» — это одна позиция, посчитанная по-разному.
+  const dropped = base.filter((p) => String(p.key).indexOf('base:') === 0 && p.estId === 'e_osb').length
+  t.ok('обе половины на месте', all.length === base.length - dropped + run(rules).length)
+  t.ok('обязательная строка не задвоилась',
+    all.filter((p) => p.estId === 'e_osb' && p.from === 'est').length === 0)
+  t.ok('а без правила она на месте',
+    allPositions(SHEET, { estimates: EST, products: PRODUCTS, winTypes: TYPES, rules: [] })
+      .filter((p) => p.estId === 'e_osb' && p.from === 'est').length === dropped)
+  // Выбор человека правило не подменяет: там решение принято руками.
+  t.ok('позиции выбора правило не трогает',
+    allPositions(Object.assign({}, SHEET, { rooms: { [rooms[0].id]: { Стены: 'e_osb' } } }),
+      { estimates: EST, products: PRODUCTS, winTypes: TYPES, rules: rules })
+      .some((p) => p.from === 'est' && p.estId === 'e_osb'))
   t.ok('происхождение видно у каждой', all.every((p) => p.from === 'est' || p.from === 'rule'))
   t.ok('без правил — ровно справочник',
     allPositions(SHEET, { estimates: EST, products: PRODUCTS, winTypes: TYPES, rules: [] }).length === base.length)

@@ -206,12 +206,29 @@ export function rulePositions(sheet, rules, estimates, products, winTypes) {
 // Полный состав дома: то, что выбрано руками в справочнике, плюс то, что дали
 // правила. ОДНА функция на экран и на сборку объекта — иначе на экране одна
 // смета, а в стройке другая, и находится это на приёмке этапа.
+// Правило для сметы ЗАМЕНЯЕТ её обязательную строку, а не добавляется к ней:
+// «Контейнер — один раз на дом» и «Контейнер — по площади пола» это одна и та же
+// позиция, посчитанная по-разному, и в списке она обязана быть одна.
+// Выбор человека (отделка комнаты, общедомовая опция) правило не трогает: там
+// решение принято руками, и подменять его нечем.
+export function ruledEstIds(sheet, rules) {
+  const kind = (sheet && sheet.kind) || "banya";
+  const out = {};
+  (rules || []).forEach(function (r) {
+    if (!r || r.off || (r.kind || "banya") !== kind) return;
+    if (ruleReady(r) || !r.estId) return;
+    out[r.estId] = true;
+  });
+  return out;
+}
+
 export function allPositions(sheet, ctx) {
   const c = ctx || {};
   const probe = probeSheet(sheet, c.winTypes);
-  const base = sheetPositions(probe, c.estimates, c.products).map(function (p) {
-    return Object.assign({}, p, { from: "est", why: positionWhy(p) });
-  });
+  const ruled = ruledEstIds(probe, c.rules);
+  const base = sheetPositions(probe, c.estimates, c.products)
+    .filter(function (p) { return !(String(p.key || "").indexOf("base:") === 0 && ruled[p.estId]); })
+    .map(function (p) { return Object.assign({}, p, { from: "est", why: positionWhy(p) }); });
   return base.concat(rulePositions(sheet, c.rules, c.estimates, c.products, c.winTypes));
 }
 

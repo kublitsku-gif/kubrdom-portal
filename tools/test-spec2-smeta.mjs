@@ -203,4 +203,58 @@ const SHEET = {
   t.ok('у опытного — есть', labRules === 1)
 }
 
+// ── 8. Правило меняется тапом по чипу «откуда число» ────────────────────────
+// Чип под строкой и есть правило, по которому она посчитана. Читать его тут, а
+// править в другой вкладке — значит каждый раз искать нужное среди чужих.
+{
+  t.section('Правило по тапу в строке сметы')
+  const EST2 = EST.concat([
+    { id: 'e_box', kind: 'house', name: 'Пол листами', stage: 1, lines: [{ pid: 'p_osb', qty: 1 }] },
+  ])
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS, estimates: EST2, dbPlans: [], crmClients: [],
+    specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [],
+    contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+    buildRules: [],
+  })
+  p.run('spec2Tab="scheme";tSpec2();')
+  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+
+  const est = p.run('modelFull=false;spec2Tab="est";tSpec2()')
+  t.ok('чип «откуда число» — кнопка', est.indexOf('data-a="est-why"') >= 0)
+  t.ok('и он у обязательной строки тоже', /data-a="est-why" data-est="e_box"/.test(est))
+  t.ok('редактор закрыт, пока не тапнули', est.indexOf('ЧЕМ МЕРЯЕТСЯ') < 0)
+
+  const chip = p.dom.node({ a: 'est-why', est: 'e_box' }); p.run('bind();'); chip.onclick()
+  const open = p.run('tSpec2()')
+  t.ok('тап раскрыл редактор', /ЧЕМ МЕРЯЕТСЯ ЭТА СТРОКА/.test(open))
+  t.ok('и предлагает, чем мерять', /по площади поверхности/.test(open) && /по точкам раскладки/.test(open))
+  t.ok('правило от одного открытия не завелось', p.q('buildRules.length') === 0)
+
+  // Меняем счёт: «на весь дом» → «по площади пола каждого помещения».
+  const costBefore = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_box";})[0].cost')
+  const pick = p.dom.node({ a: 'est-rule-set', est: 'e_box', f: 'what', v: 'surface' }); p.run('bind();'); pick.onclick()
+  const floor = p.dom.node({ a: 'est-rule-set', est: 'e_box', f: 'k', v: 'floor' }); p.run('bind();'); floor.onclick()
+  t.ok('правило завелось по первой правке', p.q('buildRules.length') === 1)
+  t.ok('и привязано к этой смете', p.q('buildRules[0].estId') === 'e_box')
+  const rows = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_box";})')
+  t.ok('строка стала считаться по помещениям', rows.length > 1, 'строк: ' + rows.length)
+  t.ok('и это уже строки правила', rows.every((x) => x.from === 'rule'))
+  t.ok('обязательная строка не осталась второй', rows.every((x) => String(x.key).indexOf('base:') !== 0))
+  // Штучный материал от площади не считают, а листовой — считают: у этой строки
+  // материал листовой, поэтому и цена обязана поехать.
+  t.ok('цена пересчиталась', rows[0].cost !== costBefore, costBefore + ' → ' + rows[0].cost)
+  t.ok('и сумма по строке выросла на весь дом',
+    rows.reduce((a, x) => a + x.cost, 0) > costBefore)
+  t.ok('и в строке видно, откуда число', /пол [\d,]+ м²/.test(p.run('tSpec2()')))
+
+  // Убрали правило — вернулся счёт «как в справочнике».
+  const del = p.dom.node({ a: 'est-rule-del', est: 'e_box' }); p.run('bind();'); del.onclick()
+  t.ok('правило убрано', p.q('buildRules.length') === 0)
+  const back = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_box";})')
+  t.ok('строка снова одна', back.length === 1 && back[0].from === 'est')
+  t.ok('и цена прежняя', back[0].cost === costBefore)
+}
+
 t.done()
