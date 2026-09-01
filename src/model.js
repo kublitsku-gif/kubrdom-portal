@@ -50,6 +50,33 @@ export const FINISH_THICK = 76;
 export const JAMB_TUBE = 40;          // труба 40×40 мм
 export const JAMB_GAP_MIN = 15, JAMB_GAP = 20;   // зазор до изделия, мм
 
+// Пирог перегородки: из чего она собрана, слой за слоем поперёк толщины. Бригаде
+// нужен именно этот список — по нему считают материал и собирают стену, а «100 мм»
+// на плане не говорит, что внутри. Умолчание — типовой пирог заказчика; правится
+// в редакторе и живёт в модели, потому что у каждого дома он свой.
+export const WALL_LAYERS = [
+  { n: "Плитка SPC", mm: 5 },
+  { n: "ОСП", mm: 9 },
+  { n: "Пароизоляция", mm: 0.1 },
+  { n: "Брус", mm: 50 },
+  { n: "Пароизоляция", mm: 0.1 },
+  { n: "ОСП", mm: 9 },
+  { n: "Фанера шлифованная", mm: 4 },
+];
+
+export function wallLayers(model) {
+  const own = model && model.layers;
+  return (own && own.length) ? own : WALL_LAYERS.map(function (l, i) {
+    return { id: "wl" + (i + 1), n: l.n, mm: l.mm };
+  });
+}
+
+// Толщина пирога. Считаем в десятых: пароизоляция 0,1 мм — тоже слой, и сумма
+// «77,2» обязана сходиться, иначе узел спорит с планом.
+export function layersThick(list) {
+  return Math.round((list || []).reduce(function (a, l) { return a + (Number(l.mm) || 0); }, 0) * 10) / 10;
+}
+
 export function containerMeta(k) {
   return CONTAINERS.find(function (c) { return c.k === k; }) || CONTAINERS[1];
 }

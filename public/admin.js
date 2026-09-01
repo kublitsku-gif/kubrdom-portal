@@ -50,6 +50,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   bayAt, splitAt, splitLengthwiseAt, nearestSide, opPosAt,
   modelToSpecs, modelTotals, modelIssues, modelScheme, modelAreas, modelWalls, snapWall, addWall, headSill, alignHeads, partitionAt, INNER_DOOR,
   WIN_CATALOG, winCatItem, winFace, winTypeFrom, frameNeeded, JAMB_TUBE, JAMB_GAP_MIN, JAMB_GAP,
+  WALL_LAYERS, wallLayers, layersThick,
   MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2 } from "../src/spec2.js";
@@ -9945,8 +9946,48 @@ function modelAreasPanel(sh){
       '</div>'+
       '<div style="font-size:9.5px;color:#6f8aa3;margin-top:6px;line-height:1.4">Стены даны за вычетом проёмов ('+numRu(A.total.openings)+' м²). Полная площадь стен — '+numRu(A.total.wallGross)+' м²: по ней идут обрешётка и утеплитель.</div>'+
     '</div>';
+  h+=modelLayersPanel(sh);
   return h+'</div>';
 }
+
+// Пирог перегородки правится здесь, рядом с планом: слой — это и материал в смете,
+// и миллиметры толщины, и по нему же рисуется вынесенный узел. Держать его в коде
+// значило бы править код на каждый дом.
+function modelLayersPanel(sh){
+  const m=sh.model;
+  const list=wallLayers(m), total=layersThick(list);
+  const th=Number(m.wallThick)||0;
+  const own=!!(m.layers&&m.layers.length);
+  let h='<div style="border-top:1px solid rgba(255,255,255,.12);margin-top:10px;padding-top:9px">'+
+    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">'+
+      '<span style="font-size:10px;font-weight:700;color:#8ea6bd;letter-spacing:0.6px;flex:1">ПИРОГ ПЕРЕГОРОДКИ · '+numRu(total)+' ММ</span>'+
+      '<button data-a="model-layer-add" style="padding:5px 11px;background:#16a085;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">+ слой</button>'+
+    '</div>';
+  h+=list.map(function(l,i){
+    return '<div style="display:flex;align-items:center;gap:5px;margin-bottom:5px">'+
+      '<span style="width:14px;text-align:center;font-size:10px;color:#7f97ae;flex-shrink:0">'+(i+1)+'</span>'+
+      '<input data-a="model-layer-n" data-i="'+i+'" value="'+esc(l.n||"")+'" placeholder="Материал" style="flex:1;min-width:0;padding:6px 8px;border-radius:7px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#fff;font-size:12px;outline:none;box-sizing:border-box">'+
+      '<input data-a="model-layer-mm" data-i="'+i+'" value="'+numInpMm(l.mm)+'" type="number" step="0.1" inputmode="decimal" title="Толщина слоя, мм" style="width:64px;padding:6px 7px;border-radius:7px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#fff;font-size:12px;outline:none;box-sizing:border-box;text-align:right">'+
+      '<span style="font-size:10.5px;color:#7f97ae;flex-shrink:0">мм</span>'+
+      '<button data-a="model-layer-del" data-i="'+i+'" style="width:26px;height:26px;border:1px solid rgba(232,116,106,.5);background:transparent;border-radius:7px;cursor:pointer;color:#e8746a;font-size:11px;flex-shrink:0">🗑</button>'+
+    '</div>';
+  }).join("");
+  // Сумма слоёв и плановая толщина — два разных числа, и расходиться им нельзя:
+  // по одному собирают стену, по другому считаются площади помещений.
+  h+='<div style="display:flex;align-items:center;gap:8px;margin-top:7px;font-size:10.5px;color:'+(Math.abs(total-th)>0.5?"#e8975a":"#7f97ae")+';line-height:1.4">'+
+      '<span style="flex:1">сумма '+numRu(total)+' мм · в плане '+numRu(th)+' мм'+(Math.abs(total-th)>0.5?" — не сходится":"")+'</span>'+
+      (Math.abs(total-th)>0.5
+        // В плане толщина целая: миллиметры геометрии — это целые числа, и 77,2
+        // на кнопке обещало бы точность, которой в плане нет.
+        ? '<button data-a="model-layer-apply" style="flex-shrink:0;padding:5px 10px;background:transparent;border:1.5px solid #e8975a;border-radius:8px;cursor:pointer;color:#e8975a;font-size:10.5px;font-weight:700">взять '+Math.round(total)+' мм в план</button>'
+        : '')+
+    '</div>';
+  if(!own)h+='<div style="font-size:10px;color:#6f8aa3;margin-top:6px;line-height:1.4">Это типовой пирог. Правка запишет его в модель — дальше он живёт вместе с домом.</div>';
+  return h+'</div>';
+}
+// Толщина слоя бывает 0,1 мм — в поле она обязана быть с ТОЧКОЙ, иначе браузер
+// считает значение невалидным и показывает поле пустым (та же беда, что у `numInp`).
+function numInpMm(mm){ return String(Math.round((Number(mm)||0)*10)/10); }
 
 // Открывание двери — четыре состояния из двух зеркал: на каком откосе петли и в
 // какую сторону распахивается створка. Подписи не «левое/правое»: на плане это
@@ -10839,6 +10880,23 @@ function schTextBox(x, y, str, size, anchor, vert){
 }
 // Пересекаются ли две коробки. Зазор — чтобы подписи не только не налезали, но и
 // не липли друг к другу: вплотную стоящие «ПОМЕЩЕНИЕ» и «Д-2» читаются как одна.
+// Выноска на узел: кружок на элементе, полка и подпись. Подпись ищет свободное
+// место среди уже занятых — иначе «УЗЕЛ 1» ложится на марку проёма, и оба не
+// читаются. Не нашлось свободного — берём первое: без подписи кружок бессмыслен.
+function schCallout(cx, cy, R, label, col, spots, busy){
+  const free=spots.find(function(p){
+    const box=schTextBox(p[0], p[1], label, 165, "middle", false);
+    return !busy.some(function(b){ return schHit(b, box, 120); });
+  })||spots[0];
+  const lx=free[0], ly=free[1];
+  const dx=lx-cx, dy=ly-cy, len=Math.sqrt(dx*dx+dy*dy)||1;
+  busy.push(schTextBox(lx, ly, label, 165, "middle", false));
+  busy.push({ x0:cx-R, y0:cy-R, x1:cx+R, y1:cy+R });
+  return '<circle cx="'+cx+'" cy="'+cy+'" r="'+R+'" fill="none" stroke="'+col+'" stroke-width="24"/>'+
+    '<line x1="'+Math.round(cx+dx/len*R)+'" y1="'+Math.round(cy+dy/len*R)+'" x2="'+Math.round(lx-dx/len*150)+'" y2="'+Math.round(ly-dy/len*150)+'" stroke="'+col+'" stroke-width="18"/>'+
+    '<text x="'+lx+'" y="'+ly+'" font-size="165" fill="'+col+'" font-weight="700" text-anchor="middle" stroke="#fff" stroke-width="70" paint-order="stroke" stroke-linejoin="round">'+esc(label)+'</text>';
+}
+
 function schHit(a, b, gap){
   const G=(gap==null)?60:gap;
   return !(a.x1+G<b.x0 || b.x1+G<a.x0 || a.y1+G<b.y0 || b.y1+G<a.y0);
@@ -11086,12 +11144,20 @@ function schemeParts(sc, view){
       const cx=j.x+j.w/2, cy=j.y+j.h/2, R=240;
       const along=(first.side==="n"||first.side==="s");
       const dir=(first.side==="s"||first.side==="e")?-1:1;   // внутрь коробки
-      const lx=along?cx:(cx+dir*(R+420)), ly=along?(cy+dir*(R+330)):cy;
-      g+='<circle cx="'+cx+'" cy="'+cy+'" r="'+R+'" fill="none" stroke="#2f4a63" stroke-width="24"/>'+
-        '<line x1="'+(cx+(along?0:dir*R))+'" y1="'+(cy+(along?dir*R:0))+'" x2="'+(along?cx:(lx-dir*160))+'" y2="'+(along?(ly-dir*110):cy)+'" stroke="#2f4a63" stroke-width="18"/>'+
-        '<text x="'+lx+'" y="'+ly+'" font-size="165" fill="#2f4a63" font-weight="700" text-anchor="middle" stroke="#fff" stroke-width="70" paint-order="stroke" stroke-linejoin="round">УЗЕЛ 1</text>';
-      busy.push(schTextBox(lx, ly, "УЗЕЛ 1", 165, "middle", false));
-      busy.push({ x0:cx-R, y0:cy-R, x1:cx+R, y1:cy+R });
+      g+=schCallout(cx, cy, R, "УЗЕЛ 1", "#2f4a63",
+        along?[[cx, cy+dir*(R+330)],[cx-700, cy+dir*(R+330)],[cx+700, cy+dir*(R+330)],[cx, cy+dir*(R+660)]]
+             :[[cx+dir*(R+420), cy],[cx+dir*(R+420), cy-500],[cx+dir*(R+420), cy+500]], busy);
+    }
+  }
+  // Вторая выноска — на перегородку: её пирог тоже узел, и на плане это те же
+  // две линии, по которым стену не собрать.
+  if(!plain){
+    const pw=(sc.walls||[]).find(function(w){ return w.kind==="part"&&w.w===sc.wallThick; });
+    if(pw){
+      const cx=pw.x+pw.w/2, cy=pw.y+220, R=240;
+      const side=(cx>sc.l/2)?-1:1;
+      g+=schCallout(cx, cy, R, "УЗЕЛ 2", "#16a085",
+        [[cx+side*(R+430), cy+40],[cx+side*(R+430), cy+520],[cx-side*(R+430), cy+40],[cx+side*(R+430), cy-420]], busy);
     }
   }
   // Цепочка двери в перегородке стоит ВНУТРИ плана, вдоль своей перегородки, и
@@ -11293,6 +11359,43 @@ function jambDetailSvg(){
   return '<svg viewBox="-30 72 1470 480" style="width:100%;height:auto;display:block;user-select:none">'+g+'</svg>';
 }
 
+// Узел перегородки — её пирог. На плане перегородка это две линии в сто миллиметров:
+// по ним не собрать стену и не посчитать материал. Здесь она разложена по слоям,
+// каждый со своей толщиной, а сумма стоит рядом — по ней сверяют плановую сотку.
+//
+// Слои рисуем ПОЧТИ в масштабе: пароизоляция 0,1 мм в честном масштабе — это ноль
+// пикселей, поэтому у каждого слоя есть минимальная видимая полоса. Числа при этом
+// настоящие, и подпись говорит правду там, где картинка приблизительна.
+function wallDetailSvg(model){
+  const list=wallLayers(model);
+  const total=layersThick(list);
+  const W=1400, x0=60, bw=420;          // ширина полосы пирога
+  const MIN=26, SCALE=5.4;              // мин. видимая толщина слоя и масштаб
+  const hs=list.map(function(l){ return Math.max(MIN, Math.round((Number(l.mm)||0)*SCALE)); });
+  const H=hs.reduce(function(a,b){return a+b;},0);
+  const top=60;
+  const fills=["#e8f4fc","#f3ede3","#dfe9f2","#efe4cf","#dfe9f2","#f3ede3","#e9f2e6"];
+  let g='', y=top;
+  list.forEach(function(l,i){
+    const h=hs[i];
+    g+='<rect x="'+x0+'" y="'+y+'" width="'+bw+'" height="'+h+'" fill="'+fills[i%fills.length]+'" stroke="#0d1b2e" stroke-width="4"/>';
+    // Выноска к слою: полка вправо, на ней имя и толщина. Слои тонкие, поэтому
+    // подписи стоят строго на своих строках — иначе они слипаются в кашу.
+    const cy=y+h/2;
+    g+='<line x1="'+(x0+bw)+'" y1="'+cy+'" x2="'+(x0+bw+90)+'" y2="'+cy+'" stroke="#9aabbf" stroke-width="3"/>'+
+      '<text x="'+(x0+bw+110)+'" y="'+(cy+11)+'" font-size="32" fill="#0d1b2e" font-weight="700" text-anchor="start">'+esc(l.n||"Слой")+'</text>'+
+      '<text x="'+(W-40)+'" y="'+(cy+11)+'" font-size="32" fill="'+SCH_DIM+'" font-weight="700" text-anchor="end">'+esc(numRu(Number(l.mm)||0))+' мм</text>';
+    y+=h;
+  });
+  // Общая толщина — размерная линия слева, как на чертеже.
+  const dx=x0-34;
+  g+='<line x1="'+dx+'" y1="'+top+'" x2="'+dx+'" y2="'+(top+H)+'" stroke="#0d1b2e" stroke-width="4"/>'+
+    '<line x1="'+(dx-13)+'" y1="'+top+'" x2="'+(dx+13)+'" y2="'+top+'" stroke="#0d1b2e" stroke-width="4"/>'+
+    '<line x1="'+(dx-13)+'" y1="'+(top+H)+'" x2="'+(dx+13)+'" y2="'+(top+H)+'" stroke="#0d1b2e" stroke-width="4"/>'+
+    '<text x="'+(dx-16)+'" y="'+(top+H/2)+'" font-size="34" fill="#0d1b2e" font-weight="700" text-anchor="middle" transform="rotate(-90 '+(dx-16)+' '+(top+H/2)+')">'+esc(numRu(total))+' мм</text>';
+  return '<svg viewBox="-70 20 '+(W+70)+' '+(H+110)+'" style="width:100%;height:auto;display:block;user-select:none">'+g+'</svg>';
+}
+
 function schemeLegend(){
   if(schemeView!=="dim")return "";
   return '<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:11px 12px;margin-bottom:9px">'+
@@ -11306,6 +11409,33 @@ function schemeLegend(){
       'Труба '+JAMB_TUBE+'×'+JAMB_TUBE+' мм по обеим сторонам окна и входной двери, во всю высоту; изделие встаёт между трубами.'+
       '<br>Зазор до изделия '+JAMB_GAP_MIN+'–'+JAMB_GAP+' мм, поэтому <b style="color:#0d1b2e">проём режется на '+(2*(JAMB_TUBE+JAMB_GAP_MIN))+'–'+(2*(JAMB_TUBE+JAMB_GAP))+' мм шире изделия</b>.'+
       '<br>На чертеже это тёмные квадраты у откосов. У глухого витража в торце усиления нет — снять или вернуть его можно у выбранного проёма в редакторе.'+
+    '</div>'+
+  '</div>'+
+  wallLegend();
+}
+
+// Узел перегородки: её пирог. Слои правятся в редакторе, на боковой панели —
+// у каждого дома он свой, а держать его в коде значит править код на каждый дом.
+function wallLegend(){
+  const sh=spec2Sheet();
+  const m=(sh&&sh.model)||((MODEL_PRESETS[0])?presetModel(MODEL_PRESETS[0], winTypes, gid).model:null);
+  if(!m)return "";
+  const list=wallLayers(m), total=layersThick(list);
+  const th=Number(m.wallThick)||0;
+  return '<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:11px 12px;margin-bottom:9px">'+
+    '<div style="display:flex;align-items:center;gap:7px;margin-bottom:6px">'+
+      '<span style="font-size:14px">🧱</span>'+
+      '<span style="font-size:11px;font-weight:700;color:#0d1b2e;letter-spacing:0.5px">УЗЕЛ 2 · ПЕРЕГОРОДКА</span>'+
+      '<span style="font-size:10px;color:#9aabbf">слои почти в масштабе</span>'+
+    '</div>'+
+    wallDetailSvg(m)+
+    '<div style="font-size:11.5px;color:#5a7a9a;line-height:1.5;margin-top:8px">'+
+      'Пирог перегородки: '+list.map(function(l){return esc(l.n||"слой")+" "+numRu(Number(l.mm)||0)+" мм";}).join(" · ")+'.'+
+      '<br>Сумма слоёв <b style="color:#0d1b2e">'+numRu(total)+' мм</b>'+
+      (Math.abs(total-th)>0.5
+        ? ', а в плане перегородка <b style="color:#0d1b2e">'+numRu(th)+' мм</b> — поправьте слои или толщину в редакторе, на боковой панели.'
+        : ' — столько же, сколько в плане.')+
+      '<br>Слои задаются в редакторе: «⛶ Во весь экран» → боковая панель, блок «Пирог перегородки».'+
     '</div>'+
   '</div>';
 }
@@ -19789,6 +19919,37 @@ function bind(){
       const n=Math.max(0,(Number((r.pts||{})[k])||0)+d);
       r.pts=Object.assign({},r.pts||{});
       if(n)r.pts[k]=n; else delete r.pts[k];
+      modelSync(sh); fl();
+    };}
+    else if(a==="model-layer-add"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      sh.model.layers=wallLayers(sh.model).concat([{id:gid(), n:"", mm:0}]);
+      modelSync(sh); fl();
+    };}
+    else if(a==="model-layer-n"||a==="model-layer-mm"){el.onchange=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      const i=parseInt(el.dataset.i,10);
+      const list=wallLayers(sh.model).map(function(l){return Object.assign({},l);});
+      if(!list[i])return;
+      if(a==="model-layer-n")list[i].n=el.value;
+      else list[i].mm=Math.max(0, Math.round((parseFloat(String(el.value).replace(",","."))||0)*10)/10);
+      sh.model.layers=list;
+      modelSync(sh); fl();
+    };}
+    else if(a==="model-layer-del"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      const i=parseInt(el.dataset.i,10);
+      sh.model.layers=wallLayers(sh.model).filter(function(l,j){return j!==i;});
+      modelSync(sh); fl();
+    };}
+    // Толщина перегородки в плане — это геометрия: от неё зависят площади комнат,
+    // поэтому пирог её сам не двигает, а предлагает.
+    else if(a==="model-layer-apply"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      const mm=Math.round(layersThick(wallLayers(sh.model)));
+      if(!mm)return;
+      if(!confirm("Взять "+mm+" мм за толщину перегородки?\n\nПлощади помещений пересчитаются."))return;
+      sh.model.wallThick=mm;
       modelSync(sh); fl();
     };}
     else if(a==="model-finish"){el.onchange=()=>{

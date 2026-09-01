@@ -11,7 +11,8 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, addWall, modelScheme, alignHeads, h
   openingSpans, wallFits,
   splitLengthwise, mergeLengthwise, moveLengthwise, elevation,
   bayAt, splitAt, splitLengthwiseAt, nearestSide, opPosAt,
-  openingCounts, modelToSpecs, modelTotals, modelIssues, modelAreas, presetModel, MODEL_PRESETS } from '../src/model.js'
+  openingCounts, modelToSpecs, modelTotals, modelIssues, modelAreas, presetModel, MODEL_PRESETS,
+  wallLayers, layersThick } from '../src/model.js'
 // Смета — сосед по деньгам: проверяем, что площадь непрямоугольной комнаты доходит
 // до расчёта, а не теряется по дороге.
 import { roomArea } from '../src/spec.js'
@@ -71,6 +72,25 @@ function house() {
   ok('контейнер всё ещё сходится', totalLength(squashed) === m.l)
 }
 
+
+
+// ── Пирог перегородки ────────────────────────────────────────────────────────
+// По «100 мм» на плане стену не собрать: бригаде нужен список слоёв с толщинами,
+// а сумма слоёв обязана сходиться с плановой толщиной — иначе узел спорит с планом.
+{
+  console.log('Пирог перегородки')
+  const def = wallLayers({})
+  ok('типовой пирог из семи слоёв', def.length === 7, String(def.length))
+  ok('первый слой — плитка SPC', def[0].n === 'Плитка SPC' && def[0].mm === 5)
+  ok('пароизоляция считается в десятых', def[2].mm === 0.1)
+  ok('сумма 77,2 мм', layersThick(def) === 77.2, String(layersThick(def)))
+  ok('у слоёв есть свои id', def.every((l) => !!l.id))
+
+  const own = { layers: [{ id: 'a', n: 'ОСП', mm: 9 }, { id: 'b', n: 'Брус', mm: 100 }] }
+  ok('свой пирог сильнее типового', wallLayers(own).length === 2 && layersThick(wallLayers(own)) === 109)
+  ok('пустой список — это отсутствие своего пирога', wallLayers({ layers: [] }).length === 7)
+  ok('мусор в толщине считается нулём', layersThick([{ mm: 'ой' }, { mm: 5 }]) === 5)
+}
 
 // ── Стена не заезжает на проём ───────────────────────────────────────────────
 // Окно режет наружную стену насквозь: перегородка, доехавшая до него, упирается в

@@ -410,6 +410,48 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   t.ok('и возвращается', p.q('specSheet(specOpenId).model.openings.filter(function(o){return o.id===' + JSON.stringify(win.id) + ';})[0].frame') === true)
 }
 
+// ── 9г. Пирог перегородки правится на боковой панели ─────────────────────────
+// «100 мм» на плане не говорит, из чего стена собрана. Слои живут в модели, а не в
+// коде: у каждого дома пирог свой, и правка кода на каждый дом — не вариант.
+{
+  t.section('Пирог перегородки')
+  const p = lab()
+  const panelHtml = () => p.run('modelAreasPanel(specSheet(specOpenId))')
+  const layers = () => p.q('wallLayers(specSheet(specOpenId).model)')
+  t.ok('блок есть на боковой панели', /ПИРОГ ПЕРЕГОРОДКИ/.test(panelHtml()))
+  t.ok('типовой пирог показан', /Плитка SPC/.test(panelHtml()) && /Фанера шлифованная/.test(panelHtml()))
+  t.ok('пока свой не завели, в модели его нет', p.q('!specSheet(specOpenId).model.layers') === true)
+
+  // Правка слоя записывает пирог в модель — дальше он живёт вместе с домом.
+  const mm = p.dom.node({ a: 'model-layer-mm', i: '3' })
+  p.run('bind();')
+  mm.value = '60'; mm.onchange()
+  t.ok('толщина слоя записалась', layers()[3].mm === 60, String(layers()[3].mm))
+  t.ok('и пирог стал своим', p.q('specSheet(specOpenId).model.layers.length') === 7)
+  t.ok('сумма пересчиталась', /87,2/.test(panelHtml()))
+
+  const nm = p.dom.node({ a: 'model-layer-n', i: '0' })
+  p.run('bind();')
+  nm.value = 'Керамогранит'; nm.onchange()
+  t.ok('имя слоя правится', layers()[0].n === 'Керамогранит')
+
+  click(p, { a: 'model-layer-add' })
+  t.ok('слой добавляется', layers().length === 8)
+  click(p, { a: 'model-layer-del', i: '7' })
+  t.ok('и удаляется', layers().length === 7)
+
+  // Толщина перегородки — геометрия: от неё зависят площади, поэтому пирог её не
+  // двигает сам, а предлагает. Подтверждение спрашиваем.
+  p.run('__asked=[];window.confirm=function(q){ __asked.push(q); return true; };')
+  t.ok('в плане пока прежние 100 мм', p.q('specSheet(specOpenId).model.wallThick') === 100)
+  click(p, { a: 'model-layer-apply' })
+  t.ok('толщина взята из пирога', p.q('specSheet(specOpenId).model.wallThick') === 87,
+    String(p.q('specSheet(specOpenId).model.wallThick')))
+  t.ok('и об этом спросили', p.q('__asked.length') === 1 && /площади/i.test(p.q('__asked[0]')),
+    JSON.stringify(p.q('__asked')))
+  t.ok('кнопка ушла — расхождения больше нет', panelHtml().indexOf('data-a="model-layer-apply"') < 0)
+}
+
 // ── 10. «Вернуть» отменяет удаление ──────────────────────────────────────────
 // Удаление здесь необратимо по своей природе: перегородка уносит с собой помещение.
 // Без отмены единственный способ вернуть промах — собирать планировку заново.
