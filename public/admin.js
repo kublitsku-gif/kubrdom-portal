@@ -11160,6 +11160,19 @@ function schemeParts(sc, view){
       '<text x="'+(vert?lx+200:lx)+'" y="'+(vert?ly:ly+195)+'" font-size="'+SCH_MARK_SUB+'" fill="#5a7a9a" text-anchor="'+anch+'"'+halo+
       (vert?' transform="rotate(-90 '+(lx+200)+' '+ly+')"':'')+'>'+
       esc(sub)+'</text>';
+    // Рез в стене — отдельной строкой и в цвете усиления: цепочка меряет ЕГО, а не
+    // изделие, и рабочий должен видеть, что это разные числа. Трубы в рез не входят:
+    // они варятся поверх листа, и их внутренняя грань — его кромка (узел 1).
+    if(op.frame&&op.cutW&&op.cutW!==op.width){
+      // Третья строка ставится ПРОЧЬ от стены: у нижней стены подпись, уехавшая
+      // «ещё ниже», ложится на саму стену и читается как часть чертежа.
+      const cw="рез "+op.cutW;
+      const away=(op.side==="s"||op.side==="e")?-1:1;
+      const cx2=vert?(lx+away*300):lx, cy2=vert?ly:(ly+(away>0?380:-215));
+      busy.push(schTextBox(cx2, cy2, cw, SCH_MARK_SUB, anch, vert));
+      g+='<text x="'+cx2+'" y="'+cy2+'" font-size="'+SCH_MARK_SUB+'" fill="#2f4a63" font-weight="700" text-anchor="'+anch+'"'+halo+
+        (vert?' transform="rotate(-90 '+cx2+' '+cy2+')"':'')+'>'+esc(cw)+'</text>';
+    }
     g+='</g>';
   });
   // Цепочка двери в перегородке стоит ВНУТРИ плана, вдоль своей перегородки, и
@@ -11560,6 +11573,90 @@ function wallDetailSvg(list){
   return '<svg viewBox="-70 20 '+(W+70)+' '+(H+110)+'" style="width:100%;height:auto;display:block;user-select:none">'+g+'</svg>';
 }
 
+// Лист для бригады: чертёж с размерами, узлы и таблица проёмов — на бумагу.
+// На площадке телефон в кармане у одного, а размечают вдвоём; лист лежит на
+// стене и не гаснет. Печатаем ровно то, что на экране: и чертёж, и узлы рисует
+// тот же код, поэтому распечатка не может показать вчерашний дом.
+function buildSchemePrint(){
+  const sh=spec2Sheet();
+  const pr=MODEL_PRESETS[0];
+  const built=(sh&&sh.model)?{model:sh.model,winTypes:winTypes}:(pr?presetModel(pr, winTypes, gid):null);
+  if(!built){ alert("Модель не найдена."); return; }
+  const m=built.model, types=built.winTypes;
+  const sc=modelScheme(m, types);
+  const A=modelAreas(m, types);
+  const d=new Date();
+  const ds=String(d.getDate()).padStart(2,"0")+"."+String(d.getMonth()+1).padStart(2,"0")+"."+d.getFullYear();
+  const sideN={n:"левая длинная",s:"правая длинная",w:"торец начала",e:"торец конца",part:"перегородка"};
+
+  // Таблица проёмов: марка, изделие, ВЫРЕЗ и отметка низа. Вырез отдельной колонкой —
+  // это то число, по которому режут, и путать его с габаритом изделия нельзя.
+  const opRows=sc.openings.map(function(o){
+    return '<tr><td class="mk">'+esc(o.mark)+'</td><td>'+esc(o.name)+'</td>'+
+      '<td class="c">'+o.width+'×'+o.height+'</td>'+
+      '<td class="c cut">'+(o.frame?(o.cutW+' × '+o.height):''+o.width+' × '+o.height)+'</td>'+
+      '<td class="c">'+(o.side==="part"?'—':(o.sill||0))+'</td>'+
+      '<td class="c">'+esc(sideN[o.side]||o.side)+'</td>'+
+      '<td class="c">'+(o.frame?'да':'нет')+'</td></tr>';
+  }).join("");
+
+  const pieTable=function(key,title){
+    const list=pieList(m, key);
+    return '<h2>'+esc(title)+' · '+numRu(layersThick(list))+' мм</h2>'+
+      '<table class="pie"><tr><th>Слой</th><th class="c">Толщина</th></tr>'+
+      list.map(function(l,i){ return '<tr><td>'+(i+1)+'. '+esc(l.n||"слой")+'</td><td class="c">'+numRu(Number(l.mm)||0)+' мм</td></tr>'; }).join("")+
+      '<tr class="sum"><td>Всего</td><td class="c">'+numRu(layersThick(list))+' мм</td></tr></table>';
+  };
+
+  const rooms=A.rooms.map(function(r){
+    return '<tr><td>'+esc(r.name||"Помещение")+'</td><td class="c">'+numRu(r.l)+' × '+numRu(r.w)+' м</td>'+
+      '<td class="c">'+numRu(r.floor)+' м²</td><td class="c">'+numRu(r.wallNet)+' м²</td></tr>';
+  }).join("");
+
+  const html='<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Чертёж '+esc((sh&&sh.name)||(pr&&pr.n)||"Дом")+'</title><style>'+
+    'body{font-family:-apple-system,Segoe UI,Arial,sans-serif;padding:22px;color:#0d1b2e;max-width:900px;margin:0 auto}'+
+    'h1{font-size:20px;margin:0 0 3px}h2{font-size:13px;margin:20px 0 6px;color:#2f4a63;letter-spacing:0.3px}'+
+    '.sub{font-size:12px;color:#5a7a9a;margin-bottom:14px}'+
+    '.plan{border:1px solid #dde6f0;border-radius:8px;padding:10px;margin-bottom:8px}'+
+    'table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:6px}'+
+    'th,td{border:1px solid #dde6f0;padding:6px 9px;text-align:left}th{background:#f2f6fa;font-size:11px;letter-spacing:0.2px}'+
+    '.c{text-align:center;white-space:nowrap}.mk{font-weight:800;white-space:nowrap}'+
+    '.cut{font-weight:800;color:#2f4a63}'+
+    '.sum td{background:#f6f9fc;font-weight:800}'+
+    '.pie{max-width:420px}'+
+    '.note{font-size:11.5px;color:#5a7a9a;line-height:1.55;margin:6px 0 0}'+
+    '.node{border:1px solid #dde6f0;border-radius:8px;padding:10px 12px;margin-bottom:10px}'+
+    '.btn{display:inline-block;margin:16px 0;padding:10px 16px;background:#16a085;color:#fff;border:none;border-radius:9px;font-size:14px;cursor:pointer}'+
+    '@media print{.btn{display:none}body{padding:0}.node,.plan{break-inside:avoid}}'+
+    '</style></head><body>'+
+    '<h1>'+esc((sh&&sh.name)||(pr&&pr.n)||"Дом")+' — чертёж для монтажа</h1>'+
+    '<div class="sub">Размеры в миллиметрах · '+ds+' · пол '+numRu(A.total.floor)+' м²</div>'+
+    '<div class="plan">'+modelSchemeSvg(m, types, 0, "dim")+'</div>'+
+    '<div class="note"><b>Цепочка проёмов меряет РЕЗ в стене, а не изделие.</b> Труба усиления варится поверх листа, её внутренняя грань — кромка реза: рез равен проёму между трубами, то есть окну плюс два монтажных зазора (узел 1).</div>'+
+    '<h2>Проёмы</h2>'+
+    '<table><tr><th>Марка</th><th>Изделие</th><th class="c">Размер изделия</th><th class="c">Рез в стене</th><th class="c">Низ, мм</th><th class="c">Стена</th><th class="c">Усиление</th></tr>'+
+      opRows+'</table>'+
+    '<h2>Узел 1 · Усиление проёма</h2>'+
+    '<div class="node">'+jambDetailSvg()+
+      '<div class="note">Труба '+JAMB_TUBE+'×'+JAMB_TUBE+' мм по обеим сторонам окна и входной двери, во всю высоту, варится поверх листа контейнера. Рез в стене и проём между трубами — один и тот же размер: окно + '+(2*JAMB_GAP_MIN)+'–'+(2*JAMB_GAP)+' мм, зазор заполняется монтажной пеной. У глухого витража в торце усиления нет.</div>'+
+    '</div>'+
+    '<h2>Узел 2 · Перегородка</h2>'+
+    '<div class="node">'+wallDetailSvg(pieList(m,"layers"))+'</div>'+
+    pieTable("layers","Пирог перегородки")+
+    '<h2>Узел 3 · Наружная стена</h2>'+
+    '<div class="node">'+wallDetailSvg(pieList(m,"skin"))+'</div>'+
+    pieTable("skin","Пирог наружной стены")+
+    '<h2>Помещения</h2>'+
+    '<table><tr><th>Помещение</th><th class="c">Размер</th><th class="c">Пол</th><th class="c">Стены</th></tr>'+rooms+
+      '<tr class="sum"><td>Всего</td><td class="c">—</td><td class="c">'+numRu(A.total.floor)+' м²</td><td class="c">'+numRu(A.total.wallNet)+' м²</td></tr></table>'+
+    '<div class="note">Площади чистовые: потолок равен полу, стены — за вычетом проёмов. Полная площадь стен '+numRu(A.total.wallGross)+' м² — по ней идут обрешётка и утеплитель.</div>'+
+    '<button class="btn" onclick="window.print()">🖨 Печать / Сохранить в PDF</button>'+
+    '</body></html>';
+  const w=window.open("","_blank");
+  if(!w){ alert("Браузер заблокировал новое окно — разрешите всплывающие окна для портала."); return; }
+  w.document.write(html); w.document.close();
+}
+
 // Узлы — вкладками, а не тремя карточками подряд: их уже три, и листать чертёж
 // сквозь два чужих узла, чтобы дойти до нужного, значит не смотреть ни на один.
 const NODE_TABS=[
@@ -11703,7 +11800,12 @@ function tSpec2(){
   '</div>';
   // Один чертёж, два читателя: бригаде размеры, клиенту имена и метры. Вкладка
   // выбирает, чей это сейчас лист, — второй чертёж заводить не надо, геометрия одна.
-  h+=schemeViewTabs()+
+  // Лист для бригады печатают целиком: чертёж, узлы и таблицы. Кнопка стоит у
+  // рабочего вида — клиенту печатают другой документ, из спецификации.
+  h+=(schemeView==="dim"
+    ? '<button data-a="spec2-print" style="width:100%;padding:10px;background:#0d1b2e;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700;margin-bottom:9px">🖨 Печать для бригады — чертёж, узлы и таблицы</button>'
+    : '')+
+    schemeViewTabs()+
     '<div data-a="spec2-scheme" title="Открыть крупно" style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:12px;margin-bottom:9px;cursor:zoom-in">'+
       modelSchemeSvg(built.model, built.winTypes, 0, schemeView)+
       '<div style="font-size:10.5px;color:#9aabbf;text-align:center;margin-top:8px">тап — открыть крупно</div>'+
@@ -20266,6 +20368,7 @@ function bind(){
     else if(a==="spec2-scheme-close"){el.onclick=()=>{ schemeZoom=0; render(); };}
     else if(a==="spec2-scheme-view"){el.onclick=()=>{ schemeView=(el.dataset.v==="plain")?"plain":"dim"; render(); };}
     else if(a==="spec2-node-tab"){el.onclick=()=>{ nodeTab=el.dataset.v||"n1"; render(); };}
+    else if(a==="spec2-print"){el.onclick=()=>{ buildSchemePrint(); };}
     else if(a==="model-tool"){el.onclick=()=>{
       modelTool=el.dataset.k;
       if(modelTool==="op"&&!modelPlaceType&&winTypes.length)modelPlaceType=winTypes[0].id;

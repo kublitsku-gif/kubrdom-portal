@@ -40,8 +40,16 @@ const sum = (a) => a.reduce((x, y) => x + y, 0)
   const bay = sc.dims.find((d) => d.name === 'Помещения и перегородки')
   ok('цепочка помещений — обшивка, комнаты и перегородки',
     bay.segs.join(' ') === '76 2000 100 6400 100 3200 76', bay.segs.join(' '))
+  // Цепочка проёмов меряет РЕЗ в стене: окно уже реза на два монтажных зазора, а
+  // трубы варятся ПОВЕРХ листа и в этот размер не входят (узел 1).
   const bot = sc.dims.find((d) => d.side === 'bottom')
-  ok('цепочка проёмов длинной стены', bot.segs.join(' ') === '2976 1500 800 1000 5676', bot.segs.join(' '))
+  ok('цепочка проёмов длинной стены — по резу',
+    bot.segs.join(' ') === '2956 1540 760 1040 5656', bot.segs.join(' '))
+  ok('и она так и названа', bot.name === 'Проёмы (вырез)', bot.name)
+  ok('рез шире изделия на два зазора, без труб',
+    sc.openings.filter((o) => o.frame).every((o) => o.cutW === o.width + 40))
+  ok('у неусиленных рез равен изделию',
+    sc.openings.filter((o) => !o.frame).every((o) => o.cutW === o.width))
   const right = sc.dims.find((d) => d.side === 'right')
   ok('цепочка проёмов торца', right.segs.join(' ') === '176 2000 176', right.segs.join(' '))
   ok('ширина: обшивка и чистовой размер',

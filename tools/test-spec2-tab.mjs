@@ -198,6 +198,31 @@ function create(p, preset) {
     String(p.q('specSheets2[0].model.finish')))
   openNode('n1')
 
+  // Рез отличается от изделия, и на чертеже это видно: цепочка меряет рез, а под
+  // маркой стоит его число — иначе окно вырезают впритык. Трубы в рез не входят:
+  // они варятся поверх листа (узел 1), рез = окно + два зазора.
+  const dim2 = p.run('tSpec2()')
+  t.ok('на чертеже подписан рез', /рез 1540/.test(dim2))
+  t.ok('и цепочка меряет его же', /<text[^>]*>1540</.test(dim2))
+
+  // Лист для бригады печатается целиком: чертёж, узлы и таблицы.
+  t.ok('кнопка печати на рабочем виде', /data-a="spec2-print"/.test(dim2))
+  p.run('__printed="";window.open=function(){ return { document:{ write:function(h){ __printed=h; }, close:function(){} } }; };')
+  const pb = p.dom.node({ a: 'spec2-print' }); p.run('bind();'); pb.onclick()
+  const sheet = p.q('__printed')
+  t.ok('лист собран', sheet.length > 5000, String(sheet.length))
+  t.ok('в нём чертёж', sheet.indexOf('sch-hatch') >= 0 && /<text[^>]*>11906</.test(sheet))
+  t.ok('таблица проёмов с колонкой реза', /Рез в стене/.test(sheet) && /1540 × 2100/.test(sheet))
+  t.ok('и сказано, что цепочка меряет рез', /меряет РЕЗ в стене/.test(sheet))
+  t.ok('все три узла на листе', /Узел 1 · Усиление/.test(sheet) && /Узел 2 · Перегородка/.test(sheet) && /Узел 3 · Наружная стена/.test(sheet))
+  t.ok('пироги расписаны слоями', /Пирог перегородки/.test(sheet) && /Плитка SPC/.test(sheet) && /ППУ/.test(sheet))
+  t.ok('и помещения с площадями', /Помещения/.test(sheet) && /КУХНЯ-ГОСТИНАЯ|Кухня-гостиная/.test(sheet))
+  t.ok('есть кнопка печати', /window.print\(\)/.test(sheet))
+  // Клиенту этот лист не предлагаем: у него своя печать, из спецификации.
+  const v2 = p.dom.node({ a: 'spec2-scheme-view', v: 'plain' }); p.run('bind();'); v2.onclick()
+  t.ok('на клиентском виде кнопки печати нет', p.run('tSpec2()').indexOf('data-a="spec2-print"') < 0)
+  const v3 = p.dom.node({ a: 'spec2-scheme-view', v: 'dim' }); p.run('bind();'); v3.onclick()
+
   // Окна на листе клиента выделены цветом и подписаны размером: он читает план
   // окнами — где свет и куда вид, — а марки и цепочки ему ни о чём не говорят.
   t.ok('окна выделены цветом', (psvg.match(/#2980b9/g) || []).length >= 4, String((psvg.match(/#2980b9/g) || []).length))

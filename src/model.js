@@ -1184,6 +1184,10 @@ export function modelScheme(model, winTypes) {
       pos: pos, width: wd, height: Number(t.h) || 0, sill: sill,
       x: box.x, y: box.y, w: box.w, h: box.h,
       frame: frame, jambs: frame ? jambsOf(box, along) : [],
+      // Ширина реза в стене: изделие плюс два монтажных зазора. Трубы стоят ПОВЕРХ
+      // листа и в этот размер не входят. По этому числу режут, и оно обязано
+      // приезжать из одного места — сюда смотрят и чертёж, и таблица на печатном листе.
+      cutW: wd + (frame ? 2 * JAMB_GAP : 0),
       swing: (kind === "door") ? swingOf(box, along, out, op.hinge || (along ? "end" : "start")) : null,
     };
   }).filter(function (o) { return o && o.width > 0; });
@@ -1223,9 +1227,17 @@ export function modelScheme(model, winTypes) {
     if (at != null) { out.at = at; out.inner = true; }
     return out;
   };
+  // Цепочка проёмов меряет РЕЗ в стене, а не изделие: по ней размечают лист, а окно
+  // уже реза на два монтажных зазора. Труба варится ПОВЕРХ листа, её внутренняя
+  // грань и есть кромка реза (см. узел 1), поэтому трубы в этот размер не входят —
+  // рез равен проёму между трубами.
+  const cut = function (o) {
+    const pad = o.frame ? JAMB_GAP : 0;
+    return [o.pos - pad, o.pos + o.width + pad];
+  };
   const along = function (sd) {
     return openings.filter(function (o) { return o.side === sd; })
-      .reduce(function (a, o) { return a.concat([o.pos, o.pos + o.width]); }, []);
+      .reduce(function (a, o) { return a.concat(cut(o)); }, []);
   };
 
   const bayMarks = [fin];
@@ -1239,10 +1251,10 @@ export function modelScheme(model, winTypes) {
     chain("top", L, [], "Габарит"),
     chain("left", W, [fin, W - fin], "Ширина"),
   ];
-  if (along("s").length) dims.push(chain("bottom", L, along("s"), "Проёмы"));
-  if (along("n").length) dims.push(chain("top", L, along("n"), "Проёмы"));
-  if (along("e").length) dims.push(chain("right", W, along("e"), "Проёмы"));
-  if (along("w").length) dims.push(chain("left", W, along("w"), "Проёмы"));
+  if (along("s").length) dims.push(chain("bottom", L, along("s"), "Проёмы (вырез)"));
+  if (along("n").length) dims.push(chain("top", L, along("n"), "Проёмы (вырез)"));
+  if (along("e").length) dims.push(chain("right", W, along("e"), "Проёмы (вырез)"));
+  if (along("w").length) dims.push(chain("left", W, along("w"), "Проёмы (вырез)"));
   // Дверь в перегородке меряется от чистовых стен, как на чертеже: 75 · 70 · 75.
   // Цепочка стоит у своей перегородки, поэтому у неё есть `at` — отметка по длине.
   openings.filter(function (o) { return o.side === "part"; }).forEach(function (o) {
