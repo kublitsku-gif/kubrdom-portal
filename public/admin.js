@@ -50,7 +50,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   bayAt, splitAt, splitLengthwiseAt, nearestSide, opPosAt,
   modelToSpecs, modelTotals, modelIssues, modelScheme, modelAreas, modelWalls, snapWall, addWall, headSill, alignHeads, partitionAt, INNER_DOOR,
   WIN_CATALOG, winCatItem, winFace, winTypeFrom, frameNeeded, JAMB_TUBE, JAMB_GAP_MIN, JAMB_GAP,
-  WALL_LAYERS, wallLayers, layersThick,
+  WALL_LAYERS, SKIN_LAYERS, wallLayers, skinLayers, layersThick, applyLayers,
   MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2 } from "../src/spec2.js";
@@ -9954,35 +9954,36 @@ function modelAreasPanel(sh){
 // и миллиметры толщины, и по нему же рисуется вынесенный узел. Держать его в коде
 // значило бы править код на каждый дом.
 function modelLayersPanel(sh){
-  const m=sh.model;
-  const list=wallLayers(m), total=layersThick(list);
-  const th=Number(m.wallThick)||0;
-  const own=!!(m.layers&&m.layers.length);
+  return pieBlock(sh, "layers")+pieBlock(sh, "skin");
+}
+
+function pieBlock(sh, key){
+  const m=sh.model, meta=PIE_META[key];
+  const list=pieList(m, key), total=layersThick(list);
+  const th=Number(m[meta.plan])||0;
+  const own=!!(m[key]&&m[key].length);
   let h='<div style="border-top:1px solid rgba(255,255,255,.12);margin-top:10px;padding-top:9px">'+
     '<div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">'+
-      '<span style="font-size:10px;font-weight:700;color:#8ea6bd;letter-spacing:0.6px;flex:1">ПИРОГ ПЕРЕГОРОДКИ · '+numRu(total)+' ММ</span>'+
-      '<button data-a="model-layer-add" style="padding:5px 11px;background:#16a085;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">+ слой</button>'+
+      '<span style="font-size:10px;font-weight:700;color:#8ea6bd;letter-spacing:0.6px;flex:1">ПИРОГ '+(key==="skin"?"НАРУЖНОЙ СТЕНЫ":"ПЕРЕГОРОДКИ")+' · '+numRu(total)+' ММ</span>'+
+      '<button data-a="model-layer-add" data-key="'+key+'" style="padding:5px 11px;background:#16a085;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">+ слой</button>'+
     '</div>';
   h+=list.map(function(l,i){
     return '<div style="display:flex;align-items:center;gap:5px;margin-bottom:5px">'+
       '<span style="width:14px;text-align:center;font-size:10px;color:#7f97ae;flex-shrink:0">'+(i+1)+'</span>'+
-      '<input data-a="model-layer-n" data-i="'+i+'" value="'+esc(l.n||"")+'" placeholder="Материал" style="flex:1;min-width:0;padding:6px 8px;border-radius:7px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#fff;font-size:12px;outline:none;box-sizing:border-box">'+
-      '<input data-a="model-layer-mm" data-i="'+i+'" value="'+numInpMm(l.mm)+'" type="number" step="0.1" inputmode="decimal" title="Толщина слоя, мм" style="width:64px;padding:6px 7px;border-radius:7px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#fff;font-size:12px;outline:none;box-sizing:border-box;text-align:right">'+
+      '<input data-a="model-layer-n" data-key="'+key+'" data-i="'+i+'" value="'+esc(l.n||"")+'" placeholder="Материал" style="flex:1;min-width:0;padding:6px 8px;border-radius:7px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#fff;font-size:12px;outline:none;box-sizing:border-box">'+
+      '<input data-a="model-layer-mm" data-key="'+key+'" data-i="'+i+'" value="'+numInpMm(l.mm)+'" type="number" step="0.1" inputmode="decimal" title="Толщина слоя поперёк стены, мм" style="width:64px;padding:6px 7px;border-radius:7px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#fff;font-size:12px;outline:none;box-sizing:border-box;text-align:right">'+
       '<span style="font-size:10.5px;color:#7f97ae;flex-shrink:0">мм</span>'+
-      '<button data-a="model-layer-del" data-i="'+i+'" style="width:26px;height:26px;border:1px solid rgba(232,116,106,.5);background:transparent;border-radius:7px;cursor:pointer;color:#e8746a;font-size:11px;flex-shrink:0">🗑</button>'+
+      '<button data-a="model-layer-del" data-key="'+key+'" data-i="'+i+'" style="width:26px;height:26px;border:1px solid rgba(232,116,106,.5);background:transparent;border-radius:7px;cursor:pointer;color:#e8746a;font-size:11px;flex-shrink:0">🗑</button>'+
     '</div>';
   }).join("");
-  // Сумма слоёв и плановая толщина — два разных числа, и расходиться им нельзя:
-  // по одному собирают стену, по другому считаются площади помещений.
-  h+='<div style="display:flex;align-items:center;gap:8px;margin-top:7px;font-size:10.5px;color:'+(Math.abs(total-th)>0.5?"#e8975a":"#7f97ae")+';line-height:1.4">'+
-      '<span style="flex:1">сумма '+numRu(total)+' мм · в плане '+numRu(th)+' мм'+(Math.abs(total-th)>0.5?" — не сходится":"")+'</span>'+
-      (Math.abs(total-th)>0.5
-        // В плане толщина целая: миллиметры геометрии — это целые числа, и 77,2
-        // на кнопке обещало бы точность, которой в плане нет.
-        ? '<button data-a="model-layer-apply" style="flex-shrink:0;padding:5px 10px;background:transparent;border:1.5px solid #e8975a;border-radius:8px;cursor:pointer;color:#e8975a;font-size:10.5px;font-weight:700">взять '+Math.round(total)+' мм в план</button>'
-        : '')+
+  // План идёт за пирогом: правка слоя тут же двигает толщину в плане, и площади
+  // пересчитываются. Пока пирог типовой, в плане может стоять своё число — первая
+  // же правка приведёт их к одному.
+  h+='<div style="font-size:10.5px;color:'+(Math.abs(total-th)>0.5?"#e8975a":"#7f97ae")+';margin-top:6px;line-height:1.4">'+
+      'в плане '+numRu(th)+' мм'+
+      (Math.abs(total-th)>0.5?' — разойдётся, пока пирог типовой; правка слоя перенесёт сумму в план':' — сумма пирога')+
     '</div>';
-  if(!own)h+='<div style="font-size:10px;color:#6f8aa3;margin-top:6px;line-height:1.4">Это типовой пирог. Правка запишет его в модель — дальше он живёт вместе с домом.</div>';
+  if(!own)h+='<div style="font-size:10px;color:#6f8aa3;margin-top:5px;line-height:1.4">Типовой пирог. Правка запишет его в модель — дальше он живёт вместе с домом, и план идёт за ним.</div>';
   return h+'</div>';
 }
 // Толщина слоя бывает 0,1 мм — в поле она обязана быть с ТОЧКОЙ, иначе браузер
@@ -10289,11 +10290,19 @@ function specModelHtml(sh){
       return '<button data-a="model-type" data-k="'+c.k+'" style="border:1.5px solid '+(on?"#8e44ad":"#dde6f0")+';background:'+(on?"#8e44ad":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">'+esc(c.n)+'</button>';
     }).join("")+'</div>';
   h+=modelPresetBtns("model-preset");
-  h+='<div style="display:flex;align-items:center;gap:8px;background:#f6f8fa;border-radius:9px;padding:7px 10px;margin-bottom:9px">'+
-      '<span style="font-size:11px;color:#5a7a9a;flex:1">Отделка стен съедает по</span>'+
-      '<input data-a="model-finish" value="'+((m.finish==null?FINISH_THICK:m.finish))+'" type="number" step="1" inputmode="numeric" style="width:70px;padding:6px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12.5px;outline:none;box-sizing:border-box;text-align:right">'+
-      '<span style="font-size:11px;color:#7a9aaa">мм на стену</span>'+
-    '</div>';
+  // Толщина обшивки — сумма пирога наружной стены, если он у дома свой: план идёт
+  // за пирогом, и второе поле для того же числа означало бы два источника правды.
+  h+=(m.skin&&m.skin.length)
+    ? '<div style="display:flex;align-items:center;gap:8px;background:#f6f8fa;border-radius:9px;padding:7px 10px;margin-bottom:9px">'+
+        '<span style="font-size:11px;color:#5a7a9a;flex:1">Наружная стена съедает по</span>'+
+        '<span style="font-size:12.5px;font-weight:800;color:#0d1b2e">'+numRu(m.finish)+' мм</span>'+
+        '<span style="font-size:11px;color:#7a9aaa">по пирогу (узел 3)</span>'+
+      '</div>'
+    : '<div style="display:flex;align-items:center;gap:8px;background:#f6f8fa;border-radius:9px;padding:7px 10px;margin-bottom:9px">'+
+        '<span style="font-size:11px;color:#5a7a9a;flex:1">Отделка стен съедает по</span>'+
+        '<input data-a="model-finish" value="'+((m.finish==null?FINISH_THICK:m.finish))+'" type="number" step="1" inputmode="numeric" style="width:70px;padding:6px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12.5px;outline:none;box-sizing:border-box;text-align:right">'+
+        '<span style="font-size:11px;color:#7a9aaa">мм на стену</span>'+
+      '</div>';
   // План или развёртка. Высоту план показать не может в принципе, а именно по ней
   // электрик ставит подрозетники — поэтому это два вида одной модели, а не картинка.
   h+='<div style="display:flex;gap:5px;margin-bottom:7px">'+
@@ -11160,6 +11169,17 @@ function schemeParts(sc, view){
         [[cx+side*(R+430), cy+40],[cx+side*(R+430), cy+520],[cx-side*(R+430), cy+40],[cx+side*(R+430), cy-420]], busy);
     }
   }
+  // Третья выноска — на наружную стену: её пирог тоже узел, и «85 мм» на цепочке
+  // не говорит, из чего она собрана.
+  if(!plain){
+    const sw=(sc.walls||[]).find(function(w){ return w.kind==="shell"&&w.h===sc.finish; });
+    if(sw){
+      const cx=sw.x+sw.w*0.72, cy=sw.y+sw.h/2, R=220;
+      const down=(cy<sc.w/2)?1:-1;
+      g+=schCallout(cx, cy, R, "УЗЕЛ 3", "#b06a2c",
+        [[cx, cy+down*(R+330)],[cx-800, cy+down*(R+330)],[cx+800, cy+down*(R+330)],[cx, cy+down*(R+700)]], busy);
+    }
+  }
   // Цепочка двери в перегородке стоит ВНУТРИ плана, вдоль своей перегородки, и
   // занимает всю высоту комнаты. Её место считаем до имён: подвинуть имя по высоте
   // против такой цепочки нельзя — только вдоль комнаты, и для этого её надо знать.
@@ -11366,8 +11386,7 @@ function jambDetailSvg(){
 // Слои рисуем ПОЧТИ в масштабе: пароизоляция 0,1 мм в честном масштабе — это ноль
 // пикселей, поэтому у каждого слоя есть минимальная видимая полоса. Числа при этом
 // настоящие, и подпись говорит правду там, где картинка приблизительна.
-function wallDetailSvg(model){
-  const list=wallLayers(model);
+function wallDetailSvg(list){
   const total=layersThick(list);
   const W=1400, x0=60, bw=420;          // ширина полосы пирога
   const MIN=26, SCALE=5.4;              // мин. видимая толщина слоя и масштаб
@@ -11411,31 +11430,38 @@ function schemeLegend(){
       '<br>На чертеже это тёмные квадраты у откосов. У глухого витража в торце усиления нет — снять или вернуть его можно у выбранного проёма в редакторе.'+
     '</div>'+
   '</div>'+
-  wallLegend();
+  pieLegend("layers")+pieLegend("skin");
 }
 
-// Узел перегородки: её пирог. Слои правятся в редакторе, на боковой панели —
-// у каждого дома он свой, а держать его в коде значит править код на каждый дом.
-function wallLegend(){
+// Пироги стен — два узла одного вида: перегородка и наружная стена. Слои правятся
+// в редакторе, на боковой панели: у каждого дома пирог свой, а держать его в коде
+// значит править код на каждый дом.
+const PIE_META={
+  layers:{ n:"УЗЕЛ 2 · ПЕРЕГОРОДКА", emoji:"🧱", of:"перегородки", plan:"wallThick", planN:"перегородка" },
+  skin:  { n:"УЗЕЛ 3 · НАРУЖНАЯ СТЕНА", emoji:"🧊", of:"наружной стены", plan:"finish", planN:"обшивка стены" },
+};
+function pieList(m, key){ return (key==="skin")?skinLayers(m):wallLayers(m); }
+function pieLegend(key){
   const sh=spec2Sheet();
   const m=(sh&&sh.model)||((MODEL_PRESETS[0])?presetModel(MODEL_PRESETS[0], winTypes, gid).model:null);
   if(!m)return "";
-  const list=wallLayers(m), total=layersThick(list);
-  const th=Number(m.wallThick)||0;
+  const meta=PIE_META[key];
+  const list=pieList(m, key), total=layersThick(list);
+  const th=Number(m[meta.plan])||0;
   return '<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:11px 12px;margin-bottom:9px">'+
     '<div style="display:flex;align-items:center;gap:7px;margin-bottom:6px">'+
-      '<span style="font-size:14px">🧱</span>'+
-      '<span style="font-size:11px;font-weight:700;color:#0d1b2e;letter-spacing:0.5px">УЗЕЛ 2 · ПЕРЕГОРОДКА</span>'+
+      '<span style="font-size:14px">'+meta.emoji+'</span>'+
+      '<span style="font-size:11px;font-weight:700;color:#0d1b2e;letter-spacing:0.5px">'+esc(meta.n)+'</span>'+
       '<span style="font-size:10px;color:#9aabbf">слои почти в масштабе</span>'+
     '</div>'+
-    wallDetailSvg(m)+
+    wallDetailSvg(list)+
     '<div style="font-size:11.5px;color:#5a7a9a;line-height:1.5;margin-top:8px">'+
-      'Пирог перегородки: '+list.map(function(l){return esc(l.n||"слой")+" "+numRu(Number(l.mm)||0)+" мм";}).join(" · ")+'.'+
+      'Пирог '+meta.of+': '+list.map(function(l){return esc(l.n||"слой")+" "+numRu(Number(l.mm)||0)+" мм";}).join(" · ")+'.'+
       '<br>Сумма слоёв <b style="color:#0d1b2e">'+numRu(total)+' мм</b>'+
       (Math.abs(total-th)>0.5
-        ? ', а в плане перегородка <b style="color:#0d1b2e">'+numRu(th)+' мм</b> — поправьте слои или толщину в редакторе, на боковой панели.'
-        : ' — столько же, сколько в плане.')+
-      '<br>Слои задаются в редакторе: «⛶ Во весь экран» → боковая панель, блок «Пирог перегородки».'+
+        ? ', а в плане '+meta.planN+' <b style="color:#0d1b2e">'+numRu(th)+' мм</b> — правка пирога в редакторе перенесёт сумму в план.'
+        : ' — столько же, сколько в плане: план идёт за пирогом.')+
+      '<br>Слои задаются в редакторе: «⛶ Во весь экран» → боковая панель.'+
     '</div>'+
   '</div>';
 }
@@ -19923,33 +19949,29 @@ function bind(){
     };}
     else if(a==="model-layer-add"){el.onclick=()=>{
       const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
-      sh.model.layers=wallLayers(sh.model).concat([{id:gid(), n:"", mm:0}]);
+      const key=el.dataset.key==="skin"?"skin":"layers";
+      sh.model=applyLayers(sh.model, key, pieList(sh.model, key).concat([{id:gid(), n:"", mm:0}]));
       modelSync(sh); fl();
     };}
     else if(a==="model-layer-n"||a==="model-layer-mm"){el.onchange=()=>{
       const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      const key=el.dataset.key==="skin"?"skin":"layers";
       const i=parseInt(el.dataset.i,10);
-      const list=wallLayers(sh.model).map(function(l){return Object.assign({},l);});
+      const list=pieList(sh.model, key).map(function(l){return Object.assign({},l);});
       if(!list[i])return;
       if(a==="model-layer-n")list[i].n=el.value;
       else list[i].mm=Math.max(0, Math.round((parseFloat(String(el.value).replace(",","."))||0)*10)/10);
-      sh.model.layers=list;
+      // План идёт за пирогом: толщина стены — это сумма её слоёв, а не отдельное
+      // число, которое кто-то вписал руками. Площади пересчитаются следом.
+      sh.model=applyLayers(sh.model, key, list);
       modelSync(sh); fl();
     };}
     else if(a==="model-layer-del"){el.onclick=()=>{
       const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
-      const i=parseInt(el.dataset.i,10);
-      sh.model.layers=wallLayers(sh.model).filter(function(l,j){return j!==i;});
-      modelSync(sh); fl();
-    };}
-    // Толщина перегородки в плане — это геометрия: от неё зависят площади комнат,
-    // поэтому пирог её сам не двигает, а предлагает.
-    else if(a==="model-layer-apply"){el.onclick=()=>{
-      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
-      const mm=Math.round(layersThick(wallLayers(sh.model)));
-      if(!mm)return;
-      if(!confirm("Взять "+mm+" мм за толщину перегородки?\n\nПлощади помещений пересчитаются."))return;
-      sh.model.wallThick=mm;
+      const key=el.dataset.key==="skin"?"skin":"layers";
+      const list=pieList(sh.model, key).filter(function(l,j){return j!==parseInt(el.dataset.i,10);});
+      if(!list.length){ alert("Хотя бы один слой нужен: из чего-то стена состоять обязана."); return; }
+      sh.model=applyLayers(sh.model, key, list);
       modelSync(sh); fl();
     };}
     else if(a==="model-finish"){el.onchange=()=>{
@@ -20061,6 +20083,15 @@ function bind(){
         modelSync(sh);
         specSheets2=specSheets2.concat([sh]);
       }
+      // Пироги стен материализуем при входе в редактор: план идёт за ними, и лист,
+      // где толщина стены «просто число», разъедется с узлами на первой правке.
+      if(sh.model&&!(sh.model.layers&&sh.model.layers.length)){
+        sh.model=applyLayers(sh.model, "layers", wallLayers(sh.model));
+      }
+      if(sh.model&&!(sh.model.skin&&sh.model.skin.length)){
+        sh.model=applyLayers(sh.model, "skin", skinLayers(sh.model));
+      }
+      modelSync(sh);
       specOpenId=sh.id; modelFull=true; modelTool="sel"; fl();
     };}
     else if(a==="model-full-close"){el.onclick=()=>{ modelFull=false; render(); };}

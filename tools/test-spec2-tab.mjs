@@ -199,12 +199,20 @@ function create(p, preset) {
   t.ok('редактор открыт на этом листе',
     p.q('modelFull') === true && p.q('specOpenId') === p.q('specSheets2[0].id'))
 
+  // Пироги стен приезжают вместе с редактором: план идёт за ними, поэтому обшивка
+  // сразу равна сумме своего пирога, а не числу «просто так».
+  t.ok('пироги стен материализовались',
+    p.q('specSheets2[0].model.skin.length') === 5 && p.q('specSheets2[0].model.layers.length') === 7)
+  t.ok('и толщины в плане — их суммы',
+    p.q('specSheets2[0].model.finish') === 85 && p.q('specSheets2[0].model.wallThick') === 77,
+    p.q('specSheets2[0].model.finish') + ' / ' + p.q('specSheets2[0].model.wallThick'))
+
   // Правка модели обязана доехать до чертежа: иначе схема показывает вчерашний дом.
-  p.run('specSheets2[0].model.rooms[0].name="Ванная";specSheets2[0].model.rooms[0].len=3076;')
+  p.run('specSheets2[0].model.rooms[0].name="Ванная";specSheets2[0].model.rooms[0].len=3085;')
   const after = p.run('tSpec2()')
   t.ok('имя помещения на схеме поменялось', /ВАННАЯ/.test(after) && !/САНУЗЕЛ/.test(after))
   t.ok('и размер в цепочке тоже', /<text[^>]*>3000</.test(after), 'нет 3000')
-  t.ok('площади пересчитались', /6,6/.test(after), 'нет 6,6 м² у ванной')
+  t.ok('площади пересчитались', /6,55/.test(after), 'нет площади ванной')
 }
 
 // ── 2. Живой раздел не задет ─────────────────────────────────────────────────

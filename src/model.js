@@ -64,11 +64,36 @@ export const WALL_LAYERS = [
   { n: "Фанера шлифованная", mm: 4 },
 ];
 
-export function wallLayers(model) {
-  const own = model && model.layers;
-  return (own && own.length) ? own : WALL_LAYERS.map(function (l, i) {
-    return { id: "wl" + (i + 1), n: l.n, mm: l.mm };
+// Пирог НАРУЖНОЙ стены: железо контейнера, утеплитель, обрешётка и обшивка. Это
+// те самые миллиметры, на которые чистовое помещение меньше коробки, — раньше они
+// стояли одним числом `finish`, и что за ним, знал только тот, кто его вписал.
+export const SKIN_LAYERS = [
+  { n: "Металл контейнера", mm: 2 },
+  { n: "ППУ", mm: 50 },
+  { n: "Обрешётка из бруса 20×40", mm: 20 },
+  { n: "ОСП", mm: 9 },
+  { n: "Фанера", mm: 4 },
+];
+
+const listOf = function (own, def, pre) {
+  return (own && own.length) ? own : def.map(function (l, i) {
+    return { id: pre + (i + 1), n: l.n, mm: l.mm };
   });
+};
+export function wallLayers(model) { return listOf(model && model.layers, WALL_LAYERS, "wl"); }
+export function skinLayers(model) { return listOf(model && model.skin, SKIN_LAYERS, "sk"); }
+
+// План идёт ЗА пирогом: толщина стены — это сумма её слоёв, а не отдельное число,
+// которое кто-то вписал руками. Поэтому правка пирога сразу двигает геометрию —
+// иначе на чертеже одно, а на площадке другое. В план уходит целое число: миллиметры
+// геометрии целые, и «77,2» обещало бы точность, которой в плане нет.
+export function applyLayers(model, key, list) {
+  const cut = (list || []).map(function (l) { return { id: l.id, n: l.n, mm: Number(l.mm) || 0 }; });
+  const mm = Math.max(1, Math.round(layersThick(cut)));
+  const patch = { };
+  patch[key] = cut;
+  patch[(key === "skin") ? "finish" : "wallThick"] = mm;
+  return Object.assign({}, model, patch);
 }
 
 // Толщина пирога. Считаем в десятых: пароизоляция 0,1 мм — тоже слой, и сумма

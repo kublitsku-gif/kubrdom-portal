@@ -356,11 +356,11 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   t.ok('и положение числом', bar.indexOf('data-a="model-op-posn"') >= 0)
 
   // Число — то же, что на чертеже: дверь в перегородке меряется от ЧИСТОВОЙ стены,
-  // поэтому 1 м на экране это 1076 по коробке (обшивка 76).
+  // поэтому 1 м на экране это 1085 по коробке (пирог наружной стены 85 мм).
   const inp = p.dom.node({ a: 'model-op-posn', id: door.id })
   p.run('bind();')
   inp.value = '1'; inp.onchange()
-  t.ok('размер вводится числом', open()[0].pos === 1076, String(open()[0].pos))
+  t.ok('размер вводится числом', open()[0].pos === 1085, String(open()[0].pos))
 
   click(p, { a: 'model-op-hinge', id: door.id })
   click(p, { a: 'model-op-into', id: door.id })
@@ -420,7 +420,10 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   const layers = () => p.q('wallLayers(specSheet(specOpenId).model)')
   t.ok('блок есть на боковой панели', /ПИРОГ ПЕРЕГОРОДКИ/.test(panelHtml()))
   t.ok('типовой пирог показан', /Плитка SPC/.test(panelHtml()) && /Фанера шлифованная/.test(panelHtml()))
-  t.ok('пока свой не завели, в модели его нет', p.q('!specSheet(specOpenId).model.layers') === true)
+  // Пирог приезжает вместе с редактором: план идёт за ним с первой минуты.
+  t.ok('пирог уже в модели', p.q('specSheet(specOpenId).model.layers.length') === 7)
+  t.ok('и толщина в плане — его сумма', p.q('specSheet(specOpenId).model.wallThick') === 77,
+    String(p.q('specSheet(specOpenId).model.wallThick')))
 
   // Правка слоя записывает пирог в модель — дальше он живёт вместе с домом.
   const mm = p.dom.node({ a: 'model-layer-mm', i: '3' })
@@ -440,16 +443,30 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   click(p, { a: 'model-layer-del', i: '7' })
   t.ok('и удаляется', layers().length === 7)
 
-  // Толщина перегородки — геометрия: от неё зависят площади, поэтому пирог её не
-  // двигает сам, а предлагает. Подтверждение спрашиваем.
-  p.run('__asked=[];window.confirm=function(q){ __asked.push(q); return true; };')
-  t.ok('в плане пока прежние 100 мм', p.q('specSheet(specOpenId).model.wallThick') === 100)
-  click(p, { a: 'model-layer-apply' })
-  t.ok('толщина взята из пирога', p.q('specSheet(specOpenId).model.wallThick') === 87,
+  // План идёт ЗА пирогом: первая же правка слоя перенесла сумму в толщину стены,
+  // и площади поехали следом — отдельной кнопки «принять» больше нет.
+  t.ok('толщина в плане равна сумме слоёв',
+    p.q('specSheet(specOpenId).model.wallThick') === Math.round(p.q('layersThick(wallLayers(specSheet(specOpenId).model))')),
     String(p.q('specSheet(specOpenId).model.wallThick')))
-  t.ok('и об этом спросили', p.q('__asked.length') === 1 && /площади/i.test(p.q('__asked[0]')),
-    JSON.stringify(p.q('__asked')))
-  t.ok('кнопка ушла — расхождения больше нет', panelHtml().indexOf('data-a="model-layer-apply"') < 0)
+  t.ok('и это уже не прежние 100 мм', p.q('specSheet(specOpenId).model.wallThick') !== 100)
+  t.ok('кнопки «взять в план» нет', panelHtml().indexOf('data-a="model-layer-apply"') < 0)
+
+  // Второй пирог — наружная стена: те же слои, тот же редактор, своё число в плане.
+  t.ok('блок наружной стены есть', /ПИРОГ НАРУЖНОЙ СТЕНЫ/.test(panelHtml()))
+  t.ok('и в нём фактический пирог', /ППУ/.test(panelHtml()) && /Обрешётка из бруса 20×40/.test(panelHtml()))
+  const skinMm = p.dom.node({ a: 'model-layer-mm', key: 'skin', i: '1' })
+  p.run('bind();')
+  skinMm.value = '60'; skinMm.onchange()
+  t.ok('правка слоя обшивки двигает finish', p.q('specSheet(specOpenId).model.finish') === 95,
+    String(p.q('specSheet(specOpenId).model.finish')))
+  t.ok('и площади пересчитались', p.q('specSheet(specOpenId).specs.rooms[0].w') < 2.2,
+    String(p.q('specSheet(specOpenId).specs.rooms[0].w')))
+  // Стена не может остаться совсем без слоёв — из чего-то она состоять обязана.
+  p.run('__msg=[];window.alert=function(q){ __msg.push(q); };')
+  const n = p.q('skinLayers(specSheet(specOpenId).model).length')
+  for (let i = 0; i < n; i++) click(p, { a: 'model-layer-del', key: 'skin', i: '0' })
+  t.ok('последний слой не удалить', p.q('skinLayers(specSheet(specOpenId).model).length') === 1)
+  t.ok('и об этом сказано', p.q('__msg.length') === 1 && /слой/i.test(p.q('__msg[0]')), JSON.stringify(p.q('__msg')))
 }
 
 // ── 10. «Вернуть» отменяет удаление ──────────────────────────────────────────
