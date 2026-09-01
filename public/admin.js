@@ -11076,6 +11076,24 @@ function schemeParts(sc, view){
       esc(sub)+'</text>';
     g+='</g>';
   });
+  // Выноска на узел — ОДНА на чертёж: узел типовой, и обводить каждое окно значит
+  // засыпать план кружками. Кружок стоит на трубе, подпись уходит внутрь комнаты:
+  // снаружи лежат размерные цепочки.
+  if(!plain){
+    const first=sc.openings.find(function(o){ return (o.jambs||[]).length; });
+    if(first){
+      const j=first.jambs[0];
+      const cx=j.x+j.w/2, cy=j.y+j.h/2, R=240;
+      const along=(first.side==="n"||first.side==="s");
+      const dir=(first.side==="s"||first.side==="e")?-1:1;   // внутрь коробки
+      const lx=along?cx:(cx+dir*(R+420)), ly=along?(cy+dir*(R+330)):cy;
+      g+='<circle cx="'+cx+'" cy="'+cy+'" r="'+R+'" fill="none" stroke="#2f4a63" stroke-width="24"/>'+
+        '<line x1="'+(cx+(along?0:dir*R))+'" y1="'+(cy+(along?dir*R:0))+'" x2="'+(along?cx:(lx-dir*160))+'" y2="'+(along?(ly-dir*110):cy)+'" stroke="#2f4a63" stroke-width="18"/>'+
+        '<text x="'+lx+'" y="'+ly+'" font-size="165" fill="#2f4a63" font-weight="700" text-anchor="middle" stroke="#fff" stroke-width="70" paint-order="stroke" stroke-linejoin="round">УЗЕЛ 1</text>';
+      busy.push(schTextBox(lx, ly, "УЗЕЛ 1", 165, "middle", false));
+      busy.push({ x0:cx-R, y0:cy-R, x1:cx+R, y1:cy+R });
+    }
+  }
   // Цепочка двери в перегородке стоит ВНУТРИ плана, вдоль своей перегородки, и
   // занимает всю высоту комнаты. Её место считаем до имён: подвинуть имя по высоте
   // против такой цепочки нельзя — только вдоль комнаты, и для этого её надо знать.
@@ -11207,12 +11225,85 @@ const SCHEME_VIEWS=[
 function schemeViewMeta(){ return SCHEME_VIEWS.find(function(v){return v[0]===schemeView;})||SCHEME_VIEWS[0]; }
 // Что означают квадраты у проёмов. Числа здесь — те же константы, по которым труба
 // нарисована: пояснение, живущее отдельно от чертежа, разойдётся с ним первым же.
+// Узел усиления, вынесенный и расписанный. На плане труба 40×40 — квадратик в
+// четыре пикселя: увидеть его можно, понять по нему нечего. Поэтому на чертеже
+// стоит выноска «УЗЕЛ 1», а сам узел нарисован рядом крупно и без масштаба — так
+// его и подают на рабочих чертежах: что за чем идёт и какие между этим зазоры.
+//
+// Числа берутся из тех же констант, что и трубы на плане: узел, живущий отдельно
+// от чертежа, разойдётся с ним на первой же правке.
+function jambDetailSvg(){
+  // Раскладка узла — БЕЗ масштаба: труба 40 и окно 1500 в одном масштабе дали бы
+  // ниточку рядом с простынёй. Узел показывает, что за чем идёт и какие между
+  // этим зазоры; настоящие числа стоят подписями.
+  const wallY=200, wallH=120;
+  const X={ w0:0, t1a:220, t1b:380, g1:500, p0:500, pb0:670, pb1:750, p1:900, g2:1020, t2:1180, w1:1400 };
+  const t=function(cx,cy,str,size,col,anchor){
+    return '<text x="'+cx+'" y="'+cy+'" font-size="'+(size||34)+'" fill="'+(col||"#5a7a9a")+'" font-weight="700" text-anchor="'+(anchor||"middle")+'">'+esc(str)+'</text>';
+  };
+  const ln=function(x1,y1,x2,y2,col,w){
+    return '<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" stroke="'+(col||SCH_DIM)+'" stroke-width="'+(w||4)+'"/>';
+  };
+  const dim=function(x1,x2,y,label,col){
+    const c=col||SCH_DIM;
+    return ln(x1,y,x2,y,c,4)+ln(x1,y-13,x1,y+13,c,4)+ln(x2,y-13,x2,y+13,c,4)+t((x1+x2)/2,y-18,label,34,c);
+  };
+  // Выноска: вертикальная линия от самого элемента, полочка и подпись НАД полочкой.
+  const note=function(fromX,fromY,toY,str,col,dirX){
+    const d=(dirX<0)?-1:1;
+    const x2=fromX+d*(40+String(str).length*21);
+    return ln(fromX,fromY,fromX,toY,col,4)+ln(fromX,toY,x2,toY,col,4)+
+      t(fromX+d*40, toY-16, str, 32, col, d>0?"start":"end");
+  };
+  let g='<defs><pattern id="jamb-hatch" width="30" height="30" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">'+
+    '<rect width="30" height="30" fill="#eef1f5"/><line x1="0" y1="0" x2="0" y2="30" stroke="#9aabbf" stroke-width="5"/></pattern></defs>';
+  // Стена коробки по краям — узел вырезан из неё.
+  [[X.w0,X.t1a],[X.t2,X.w1]].forEach(function(p){
+    g+='<rect x="'+p[0]+'" y="'+wallY+'" width="'+(p[1]-p[0])+'" height="'+wallH+'" fill="url(#jamb-hatch)" stroke="#0d1b2e" stroke-width="6"/>';
+  });
+  // Трубы: заливка та же, что у квадратов на плане, плюс внутренний контур —
+  // по нему видно, что это профиль, а не сплошной брусок.
+  [[X.t1a,X.t1b],[X.g2,X.t2]].forEach(function(p){
+    g+='<rect x="'+p[0]+'" y="'+wallY+'" width="'+(p[1]-p[0])+'" height="'+wallH+'" fill="#2f4a63" stroke="#fff" stroke-width="4"/>'+
+      '<rect x="'+(p[0]+16)+'" y="'+(wallY+16)+'" width="'+(p[1]-p[0]-32)+'" height="'+(wallH-32)+'" fill="none" stroke="#8fb4d6" stroke-width="4"/>';
+  });
+  // Изделие с разрывом посередине: узел про края проёма, а не про ширину окна.
+  [[X.p0,X.pb0],[X.pb1,X.p1]].forEach(function(p){
+    g+='<rect x="'+p[0]+'" y="'+(wallY+18)+'" width="'+(p[1]-p[0])+'" height="'+(wallH-36)+'" fill="#e8f4fc" stroke="'+SCH_WIN+'" stroke-width="6"/>';
+  });
+  // Разрыв: две зигзаг-линии по краям пропуска — так показывают, что кусок вырезан.
+  [[X.pb0,1],[X.pb1,-1]].forEach(function(p){
+    g+='<path d="M'+p[0]+' '+(wallY+4)+'l'+(22*p[1])+' 28l'+(-22*p[1])+' 28l'+(22*p[1])+' 28l'+(-22*p[1])+' 28" fill="none" stroke="#9aabbf" stroke-width="5"/>';
+  });
+  // Главное число: по нему режут стену.
+  g+=dim(X.t1a, X.t2, wallY-70, "проём = изделие + "+(2*(JAMB_TUBE+JAMB_GAP_MIN))+"…"+(2*(JAMB_TUBE+JAMB_GAP)), "#0d1b2e");
+  // Что за чем идёт.
+  const dy=wallY+wallH+70;
+  g+=dim(X.t1a,X.t1b,dy,String(JAMB_TUBE))+
+     dim(X.t1b,X.g1,dy,JAMB_GAP_MIN+"…"+JAMB_GAP)+
+     dim(X.p0,X.p1,dy,"изделие",SCH_WIN)+
+     dim(X.g2- (X.g1-X.t1b), X.g2, dy, JAMB_GAP_MIN+"…"+JAMB_GAP)+
+     dim(X.g2,X.t2,dy,String(JAMB_TUBE));
+  // Выноски: труба вниз-влево, зазор вниз-вправо — на разной высоте, чтобы подписи
+  // не встретились.
+  // Выноска ОДНА — к трубе: она говорит то, чего цепочка сказать не может («во всю
+  // высоту»). Зазор цепочка уже подписала дважды, и вторая выноска к нему только
+  // пересекала бы её же цифры.
+  g+=note((X.t1a+X.t1b)/2, wallY+wallH, dy+120, "труба "+JAMB_TUBE+"×"+JAMB_TUBE+" мм, во всю высоту проёма", "#2f4a63");
+  return '<svg viewBox="-30 72 1470 480" style="width:100%;height:auto;display:block;user-select:none">'+g+'</svg>';
+}
+
 function schemeLegend(){
   if(schemeView!=="dim")return "";
-  return '<div style="display:flex;gap:9px;align-items:flex-start;background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:10px 12px;margin-bottom:9px">'+
-    '<span style="font-size:15px;line-height:1.1">🔩</span>'+
-    '<div style="flex:1;min-width:0;font-size:11.5px;color:#5a7a9a;line-height:1.5">'+
-      '<b style="color:#0d1b2e">Усиление проёмов</b> — труба '+JAMB_TUBE+'×'+JAMB_TUBE+' мм по обеим сторонам окна и входной двери, во всю высоту; изделие встаёт между трубами.'+
+  return '<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:11px 12px;margin-bottom:9px">'+
+    '<div style="display:flex;align-items:center;gap:7px;margin-bottom:6px">'+
+      '<span style="font-size:14px">🔩</span>'+
+      '<span style="font-size:11px;font-weight:700;color:#0d1b2e;letter-spacing:0.5px">УЗЕЛ 1 · УСИЛЕНИЕ ПРОЁМА</span>'+
+      '<span style="font-size:10px;color:#9aabbf">без масштаба</span>'+
+    '</div>'+
+    jambDetailSvg()+
+    '<div style="font-size:11.5px;color:#5a7a9a;line-height:1.5;margin-top:8px">'+
+      'Труба '+JAMB_TUBE+'×'+JAMB_TUBE+' мм по обеим сторонам окна и входной двери, во всю высоту; изделие встаёт между трубами.'+
       '<br>Зазор до изделия '+JAMB_GAP_MIN+'–'+JAMB_GAP+' мм, поэтому <b style="color:#0d1b2e">проём режется на '+(2*(JAMB_TUBE+JAMB_GAP_MIN))+'–'+(2*(JAMB_TUBE+JAMB_GAP))+' мм шире изделия</b>.'+
       '<br>На чертеже это тёмные квадраты у откосов. У глухого витража в торце усиления нет — снять или вернуть его можно у выбранного проёма в редакторе.'+
     '</div>'+

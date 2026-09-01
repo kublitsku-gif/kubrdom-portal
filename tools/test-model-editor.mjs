@@ -404,7 +404,7 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   click(p, { a: 'model-op-frame', id: win.id })
   t.ok('усиление снято', p.q('specSheet(specOpenId).model.openings.filter(function(o){return o.id===' + JSON.stringify(win.id) + ';})[0].frame') === false)
   t.ok('и с чертежа тоже',
-    p.run('modelSchemeSvg(specSheet(specOpenId).model, winTypes, 0, "dim")').split('fill="#2f4a63"').length - 1 === 2)
+    (p.run('modelSchemeSvg(specSheet(specOpenId).model, winTypes, 0, "dim")').match(/<rect[^>]*fill="#2f4a63"/g) || []).length === 2)
   t.ok('кнопка это показывает', /без усиления/.test(p.run('modelFullOverlay()')))
   click(p, { a: 'model-op-frame', id: win.id })
   t.ok('и возвращается', p.q('specSheet(specOpenId).model.openings.filter(function(o){return o.id===' + JSON.stringify(win.id) + ';})[0].frame') === true)
