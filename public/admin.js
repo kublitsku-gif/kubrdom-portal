@@ -10823,6 +10823,9 @@ function schText(x,y,t,size,anchor,rot){
 // проёму, а не заголовок комнаты, и в крупном кегле она спорила с именем за одно
 // поле — «ПОМЕЩЕНИЕ» ложилось прямо на «Д-2 700×2050».
 const SCH_MARK=150, SCH_MARK_SUB=125;
+// Окно на листе клиента: свой цвет и свой кегль подписи. Рабочий чертёж остаётся
+// чёрно-синим — цвет там спорил бы с размерными цепочками.
+const SCH_WIN="#2980b9", SCH_PLAIN=165;
 // Коробка, которую займёт текст. Ширину буквы SVG заранее не отдаёт, поэтому берём
 // долю от кегля: для проверки «не налезло ли» этой точности хватает, а замер в
 // браузере потребовал бы уже нарисованного чертежа — то есть был бы поздно.
@@ -11019,7 +11022,10 @@ function schemeParts(sc, view){
     // Проём — своя группа с меткой: пока его тащат пальцем, редактор двигает
     // ИМЕННО ЕЁ, а не перерисовывает весь чертёж (см. `model-op-drag`).
     g+='<g data-op="'+esc(op.id)+'">';
-    g+='<rect x="'+op.x+'" y="'+op.y+'" width="'+op.w+'" height="'+op.h+'" fill="#fff" stroke="#0d1b2e" stroke-width="26"/>';
+    // На листе клиента окна выделены цветом: он читает план окнами — где свет и
+    // куда вид, — а на рабочем чертеже цвет был бы шумом поверх размеров.
+    const winC=(plain&&op.kind!=="door")?SCH_WIN:"#0d1b2e";
+    g+='<rect x="'+op.x+'" y="'+op.y+'" width="'+op.w+'" height="'+op.h+'" fill="'+(winC==="#0d1b2e"?"#fff":"#e8f4fc")+'" stroke="'+winC+'" stroke-width="26"/>';
     // Усиление: труба 40×40 по обе стороны проёма, во всю высоту. На плане это два
     // квадрата в толще стены — по ним размечают стойки. Клиенту их не показываем:
     // это узел монтажа, а не планировка.
@@ -11031,8 +11037,8 @@ function schemeParts(sc, view){
       const along=(op.side==="n"||op.side==="s");
       const cx0=op.x+op.w/2, cy0=op.y+op.h/2;
       g+=along
-        ? '<line x1="'+op.x+'" y1="'+cy0+'" x2="'+(op.x+op.w)+'" y2="'+cy0+'" stroke="#0d1b2e" stroke-width="16"/>'
-        : '<line x1="'+cx0+'" y1="'+op.y+'" x2="'+cx0+'" y2="'+(op.y+op.h)+'" stroke="#0d1b2e" stroke-width="16"/>';
+        ? '<line x1="'+op.x+'" y1="'+cy0+'" x2="'+(op.x+op.w)+'" y2="'+cy0+'" stroke="'+winC+'" stroke-width="16"/>'
+        : '<line x1="'+cx0+'" y1="'+op.y+'" x2="'+cx0+'" y2="'+(op.y+op.h)+'" stroke="'+winC+'" stroke-width="16"/>';
     }
     // Марка и размер — как на чертеже: Д-1 сверху, габарит проёма под ней. Марка
     // мельче имени помещения: это подпись К ПРОЁМУ, а не заголовок комнаты, и
@@ -11048,7 +11054,18 @@ function schemeParts(sc, view){
     const anch=part?(dirX>0?"start":"end"):"middle";
     const halo=' stroke="#fff" stroke-width="70" paint-order="stroke" stroke-linejoin="round"';
     const sub=op.width+"×"+op.height+(op.sill?" · h"+op.sill:"");
-    if(plain){ g+='</g>'; return; }   // клиенту марка ни о чём не говорит
+    if(plain){
+      // Марка клиенту ни о чём не говорит, а размер окна говорит: по нему видно,
+      // какое это окно и сколько в комнате света. Дверь подписывать нечем — её
+      // читают по створке, и лишняя строка на плане только мешает.
+      if(op.kind!=="door"){
+        const pb=schTextBox(lx, ly, op.width+"×"+op.height, SCH_PLAIN, anch, vert);
+        busy.push(pb);
+        g+='<text x="'+lx+'" y="'+ly+'" font-size="'+SCH_PLAIN+'" fill="'+SCH_WIN+'" font-weight="700" text-anchor="'+anch+'"'+halo+rot+'>'+
+          esc(op.width+"×"+op.height)+'</text>';
+      }
+      g+='</g>'; return;
+    }
     // Место, которое марка занимает на чертеже: имя помещения обязано его обойти,
     // а посчитать его больше негде — ширину текста SVG сам не отдаёт.
     busy.push(schTextBox(lx, ly, op.mark, SCH_MARK, anch, vert)); 
