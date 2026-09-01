@@ -280,6 +280,7 @@ function serializeState(){
     { work_id: "specSheets",      data: specSheets      },
     { work_id: "specSheets2",     data: specSheets2     },
     { work_id: "buildRules",      data: buildRules      },
+    { work_id: "projects",        data: projects        },
     { work_id: "winTypes",        data: winTypes        },
     { work_id: "purchased",       data: purchased       },
     { work_id: "arrived",         data: arrived         },
@@ -331,6 +332,7 @@ function applyState(items){
   specSheets      = arr("specSheets",      specSheets);
   specSheets2     = arr("specSheets2",     specSheets2);
   buildRules      = arr("buildRules",      buildRules);
+  projects        = arr("projects",        projects);
   winTypes        = arr("winTypes",        winTypes);
   purchased       = obj("purchased",       purchased);
   arrived         = obj("arrived",         arrived);
@@ -1477,6 +1479,7 @@ const TAB_DEFS=[
   {k:"kp",        n:"📋 КП"},
   {k:"spec",      n:"🏠 Спецификация"},
   {k:"spec2",     n:"🧪 Спецификация 2"},
+  {k:"projects",  n:"🏗 Проекты"},
   {k:"voiceai",   n:"🎙 Голосовой ИИ"},
   {k:"issues",    n:"❓ Вопросы"},
   {k:"history",   n:"🕘 История"},
@@ -2126,6 +2129,11 @@ let specSheets2=[];
 // Правила сборки: «эта смета применяется к стенам каждого помещения». Живут
 // отдельным разделом снимка — их правят и читают независимо от листов.
 let buildRules=[];
+// Проекты: дом от чертежа до договора одной карточкой. Лист той же формы, что
+// спецификация (модель, отделка, наценка), плюс ссылки на объект и договор —
+// поэтому редактор модели, смета, печать и сборка объекта работают без правок.
+let projects=[];
+let projOpenId=null, projBand="plan", projNew=null;
 let specOpenId=null;      // открытая спецификация (null = список)
 let specNew={name:"",kind:"banya",clientId:"",planId:"",model:"",preset:""};
 let specShowNew=false;
@@ -4427,7 +4435,7 @@ function moreSheet(allTabs,accessible,picked){
 }
 
 function tabContentHtml(){
-  return tab==="assign"?tObjects():tab==="myday"?tMyDay():tab==="sheetlist"?tSheetList():tab==="wizard"?tWizardTab():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tab==="kp"?tKP():tab==="spec"?tSpec():tab==="spec2"?tSpec2():tab==="voiceai"?tVoiceAi():tab==="issues"?tIssues():tab==="history"?tHistory():tCRM();
+  return tab==="assign"?tObjects():tab==="myday"?tMyDay():tab==="sheetlist"?tSheetList():tab==="wizard"?tWizardTab():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tab==="kp"?tKP():tab==="spec"?tSpec():tab==="spec2"?tSpec2():tab==="projects"?tProjects():tab==="voiceai"?tVoiceAi():tab==="issues"?tIssues():tab==="history"?tHistory():tCRM();
 }
 
 function render(){
@@ -9527,7 +9535,8 @@ function kpStages(t){ // [{name,color,cost,price,works}]
 // и им всё равно, в боевой он коллекции или в опытной.
 function specSheet(id){
   return (specSheets||[]).find(function(x){return x.id===id;})||
-         (specSheets2||[]).find(function(x){return x.id===id;})||null;
+         (specSheets2||[]).find(function(x){return x.id===id;})||
+         (projects||[]).find(function(x){return x.id===id;})||null;
 }
 // Лист из опытного раздела. Проверяем принадлежностью к коллекции, а не флагом в
 // самой записи: флаг переживает копирование, и дубль боевого листа молча считался бы
@@ -9538,6 +9547,7 @@ function specIs2(sh){ return !!sh&&(specSheets2||[]).some(function(x){return x.i
 function specDrop(id){
   specSheets=specSheets.filter(function(x){return x.id!==id;});
   specSheets2=specSheets2.filter(function(x){return x.id!==id;});
+  projects=projects.filter(function(x){return x.id!==id;});
 }
 // Планировки того же вида: у планировок две категории (дом / баня), у смет три вида.
 function specPlanCat(kind){ return kind==="house"?"house":"banya"; }
@@ -9577,11 +9587,12 @@ function specPlanTiles(kind, sel, action){
 // спецификациям заведены договора, объекты и транши, и молча изменить их сумму
 // новым правилом нельзя — сначала правила обкатываются здесь.
 function specCtx(sh){
+  const war=!!sh&&(specSheets||[]).some(function(x){return x.id===sh.id;});
   return { estimates:estimates, products:expProducts, winTypes:winTypes,
-    stages:EST_STAGES, rules: specIs2(sh)?(buildRules||[]):[] };
+    stages:EST_STAGES, rules: war?[]:(buildRules||[]) };
 }
 function specTot(sh){ return specIs2(sh)?totals2(sh, specCtx(sh)):sheetTotals(sh, estimates, expProducts); }
-function specIssuesOf(sh){ return specIs2(sh)?issues2(sh, winTypes):sheetIssues(sh, estimates, expProducts); }
+function specIssuesOf(sh){ return (specIs2(sh)||specIsProject(sh))?issues2(sh, winTypes):sheetIssues(sh, estimates, expProducts); }
 const SPEC_SURFACE={floor:"пол", wall:"стены", ceil:"потолок"};
 // Что физически входит в позицию. Одна формулировка на экран продавца и на печать
 // клиенту: расхождение здесь означает, что в кабинете обещали одно, а на бумаге другое.
@@ -9901,7 +9912,11 @@ function modelToolMeta(k){ return MODEL_TOOLS.find(function(t){return t[0]===k;}
 // листах: по боевым заведены договора, объекты и транши, и менять там экран посреди
 // продаж нельзя. Признак — коллекция листа, а не флаг в записи: флаг переживает
 // копирование, и дубль боевого листа считался бы опытным.
-function modelLab(sh){ return specIs2(sh||specSheet(specOpenId)); }
+function proj(id){ return (projects||[]).find(function(x){return x.id===id;})||null; }
+function specIsProject(sh){ return !!sh&&(projects||[]).some(function(x){return x.id===sh.id;}); }
+// Окна и двери врозь — у опытного листа и у проекта. В боевой спецификации экран
+// прежний: по тем листам заведены договора, объекты и транши.
+function modelLab(sh){ const x=sh||specSheet(specOpenId); return specIs2(x)||specIsProject(x); }
 
 // Площади помещений: пол, потолок и стены. Числа считает модель (`modelAreas`),
 // панель их только показывает — те же цифры уходят в отделку и в смету, и своя
@@ -11349,6 +11364,13 @@ function modelSchemeSvg(model, types, minW, view){
 // Раздел правит ОДИН рабочий лист: модель живёт в снимке, а не в коде, иначе
 // править её можно было бы только правкой заготовки — и правка терялась бы у всех.
 function spec2Sheet(){ return (specSheets2||[])[0]||null; }
+// Чей чертёж сейчас на экране. Схему, узлы и печать открывают из двух мест —
+// опытного раздела и карточки проекта, — и оба показывают ОДНУ модель: ту, что
+// открыта. Второй набор экранов под проект означал бы вторую копию чертежа.
+function schemeSheet(){
+  if(tab==="projects"&&projOpenId){ const p=proj(projOpenId); if(p)return p; }
+  return spec2Sheet();
+}
 
 // Два вида одного чертежа: рабочий с размерами и лист для клиента. Ни один не
 // «главнее» — это один дом, показанный тому, кто его читает.
@@ -11594,7 +11616,7 @@ function wallDetailSvg(list){
 // стене и не гаснет. Печатаем ровно то, что на экране: и чертёж, и узлы рисует
 // тот же код, поэтому распечатка не может показать вчерашний дом.
 function buildSchemePrint(){
-  const sh=spec2Sheet();
+  const sh=schemeSheet();
   const pr=MODEL_PRESETS[0];
   const built=(sh&&sh.model)?{model:sh.model,winTypes:winTypes}:(pr?presetModel(pr, winTypes, gid):null);
   if(!built){ alert("Модель не найдена."); return; }
@@ -11718,7 +11740,7 @@ const PIE_META={
 };
 function pieList(m, key){ return (key==="skin")?skinLayers(m):wallLayers(m); }
 function pieLegend(key){
-  const sh=spec2Sheet();
+  const sh=schemeSheet();
   const m=(sh&&sh.model)||((MODEL_PRESETS[0])?presetModel(MODEL_PRESETS[0], winTypes, gid).model:null);
   if(!m)return "";
   const meta=PIE_META[key];
@@ -11759,7 +11781,7 @@ function schemeViewTabs(){
 // разглядывают чертёж здесь: оверлей выходит из колонки 480 px на весь экран, и
 // только тут прокрутка вбок уместна — её включает увеличение, а не вёрстка.
 function spec2SchemeOverlay(){
-  const sh=spec2Sheet();
+  const sh=schemeSheet();
   const pr=MODEL_PRESETS[0];
   const built=(sh&&sh.model)?{model:sh.model,winTypes:winTypes}:(pr?presetModel(pr, winTypes, gid):null);
   if(!built)return "";
@@ -11940,9 +11962,11 @@ function spec2RulesHtml(built, sh, pr){
   return h;
 }
 
-function spec2EstHtml(built, sh, pr){
-  const probe=spec2Probe(built, sh, pr);
-  const w=works2(probe, Object.assign(specCtx(sh), { winTypes:built.winTypes }));
+// Тело сметы одно на два экрана: опытный раздел и карточка проекта. Второй экран
+// с теми же числами разошёлся бы с первым на первой же правке.
+// `live` — лист, из которого можно заводить объект и договор (у заготовки его нет).
+function estBodyHtml(sh, types, live, actions){
+  const w=works2(sh, Object.assign(specCtx(sh), { winTypes:types }));
   let h='';
   // Деньги сверху: с них начинается любой разговор про смету, и лезть за итогом
   // в конец списка из сорока строк никто не будет.
@@ -12005,17 +12029,235 @@ function spec2EstHtml(built, sh, pr){
   }
   // Объект и договор — только по заведённому листу: из заготовки, которая нигде
   // не сохранена, стройку заводить не из чего.
-  if(sh&&w.positions.length){
+  if(live&&actions!==false&&w.positions.length){
     h+='<div style="display:flex;gap:6px;margin-bottom:9px">'+
-      '<button data-a="spec-to-object" data-id="'+sh.id+'" style="flex:1;padding:11px;background:#16a085;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700">🏗 Создать объект</button>'+
-      '<button data-a="spec-to-contract" data-id="'+sh.id+'" style="flex:1;padding:11px;background:#fff;border:1.5px solid #dde6f0;border-radius:10px;cursor:pointer;color:#0d1b2e;font-size:12.5px;font-weight:700">📄 Завести договор</button>'+
+      '<button data-a="spec-to-object" data-id="'+live.id+'" style="flex:1;padding:11px;background:#16a085;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700">🏗 Создать объект</button>'+
+      '<button data-a="spec-to-contract" data-id="'+live.id+'" style="flex:1;padding:11px;background:#fff;border:1.5px solid #dde6f0;border-radius:10px;cursor:pointer;color:#0d1b2e;font-size:12.5px;font-weight:700">📄 Завести договор</button>'+
     '</div>';
   }
   h+='<div style="font-size:10.5px;color:#9aabbf;line-height:1.5;margin-bottom:20px">'+
       'Количество каждой строки посчитано по чертежу: площади помещений, число проёмов и точек раскладки. Правьте план — смета пересчитается вместе с ним.'+
-      (sh?'':'<br>Это заготовка: считать по ней можно, а заводить объект — не из чего. Нажмите «Открыть редактор» на схеме.')+
+      (live?'':'<br>Это заготовка: считать по ней можно, а заводить объект — не из чего. Нажмите «Открыть редактор» на схеме.')+
     '</div>';
   return h;
+}
+function spec2EstHtml(built, sh, pr){ return estBodyHtml(spec2Probe(built, sh, pr), built.winTypes, sh); }
+
+
+// ═══ ПРОЕКТЫ ═════════════════════════════════════════════════════════════════
+// Дом от чертежа до договора одной карточкой. Раньше путь шёл по четырём экранам
+// (смета → шаблон → объект → договор), и на каждом состав дома переписывался
+// заново: правка в начале цепочки до стройки не доезжала.
+//
+// Проект — тот же лист, что спецификация (модель, отделка, наценка), поэтому
+// редактор модели, смета, печать бригаде и сборка объекта работают без единой
+// правки. Новое здесь одно: у дома появился адрес, по которому лежит ВСЁ о нём.
+const PROJ_BANDS=[
+  ["plan",  "📐 Чертёж", "что построить"],
+  ["parts", "🧾 Состав", "из чего"],
+  ["money", "💰 Деньги", "за сколько"],
+  ["build", "🏗 Стройка", "как идёт"],
+];
+const PROJ_COL="#16a085";
+function projBandMeta(){ return PROJ_BANDS.find(function(b){return b[0]===projBand;})||PROJ_BANDS[0]; }
+function projTypes(){ return winTypes; }
+function projTot(p){ return specTot(p); }
+function projAreas(p){ return p&&p.model?modelAreas(p.model, winTypes):null; }
+function projObj(p){ return p&&p.objId?objects.find(function(o){return o.id===p.objId;}):null; }
+function projContract(p){ return p&&p.contractId?contractDocs.find(function(c){return c.id===p.contractId;}):null; }
+
+function projNewFormHtml(){
+  const n=projNew||{};
+  let h='<div style="background:#fff;border:2px solid '+PROJ_COL+';border-radius:14px;padding:14px;margin-bottom:12px">'+
+    '<div style="font-size:10px;font-weight:700;color:'+PROJ_COL+';letter-spacing:0.5px;margin-bottom:8px">НОВЫЙ ПРОЕКТ</div>'+
+    '<input id="proj-n-name" value="'+esc(n.name||"")+'" placeholder="Название (например: Дом Ивановых)" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:8px">'+
+    '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:5px">С ЧЕГО НАЧАТЬ</div>'+
+    '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:4px">'+
+      MODEL_PRESETS.map(function(pr){
+        const on=(n.preset||MODEL_PRESETS[0].k)===pr.k;
+        return '<button data-a="proj-n-preset" data-k="'+pr.k+'" style="border:1.5px solid '+(on?PROJ_COL:"#dde6f0")+';background:'+(on?PROJ_COL:"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:7px 11px;font-size:11.5px;font-weight:700;cursor:pointer">📐 '+esc(pr.n)+'</button>';
+      }).join("")+
+    '</div>'+
+    '<div style="font-size:10px;color:#a0b4c8;margin:2px 0 9px;line-height:1.45">Заготовка — уже начерченный контейнер: отсеки, длины и проёмы стоят, дальше их двигают в редакторе.</div>'+
+    '<select id="proj-n-client" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:10px">'+
+      '<option value="">— клиент из CRM (необязательно) —</option>'+
+      crmClients.map(function(c){return '<option value="'+c.id+'"'+(n.clientId===c.id?" selected":"")+'>'+esc(c.name||"")+'</option>';}).join("")+
+    '</select>'+
+    '<div style="display:flex;gap:8px">'+
+      '<button data-a="proj-create" style="flex:1;padding:10px;background:'+PROJ_COL+';border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">Создать</button>'+
+      '<button data-a="proj-new-cancel" style="padding:10px 16px;background:#fff;border:1px solid #d0dae8;border-radius:9px;cursor:pointer;color:#7a9aaa;font-size:13px">Отмена</button>'+
+    '</div>'+
+  '</div>';
+  return h;
+}
+
+function projListHtml(){
+  let h='<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:10px">'+
+    '<div style="flex:1;min-width:0">'+
+      '<div style="font-size:11px;color:'+PROJ_COL+';font-weight:700;letter-spacing:1px">🏗 ПРОЕКТЫ</div>'+
+      '<div style="font-size:12px;color:#5a7a9a;margin-top:2px;line-height:1.45">Дом от чертежа до договора: чертёж, состав, деньги и стройка в одной карточке.</div>'+
+    '</div>'+
+    (projNew?'':'<button data-a="proj-new" style="padding:9px 15px;background:'+PROJ_COL+';border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700;flex-shrink:0">+ Проект</button>')+
+  '</div>';
+  if(projNew)h+=projNewFormHtml();
+  if(!projects.length){
+    h+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:16px;font-size:12.5px;color:#7a9aaa;line-height:1.55">'+
+      'Проектов пока нет. Проект начинается с чертежа: заготовка контейнера, дальше перегородки и проёмы — а смета, объект и договор собираются из него же.'+
+    '</div>';
+    return h;
+  }
+  h+=projects.map(function(p){
+    const A=projAreas(p), t=projTot(p);
+    const cl=crmClients.find(function(c){return c.id===p.clientId;});
+    const chip=function(txt,col){ return '<span style="background:'+col+'22;color:'+col+';border-radius:7px;padding:2px 7px;font-size:10.5px;font-weight:700">'+txt+'</span>'; };
+    return '<div data-a="proj-open" data-id="'+p.id+'" style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:12px 13px;margin-bottom:8px;cursor:pointer">'+
+      '<div style="display:flex;align-items:baseline;gap:8px">'+
+        '<span style="flex:1;min-width:0;font-size:14px;font-weight:800;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(p.name||"Проект")+'</span>'+
+        '<span style="font-size:13px;font-weight:800;color:'+PROJ_COL+';white-space:nowrap">'+Math.round(t.price).toLocaleString("ru-RU")+' ₽</span>'+
+      '</div>'+
+      '<div style="font-size:11.5px;color:#7a9aaa;margin-top:3px">'+
+        (cl?esc(cl.name)+' · ':'')+(A?numRu(A.total.floor)+' м² пола · ':'')+t.count+' позиций'+
+      '</div>'+
+      '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px">'+
+        (projObj(p)?chip("объект","#2980b9"):chip("объекта нет","#9aabbf"))+
+        (projContract(p)?chip("договор","#16a085"):chip("договора нет","#9aabbf"))+
+      '</div>'+
+    '</div>';
+  }).join("");
+  return h;
+}
+
+function projBandsHtml(){
+  return '<div style="display:flex;gap:4px;margin-bottom:9px">'+
+    PROJ_BANDS.map(function(b){
+      const on=projBand===b[0];
+      return '<button data-a="proj-band" data-v="'+b[0]+'" style="flex:1;border:1.5px solid '+(on?"#0d1b2e":"#dde6f0")+';background:'+(on?"#0d1b2e":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:10px;padding:8px 4px;font-size:11.5px;font-weight:700;cursor:pointer">'+esc(b[1])+'</button>';
+    }).join("")+
+  '</div>'+
+  '<div style="font-size:10.5px;color:#9aabbf;line-height:1.45;margin-bottom:8px">'+esc(projBandMeta()[2])+'</div>';
+}
+
+// Полоса «Чертёж»: та же схема, тот же оверлей и та же печать, что в опытном
+// разделе, — рисует их один код, и распечатка не может показать вчерашний дом.
+function projPlanHtml(p){
+  if(!p.model)return '<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:16px;font-size:12.5px;color:#7a9aaa">У проекта нет модели — считать нечего.</div>';
+  return (schemeView==="dim"
+      ? '<button data-a="spec2-print" style="width:100%;padding:10px;background:#0d1b2e;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700;margin-bottom:9px">🖨 Печать для бригады — чертёж, узлы и таблицы</button>'
+      : '')+
+    schemeViewTabs()+
+    '<div data-a="spec2-scheme" title="Открыть крупно" style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:12px;margin-bottom:9px;cursor:zoom-in">'+
+      modelSchemeSvg(p.model, winTypes, 0, schemeView)+
+      '<div style="font-size:10.5px;color:#9aabbf;text-align:center;margin-top:8px">тап — открыть крупно</div>'+
+    '</div>'+
+    areasCardHtml(p.model, winTypes);
+}
+
+// Полоса «Стройка»: объект по этому проекту. Своих отметок здесь нет — стройку
+// ведут в «Объектах», а тут видно, что она вообще идёт.
+function projBuildHtml(p){
+  const o=projObj(p);
+  if(!o)return '<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:16px;font-size:12.5px;color:#7a9aaa;line-height:1.55">'+
+    'Объекта по этому проекту ещё нет. Он собирается на полосе «Деньги» — тем же составом, который показан в «Составе».</div>';
+  const stages=o.stages||[];
+  let h='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:12px 13px;margin-bottom:9px">'+
+    '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:8px">ОБЪЕКТ · '+esc(o.name||"")+'</div>'+
+    stages.map(function(st){
+      const works=st.works||[];
+      const done=works.filter(function(w){return !!w.doneAt;}).length;
+      const sum=works.reduce(function(a,w){return a+(Number(w.cost)||0);},0);
+      return '<div style="display:flex;align-items:baseline;gap:8px;padding:6px 0;border-top:1px solid #f4f7fb;font-size:12px">'+
+        '<span style="width:8px;height:8px;border-radius:3px;background:'+(st.c||"#7a9aaa")+';flex-shrink:0"></span>'+
+        '<span style="flex:1;min-width:0;color:#0d1b2e;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(st.n||"Этап")+'</span>'+
+        '<span style="color:#7a9aaa;white-space:nowrap">'+done+' из '+works.length+'</span>'+
+        '<span style="color:#0d1b2e;font-weight:700;white-space:nowrap">'+Math.round(sum).toLocaleString("ru-RU")+' ₽</span>'+
+      '</div>';
+    }).join("")+
+  '</div>'+
+  '<button data-a="proj-open-obj" data-oid="'+o.id+'" style="width:100%;padding:11px;background:#2980b9;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700;margin-bottom:9px">Открыть объект во вкладке «Объекты»</button>';
+  return h;
+}
+
+function projMoneyHtml(p){
+  const t=projTot(p);
+  const o=projObj(p), c=projContract(p);
+  let h='<div style="background:#0d1b2e;border-radius:13px;padding:12px 14px;margin-bottom:9px;color:#fff">'+
+    '<div style="display:flex;align-items:baseline;gap:10px">'+
+      '<div style="flex:1;min-width:0">'+
+        '<div style="font-size:10px;color:#8fa6bd;font-weight:700;letter-spacing:0.5px">СЕБЕСТОИМОСТЬ</div>'+
+        '<div style="font-size:20px;font-weight:800;margin-top:2px">'+Math.round(t.cost).toLocaleString("ru-RU")+' ₽</div>'+
+      '</div>'+
+      '<div style="text-align:right">'+
+        '<div style="font-size:10px;color:#8fa6bd;font-weight:700;letter-spacing:0.5px">КЛИЕНТУ</div>'+
+        '<div style="font-size:20px;font-weight:800;margin-top:2px;color:#4ecdc4">'+Math.round(t.price).toLocaleString("ru-RU")+' ₽</div>'+
+      '</div>'+
+    '</div>'+
+  '</div>'+
+  '<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
+    '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:6px">НАЦЕНКА, %</div>'+
+    '<input data-a="proj-markup" data-id="'+p.id+'" type="number" step="1" min="0" value="'+String(Number(p.markup)||0)+'" style="width:110px;padding:8px 10px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box">'+
+    '<div style="font-size:10.5px;color:#9aabbf;line-height:1.45;margin-top:6px">Наценка одна на проект: продавец должен понимать, что он назвал клиенту, а не собирать сумму из сорока процентов.</div>'+
+  '</div>';
+  // Объект и договор — отсюда: это единственное место, где «что построить»
+  // встречается с «за сколько».
+  h+='<div style="display:flex;gap:6px;margin-bottom:9px">'+
+      (o?'<div style="flex:1;padding:11px;background:#eef6ff;border-radius:10px;color:#2980b9;font-size:12px;font-weight:700;text-align:center">🏗 Объект создан</div>'
+        :'<button data-a="spec-to-object" data-id="'+p.id+'" style="flex:1;padding:11px;background:'+PROJ_COL+';border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700">🏗 Создать объект</button>')+
+      (c?'<div style="flex:1;padding:11px;background:#eefaf6;border-radius:10px;color:#16a085;font-size:12px;font-weight:700;text-align:center">📄 '+esc(String(c.amount||0).length?Math.round(c.amount||0).toLocaleString("ru-RU")+" ₽":"договор")+'</div>'
+        :'<button data-a="spec-to-contract" data-id="'+p.id+'" style="flex:1;padding:11px;background:#fff;border:1.5px solid #dde6f0;border-radius:10px;cursor:pointer;color:#0d1b2e;font-size:12.5px;font-weight:700">📄 Завести договор</button>')+
+    '</div>'+
+    '<div style="font-size:10.5px;color:#9aabbf;line-height:1.5;margin-bottom:20px">Объект собирается тем же составом, который показан на полосе «Состав»: продали одно — строят то же самое.</div>';
+  return h;
+}
+
+function projCardHtml(p){
+  let h='<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:10px">'+
+    '<button data-a="proj-back" style="border:1px solid #dde6f0;background:#fff;border-radius:9px;padding:7px 11px;font-size:12px;color:#7a9aaa;cursor:pointer;flex-shrink:0">‹</button>'+
+    '<div style="flex:1;min-width:0">'+
+      '<input data-a="proj-name" data-id="'+p.id+'" value="'+esc(p.name||"")+'" style="width:100%;border:none;background:transparent;font-size:16px;font-weight:800;color:#0d1b2e;outline:none;padding:0">'+
+      '<div style="font-size:11.5px;color:#7a9aaa;margin-top:2px">'+esc(estKindMeta(p.kind).n)+((crmClients.find(function(c){return c.id===p.clientId;})||{}).name?' · '+esc(crmClients.find(function(c){return c.id===p.clientId;}).name):'')+'</div>'+
+    '</div>'+
+    '<button data-a="proj-edit" data-id="'+p.id+'" style="padding:9px 13px;background:#8e44ad;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:12px;font-weight:700;flex-shrink:0">⛶ Чертить</button>'+
+  '</div>';
+  h+=projBandsHtml();
+  if(projBand==="plan")h+=projPlanHtml(p);
+  else if(projBand==="parts")h+=estBodyHtml(p, winTypes, p, false);
+  else if(projBand==="money")h+=projMoneyHtml(p);
+  else h+=projBuildHtml(p);
+  if(projBand!=="parts"){
+    h+='<button data-a="proj-del" data-id="'+p.id+'" style="width:100%;padding:9px;background:#fff;border:1px solid #f0d5d0;border-radius:10px;cursor:pointer;color:#c0392b;font-size:11.5px;margin-bottom:20px">Удалить проект</button>';
+  }
+  return h;
+}
+
+function tProjects(){
+  const p=projOpenId?proj(projOpenId):null;
+  if(projOpenId&&!p)projOpenId=null;
+  return '<div>'+(p?projCardHtml(p):projListHtml())+'</div>';
+}
+
+// Площади светлой карточкой — для колонки вкладки. Тёмная панель `modelAreasPanel`
+// живёт в полноэкранном редакторе и в колонку не встаёт.
+function areasCardHtml(model, types){
+  const A=modelAreas(model, types||winTypes);
+  const cell=function(label,val){
+    return '<div style="text-align:center;background:#f6f8fa;border-radius:9px;padding:7px 5px">'+
+      '<div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.5px">'+label+'</div>'+
+      '<div style="font-size:14px;font-weight:800;color:#0d1b2e">'+numRu(val)+' м²</div></div>';
+  };
+  return '<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
+    '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:8px">ПЛОЩАДИ · ВСЕГО ПО ДОМУ</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:9px">'+
+      cell("ПОЛ",A.total.floor)+cell("ПОТОЛОК",A.total.ceil)+cell("СТЕНЫ",A.total.wallNet)+
+    '</div>'+
+    A.rooms.map(function(r){
+      return '<div style="display:flex;align-items:baseline;gap:8px;padding:5px 0;border-top:1px solid #f4f7fb;font-size:12px">'+
+        '<span style="flex:1;min-width:0;color:#0d1b2e;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.name||"Помещение")+'</span>'+
+        '<span style="color:#7a9aaa;white-space:nowrap;font-size:11px">'+numRu(r.l)+'×'+numRu(r.w)+' м</span>'+
+        '<span style="color:#0d1b2e;font-weight:700;white-space:nowrap">пол '+numRu(r.floor)+'</span>'+
+        '<span style="color:#5a7a9a;white-space:nowrap">стены '+numRu(r.wallNet)+'</span>'+
+      '</div>';
+    }).join("")+
+  '</div>';
 }
 
 function tSpec2(){
@@ -12059,20 +12301,7 @@ function tSpec2(){
     schemeLegend();
   // Площади рядом со схемой: их считают по этому же чертежу, и держать их на
   // другом экране значит заставить сверять два экрана.
-  h+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
-    '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:8px">ПЛОЩАДИ · ВСЕГО ПО ДОМУ</div>'+
-    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:9px">'+
-      cell("ПОЛ",A.total.floor)+cell("ПОТОЛОК",A.total.ceil)+cell("СТЕНЫ",A.total.wallNet)+
-    '</div>'+
-    A.rooms.map(function(r){
-      return '<div style="display:flex;align-items:baseline;gap:8px;padding:5px 0;border-top:1px solid #f4f7fb;font-size:12px">'+
-        '<span style="flex:1;min-width:0;color:#0d1b2e;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.name||"Помещение")+'</span>'+
-        '<span style="color:#7a9aaa;white-space:nowrap;font-size:11px">'+numRu(r.l)+'×'+numRu(r.w)+' м</span>'+
-        '<span style="color:#0d1b2e;font-weight:700;white-space:nowrap">пол '+numRu(r.floor)+'</span>'+
-        '<span style="color:#5a7a9a;white-space:nowrap">стены '+numRu(r.wallNet)+'</span>'+
-      '</div>';
-    }).join("")+
-  '</div>';
+  h+=areasCardHtml(built.model, built.winTypes);
   h+='<div style="font-size:10.5px;color:#9aabbf;line-height:1.5;margin-bottom:20px">'+
       'Несущие стены, перегородки, проёмы и размеры — в миллиметрах. Площади чистовые: потолок равен полу, стены — за вычетом проёмов. Мебель и сантехника на схему не выносятся.'+
       (sh?'':'<br>Это заготовка. Нажмите «Открыть редактор» — она станет рабочей моделью раздела.')+
@@ -20618,6 +20847,57 @@ function bind(){
     // Правила сборки. Правка пишется сразу в раздел снимка: отдельной кнопки
     // «сохранить» в панели нет нигде, и заводить её здесь значило бы объяснять,
     // почему этот экран не такой, как все.
+    // ── ПРОЕКТЫ ────────────────────────────────────────────────────────────
+    else if(a==="proj-new"){el.onclick=()=>{ projNew={name:"",preset:MODEL_PRESETS[0].k,clientId:""}; render(); };}
+    else if(a==="proj-new-cancel"){el.onclick=()=>{ projNew=null; render(); };}
+    else if(a==="proj-n-preset"){el.onclick=()=>{ projNew=Object.assign({},projNew||{},{k:0,preset:el.dataset.k}); render(); };}
+    else if(a==="proj-create"){el.onclick=()=>{
+      const name=((document.getElementById("proj-n-name")||{}).value||"").trim();
+      const clientId=((document.getElementById("proj-n-client")||{}).value||"");
+      const pr=MODEL_PRESETS.find(function(x){return x.k===((projNew&&projNew.preset)||MODEL_PRESETS[0].k);})||MODEL_PRESETS[0];
+      const r=presetModel(pr, winTypes, gid);
+      if(!r){ alert("Заготовка не найдена."); return; }
+      winTypes=r.winTypes;
+      const p={ id:gid(), name:name||pr.n, kind:"house", clientId:clientId,
+        specs:{height:2.5,rooms:[],openings:[]}, rooms:{}, global:{}, qty:{},
+        markup:Number((settings&&settings.specMarkup))||30, status:"draft",
+        at:todayISO(), by:(currentUser&&currentUser.id)||"", model:r.model, objId:"", contractId:"" };
+      // Пироги материализуем сразу: план идёт за ними, и дом, где толщина стены
+      // «просто число», разъедется с узлами на первой правке.
+      p.model=applyLayers(p.model, "layers", wallLayers(p.model));
+      p.model=applyLayers(p.model, "skin", skinLayers(p.model));
+      modelSync(p);
+      projects=projects.concat([p]);
+      projNew=null; projOpenId=p.id; projBand="plan"; fl();
+    };}
+    else if(a==="proj-open"){el.onclick=()=>{ projOpenId=el.dataset.id; projBand="plan"; render(); window.scrollTo(0,0); };}
+    else if(a==="proj-back"){el.onclick=()=>{ projOpenId=null; render(); window.scrollTo(0,0); };}
+    else if(a==="proj-band"){el.onclick=()=>{ projBand=el.dataset.v||"plan"; render(); window.scrollTo(0,0); };}
+    // Чертят проект тем же редактором, что и опытный лист: два редактора одной
+    // модели разошлись бы в первый же день.
+    else if(a==="proj-edit"){el.onclick=()=>{
+      const p=proj(el.dataset.id); if(!p)return;
+      if(p.model&&!(p.model.layers&&p.model.layers.length))p.model=applyLayers(p.model,"layers",wallLayers(p.model));
+      if(p.model&&!(p.model.skin&&p.model.skin.length))p.model=applyLayers(p.model,"skin",skinLayers(p.model));
+      modelSync(p);
+      specOpenId=p.id; modelFull=true; modelTool="sel"; fl();
+    };}
+    else if(a==="proj-name"){el.onchange=()=>{
+      const p=proj(el.dataset.id); if(!p)return; p.name=el.value||""; fl();
+    };}
+    else if(a==="proj-markup"){el.onchange=()=>{
+      const p=proj(el.dataset.id); if(!p)return;
+      const v=parseFloat(String(el.value).replace(",",".")); p.markup=(isFinite(v)&&v>=0)?v:0; fl();
+    };}
+    else if(a==="proj-open-obj"){el.onclick=()=>{ tab="assign"; openObject=el.dataset.oid; render(); window.scrollTo(0,0); };}
+    else if(a==="proj-del"){el.onclick=()=>{
+      const p=proj(el.dataset.id); if(!p)return;
+      // Объект и договор живут своей жизнью — удаление проекта их не трогает,
+      // но сказать об этом надо: иначе «удалил проект» читается как «удалил всё».
+      const tail=(p.objId||p.contractId)?"\n\nОбъект и договор по нему останутся — их удаляют в своих вкладках.":"";
+      if(!confirm("Удалить проект «"+(p.name||"")+"»?"+tail))return;
+      specDrop(p.id); projOpenId=null; fl();
+    };}
     else if(a==="rule-add"){el.onclick=()=>{
       const sh=spec2Sheet();
       const kind=(sh&&sh.kind)||"house";

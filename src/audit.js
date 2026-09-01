@@ -20,6 +20,7 @@ const VAL_MAX = 70;               // обрезка значений в логе
 // (служебные ключи вроде estKinds/estRooms шумят и ничего не говорят человеку).
 export const SECTION_LABELS = {
   objects:      "Объекты",
+  projects:     "Проекты",
   templates:    "Шаблоны",
   estimates:    "Сметы",
   buildRules:   "Правила сборки",
