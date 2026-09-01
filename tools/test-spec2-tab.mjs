@@ -128,11 +128,36 @@ function create(p, preset) {
 
   // Второй узел — пирог перегородки: по «100 мм» на плане стену не собрать.
   t.ok('на чертеже выноска на перегородку', /УЗЕЛ 2/.test(dsvg))
+  // Узлы — вкладками: их три, и листать чертёж сквозь чужие узлы незачем.
+  t.ok('вкладки узлов есть', ['n1', 'n2', 'n3'].every((v) => dim.indexOf('data-a="spec2-node-tab" data-v="' + v + '"') >= 0))
+  t.ok('по умолчанию открыт узел 1', /УЗЕЛ 1 · УСИЛЕНИЕ ПРОЁМА/.test(dim) && dim.indexOf('УЗЕЛ 2 · ПЕРЕГОРОДКА') < 0)
+  t.ok('клиенту узлов не показываем', pl.indexOf('spec2-node-tab') < 0 && psvg.indexOf('УЗЕЛ 2') < 0)
+
+  // Возвращаемся на рабочий вид: узлы живут там, клиенту их не показывают.
+  const back = p.dom.node({ a: 'spec2-scheme-view', v: 'dim' }); p.run('bind();'); back.onclick()
+  const openNode = (v) => { const el = p.dom.node({ a: 'spec2-node-tab', v: v }); p.run('bind();'); el.onclick(); return p.run('tSpec2()') }
+  const n2 = openNode('n2')
   t.ok('узел перегородки расписан слоями',
-    /УЗЕЛ 2 · ПЕРЕГОРОДКА/.test(dim) && /Плитка SPC/.test(dim) && /Фанера шлифованная/.test(dim))
-  t.ok('и суммой', /77,2 мм/.test(dim))
-  t.ok('расхождение с планом названо', /а в плане перегородка <b[^>]*>100 мм/.test(dim))
-  t.ok('клиенту пирог не показываем', pl.indexOf('ПЕРЕГОРОДКА') < 0 && psvg.indexOf('УЗЕЛ 2') < 0)
+    /УЗЕЛ 2 · ПЕРЕГОРОДКА/.test(n2) && /Плитка SPC/.test(n2) && /Фанера шлифованная/.test(n2))
+  t.ok('и суммой', /77,2 мм/.test(n2))
+  t.ok('расхождение с планом названо', /а в плане перегородка <b[^>]*>100 мм/.test(n2))
+  const n3 = openNode('n3')
+  t.ok('третий узел — наружная стена', /УЗЕЛ 3 · НАРУЖНАЯ СТЕНА/.test(n3) && /ППУ/.test(n3) && /85 мм/.test(n3))
+  // Пирог правится прямо в узле — там, где на него смотрят.
+  t.ok('пока лист не заведён, править нечего',
+    n3.indexOf('data-a="model-layer-mm"') < 0 && /станет пирогом вашего дома/.test(n3))
+  const btn = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); btn.onclick()
+  p.run('modelFull=false;')
+  const n3b = p.run('tSpec2()')
+  t.ok('у заведённого листа слои правятся в узле',
+    /data-a="model-layer-mm"[^>]*data-key="skin"/.test(n3b) && /data-a="model-layer-add"/.test(n3b))
+  const mm = p.dom.node({ a: 'model-layer-mm', sh: p.q('specSheets2[0].id'), key: 'skin', i: '1' })
+  p.run('bind();')
+  mm.value = '80'; mm.onchange()
+  t.ok('правка из узла доехала до модели', p.q('specSheets2[0].model.skin[1].mm') === 80)
+  t.ok('и план пошёл за пирогом', p.q('specSheets2[0].model.finish') === 115,
+    String(p.q('specSheets2[0].model.finish')))
+  openNode('n1')
 
   // Окна на листе клиента выделены цветом и подписаны размером: он читает план
   // окнами — где свет и куда вид, — а марки и цепочки ему ни о чём не говорят.
@@ -174,8 +199,14 @@ function create(p, preset) {
     boxes.push({ txt: txt, size: size, x0: x0, y0: y0, x1: x0 + bw, y1: y0 + bh })
   }
   const hit = (a, b) => !(a.x1 < b.x0 || b.x1 < a.x0 || a.y1 < b.y0 || b.y1 < a.y0)
+  // Подписи, которые обязаны стоять чисто: имена помещений и выноски на узлы.
   const names = boxes.filter((b) => /^[А-ЯЁ -]+$/.test(b.txt) && b.size >= 180)
+  const nodes = boxes.filter((b) => /^УЗЕЛ \d$/.test(b.txt))
   t.ok('имена помещений нашлись', names.length >= 3, String(names.length))
+  t.ok('и три выноски на узлы', nodes.length === 3, String(nodes.length))
+  const clash2 = []
+  nodes.forEach((n) => boxes.forEach((b) => { if (b !== n && hit(n, b)) clash2.push(n.txt + ' × ' + b.txt) }))
+  t.ok('выноска не легла на чужую подпись', clash2.length === 0, clash2.join(' | '))
   const clashes = []
   names.forEach((n) => boxes.forEach((b) => {
     if (b === n) return
