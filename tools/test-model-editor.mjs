@@ -884,4 +884,59 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   t.ok('цепочка держится у своей перегородки', near.every((v) => v < 700), JSON.stringify(near))
 }
 
+// ── 19. Планировка заказчика подложкой ───────────────────────────────────────
+// Чертёж рисуют ПО чужой планировке, поэтому она лежит под ним в тех же
+// миллиметрах: двигается и масштабируется вместе с чертежом, а не «где-то поверх
+// экрана». В печать и на лист клиента она не идёт — это исходник, а не документ.
+{
+  t.section('Подложка')
+  const p = panel()
+  click(p, { a: 'model-full' })
+  const plain = p.run('modelPlanSvg(specSheets[0], true)')
+  t.ok('без файла подложки нет', plain.indexOf('<image') < 0)
+  t.ok('и инструмента тоже нет', p.run('modelFullOverlay()').indexOf('data-k="under"') < 0,
+    'инструмент, которому нечего двигать, обещает то, чего нет')
+
+  p.run('specSheets[0].model=Object.assign({},specSheets[0].model,' +
+    '{under:{url:"plan.png",x:0,y:-200,w:11952,h:2800,op:0.45}});')
+  const withImg = p.run('modelPlanSvg(specSheets[0], true)')
+  t.ok('подложка нарисована', /<image[^>]+plan\.png/.test(withImg))
+  t.ok('и лежит под чертежом', withImg.indexOf('<image') < withImg.indexOf('sch-hatch'),
+    'иначе она закрывает то, ради чего её положили')
+  t.ok('инструмент появился', p.run('modelFullOverlay()').indexOf('data-k="under"') >= 0)
+  // В печатный чертёж чужая планировка не попадает.
+  t.ok('в печати её нет',
+    p.run('modelSchemeSvg(specSheets[0].model, winTypes)').indexOf('<image') < 0)
+
+  // Двигают её пальцем — как проём, без перерисовки внутри жеста.
+  click(p, { a: 'model-tool', k: 'under' })
+  const before = p.q('specSheets[0].model.under')
+  const img = p.dom.node({ a: 'model-under-drag' })
+  img.setAttribute = () => {}
+  img.ownerSVGElement = { dataset: { vbw: '13352' }, getBoundingClientRect: () => ({ width: 1000, height: 300 }),
+    querySelector: () => null }
+  p.run('bind();')
+  img.onpointerdown({ clientX: 0, clientY: 0, pointerId: 1, preventDefault() {} })
+  img.onpointermove({ clientX: 40, clientY: 20 })
+  img.onpointerup()
+  const moved = p.q('specSheets[0].model.under')
+  t.ok('подложка едет за пальцем', moved.x > before.x && moved.y > before.y,
+    JSON.stringify([before.x, before.y]) + ' → ' + JSON.stringify([moved.x, moved.y]))
+
+  // Размер меняется ОТ ЦЕНТРА: иначе после каждого нажатия её ловят заново.
+  const c0 = [moved.x + moved.w / 2, moved.y + moved.h / 2]
+  click(p, { a: 'model-under-zoom', d: '0.05' })
+  const big = p.q('specSheets[0].model.under')
+  t.ok('увеличение от центра', big.w > moved.w &&
+    Math.abs((big.x + big.w / 2) - c0[0]) <= 1 && Math.abs((big.y + big.h / 2) - c0[1]) <= 1,
+    JSON.stringify([big.x + big.w / 2, big.y + big.h / 2]) + ' против ' + JSON.stringify(c0))
+
+  click(p, { a: 'model-under-op' })
+  t.ok('прозрачность переключается', p.q('specSheets[0].model.under').op !== big.op)
+
+  click(p, { a: 'model-under-off' })
+  t.ok('подложку можно убрать', !p.q('specSheets[0].model.under'))
+  t.ok('и инструмент уходит вместе с ней', p.run('modelFullOverlay()').indexOf('data-k="under"') < 0)
+}
+
 t.done()

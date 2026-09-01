@@ -652,6 +652,41 @@ async function photoQueueFlush(){
   return sent;
 }
 
+// Планировка заказчика как ПОДЛОЖКА. Храним ссылку и геометрию в мм модели: подложка
+// живёт в тех же координатах, что и чертёж, поэтому масштабируется и двигается вместе
+// с ним, а не «где-то поверх экрана».
+//
+// Размер по умолчанию — по габариту дома: чаще всего планировку и рисуют на весь дом,
+// а дальше её подгоняют по известному размеру.
+async function attachPlanFile(projId, file){
+  const isPdf=/pdf$/i.test(file.type||"")||/\.pdf$/i.test(file.name||"");
+  try{
+    const url=await uploadFileR2(file);
+    const pr=projects.find(function(x){return x.id===projId;});
+    if(!pr||!pr.model)return;
+    pr.plan={ name:file.name||"планировка", url:url, pdf:isPdf };
+    if(!isPdf){
+      const ar=await imageAspect(url).catch(function(){ return 3; });
+      const L=totalLength(pr.model), W=Number(pr.model.w)||0;
+      const w=L, h=Math.round(L/(ar||3));
+      pr.model=Object.assign({}, pr.model, { under:{ url:url, x:0, y:Math.round((W-h)/2), w:w, h:h, op:0.45 } });
+    }
+    fl();
+    if(isPdf)alert("PDF прикреплён к проекту.\n\nПодложкой в редакторе он пока не встаёт — для обводки приложите снимок страницы (PNG/JPG).");
+  }catch(err){ alert("Не удалось загрузить планировку: "+((err&&err.message)||err)); }
+}
+
+// Пропорции картинки — из самой картинки: подложка, растянутая наугад, врёт в обе
+// стороны, а по одному известному размеру её потом калибруют.
+function imageAspect(url){
+  return new Promise(function(res, rej){
+    const im=new Image();
+    im.onload=function(){ res((im.naturalWidth||1)/(im.naturalHeight||1)); };
+    im.onerror=function(){ rej(new Error("картинка не открылась")); };
+    im.src=url;
+  });
+}
+
 async function uploadFileR2(file, alreadyCompressed){
   if(!alreadyCompressed){ try{ file=await compressImage(file, 1024*1024); }catch(e){ /* не удалось сжать — грузим оригинал */ } }
   const r=await fetch(API_BASE+"/api/file?name="+encodeURIComponent(file.name),{
@@ -2103,6 +2138,7 @@ let modelView="plan";      // plan | elev | iso — план, развёртка
 // Камера объёмного вида. Живёт во вкладке, а не в модели: это взгляд человека на
 // дом, а не свойство дома — у второго смотрящего он свой.
 let modelYaw=35, modelTilt=55;
+let modelUnderShow=true;   // показывать ли планировку заказчика под чертежом
 // Как показывать дом: "solid" — как он есть, с гофрой и крышей (так его видит
 // клиент); "ghost" — ближняя стена прозрачная (дом и планировка сразу);
 // "cut" — ближняя стена снята совсем (чистый вид внутрь).
@@ -9951,7 +9987,12 @@ function modelPlanSvg(sh, full){
   // Ручка стоит НИЖЕ имён помещений и марок проёмов: по центру она ложится ровно
   // на имя, и в узком отсеке его не прочитать.
   const HY=Math.round(W*0.72);
-  let g=base.g;
+  // Подложка — под всем: чертёж рисуют ПО ней, а не она поверх чертежа. Только в
+  // редакторе: на листе клиента и в печати чужая планировка не нужна.
+  const und=full&&modelUnderShow&&m.under&&m.under.url?m.under:null;
+  let g=(und?('<image href="'+esc(und.url)+'" x="'+und.x+'" y="'+und.y+'" width="'+und.w+'" height="'+und.h+
+      '" opacity="'+(und.op||0.45)+'" preserveAspectRatio="none"'+
+      (modelTool==="under"?' data-a="model-under-drag"':'')+'/>'):'')+base.g;
   // Продольные перегородки и ручка их переноса
   bays.forEach(function(b){
     if(!b.sub)return;
@@ -10037,6 +10078,7 @@ const MODEL_TOOLS=[
   ["win",  "🪟", "Окна",           "Тап у стены — окно в этом месте"],
   ["door", "🚪", "Двери",          "Тап у стены — входная дверь; тап по перегородке — межкомнатная"],
   ["free", "▬",  "Стена куском",   "Проведите линию — стена любой длины; комната станет Г-образной"],
+  ["under","🖼", "Подложка",       "Тяните планировку заказчика, кнопками рядом — размер и прозрачность"],
   ["del",  "🗑", "Убрать",         "Тап по проёму, перегородке или стене"],
 ];
 // Набор инструментов зависит от того, чей лист открыт. В опытном разделе окна и
@@ -10045,8 +10087,13 @@ const MODEL_TOOLS=[
 // единый «Проём» — обкатка не должна менять экран, на котором работают продажи.
 function modelTools(lab){
   const by=function(k){ return MODEL_TOOLS.find(function(t){return t[0]===k;}); };
+  // «Подложку» показываем только когда она есть: инструмент, которому нечего двигать,
+  // занимает место в панели и обещает то, чего нет.
+  const sh=specSheet(specOpenId);
+  const hasUnder=!!(sh&&sh.model&&sh.model.under&&sh.model.under.url);
   return [by("sel"),by("wall"),by("wallw")]
-    .concat(lab?[by("win"),by("door")]:[by("op")], [by("free"),by("del")]);
+    .concat(lab?[by("win"),by("door")]:[by("op")], [by("free"),by("del")],
+      hasUnder?[by("under")]:[]);
 }
 // Прилипание концов и оси стены к соседям. Без него кладовка не замыкается: щель
 // в один миллиметр — это проход, и заливка справедливо считает комнату одной.
@@ -10404,6 +10451,14 @@ function modelFullOverlay(){
       const can=modelCanUndo(sh);
       return '<button data-a="model-undo"'+(can?'':' disabled')+' title="Вернуть последнее изменение планировки" style="display:flex;align-items:center;gap:6px;border:1.5px solid rgba(255,255,255,'+(can?'.35':'.12')+');background:transparent;color:'+(can?'#fff':'rgba(255,255,255,.3)')+';border-radius:9px;padding:7px 12px;font-size:12px;font-weight:700;cursor:'+(can?'pointer':'default')+'"><span>↶</span>Вернуть'+(can?' <span style="opacity:.6">'+modelHist.length+'</span>':'')+'</button>';
     })()+
+    // Пока двигают подложку, рядом с инструментом стоят её же ручки: размер и
+    // прозрачность. В другом инструменте они были бы шумом.
+    (modelTool==="under"&&m.under&&m.under.url
+      ? [["under-zoom","−","-0.05","уменьшить"],["under-zoom","+","0.05","увеличить"],
+         ["under-op","◐","","прозрачность"],["under-off","✕","","убрать подложку"]].map(function(b){
+          return '<button data-a="model-'+b[0]+'" data-d="'+b[2]+'" title="'+esc(b[3])+'" style="border:1.5px solid rgba(255,255,255,.25);background:transparent;color:#fff;border-radius:9px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer">'+b[1]+'</button>';
+        }).join("")
+      : "")+
     '<span style="flex:1"></span>'+
     viewBtn("iso","🧊 3D")+
     [1,2,4].map(function(z){
@@ -12344,6 +12399,11 @@ function projNewFormHtml(){
       }).join("")+
     '</div>'+
     '<div style="font-size:10px;color:#a0b4c8;margin:2px 0 9px;line-height:1.45">Заготовка — уже начерченный контейнер: отсеки, длины и проёмы стоят, дальше их двигают в редакторе.</div>'+
+    // Планировка заказчика — подложкой под наш чертёж: по ней ставят стены, и она же
+    // остаётся в проекте как исходник, с которым сверяют результат.
+    '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:5px">ПЛАНИРОВКА ЗАКАЗЧИКА (необязательно)</div>'+
+    '<input id="proj-n-plan" type="file" accept="image/*,application/pdf" style="width:100%;font-size:12px;margin-bottom:4px">'+
+    '<div style="font-size:10px;color:#a0b4c8;margin:0 0 9px;line-height:1.45">Ляжет подложкой в редакторе: масштабируете по известному размеру и обводите стены нашими инструментами.</div>'+
     '<select id="proj-n-client" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:10px">'+
       '<option value="">— клиент из CRM (необязательно) —</option>'+
       crmClients.map(function(c){return '<option value="'+c.id+'"'+(n.clientId===c.id?" selected":"")+'>'+esc(c.name||"")+'</option>';}).join("")+
@@ -21194,6 +21254,11 @@ function bind(){
       modelSync(p);
       projects=projects.concat([p]);
       projNew=null; projOpenId=p.id; projBand="plan"; fl();
+      // Файл грузим ПОСЛЕ создания: проект уже открыт и им можно заниматься, пока
+      // планировка едет в R2. Упадёт загрузка — проект от этого не пострадает.
+      const fi=document.getElementById("proj-n-plan");
+      const file=fi&&fi.files&&fi.files[0];
+      if(file)attachPlanFile(p.id, file);
     };}
     else if(a==="proj-open"){el.onclick=()=>{ projOpenId=el.dataset.id; projBand="plan"; render(); window.scrollTo(0,0); };}
     else if(a==="proj-back"){el.onclick=()=>{ projOpenId=null; render(); window.scrollTo(0,0); };}
@@ -21450,6 +21515,54 @@ function bind(){
       sh.model=alignHeads(sh.model, winTypes);
       modelSync(sh); fl();
     };}
+    else if(a==="model-under-zoom"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model||!sh.model.under)return;
+      const u=sh.model.under, k=1+(parseFloat(el.dataset.d)||0);
+      // Масштабируем ОТ ЦЕНТРА подложки: иначе она уползает из-под чертежа, и её
+      // приходится ловить заново после каждого нажатия.
+      const cx=u.x+u.w/2, cy=u.y+u.h/2;
+      const w=Math.max(200, Math.round(u.w*k)), h=Math.max(200, Math.round(u.h*k));
+      sh.model=Object.assign({}, sh.model, { under:Object.assign({}, u, { w:w, h:h, x:Math.round(cx-w/2), y:Math.round(cy-h/2) }) });
+      fl();
+    };}
+    else if(a==="model-under-op"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model||!sh.model.under)return;
+      const steps=[0.2,0.45,0.7,0.9], u=sh.model.under;
+      const i=steps.findIndex(function(v){ return Math.abs(v-(u.op||0.45))<0.01; });
+      sh.model=Object.assign({}, sh.model, { under:Object.assign({}, u, { op:steps[(i+1)%steps.length] }) });
+      fl();
+    };}
+    else if(a==="model-under-off"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      if(!confirm("Убрать подложку с чертежа?\n\nФайл планировки останется в проекте."))return;
+      const m2=Object.assign({}, sh.model); delete m2.under;
+      sh.model=m2; modelTool="sel"; fl();
+    };}
+    else if(a==="model-under-drag"){
+      // Подложку двигают пальцем — как проём: без render() внутри жеста, иначе
+      // элемент с захваченным указателем исчезает вместе с разметкой.
+      el.onpointerdown=(ev)=>{
+        const sh=specSheet(specOpenId); if(!sh||!sh.model||!sh.model.under)return;
+        const mmPerPx=planMmPerPx(el); if(!mmPerPx)return;
+        const u=sh.model.under, x0=ev.clientX, y0=ev.clientY;
+        let dx=0, dy=0, moved=false;
+        ev.preventDefault();
+        try{ el.setPointerCapture(ev.pointerId); }catch(e){}
+        const up=function(){
+          el.onpointermove=null; el.onpointerup=null; el.onpointercancel=null;
+          if(!moved)return;
+          sh.model=Object.assign({}, sh.model, { under:Object.assign({}, u, { x:Math.round(u.x+dx), y:Math.round(u.y+dy) }) });
+          fl();
+        };
+        el.onpointermove=function(e){
+          if(!moved&&Math.abs(e.clientX-x0)<TAP_PX&&Math.abs(e.clientY-y0)<TAP_PX)return;
+          moved=true;
+          dx=(e.clientX-x0)*mmPerPx; dy=(e.clientY-y0)*mmPerPx;
+          el.setAttribute("x", Math.round(u.x+dx)); el.setAttribute("y", Math.round(u.y+dy));
+        };
+        el.onpointerup=up; el.onpointercancel=up;
+      };
+    }
     else if(a==="model-iso-walls"){el.onclick=()=>{ modelIsoWalls=el.dataset.w; render(); };}
     else if(a==="model-iso-reset"){el.onclick=()=>{ modelYaw=35; modelTilt=55; render(); };}
     else if(a==="model-iso"){
