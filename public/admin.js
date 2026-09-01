@@ -54,7 +54,8 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2, works2 } from "../src/spec2.js";
-import { allPositions, rulePositions, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES } from "../src/recipe.js";
+import { allPositions, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES } from "../src/recipe.js";
+import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
 import { isoScene } from "../src/iso.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
@@ -5595,6 +5596,58 @@ function buildTplDiffSection(obj){
     '<span style="color:#8e44ad">'+d.items.length+' поз.'+(d.safe<d.items.length?' · '+(d.items.length-d.safe)+' спорных':'')+'</span>', body, true);
 }
 
+// «В проекте изменилось»: та же секция, что у шаблона, но между проектом и стройкой.
+// Показываем админу и производству: принимать правку проекта в идущую стройку —
+// решение по деньгам и объёму, а не косметика.
+const PROJ_DIFF_KIND={
+  added:  {i:"➕", n:"появилась в проекте", c:"#27ae60"},
+  removed:{i:"➖", n:"из проекта убрали",   c:"#c0392b"},
+  changed:{i:"✏️", n:"изменилась в проекте", c:"#2980b9"},
+};
+function projDiffRows(obj, d, oid){
+  return d.items.map(function(it){
+    const k=PROJ_DIFF_KIND[it.kind]||PROJ_DIFF_KIND.changed;
+    const nm=(it.proj&&it.proj.w&&it.proj.w.n)||(it.obj&&it.obj.w&&it.obj.w.n)||"Работа";
+    const oldCost=it.obj?(Number(it.obj.w.cost)||0):0;
+    const newCost=it.proj?(Number(it.proj.w.cost)||0):0;
+    const stuck=it.kind==="removed"&&workTouched(it.obj&&it.obj.w);
+    return '<div style="display:flex;align-items:center;gap:9px;padding:8px 10px;border:1px solid '+k.c+'33;background:'+k.c+'08;border-radius:9px;margin-bottom:6px">'+
+      '<span style="font-size:14px">'+k.i+'</span>'+
+      '<div style="flex:1;min-width:0">'+
+        '<div style="font-size:12.5px;font-weight:700;color:#1a2a3a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(nm)+'</div>'+
+        '<div style="font-size:10px;color:'+k.c+';margin-top:2px">'+k.n+
+          (it.kind==="changed"&&oldCost!==newCost?' · '+oldCost.toLocaleString("ru-RU")+' → '+newCost.toLocaleString("ru-RU")+' ₽':'')+
+          (stuck?' · <b>по ней есть часы или фото — не убираем</b>':(it.safe?'':' · <b>в объекте её тоже правили</b>'))+'</div>'+
+      '</div>'+
+      (stuck?'':'<button data-a="obj-proj-apply" data-oid="'+oid+'" data-key="'+esc(it.key)+'" style="padding:6px 11px;background:'+(it.safe?k.c:"#fff")+';border:1.5px solid '+k.c+';border-radius:7px;cursor:pointer;font-size:11px;font-weight:700;color:'+(it.safe?"#fff":k.c)+';white-space:nowrap">Принять</button>')+
+    '</div>';
+  }).join("");
+}
+function projDiffButtons(d, oid){
+  return '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">'+
+      (d.safe?'<button data-a="obj-proj-apply-safe" data-oid="'+oid+'" style="flex:1;min-width:150px;padding:9px;background:'+PROJ_COL+';border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Принять безопасные ('+d.safe+')</button>':'')+
+      '<button data-a="obj-proj-accept" data-oid="'+oid+'" style="flex:1;min-width:150px;padding:9px;background:#fff;border:1px solid #d0dae8;border-radius:9px;cursor:pointer;color:#7a9aaa;font-size:12px;font-weight:700">Ничего не принимать</button>'+
+    '</div>'+
+    '<div style="font-size:10px;color:#a0b4c8;text-align:center;margin-top:6px">«Ничего не принимать» просто запомнит нынешний проект как просмотренный.</div>';
+}
+function buildProjDiffSection(obj){
+  if(!currentUser||!currentUser.roles.some(function(r){return ["admin","prod_head","client_mgr"].indexOf(r)>=0;}))return "";
+  const d=objProjDiff(obj);
+  if(!d)return "";
+  if(d.noBase){
+    // Объекты, собранные до появления слепка, сравнивать не с чем. Не молчим:
+    // иначе человек ждёт уведомлений, которых механизм физически не может дать.
+    return objSection(obj.id,"projdiff","🏗 СВЯЗЬ С ПРОЕКТОМ","#16a085",'<span style="color:#9aabbf">не настроена</span>',
+      '<div style="font-size:11.5px;color:#7a9aaa;line-height:1.5;margin-bottom:9px">Объект собран до того, как портал начал запоминать состав проекта, поэтому сравнивать не с чем. Отметьте нынешний проект как принятый — дальше портал будет показывать, что в нём изменилось.</div>'+
+      '<button data-a="obj-proj-accept" data-oid="'+obj.id+'" style="width:100%;padding:9px;background:'+PROJ_COL+';border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Считать нынешний проект принятым</button>', false);
+  }
+  if(!d.items.length)return "";
+  const body='<div style="font-size:11.5px;color:#7a9aaa;line-height:1.5;margin-bottom:9px">Проект «'+esc(d.proj.name||"")+'» поменялся с тех пор, как из него собрали этот объект: подвинули перегородку, поправили правило или цену. Принять — значит перенести план в стройку; часы, фото и отметки «выполнено» при этом сохраняются.</div>'+
+    projDiffRows(obj, d, obj.id)+projDiffButtons(d, obj.id);
+  return objSection(obj.id,"projdiff","🏗 ПРОЕКТ ОБНОВИЛСЯ",PROJ_COL,
+    '<span style="color:'+PROJ_COL+'">'+d.items.length+' поз.'+(d.safe<d.items.length?' · '+(d.items.length-d.safe)+' спорных':'')+'</span>', body, true);
+}
+
 function buildIssuesSection(obj){
   if(!obj)return "";
   const list=objIssues(obj.id);
@@ -6355,6 +6408,7 @@ ${(()=>{
 
 <!-- Вопросы по объекту: обращения с площадки и от клиента -->
 ${buildTplDiffSection(obj)}
+${buildProjDiffSection(obj)}
 
 ${buildIssuesSection(obj)}
 
@@ -7533,6 +7587,98 @@ function objTplAccept(obj){
   const t=templates.find(function(x){return x.id===(obj&&obj.templateId);});
   if(!t)return false;
   objects=objects.map(function(o){ return o.id!==obj.id?o:Object.assign({},o,{tplBase:tplBaseline(t)}); });
+  return true;
+}
+
+// ─── РЕВИЗИИ ПРОЕКТА: «В ПРОЕКТЕ ИЗМЕНИЛОСЬ» ─────────────────────────────────
+// Тот же трёхсторонний механизм, что у шаблона, но между ПРОЕКТОМ и стройкой.
+// Состав проекта нигде не лежит — он считается по чертежу и правилам, поэтому
+// «версия проекта» это подпись его состава: подвинули перегородку, поправили
+// правило — и объект узнал, что план разошёлся со стройкой.
+function projPositions(sh){ return sh?allPositions(sh, specCtx(sh)):[]; }
+function objProject(obj){
+  const sh=obj&&obj.specId?specSheet(obj.specId):null;
+  return specIsProject(sh)?sh:null;
+}
+function objProjDiff(obj){
+  const p=objProject(obj);
+  if(!p)return null;
+  const d=projDiff(projPositions(p), obj);
+  d.proj=p;
+  return d;
+}
+// Принять одну правку проекта в объект. Переносим ТОЛЬКО план — имя, цену и
+// материалы; id работы, часы, фото и отметку «выполнено» сохраняем, иначе
+// принятая правка обнуляет бригаде день работы.
+// Принятая правка двигает слепок ПО ЭТОЙ позиции: «принято» и значит, что дальше
+// сравнивать надо отсюда. Оставь слепок на месте — принятая правка висела бы в
+// списке вечно, уже помеченная спорной (объект-то теперь совпадает с проектом).
+function projBaseMove(objId, key, sig){
+  objects=objects.map(function(o){
+    if(o.id!==objId)return o;
+    const base=Object.assign({}, (o.projBase&&o.projBase.sig)||{});
+    if(sig===null)delete base[key]; else base[key]=sig;
+    return Object.assign({},o,{projBase:{at:(o.projBase&&o.projBase.at)||todayISO(), sig:base}});
+  });
+}
+function objProjApply(obj, item){
+  if(!obj||!item)return false;
+  const key=item.key;
+  if(item.kind==="removed"){
+    // Работу со следами стройки не убираем: в проекте её нет, а часы и фото есть.
+    const o=item.obj&&item.obj.w;
+    if(workTouched(o))return false;
+    objects=objects.map(function(x){
+      if(x.id!==obj.id)return x;
+      return Object.assign({},x,{stages:(x.stages||[]).map(function(st){
+        if(!(st.works||[]).some(function(w){return (w.posKey||"")===key;}))return st;
+        return Object.assign({},st,{works:st.works.filter(function(w){return (w.posKey||"")!==key;})});
+      })});
+    });
+    projBaseMove(obj.id, key, null);
+    return true;
+  }
+  const src=item.proj&&item.proj.w;
+  if(!src)return false;
+  const withIds=function(){ return (src.mats||[]).map(function(m){ return Object.assign({id:gid()},m); }); };
+  if(item.kind==="changed"){
+    objects=objects.map(function(x){
+      if(x.id!==obj.id)return x;
+      return Object.assign({},x,{stages:(x.stages||[]).map(function(st){
+        if(!(st.works||[]).some(function(w){return (w.posKey||"")===key;}))return st;
+        return Object.assign({},st,{works:st.works.map(function(w){
+          if((w.posKey||"")!==key)return w;
+          return Object.assign({},w,{ n:src.n, cost:Number(src.cost)||0, mats:withIds() });
+        })});
+      })});
+    });
+    projBaseMove(obj.id, key, sigOf(src));
+    return true;
+  }
+  // added — кладём в этап проекта по номеру, иначе в последний: этапы объекта уже свои.
+  const nw=Object.assign({},src,{ id:gid(), mats:withIds(), timeLogs:[] });
+  const stN=item.proj&&item.proj.stage;
+  const meta=EST_STAGES.find(function(x){return x.n===stN;});
+  const stName=meta?(meta.short.toUpperCase()+" — "+meta.label.toUpperCase()):"";
+  objects=objects.map(function(x){
+    if(x.id!==obj.id)return x;
+    const stages=(x.stages||[]).slice();
+    if(!stages.length)return x;
+    let idx=stages.findIndex(function(st){return st.n===stName;});
+    if(idx<0)idx=stages.length-1;
+    stages[idx]=Object.assign({},stages[idx],{works:(stages[idx].works||[]).concat([nw])});
+    return Object.assign({},x,{stages:stages});
+  });
+  projBaseMove(obj.id, key, sigOf(src));
+  return true;
+}
+// Слепок принимаем целиком: «я посмотрел, дальше сравнивай отсюда». Иначе
+// отклонённая правка всплывает в каждом рендере, и баннер становится фоном.
+function objProjAccept(obj){
+  const p=objProject(obj);
+  if(!p)return false;
+  const base=projBaseline(projPositions(p), todayISO());
+  objects=objects.map(function(o){ return o.id!==obj.id?o:Object.assign({},o,{projBase:base}); });
   return true;
 }
 
@@ -10725,14 +10871,10 @@ function specBuildStages(sh){
   pos.forEach(function(p){
     const n=Number(p.stage)||0;
     if(!byStage[n])byStage[n]=[];
-    const mats=(p.mats||[]).map(function(m){
-      const mm={ id:gid(), pid:m.pid||"", n:m.n||"", store:m.store||"", url:m.url||"", note:"",
-        cost:Number(m.cost)||0, qty:Number(m.qty)||0, mode:m.mode||"piece", unitCost:Number(m.cost)||0 };
-      ["packBase","packPer","lenPer","sheetM2"].forEach(function(k){ if(m[k]!=null)mm[k]=m[k]; });
-      return mm;
-    });
-    const w={ id:gid(), estId:p.estId||"", n:p.name+(p.room?" — "+p.room:""), room:"", cost:0, labor:0, note:"", mats:mats, timeLogs:[] };
-    w.cost=wMatTotal(w);
+    // Форму работы даёт общий модуль: по ней же считается подпись состава, и два
+    // разных кода на одно и то же разошлись бы на первой правке.
+    const w=Object.assign(positionWork(p), { id:gid(), timeLogs:[] });
+    w.mats=w.mats.map(function(m){ return Object.assign({ id:gid() }, m); });
     byStage[n].push(w);
   });
   return Object.keys(byStage).map(Number).sort(function(a,b){return a-b;}).map(function(n){
@@ -12159,7 +12301,18 @@ function projBuildHtml(p){
   if(!o)return '<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:16px;font-size:12.5px;color:#7a9aaa;line-height:1.55">'+
     'Объекта по этому проекту ещё нет. Он собирается на полосе «Деньги» — тем же составом, который показан в «Составе».</div>';
   const stages=o.stages||[];
-  let h='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:12px 13px;margin-bottom:9px">'+
+  let h='';
+  // Правку чертежа видно там же, где её сделали: подвинул перегородку — увидел,
+  // что стройка идёт по старым числам, и решил, переносить ли.
+  const d=objProjDiff(o);
+  if(d&&d.items&&d.items.length){
+    h+='<div style="background:#fff;border:1px solid '+PROJ_COL+'55;border-radius:13px;padding:12px 13px;margin-bottom:9px">'+
+      '<div style="font-size:11px;font-weight:700;color:'+PROJ_COL+';letter-spacing:0.5px;margin-bottom:6px">В ПРОЕКТЕ ИЗМЕНИЛОСЬ · '+d.items.length+' поз.</div>'+
+      '<div style="font-size:11.5px;color:#7a9aaa;line-height:1.5;margin-bottom:9px">Стройка идёт по составу, который был при сборке объекта. Принять — значит перенести план; часы, фото и отметки «выполнено» сохраняются.</div>'+
+      projDiffRows(o, d, o.id)+projDiffButtons(d, o.id)+
+    '</div>';
+  }
+  h+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:12px 13px;margin-bottom:9px">'+
     '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:8px">ОБЪЕКТ · '+esc(o.name||"")+'</div>'+
     stages.map(function(st){
       const works=st.works||[];
@@ -21372,6 +21525,9 @@ function bind(){
         id:oid, name:sh.name||"Объект", icon:kd.emoji||"🏠",
         templateId:"", specId:sh.id, stages:stages,
         specs:JSON.parse(JSON.stringify(sh.specs||{height:2.5,rooms:[],openings:[]})),
+        // Слепок состава на момент сборки: по нему объект потом поймёт, что
+        // изменилось в проекте. Без него сравнивать не с чем — только копия.
+        projBase:projBaseline(allPositions(sh, specCtx(sh)), todayISO()),
       }]);
       sh.objId=oid; sh.status="sold";
       // Договор по этой спеке уже есть — привяжем к нему объект, иначе он останется без.
@@ -22918,6 +23074,35 @@ function bind(){
       const obj=objects.find(function(o){return o.id===el.dataset.oid;});
       if(!obj)return;
       objTplAccept(obj); fl();
+    };}
+    // ─── Правки проекта в стройку ──────────────────────────────────────────
+    else if(a==="obj-proj-apply"){el.onclick=()=>{
+      const {oid,key}=el.dataset;
+      const obj=objects.find(function(o){return o.id===oid;});
+      const d=obj&&objProjDiff(obj);
+      const it=d&&d.items.find(function(x){return x.key===key;});
+      if(!it)return;
+      if(!it.safe&&!confirm("Эту работу правили и в объекте.\n\nПринять версию из проекта? Правка объекта будет заменена."))return;
+      objProjApply(obj,it);
+      normalizeWorkCosts(); fl();
+    };}
+    else if(a==="obj-proj-apply-safe"){el.onclick=()=>{
+      const oid=el.dataset.oid;
+      const obj=objects.find(function(o){return o.id===oid;});
+      const d=obj&&objProjDiff(obj);
+      if(!d||!d.items.length)return;
+      const safe=d.items.filter(function(x){return x.safe;});
+      if(!safe.length)return;
+      if(!confirm("Принять "+safe.length+" правк"+(safe.length===1?"у":"и")+" проекта?\n\nЭто те позиции, которые в объекте не трогали. Спорные останутся на ваше решение."))return;
+      // Слепок двигается по каждой принятой позиции внутри objProjApply, поэтому
+      // спорные остаются в списке и никуда не пропадают.
+      safe.forEach(function(it){ objProjApply(objects.find(function(o){return o.id===oid;}),it); });
+      normalizeWorkCosts(); fl();
+    };}
+    else if(a==="obj-proj-accept"){el.onclick=()=>{
+      const obj=objects.find(function(o){return o.id===el.dataset.oid;});
+      if(!obj)return;
+      objProjAccept(obj); fl();
     };}
     else if(a==="obj-stage-ask-accept"){el.onclick=()=>{
       const {oid,sid}=el.dataset;

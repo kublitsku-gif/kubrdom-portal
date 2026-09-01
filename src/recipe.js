@@ -129,7 +129,17 @@ export function rulePositions(sheet, rules, estimates, products, winTypes) {
     if (!est) return;
     const mult = Number(r.qty) > 0 ? Number(r.qty) : 1;
     const add = function (ctx) {
-      const p = positionFor(est, ctx, prodById, mult);
+      const p = positionFor(est, ctx, prodById);
+      // Множитель умножает МАТЕРИАЛЫ, а не только сумму: объект собирается по
+      // материалам (`w.cost` = их сумма), и «×2» в одной только цене означало бы,
+      // что на экране одна смета, а на стройку уехала вдвое дешевле.
+      if (mult !== 1) {
+        p.mats = (p.mats || []).map(function (m) {
+          return Object.assign({}, m, { qty: Math.round((Number(m.qty) || 0) * mult * 100) / 100 });
+        });
+        p.cost = Math.round(p.mats.reduce(function (a, m) { return a + (Number(m.cost) || 0) * (Number(m.qty) || 0); }, 0));
+        p.factor = mult;
+      }
       p.stage = Number(r.stage) > 0 ? Number(r.stage) : p.stage;
       p.ruleId = r.id;
       p.from = "rule";
@@ -203,4 +213,26 @@ export function allPositions(sheet, ctx) {
     return Object.assign({}, p, { from: "est", why: positionWhy(p) });
   });
   return base.concat(rulePositions(sheet, c.rules, c.estimates, c.products, c.winTypes));
+}
+
+// Позиция → работа объекта. ОДНА машинка на сборку объекта и на подпись состава:
+// если бы объект собирался одним кодом, а сравнивался другим, «в проекте
+// изменилось» загоралось бы на ровном месте — или молчало, когда изменилось.
+// Идентификаторы здесь не выдаются: их ставит тот, кто кладёт работу в объект.
+export function positionWork(pos) {
+  const p = pos || {};
+  const mats = (p.mats || []).map(function (m) {
+    const mm = { pid: m.pid || "", n: m.n || "", store: m.store || "", url: m.url || "", note: "",
+      cost: Number(m.cost) || 0, qty: Number(m.qty) || 0, mode: m.mode || "piece",
+      unitCost: Number(m.cost) || 0 };
+    ["packBase", "packPer", "lenPer", "sheetM2"].forEach(function (k) { if (m[k] != null) mm[k] = m[k]; });
+    return mm;
+  });
+  return {
+    posKey: p.key || "", estId: p.estId || "",
+    n: (p.name || "") + (p.room ? " — " + p.room : ""),
+    room: "", labor: 0, note: "",
+    cost: Math.round(mats.reduce(function (a, m) { return a + m.cost * m.qty; }, 0)),
+    mats: mats,
+  };
 }
