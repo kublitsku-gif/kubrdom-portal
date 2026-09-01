@@ -11404,14 +11404,21 @@ function jambDetailSvg(){
     // Пена — пузырьками: так её и штрихуют на узлах, и ни с чем не спутать.
     '<pattern id="jamb-foam" width="26" height="26" patternUnits="userSpaceOnUse">'+
       '<rect width="26" height="26" fill="#fdf3e0"/><circle cx="8" cy="8" r="4" fill="none" stroke="#e0a75a" stroke-width="3"/>'+
-      '<circle cx="20" cy="19" r="3" fill="none" stroke="#e0a75a" stroke-width="3"/></pattern></defs>';
+      '<circle cx="20" cy="19" r="3" fill="none" stroke="#e0a75a" stroke-width="3"/></pattern>'+
+    // ППУ — точками: так утеплитель штрихуют на узлах, и с пеной в зазоре он не
+    // спорит цветом, но и не сливается.
+    '<pattern id="jamb-ppu" width="22" height="22" patternUnits="userSpaceOnUse">'+
+      '<rect width="22" height="22" fill="#eef3f7"/><circle cx="6" cy="6" r="2.6" fill="#8fa7bd"/>'+
+      '<circle cx="16" cy="15" r="2.6" fill="#8fa7bd"/></pattern></defs>';
 
   // Лист контейнера: гофра по наружной кромке, рез — там, где кончается лист.
   // У самого реза волна обязана быть ВПАДИНОЙ шириной с трубу — в неё труба и
   // садится. Регулярная волна попадает туда как придётся, поэтому последний период
   // строим руками: узел без масштаба, и показать посадку важнее, чем выдержать шаг.
   const nest=TUBE+26, ramp=Math.round(CORRSTEP*0.2), inner=wallY+CORR;
-  const sheet=function(x0, x1, dir){                 // dir=+1 — рез справа
+  const STEEL=16;                                    // толщина листа в узле
+  // Кромка листа: регулярная волна, а у самого реза — впадина шириной с трубу.
+  const edgePts=function(x0, x1, dir){               // dir=+1 — рез справа
     const from=(dir>0)?x0:(x0+nest+ramp), to=(dir>0)?(x1-nest-ramp):x1;
     const wave=corrPts(from, to, wallY, inner, CORRSTEP);
     const out=(dir>0)?wave.slice():wave.slice().reverse();
@@ -11419,12 +11426,27 @@ function jambDetailSvg(){
     if(last[1]!==wallY)out.push([last[0]+dir*ramp, wallY]);   // выходим на гребень
     const edge=(dir>0)?x1:x0;
     out.push([edge-dir*nest, wallY], [edge-dir*(nest-ramp), inner], [edge, inner]);
-    const body=(dir>0)?[[x1,wallY+wallH],[x0,wallY+wallH]]:[[x0,wallY+wallH],[x1,wallY+wallH]];
-    return "M "+out.concat(body).map(function(q){ return Math.round(q[0])+" "+Math.round(q[1]); }).join(" L ")+" Z";
+    return out;
   };
-  g+='<path d="'+sheet(X.w0, X.cut1, 1)+'" fill="url(#jamb-hatch)" stroke="#0d1b2e" stroke-width="6" stroke-linejoin="round"/>';
-  g+='<path d="'+sheet(X.cut2, X.w1, -1)+'" fill="url(#jamb-hatch)" stroke="#0d1b2e" stroke-width="6" stroke-linejoin="round"/>';
+  const poly=function(pts){ return pts.map(function(q){ return Math.round(q[0])+" "+Math.round(q[1]); }).join(" L "); };
+  [[X.w0,X.cut1,1],[X.cut2,X.w1,-1]].forEach(function(p){
+    const out=edgePts(p[0], p[1], p[2]);
+    const ins=out.map(function(q){ return [q[0], q[1]+STEEL]; });   // внутренняя грань листа
+    // Углы низа берём по КОНЦАМ самой ломаной, а не по x0/x1: правая половина
+    // строится справа налево, и по краям прямоугольника контур завязывался бантиком.
+    const head=ins[0], tail=ins[ins.length-1];
+    // Сначала ППУ: он заполняет всё за листом, включая впадины гофры. Утеплитель —
+    // не фон, а слой: по нему считают материал, и на узле он обязан быть виден.
+    g+='<path d="M '+poly(ins)+' L '+Math.round(tail[0])+' '+(wallY+wallH)+' L '+Math.round(head[0])+' '+(wallY+wallH)+
+      ' Z" fill="url(#jamb-ppu)" stroke="#9aabbf" stroke-width="4"/>';
+    // Поверх — сам лист: гнутая лента постоянной толщины, а не сплошная стена.
+    g+='<path d="M '+poly(out)+' L '+poly(ins.slice().reverse())+
+      ' Z" fill="#dfe6ec" stroke="#0d1b2e" stroke-width="6" stroke-linejoin="round"/>';
+  });
   g+=t(X.w0+8, wallY-16, "лист контейнера", 30, "#7a9aaa", "start");
+  // Подпись утеплителя — ВНУТРИ его же зоны: рядом с чертежом она налезала на трубу,
+  // а места в самой заливке достаточно.
+  g+=t(X.w0+96, wallY+wallH-22, "ППУ", 30, "#6b8299", "start");
 
   // Труба — ПОВЕРХ листа, изнутри: её грань совпадает с резом, дальше она идёт по
   // стене. Отсюда и равенство размеров, ради которого узел переделан.
