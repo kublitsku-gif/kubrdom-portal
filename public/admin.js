@@ -10450,6 +10450,11 @@ function modelPlaceBar(){
 function modelReadPanel(sh){
   if(!modelRead||!sh||modelRead.sheetId!==sh.id)return "";
   const p=modelRead.plan;
+  // Предпросмотр считаем ТОЙ ЖЕ функцией, что и применение: иначе панель обещает
+  // одно, а на чертёж встаёт другое. Номера изделий берём свои — настоящие
+  // родятся при применении, а тратить их на показ незачем.
+  let pv=0;
+  const prev=planToModel(p, winTypes, function(){ return "prev"+(++pv); });
   // Метры с запятой, как их пишут на чертеже: «2 м» и «2.00 m» читаются как чужие
   // числа, а сверять человеку придётся именно глазами.
   const mm=function(v){ return v?(numRu(Math.round(v/10)/100)+" м"):"—"; };
@@ -10466,17 +10471,27 @@ function modelReadPanel(sh){
   h+='<div style="font-size:12px;font-weight:800;color:#5a7a9a;margin:10px 0 4px">ПОМЕЩЕНИЯ</div>'+
     (p.bays.length?p.bays.map(function(b){ return row(b.name, mm(b.len)); }).join("")
       :'<div style="font-size:12.5px;color:#c0392b">не прочитались</div>');
+  // Окна и двери показываем ПАРОЙ: что нарисовано и что поедет в заказ. Дом
+  // собирают из каталога, и «1450×1300 по чертежу» купить негде — в заказ уйдёт
+  // ближайшее, и увидеть эту подмену человек обязан здесь, а не в спецификации.
   h+='<div style="font-size:12px;font-weight:800;color:#5a7a9a;margin:12px 0 4px">ОКНА И ДВЕРИ</div>'+
-    (p.openings.length?p.openings.map(function(o){
-        return row((o.kind==="door"?"🚪 ":"🪟 ")+(o.label||(o.w+"×"+o.h))+" · "+(SIDES[o.side]||o.side),
-          o.w+"×"+o.h+" · от "+mm(o.pos));
+    (prev.picks.length?prev.picks.map(function(k){
+        const head=(k.kind==="door"?"🚪 ":"🪟 ")+(k.label||(k.w+"×"+k.h))+" · "+(SIDES[k.side]||k.side);
+        const swap=k.same
+          ? '<span style="font-weight:700;color:#0d1b2e">'+k.tw+'×'+k.th+'</span>'
+          : '<span style="color:#b9770e">'+k.w+'×'+k.h+'</span> <span style="color:#9aabbf">→</span> <span style="font-weight:700;color:#0d1b2e">'+k.tw+'×'+k.th+'</span>';
+        return '<div style="display:flex;gap:10px;font-size:12.5px;padding:4px 0;border-bottom:1px solid #eef3f8">'+
+            '<span style="flex:1;color:#5a7a9a">'+esc(head)+'<br><span style="font-size:11.5px;color:'+(k.none?"#c0392b":"#9aabbf")+'">'+esc(k.name)+(k.none?" · цены нет":(k.cost?" · "+numRu(k.cost)+" ₽":""))+" · от "+mm(k.pos)+'</span></span>'+
+            '<span style="text-align:right;white-space:nowrap">'+swap+'</span>'+
+          '</div>';
       }).join("")
       :'<div style="font-size:12.5px;color:#c0392b">не прочитались</div>');
   if(p.notes)h+='<div style="margin-top:12px;background:#f4f7fa;border-radius:9px;padding:9px 11px;font-size:12.5px;color:#5a7a9a">📝 '+esc(p.notes)+'</div>';
-  if(modelRead.warnings.length){
+  const warns=modelRead.warnings.concat(prev.warnings);
+  if(warns.length){
     h+='<div style="margin-top:12px;background:#fff4e5;border:1px solid #f0c99a;border-radius:9px;padding:9px 11px">'+
       '<div style="font-size:12px;font-weight:800;color:#b9770e;margin-bottom:4px">ПРОВЕРЬТЕ РУКАМИ</div>'+
-      modelRead.warnings.map(function(w){ return '<div style="font-size:12.5px;color:#7a5a2a;padding:2px 0">• '+esc(w)+'</div>'; }).join("")+
+      warns.map(function(w){ return '<div style="font-size:12.5px;color:#7a5a2a;padding:2px 0">• '+esc(w)+'</div>'; }).join("")+
     '</div>';
   }
   h+='<div style="display:flex;gap:8px;margin-top:16px">'+

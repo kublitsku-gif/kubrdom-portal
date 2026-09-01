@@ -28,7 +28,7 @@ const READ = {
     { name: 'Спальня', len: 3200 },
   ],
   openings: [
-    { kind: 'win', side: 's', after_bay: null, pos: 2976, width: 1500, height: 2100, label: 'ОК-1' },
+    { kind: 'win', side: 's', after_bay: null, pos: 2976, width: 1300, height: 1150, label: 'ОК-1' },
     { kind: 'door', side: 's', after_bay: null, pos: 5276, width: 1000, height: 2100, label: 'Вход' },
     { kind: 'door', side: 'part', after_bay: 0, pos: 826, width: 700, height: 2050, label: 'Д-1' },
   ],
@@ -146,8 +146,8 @@ const READ = {
   const part = model.openings.find((o) => o.side === 'part')
   ok('дверь встала на перегородку санузла', part.after === model.rooms[0].id)
   ok('у двери порог на полу', model.openings[1].sill === 0, String(model.openings[1].sill))
-  // Окно 1500×2100 в комнате 2500 стоит от пола — под перемычкой ему больше негде.
-  ok('окно подвешено под перемычку', model.openings[0].sill === 0, String(model.openings[0].sill))
+  // Окно 1300×1150 подвешено под перемычку 2100: подоконник — то, что осталось.
+  ok('окно подвешено под перемычку', model.openings[0].sill === 2100 - 1150, String(model.openings[0].sill))
   ok('у двери в перегородке порога нет', part.sill === undefined, String(part.sill))
 }
 
@@ -183,21 +183,58 @@ const READ = {
   ok('и названа', res.warnings.some((w) => /Д-9/.test(w)), res.warnings.join(' | '))
 }
 
-// ── 6. Изделия узнаются, а не плодятся ───────────────────────────────────────
-// Справочник дома — источник согласованной цены. Прочитанное окно 1500×2100 не
-// должно заводить второй такой же строкой: заказывают по справочнику.
+// ── 6. Изделия — из каталога, а не выдуманные ────────────────────────────────
+// Дом собирают из того, что заказывают. Окно «1450×1300 по чертежу» купить
+// негде: в заказ уйдёт ближайшее каталожное, и чертёж обязан показывать ЕГО —
+// иначе проём режут под изделие, которого не существует. Всякая подмена
+// называется вслух: человек сверяет её с чертежом заказчика.
 {
-  console.log('Изделия')
-  const { plan } = planNormalize(READ)
-  const mine = [{ id: 'w1', kind: 'win', n: 'Окно 1500×2100 п/о', w: 1500, h: 2100, cost: 31000 }]
-  const { model, winTypes } = planToModel(plan, mine, ids())
-  ok('своё изделие узнано по размеру', winTypes.length === 3, String(winTypes.length))
-  ok('и цена осталась своя', winTypes[0].cost === 31000, String(winTypes[0].cost))
-  ok('проём ссылается на него', model.openings[0].typeId === 'w1', model.openings[0].typeId)
-  // Межкомнатная дверь 700×2050 есть в каталоге поставщика — берём её вместе с
-  // раскладкой и ценой, а не пустышку с нулём.
-  const inner = winTypes.find((t) => t.w === 700)
-  ok('дверь взята из каталога', !!inner && inner.n.length > 5, inner && inner.n)
+  console.log('Изделия из каталога')
+  const one = (o, mine) => {
+    const { plan } = planNormalize(Object.assign({}, READ, { openings: [o] }))
+    const r = planToModel(plan, mine || [], ids())
+    const t = r.winTypes.find((x) => x.id === r.model.openings[0].typeId)
+    return { t, warn: r.warnings, op: r.model.openings[0] }
+  }
+
+  // Точное попадание в каталог — молча, вместе с ценой поставщика и раскладкой.
+  const exact = one({ kind: 'win', side: 's', pos: 3000, width: 1300, height: 1150, label: 'ОК-1' })
+  ok('каталожный размер узнан', exact.t.w === 1300 && exact.t.cost > 0, exact.t.n + ' ' + exact.t.cost)
+  ok('раскладка створок приехала', !!exact.t.face)
+  ok('и подменять нечего', !exact.warn.length, exact.warn.join(' | '))
+
+  // Чертёж рисовали не по каталогу — ставим ближайшее и говорим об этом.
+  const near = one({ kind: 'win', side: 's', pos: 3000, width: 1450, height: 1300, label: 'ОК-2' })
+  ok('чужой размер заменён каталожным', near.t.w === 1500 && near.t.h === 1200, near.t.n)
+  ok('и цена у него настоящая', near.t.cost > 0, String(near.t.cost))
+  ok('подмена названа вслух',
+    near.warn.some((w) => /ОК-2/.test(w) && /1450×1300/.test(w) && /1500×1200/.test(w)), near.warn.join(' | '))
+  // Изделие шире нарисованного — но встаёт туда же, где было: чертёж показывал
+  // окно посреди простенка, и 50 мм ширины не повод сдвигать его вбок.
+  ok('проём остался на месте центром', near.op.pos === 3000 - 25, String(near.op.pos))
+
+  // В каталоге нет ничего близкого — врать нельзя: изделие по чертежу и ноль в
+  // цене, который человек обязан заполнить.
+  const far = one({ kind: 'win', side: 's', pos: 500, width: 4000, height: 2200, label: 'Панорама' })
+  ok('панорамное окно осталось своим', far.t.w === 4000 && far.t.cost === 0, far.t.n)
+  ok('и об этом сказано', far.warn.some((w) => /нет ничего близкого/.test(w)), far.warn.join(' | '))
+
+  // Межкомнатная дверь — стандартное полотно, а не «ближайшая входная»: у входной
+  // разница всего 300 мм, а это другая дверь и другие деньги.
+  const inner = one({ kind: 'door', side: 'part', after_bay: 0, pos: 800, width: 700, height: 2050, label: 'Д-1' })
+  ok('межкомнатная дверь — стандартное полотно', inner.t.w === 700 && /межкомнатная/i.test(inner.t.n), inner.t.n)
+
+  // Справочник дома важнее каталога: там СОГЛАСОВАННАЯ цена проданного дома.
+  const mine = [{ id: 'w1', kind: 'win', n: 'Окно 1300×1150 п/о', w: 1300, h: 1150, cost: 31000 }]
+  const own = one({ kind: 'win', side: 's', pos: 3000, width: 1300, height: 1150, label: 'ОК-1' }, mine)
+  ok('своё изделие узнано по размеру', own.t.id === 'w1', own.t.id)
+  ok('и цена осталась своя', own.t.cost === 31000, String(own.t.cost))
+
+  // Но «своё» — это то же самое, а не «что-то похожее»: входная дверь, уже
+  // заведённая в проекте, не должна перехватывать межкомнатную.
+  const doors = [{ id: 'd1', kind: 'door', n: 'Дверь входная 1000×2100', w: 1000, h: 2100, cost: 27150 }]
+  const grab = one({ kind: 'door', side: 'part', after_bay: 0, pos: 800, width: 700, height: 2050, label: 'Д-1' }, doors)
+  ok('входная дверь не перехватывает межкомнатную', grab.t.id !== 'd1' && grab.t.w === 700, grab.t.n)
 }
 
 // ── 7. Пустой ответ не роняет разбор ─────────────────────────────────────────

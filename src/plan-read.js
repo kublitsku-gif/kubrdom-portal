@@ -15,7 +15,7 @@
 // Все размеры — миллиметры, как во всей модели.
 import {
   CONTAINERS, emptyModel, FINISH_THICK, MIN_ROOM,
-  WIN_CATALOG, winTypeFrom, totalLength, alignHeads,
+  WIN_CATALOG, INNER_DOOR, winTypeFrom, totalLength, alignHeads,
 } from "./model.js";
 
 // Читает чертёж модель посильнее: план — это картинка с цифрами, и ошибка в
@@ -220,20 +220,49 @@ function pickContainer(len, width, height) {
   return (bestD <= 500) ? best : null;
 }
 
-// Изделие под прочитанный размер: сначала справочник дома (там согласованная
-// цена), потом каталог поставщика (там раскладка и цена), и только потом —
-// пустышка с нулевой ценой, которую человек заполнит руками.
+// Что вообще можно поставить в дом: каталог поставщика плюс стандартное
+// межкомнатное полотно. Полотно живёт константой, а не строкой каталога, но
+// заказывают его так же, и подбирать двери без него — значит каждый раз заводить
+// «Дверь 700×2050» заново.
+const PRODUCTS = WIN_CATALOG.concat([Object.assign({ k: "inner-door", cost: 0 }, INNER_DOOR)]);
+
+// Насколько далеко изделие может быть от чертежа, чтобы всё ещё считаться тем же.
+// Полметра — это ещё «окно чуть другое», а витраж 4 м подменить окном 1,3 м уже
+// не «ближайшее», а другой дом.
+const FIT_LIMIT = 500;
+
+// Изделие под прочитанный размер. Порядок такой:
+//   1) справочник дома — там СОГЛАСОВАННАЯ цена, и переписывать её нельзя;
+//   2) БЛИЖАЙШЕЕ по размеру из каталога — заказывают из него, и рисовать окно,
+//      которого не купить, значит рисовать чертёж под несуществующий дом;
+//   3) если в каталоге нет ничего близкого — изделие по чертежу с нулевой ценой.
+// Всякая подмена называется вслух: чертёж говорил 1450, а поедет 1500.
 function findType(types, kind, w, h, gen) {
-  const has = types.find(function (t) {
-    return t && (t.kind || "win") === kind && Math.abs(Number(t.w) - w) <= 50 && Math.abs(Number(t.h) - h) <= 50;
-  });
-  if (has) return { id: has.id, added: null };
-  const cat = WIN_CATALOG.find(function (c) {
-    return c.kind === kind && Math.abs(c.w - w) <= 50 && Math.abs(c.h - h) <= 50;
-  });
-  const t = cat ? winTypeFrom(cat, gen())
-    : { id: gen(), kind: kind, n: (kind === "door" ? "Дверь " : "Окно ") + w + "×" + h, w: w, h: h, cost: 0, face: null };
-  return { id: t.id, added: t };
+  const near = function (list, limit) {
+    let best = null, bestD = Infinity;
+    list.forEach(function (t) {
+      if (!t || (t.kind || "win") !== kind) return;
+      const d = Math.abs(Number(t.w) - w) + Math.abs(Number(t.h) - h);
+      if (d < bestD) { bestD = d; best = t; }
+    });
+    return (best && Math.abs(Number(best.w) - w) <= limit && Math.abs(Number(best.h) - h) <= limit)
+      ? best : null;
+  };
+
+  // Своё изделие берём только когда оно ТО ЖЕ: у дома в справочнике лежит десяток
+  // строк, и «ближайшая» из них подставила бы входную дверь вместо межкомнатной —
+  // 300 мм разницы, зато уже заведена. Ближайшее ищут в каталоге, а не среди
+  // случайного набора, который успел накопиться в проекте.
+  const mine = near(types, 50);
+  if (mine) return { id: mine.id, added: null, w: Number(mine.w), h: Number(mine.h), n: mine.n };
+
+  const cat = near(PRODUCTS, FIT_LIMIT);
+  if (cat) {
+    const t = winTypeFrom(cat, gen());
+    return { id: t.id, added: t, w: t.w, h: t.h, n: t.n };
+  }
+  const t = { id: gen(), kind: kind, n: (kind === "door" ? "Дверь " : "Окно ") + w + "×" + h, w: w, h: h, cost: 0, face: null };
+  return { id: t.id, added: t, w: w, h: h, n: t.n, none: true };
 }
 
 // Прочитанное → модель портала. Здесь чистовые размеры чертежа становятся
@@ -283,14 +312,36 @@ export function planToModel(plan, winTypes, newId) {
   }
 
   const types = (winTypes || []).slice();
+  // Подбор изделий — отдельный список, а не только предупреждения: человек сверяет
+  // «что нарисовано» с «что заказываем» построчно, и в панели это таблица, а не
+  // абзац текста внизу.
+  const picks = [];
   model.openings = (p.openings || []).map(function (o) {
     const found = findType(types, o.kind, o.w, o.h, gen);
     if (found.added) types.push(found.added);
-    const op = { id: gen(), side: o.side, pos: o.pos, typeId: found.id };
+    const named = o.label || ((o.kind === "door" ? "дверь " : "окно ") + o.w + "×" + o.h);
+    if (found.none) {
+      warn.push(named + " " + o.w + "×" + o.h + ": в каталоге нет ничего близкого — завели изделие по чертежу, впишите цену");
+    } else if (found.w !== o.w || found.h !== o.h) {
+      warn.push(named + ": на чертеже " + o.w + "×" + o.h + ", поставили «" + found.n + "» — ближайшее, что заказываем");
+    }
+    picks.push({
+      label: o.label, kind: o.kind, side: o.side, pos: o.pos,
+      w: o.w, h: o.h,                       // что на чертеже
+      name: found.n, tw: found.w, th: found.h,   // что поедет в заказ
+      cost: (found.added ? Number(found.added.cost) || 0 : null),
+      same: (found.w === o.w && found.h === o.h),
+      none: !!found.none,
+    });
+    // Подменённое изделие встаёт ЦЕНТРОМ туда, где было нарисованное: чертёж
+    // показывал окно посреди простенка, и разница в 50 мм ширины не должна
+    // сдвигать его вбок.
+    const pos = Math.max(0, Math.round(o.pos + (o.w - found.w) / 2));
+    const op = { id: gen(), side: o.side, pos: pos, typeId: found.id };
     if (o.side === "part") {
       const bay = bays[o.after == null ? 0 : o.after];
       if (!bay || bay === bays[bays.length - 1]) {
-        warn.push((o.label || "проём " + o.w) + ": не понятно, на какой перегородке — пропущен");
+        warn.push(named + ": не понятно, на какой перегородке — пропущен");
         return null;
       }
       op.after = bay.id;
@@ -300,9 +351,14 @@ export function planToModel(plan, winTypes, newId) {
     // Проём, вылезший за стену, — это не планировка, а ошибка чтения: прижимаем
     // к стене и говорим об этом, чтобы человек посмотрел именно на него.
     const wallLen = (o.side === "n" || o.side === "s") ? totalLength(model) : (Number(model.w) || 0);
-    if (op.pos + o.w > wallLen) {
-      const fixed = Math.max(0, wallLen - o.w);
-      warn.push((o.label || "проём " + o.w) + ": не помещается в стену — сдвинули на " + fixed + " мм");
+    if (found.w > wallLen) {
+      // Изделие шире самой стены — сдвигать некуда, и «сдвинули на 0» тут только
+      // сбивает: скорее всего перепутана сторона (торец вместо длинной стены).
+      warn.push(named + ": " + found.w + " мм шире стены (" + wallLen + " мм) — проверьте сторону и размер");
+      op.pos = 0;
+    } else if (op.pos + found.w > wallLen) {
+      const fixed = Math.max(0, wallLen - found.w);
+      warn.push(named + ": не помещается в стену — сдвинули на " + fixed + " мм");
       op.pos = fixed;
     }
     return op;
@@ -318,5 +374,5 @@ export function planToModel(plan, winTypes, newId) {
     return p;
   });
 
-  return { model: model, winTypes: types, warnings: warn };
+  return { model: model, winTypes: types, warnings: warn, picks: picks };
 }
