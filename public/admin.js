@@ -11116,7 +11116,7 @@ function schemeParts(sc, view){
     // квадрата в толще стены — по ним размечают стойки. Клиенту их не показываем:
     // это узел монтажа, а не планировка.
     if(!plain)(op.jambs||[]).forEach(function(j){
-      g+='<rect x="'+j.x+'" y="'+j.y+'" width="'+j.w+'" height="'+j.h+'" fill="#2f4a63" stroke="#fff" stroke-width="10"/>';
+      g+='<rect x="'+j.x+'" y="'+j.y+'" width="'+j.w+'" height="'+j.h+'" fill="'+JAMB_COLOR+'" stroke="#fff" stroke-width="10"/>';
     });
     if(op.kind==="door"){ g+=schDoorSwing(op); }
     else {
@@ -11203,7 +11203,7 @@ function schemeParts(sc, view){
       const cx=j.x+j.w/2, cy=j.y+j.h/2, R=240;
       const along=(first.side==="n"||first.side==="s");
       const dir=(first.side==="s"||first.side==="e")?-1:1;   // внутрь коробки
-      g+=schCallout(cx, cy, R, "УЗЕЛ 1", "#2f4a63",
+      g+=schCallout(cx, cy, R, "УЗЕЛ 1", JAMB_COLOR,
         along?[[cx, cy+dir*(R+330)],[cx-700, cy+dir*(R+330)],[cx+700, cy+dir*(R+330)],[cx, cy+dir*(R+660)]]
              :[[cx+dir*(R+420), cy],[cx+dir*(R+420), cy-500],[cx+dir*(R+420), cy+500]], busy);
     }
@@ -11337,6 +11337,30 @@ function schemeViewMeta(){ return SCHEME_VIEWS.find(function(v){return v[0]===sc
 //
 // Числа берутся из тех же констант, что и трубы на плане: узел, живущий отдельно
 // от чертежа, разойдётся с ним на первой же правке.
+// Цвет усиления — один на план, узел и выноску: труба это единственная НЕСУЩАЯ
+// деталь проёма, и на чертеже она обязана быть заметнее всего остального. Тёмно-синим
+// она сливалась и со стеной, и с оконной рамой.
+const JAMB_COLOR="#e2701a";
+
+// Гофрированный лист контейнера — в сечении это трапециевидная волна, и рисовать
+// её плоской полосой значит потерять единственное, что отличает контейнер от
+// каркасного дома. Волна идёт по НАРУЖНОЙ кромке слоя и уходит внутрь него:
+// снаружи гофра выступает, а конструктивная толщина считается по её впадине.
+//
+// Возвращаем только ломаную кромки — остальное дорисовывает узел, который её звал.
+function corrEdge(x0, x1, yOut, yIn, step){
+  const p=Math.max(24, step||60), flat=Math.round(p*0.34), slope=Math.round(p*0.16);
+  let d="M "+x0+" "+yOut, x=x0, up=true;
+  while(x<x1-1){
+    const run=Math.min(flat, x1-x);
+    x+=run; d+=" L "+x+" "+(up?yOut:yIn);
+    if(x>=x1-1)break;
+    const rise=Math.min(slope, x1-x);
+    x+=rise; up=!up; d+=" L "+x+" "+(up?yOut:yIn);
+  }
+  return d;
+}
+
 function jambDetailSvg(){
   // Раскладка узла — БЕЗ масштаба: труба 40 и окно 1500 в одном масштабе дали бы
   // ниточку рядом с простынёй. Узел показывает, что за чем идёт и какие между
@@ -11361,16 +11385,30 @@ function jambDetailSvg(){
       t(fromX+d*40, toY-16, str, 32, col, d>0?"start":"end");
   };
   let g='<defs><pattern id="jamb-hatch" width="30" height="30" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">'+
-    '<rect width="30" height="30" fill="#eef1f5"/><line x1="0" y1="0" x2="0" y2="30" stroke="#9aabbf" stroke-width="5"/></pattern></defs>';
-  // Стена коробки по краям — узел вырезан из неё.
+    '<rect width="30" height="30" fill="#eef1f5"/><line x1="0" y1="0" x2="0" y2="30" stroke="#9aabbf" stroke-width="5"/></pattern>'+
+    // Пена — пузырьками: так её и штрихуют на узлах, и ни с чем не спутать.
+    '<pattern id="jamb-foam" width="26" height="26" patternUnits="userSpaceOnUse">'+
+      '<rect width="26" height="26" fill="#fdf3e0"/><circle cx="8" cy="8" r="4" fill="none" stroke="#e0a75a" stroke-width="3"/>'+
+      '<circle cx="20" cy="19" r="3" fill="none" stroke="#e0a75a" stroke-width="3"/></pattern></defs>';
+  // Стена коробки по краям — узел вырезан из неё. Наружная кромка идёт ГОФРОЙ:
+  // это лист морского контейнера, и по нему же режут проём.
+  const CORR=26;                                  // на сколько волна уходит внутрь
   [[X.w0,X.t1a],[X.t2,X.w1]].forEach(function(p){
-    g+='<rect x="'+p[0]+'" y="'+wallY+'" width="'+(p[1]-p[0])+'" height="'+wallH+'" fill="url(#jamb-hatch)" stroke="#0d1b2e" stroke-width="6"/>';
+    g+='<path d="'+corrEdge(p[0], p[1], wallY, wallY+CORR, 84)+
+      ' L '+p[1]+' '+(wallY+wallH)+' L '+p[0]+' '+(wallY+wallH)+' Z" fill="url(#jamb-hatch)" stroke="#0d1b2e" stroke-width="6" stroke-linejoin="round"/>';
   });
+  g+=t(X.w0+8, wallY-14, "лист контейнера", 28, "#7a9aaa", "start");
   // Трубы: заливка та же, что у квадратов на плане, плюс внутренний контур —
   // по нему видно, что это профиль, а не сплошной брусок.
   [[X.t1a,X.t1b],[X.g2,X.t2]].forEach(function(p){
-    g+='<rect x="'+p[0]+'" y="'+wallY+'" width="'+(p[1]-p[0])+'" height="'+wallH+'" fill="#2f4a63" stroke="#fff" stroke-width="4"/>'+
-      '<rect x="'+(p[0]+16)+'" y="'+(wallY+16)+'" width="'+(p[1]-p[0]-32)+'" height="'+(wallH-32)+'" fill="none" stroke="#8fb4d6" stroke-width="4"/>';
+    g+='<rect x="'+p[0]+'" y="'+wallY+'" width="'+(p[1]-p[0])+'" height="'+wallH+'" fill="'+JAMB_COLOR+'" stroke="#0d1b2e" stroke-width="6"/>'+
+      '<rect x="'+(p[0]+16)+'" y="'+(wallY+16)+'" width="'+(p[1]-p[0]-32)+'" height="'+(wallH-32)+'" fill="none" stroke="#ffd9b0" stroke-width="5"/>';
+  });
+  // Зазор между трубой и окном — не пустота: он ЗАПОЛНЯЕТСЯ монтажной пеной, и на
+  // узле это видно штриховкой, а не только подписью. Пустой зазор на чертеже читается
+  // как «здесь ничего не надо».
+  [[X.t1b,X.g1],[X.p1,X.g2]].forEach(function(p){
+    g+='<rect x="'+p[0]+'" y="'+wallY+'" width="'+(p[1]-p[0])+'" height="'+wallH+'" fill="url(#jamb-foam)" stroke="#c98a2b" stroke-width="3" stroke-dasharray="10 7"/>';
   });
   // Изделие с разрывом посередине: узел про края проёма, а не про ширину окна.
   [[X.p0,X.pb0],[X.pb1,X.p1]].forEach(function(p){
@@ -11380,13 +11418,16 @@ function jambDetailSvg(){
   [[X.pb0,1],[X.pb1,-1]].forEach(function(p){
     g+='<path d="M'+p[0]+' '+(wallY+4)+'l'+(22*p[1])+' 28l'+(-22*p[1])+' 28l'+(22*p[1])+' 28l'+(-22*p[1])+' 28" fill="none" stroke="#9aabbf" stroke-width="5"/>';
   });
-  // Главное число: по нему режут стену.
-  g+=dim(X.t1a, X.t2, wallY-70, "проём = изделие + "+(2*(JAMB_TUBE+JAMB_GAP_MIN))+"…"+(2*(JAMB_TUBE+JAMB_GAP)), "#0d1b2e");
+  // Два размера, и путать их нельзя. РЕЗ идёт за трубой: стену режут шире проёма
+  // на две трубы, и именно этот размер размечают болгаркой по железу. ПРОЁМ —
+  // между трубами: в него встаёт окно, и по нему его заказывают.
+  g+=dim(X.t1a, X.t2, wallY-150, "рез в стене = окно + "+(2*(JAMB_TUBE+JAMB_GAP_MIN))+"…"+(2*(JAMB_TUBE+JAMB_GAP)), "#0d1b2e");
+  g+=dim(X.t1b, X.g2, wallY-60, "проём между трубами = окно + "+(2*JAMB_GAP_MIN)+"…"+(2*JAMB_GAP), JAMB_COLOR);
   // Что за чем идёт.
   const dy=wallY+wallH+70;
   g+=dim(X.t1a,X.t1b,dy,String(JAMB_TUBE))+
      dim(X.t1b,X.g1,dy,JAMB_GAP_MIN+"…"+JAMB_GAP)+
-     dim(X.p0,X.p1,dy,"изделие",SCH_WIN)+
+     dim(X.p0,X.p1,dy,"окно",SCH_WIN)+
      dim(X.g2- (X.g1-X.t1b), X.g2, dy, JAMB_GAP_MIN+"…"+JAMB_GAP)+
      dim(X.g2,X.t2,dy,String(JAMB_TUBE));
   // Выноски: труба вниз-влево, зазор вниз-вправо — на разной высоте, чтобы подписи
@@ -11394,8 +11435,15 @@ function jambDetailSvg(){
   // Выноска ОДНА — к трубе: она говорит то, чего цепочка сказать не может («во всю
   // высоту»). Зазор цепочка уже подписала дважды, и вторая выноска к нему только
   // пересекала бы её же цифры.
-  g+=note((X.t1a+X.t1b)/2, wallY+wallH, dy+120, "труба "+JAMB_TUBE+"×"+JAMB_TUBE+" мм, во всю высоту проёма", "#2f4a63");
-  return '<svg viewBox="-30 72 1470 480" style="width:100%;height:auto;display:block;user-select:none">'+g+'</svg>';
+  g+=note((X.t1a+X.t1b)/2, wallY+wallH, dy+120, "труба "+JAMB_TUBE+"×"+JAMB_TUBE+" мм, во всю высоту проёма", JAMB_COLOR);
+  // Про пену подписываем ПОД её же размером, а не выноской: выноска отсюда шла бы
+  // через полку соседней и пересекала её текст, а место под цепочкой свободно.
+  [[X.t1b,X.g1],[X.p1,X.g2]].forEach(function(p){
+    g+=t((p[0]+p[1])/2, dy+46, "пена", 30, "#c98a2b");
+  });
+  // Полную фразу про пену держит текст под узлом: на самом узле она встала бы в
+  // строку с выноской трубы, и обе стали бы нечитаемы.
+  return '<svg viewBox="-30 -10 1470 640" style="width:100%;height:auto;display:block;user-select:none">'+g+'</svg>';
 }
 
 // Узел перегородки — её пирог. На плане перегородка это две линии в сто миллиметров:
@@ -11416,7 +11464,17 @@ function wallDetailSvg(list){
   let g='', y=top;
   list.forEach(function(l,i){
     const h=hs[i];
-    g+='<rect x="'+x0+'" y="'+y+'" width="'+bw+'" height="'+h+'" fill="'+fills[i%fills.length]+'" stroke="#0d1b2e" stroke-width="4"/>';
+    // Лист контейнера рисуем ГОФРОЙ, а не полосой: это единственное, чем стена
+    // контейнера отличается от каркасной, и на узле это должно быть видно сразу.
+    // Волна уходит ВНУТРЬ слоя: снаружи гофра выступает, а считают по впадине.
+    const steel=/контейнер/i.test(l.n||"");
+    if(steel){
+      const d=Math.min(Math.round(h*0.7), 20);
+      g+='<path d="'+corrEdge(x0, x0+bw, y, y+d, 46)+' L '+(x0+bw)+' '+(y+h)+' L '+x0+' '+(y+h)+
+        ' Z" fill="#d8dfe6" stroke="#0d1b2e" stroke-width="4" stroke-linejoin="round"/>';
+    } else {
+      g+='<rect x="'+x0+'" y="'+y+'" width="'+bw+'" height="'+h+'" fill="'+fills[i%fills.length]+'" stroke="#0d1b2e" stroke-width="4"/>';
+    }
     // Выноска к слою: полка вправо, на ней имя и толщина. Слои тонкие, поэтому
     // подписи стоят строго на своих строках — иначе они слипаются в кашу.
     const cy=y+h/2;
@@ -11461,9 +11519,10 @@ function jambLegend(){
     '</div>'+
     jambDetailSvg()+
     '<div style="font-size:11.5px;color:#5a7a9a;line-height:1.5;margin-top:8px">'+
-      'Труба '+JAMB_TUBE+'×'+JAMB_TUBE+' мм по обеим сторонам окна и входной двери, во всю высоту; изделие встаёт между трубами.'+
-      '<br>Зазор до изделия '+JAMB_GAP_MIN+'–'+JAMB_GAP+' мм, поэтому <b style="color:#0d1b2e">проём режется на '+(2*(JAMB_TUBE+JAMB_GAP_MIN))+'–'+(2*(JAMB_TUBE+JAMB_GAP))+' мм шире изделия</b>.'+
-      '<br>На чертеже это тёмные квадраты у откосов. У глухого витража в торце усиления нет — снять или вернуть его можно у выбранного проёма в редакторе.'+
+      'Труба '+JAMB_TUBE+'×'+JAMB_TUBE+' мм по обеим сторонам окна и входной двери, во всю высоту; окно встаёт между трубами.'+
+      '<br>Зазор до окна '+JAMB_GAP_MIN+'–'+JAMB_GAP+' мм с каждой стороны, он заполняется монтажной пеной.'+
+      '<br><b style="color:#0d1b2e">Режут стену ЗА трубой</b>: рез шире окна на '+(2*(JAMB_TUBE+JAMB_GAP_MIN))+'–'+(2*(JAMB_TUBE+JAMB_GAP))+' мм, а сам проём между трубами — на '+(2*JAMB_GAP_MIN)+'–'+(2*JAMB_GAP)+' мм.'+
+      '<br>На чертеже это оранжевые квадраты у откосов. У глухого витража в торце усиления нет — снять или вернуть его можно у выбранного проёма в редакторе.'+
     '</div>'+
   '</div>';
 }
