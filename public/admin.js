@@ -53,7 +53,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   WALL_LAYERS, SKIN_LAYERS, wallLayers, skinLayers, layersThick, applyLayers,
   MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
-import { totals2, issues2 } from "../src/spec2.js";
+import { totals2, issues2, works2 } from "../src/spec2.js";
 import { isoScene } from "../src/iso.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
@@ -2113,6 +2113,7 @@ let modelZoom=1;           // 1 = вписать по ширине
 let schemeZoom=0;          // схема плана крупно: 0 — закрыта, иначе кратность
 let schemeView="dim";      // чей чертёж: dim — рабочий с размерами, plain — клиенту
 let nodeTab="n1";          // какой узел раскрыт под чертежом
+let spec2Tab="scheme";     // что смотрим в разделе: чертёж или смету по нему
 let modelStageTab=0;       // 0 = все этапы
 let specSheets=[];
 // «Спецификация 2» — опытный раздел (см. src/spec2.js). Листы держим ОТДЕЛЬНО: по
@@ -11777,6 +11778,141 @@ function spec2SchemeOverlay(){
     '</div>';
 }
 
+// ── СМЕТА ПО ЧЕРТЕЖУ ────────────────────────────────────────────────────────
+// Схема и смета — два взгляда на ОДИН дом: подвинули перегородку, и обе цифры
+// поехали. Поэтому это вкладки одного раздела, а не разные экраны: считать
+// смету, глядя на вчерашний чертёж, нельзя.
+const SPEC2_TABS=[
+  ["scheme","📐 Схема",  "чертёж, площади и узлы"],
+  ["est",   "🧾 Смета",  "работы и материалы, посчитанные по этому чертежу"],
+];
+function spec2TabsHtml(){
+  return '<div style="display:flex;gap:5px;margin-bottom:9px">'+
+    SPEC2_TABS.map(function(t){
+      const on=spec2Tab===t[0];
+      return '<button data-a="spec2-tab" data-v="'+t[0]+'" style="flex:1;border:1.5px solid '+(on?"#0d1b2e":"#dde6f0")+';background:'+(on?"#0d1b2e":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:10px;padding:9px 8px;font-size:12.5px;font-weight:700;cursor:pointer">'+esc(t[1])+'</button>';
+    }).join("")+
+  '</div>';
+}
+// Лист для расчёта. Пока раздел не заведён, считаем по заготовке — экран не
+// должен быть пустым до первого нажатия, а числа на нём те же, что окажутся
+// в листе. Такой лист никуда не сохраняется, поэтому и объекта из него нет.
+function spec2Probe(built, sh, pr){
+  if(sh)return sh;
+  return { id:"", name:(pr&&pr.n)||"Заготовка", kind:"house", clientId:"",
+    specs:{height:2.5,rooms:[],openings:[]}, rooms:{}, global:{}, qty:{},
+    markup:Number((settings&&settings.specMarkup))||30, status:"draft", model:built.model };
+}
+function spec2FactsHtml(f){
+  const cell=function(label,val){
+    return '<div style="text-align:center;background:#f6f8fa;border-radius:9px;padding:7px 5px">'+
+      '<div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.5px">'+label+'</div>'+
+      '<div style="font-size:14px;font-weight:800;color:#0d1b2e">'+numRu(val)+' м²</div></div>';
+  };
+  let h='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
+    '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:8px">ОТКУДА ЧИСЛА · ДОМ ПОСЧИТАЛ СЕБЯ САМ</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">'+
+      cell("ПОЛ",f.total.floor)+cell("ПОТОЛОК",f.total.ceil)+cell("СТЕНЫ",f.total.wallNet)+
+    '</div>';
+  if(f.openings.length){
+    h+='<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin:10px 0 5px">ИЗДЕЛИЯ В ПРОЁМАХ</div>'+
+      f.openings.map(function(o){
+        return '<div style="display:flex;align-items:baseline;gap:8px;padding:4px 0;border-top:1px solid #f4f7fb;font-size:12px">'+
+          '<span style="flex-shrink:0">'+(o.kind==="door"?"🚪":"🪟")+'</span>'+
+          '<span style="flex:1;min-width:0;color:#0d1b2e;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(o.name)+'</span>'+
+          '<span style="color:#7a9aaa;white-space:nowrap;font-size:11px">'+o.w+'×'+o.h+'</span>'+
+          '<span style="color:#0d1b2e;font-weight:700;white-space:nowrap">×'+o.count+'</span>'+
+        '</div>';
+      }).join("");
+  }
+  if(f.points.length){
+    h+='<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin:10px 0 5px">РАСКЛАДКА</div>'+
+      '<div style="display:flex;flex-wrap:wrap;gap:5px">'+
+        f.points.map(function(p){
+          return '<span style="background:#f2f6fa;border-radius:8px;padding:4px 8px;font-size:11.5px;color:#0d1b2e">'+p.emoji+' '+esc(p.n)+' <b>'+p.count+'</b></span>';
+        }).join("")+
+      '</div>';
+  }
+  return h+'</div>';
+}
+function spec2EstHtml(built, sh, pr){
+  const probe=spec2Probe(built, sh, pr);
+  const w=works2(probe, estimates, expProducts, built.winTypes, EST_STAGES);
+  let h='';
+  // Деньги сверху: с них начинается любой разговор про смету, и лезть за итогом
+  // в конец списка из сорока строк никто не будет.
+  h+='<div style="background:#0d1b2e;border-radius:13px;padding:12px 14px;margin-bottom:9px;color:#fff">'+
+    '<div style="display:flex;align-items:baseline;gap:10px">'+
+      '<div style="flex:1;min-width:0">'+
+        '<div style="font-size:10px;color:#8fa6bd;font-weight:700;letter-spacing:0.5px">СЕБЕСТОИМОСТЬ ПО ЧЕРТЕЖУ</div>'+
+        '<div style="font-size:20px;font-weight:800;margin-top:2px">'+w.cost.toLocaleString("ru-RU")+' ₽</div>'+
+      '</div>'+
+      '<div style="text-align:right">'+
+        '<div style="font-size:10px;color:#8fa6bd;font-weight:700;letter-spacing:0.5px">КЛИЕНТУ +'+numRu(w.markup)+'%</div>'+
+        '<div style="font-size:20px;font-weight:800;margin-top:2px;color:#4ecdc4">'+w.price.toLocaleString("ru-RU")+' ₽</div>'+
+      '</div>'+
+    '</div>'+
+    '<div style="font-size:10.5px;color:#8fa6bd;line-height:1.45;margin-top:7px">'+
+      w.positions.length+' позиций · считается на лету по модели, нигде не сохраняется'+
+    '</div>'+
+  '</div>';
+  h+=spec2FactsHtml(w.facts);
+  // Работы этапами: стройка меряется этапами, по ним же идут сроки, приёмка и
+  // транши — смета обязана читаться в том же разрезе.
+  if(w.stages.length){
+    h+=w.stages.map(function(st){
+      return '<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
+        '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:7px">'+
+          '<span style="width:8px;height:8px;border-radius:3px;background:'+st.color+';flex-shrink:0"></span>'+
+          '<span style="flex:1;min-width:0;font-size:11px;font-weight:700;color:#0d1b2e;letter-spacing:0.4px;text-transform:uppercase">'+esc(st.label)+'</span>'+
+          '<span style="font-size:12.5px;font-weight:800;color:#0d1b2e;white-space:nowrap">'+Math.round(st.cost).toLocaleString("ru-RU")+' ₽</span>'+
+        '</div>'+
+        st.positions.map(function(p){
+          const mats=specMatsText(p);
+          return '<div style="padding:7px 0;border-top:1px solid #f4f7fb">'+
+            '<div style="display:flex;align-items:baseline;gap:8px">'+
+              '<span style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#0d1b2e">'+esc(p.name)+'</span>'+
+              '<span style="font-size:12px;font-weight:700;color:#0d1b2e;white-space:nowrap">'+Math.round(p.cost).toLocaleString("ru-RU")+' ₽</span>'+
+            '</div>'+
+            '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:4px">'+
+              '<span style="background:#eef6ff;color:#2980b9;border-radius:7px;padding:2px 7px;font-size:10.5px;font-weight:700">'+esc(p.why)+'</span>'+
+            '</div>'+
+            (mats?'<div style="font-size:10.5px;color:#9aabbf;line-height:1.45;margin-top:4px">'+esc(mats)+'</div>':'')+
+          '</div>';
+        }).join("")+
+      '</div>';
+    }).join("");
+  } else {
+    h+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:14px;margin-bottom:9px;font-size:12px;color:#7a9aaa;line-height:1.5">'+
+      'По этому дому не посчиталась ни одна позиция: в справочнике смет нет ничего, что меряется его площадями и раскладкой. Это и есть работа следующего шага — правила сборки.'+
+    '</div>';
+  }
+  // Чего дом не досчитался. Список не для красоты: это задание на правила
+  // сборки, и пока он не пуст — дом продаётся не целиком.
+  if(w.gaps.length){
+    h+='<div style="background:#fffaf3;border:1px solid #f0d9b8;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
+      '<div style="font-size:10px;font-weight:700;color:#b9770e;letter-spacing:0.5px;margin-bottom:6px">ПОСЧИТАНО, НО В СМЕТУ НЕ ПОПАЛО</div>'+
+      w.gaps.map(function(g){
+        return '<div style="font-size:12px;color:#0d1b2e;padding:4px 0;line-height:1.45"><b>'+esc(g.t)+'</b> <span style="color:#a08a6a">— '+esc(g.why)+'</span></div>';
+      }).join("")+
+      '<div style="font-size:10.5px;color:#a08a6a;line-height:1.45;margin-top:5px">Каждая строка — правило, которого пока нет.</div>'+
+    '</div>';
+  }
+  // Объект и договор — только по заведённому листу: из заготовки, которая нигде
+  // не сохранена, стройку заводить не из чего.
+  if(sh&&w.positions.length){
+    h+='<div style="display:flex;gap:6px;margin-bottom:9px">'+
+      '<button data-a="spec-to-object" data-id="'+sh.id+'" style="flex:1;padding:11px;background:#16a085;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700">🏗 Создать объект</button>'+
+      '<button data-a="spec-to-contract" data-id="'+sh.id+'" style="flex:1;padding:11px;background:#fff;border:1.5px solid #dde6f0;border-radius:10px;cursor:pointer;color:#0d1b2e;font-size:12.5px;font-weight:700">📄 Завести договор</button>'+
+    '</div>';
+  }
+  h+='<div style="font-size:10.5px;color:#9aabbf;line-height:1.5;margin-bottom:20px">'+
+      'Количество каждой строки посчитано по чертежу: площади помещений, число проёмов и точек раскладки. Правьте план — смета пересчитается вместе с ним.'+
+      (sh?'':'<br>Это заготовка: считать по ней можно, а заводить объект — не из чего. Нажмите «Открыть редактор» на схеме.')+
+    '</div>';
+  return h;
+}
+
 function tSpec2(){
   const sh=spec2Sheet();
   const pr=MODEL_PRESETS[0];
@@ -11793,11 +11929,15 @@ function tSpec2(){
   let h='<div>';
   h+='<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:10px">'+
     '<div style="flex:1;min-width:0">'+
-      '<div style="font-size:11px;color:#8e44ad;font-weight:700;letter-spacing:1px">📐 СХЕМА ПЛАНА</div>'+
+      '<div style="font-size:11px;color:#8e44ad;font-weight:700;letter-spacing:1px">'+(spec2Tab==="est"?"🧾 СМЕТА ПО ЧЕРТЕЖУ":"📐 СХЕМА ПЛАНА")+'</div>'+
       '<div style="font-size:12px;color:#5a7a9a;margin-top:2px;line-height:1.45">'+esc((sh&&sh.name)||(pr&&pr.n)||"")+'</div>'+
     '</div>'+
     '<button data-a="spec2-edit" style="padding:9px 15px;background:#8e44ad;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700;flex-shrink:0">⛶ '+(sh?"Редактировать":"Открыть редактор")+'</button>'+
   '</div>';
+  // Схема и смета — один дом двумя взглядами. Смета считается по ТОЙ ЖЕ модели,
+  // что нарисована рядом: разъехаться им негде.
+  h+=spec2TabsHtml();
+  if(spec2Tab==="est")return h+spec2EstHtml(built, sh, pr)+'</div>';
   // Один чертёж, два читателя: бригаде размеры, клиенту имена и метры. Вкладка
   // выбирает, чей это сейчас лист, — второй чертёж заводить не надо, геометрия одна.
   // Лист для бригады печатают целиком: чертёж, узлы и таблицы. Кнопка стоит у
@@ -20368,6 +20508,7 @@ function bind(){
     else if(a==="spec2-scheme-close"){el.onclick=()=>{ schemeZoom=0; render(); };}
     else if(a==="spec2-scheme-view"){el.onclick=()=>{ schemeView=(el.dataset.v==="plain")?"plain":"dim"; render(); };}
     else if(a==="spec2-node-tab"){el.onclick=()=>{ nodeTab=el.dataset.v||"n1"; render(); };}
+    else if(a==="spec2-tab"){el.onclick=()=>{ spec2Tab=(el.dataset.v==="est")?"est":"scheme"; render(); window.scrollTo(0,0); };}
     else if(a==="spec2-print"){el.onclick=()=>{ buildSchemePrint(); };}
     else if(a==="model-tool"){el.onclick=()=>{
       modelTool=el.dataset.k;
