@@ -17,7 +17,7 @@
 
 import { sheetTotals, pointTotals, pointMeta } from "./spec.js";
 import { modelIssues, modelAreas, modelTotals } from "./model.js";
-import { allPositions, probeSheet, positionWhy } from "./recipe.js";
+import { allPositions, probeSheet, positionWhy, PIE_SOURCES, pieCost } from "./recipe.js";
 
 // Пробный лист и объяснение количества живут в src/recipe.js — там же, где
 // правила, которые ими пользуются. Здесь они переэкспортированы, потому что
@@ -179,6 +179,18 @@ export function gaps2(sheet, ctx) {
     out.push({ kind: "surface", k: pair[0], t: SURFACE2[pair[0]] + " " + num2(pair[1]) + " м²",
       why: "ни одна позиция этим не меряется" });
   });
+
+  // Пирог знает, из чего стена, но не знает, по чём. Слой без товара — это
+  // конструкция, которую никто не оплачивает: в смету она не попадает.
+  if (c.pies) {
+    PIE_SOURCES.forEach(function (src) {
+      const m = pieCost(probe.model, src.key, c.products, winTypes);
+      if (!m.layers || m.priced >= m.layers) return;
+      out.push({ kind: "pie", k: src.key,
+        t: "пирог «" + src.n + "» · " + (m.layers - m.priced) + " из " + m.layers + " слоёв без товара",
+        why: "их стоимость в смету не попадает" });
+    });
+  }
 
   // Окна и двери смета считает монтажом, а сами изделия стоят в справочнике
   // проёмов. Пока их не свели в одну сумму, дом на экране дешевле, чем на складе.

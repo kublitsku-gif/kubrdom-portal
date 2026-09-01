@@ -257,4 +257,51 @@ const SHEET = {
   t.ok('и цена прежняя', back[0].cost === costBefore)
 }
 
+// ── 9. Пирог стены считает себя сам ─────────────────────────────────────────
+// Узел — то место, где на пирог смотрят; там же ему и место для цены. Проверяем,
+// что выбор товара в слое доезжает до сметы и до объекта.
+{
+  t.section('Дом как конструкция')
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS.concat([{ id: 'p_ppu', name: 'ППУ 50 мм', unitCost: 600, store: 'Белка', mode: 'm2' }]),
+    estimates: EST, dbPlans: [], crmClients: [],
+    specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [],
+    contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+    buildRules: [],
+  })
+  p.run('spec2Tab="scheme";tSpec2();')
+  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+  p.run('modelFull=false;')
+
+  const node = p.run('spec2Tab="scheme";schemeView="dim";nodeTab="n3";tSpec2()')
+  t.ok('в узле можно выбрать товар слоя', node.indexOf('data-a="model-layer-pid"') >= 0)
+  t.ok('и видно, что слои без цены', /без товара/.test(node))
+
+  const before = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.length')
+  const sel = p.dom.node({ a: 'model-layer-pid', sh: p.q('spec2Sheet().id'), key: 'skin', i: '1' })
+  sel.value = 'p_ppu'
+  p.run('bind();'); sel.onchange()
+  t.ok('товар записан в слой', p.q('spec2Sheet().model.skin[1].pid') === 'p_ppu')
+
+  const pos = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.from==="layer";})')
+  t.ok('слой стал строкой сметы', pos.length === 1)
+  t.ok('и посчитан по площади стен', pos[0].area > 10 && pos[0].cost > 0)
+  t.ok('всего строк стало больше', p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.length') === before + 1)
+
+  const node2 = p.run('nodeTab="n3";tSpec2()')
+  t.ok('узел показывает деньги пирога', /₽\/м²/.test(node2))
+
+  // Толщину правим — товар остаётся: слой это не только миллиметры.
+  const mm = p.dom.node({ a: 'model-layer-mm', sh: p.q('spec2Sheet().id'), key: 'skin', i: '1' })
+  mm.value = '60'
+  p.run('bind();'); mm.oninput ? mm.oninput() : (mm.onchange && mm.onchange())
+  t.ok('товар пережил правку толщины', p.q('spec2Sheet().model.skin[1].pid') === 'p_ppu')
+
+  // Объект собирается тем же списком — вместе со строками пирога.
+  const shown = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.length')
+  const nWorks = p.q('specBuildStages(spec2Sheet()).reduce(function(a,s){return a+s.works.length;},0)')
+  t.ok('строки пирога уехали в объект', nWorks === shown, 'объект ' + nWorks + ', смета ' + shown)
+}
+
 t.done()

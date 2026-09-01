@@ -7,7 +7,9 @@
 // список из справочника и список из правил складываются, а не подменяют друг друга.
 import { presetModel, MODEL_PRESETS } from '../src/model.js'
 import { sheetPositions } from '../src/spec.js'
-import { rulePositions, allPositions, ruleText, ruleReady, probeSheet } from '../src/recipe.js'
+import { rulePositions, allPositions, ruleText, ruleReady, probeSheet,
+  layerPositions, pieArea, pieCost } from '../src/recipe.js'
+import { modelAreas, modelTotals, applyLayers } from '../src/model.js'
 import { gaps2 } from '../src/spec2.js'
 
 const t = reporterOf()
@@ -163,6 +165,64 @@ const R = (o) => Object.assign({ id: 'r1', kind: 'house', what: 'surface', k: 'w
   const after = gaps2(SHEET, Object.assign({ rules: rules }, ctx)).filter((g) => g.k === 'wall').length
   t.ok('стены были пробелом', before === 1)
   t.ok('правило его закрыло', after === 0)
+}
+
+// ── 6. Дом как конструкция: пирог считает себя сам ──────────────────────────
+// Пирог уже описывает, из чего стена. Дай слою товар — и он посчитает себя тем
+// же `matQtyForArea`, что и вся остальная смета.
+{
+  t.section('Пироги стен')
+  const PIE_PROD = PRODUCTS.concat([
+    { id: 'p_ppu', name: 'ППУ 50 мм', unitCost: 600, store: 'Белка', mode: 'm2' },
+    { id: 'p_sheet', name: 'Фанера 4 мм', unitCost: 1400, store: 'Лемана', mode: 'sheet', packBase: 'м²', packPer: 3 },
+  ])
+  const withPie = JSON.parse(JSON.stringify(SHEET))
+  withPie.model = applyLayers(withPie.model, 'skin', [
+    { id: 'l1', n: 'Металл контейнера', mm: 2 },
+    { id: 'l2', n: 'ППУ', mm: 50, pid: 'p_ppu' },
+    { id: 'l3', n: 'Фанера', mm: 4, pid: 'p_sheet', stage: 3 },
+  ])
+  const A = modelAreas(withPie.model, TYPES)
+  const pos = layerPositions(withPie, EST, PIE_PROD, TYPES)
+
+  t.ok('слой без товара молчит', pos.length === 2)
+  t.ok('меряется ЧИСТОЙ площадью стен', pos[0].area === A.total.wallNet)
+  t.ok('и об этом сказано в строке', /наружная стена [\d,]+ м²/.test(pos[0].why))
+  t.ok('м² идут как есть', pos[0].mats[0].qty === A.total.wallNet)
+  t.ok('деньги — площадь × цена', pos[0].cost === Math.round(A.total.wallNet * 600))
+  // Листовой материал считается фасовкой, как везде в смете.
+  t.ok('листы — через фасовку', pos[1].mats[0].qty === Math.ceil(A.total.wallNet / 3 * 100) / 100)
+  t.ok('этап слоя уважается', pos[1].stage === 3 && pos[0].stage === 2)
+  t.ok('строка помечена пирогом', pos.every((p) => p.from === 'layer' && p.pie === 'skin'))
+
+  // Перегородки меряются своей площадью, а не площадью стен коробки.
+  const withPart = JSON.parse(JSON.stringify(withPie))
+  withPart.model = applyLayers(withPart.model, 'layers', [{ id: 'q1', n: 'Брус', mm: 50, pid: 'p_ppu' }])
+  const parts = layerPositions(withPart, EST, PIE_PROD, TYPES).filter((p) => p.pie === 'layers')
+  t.ok('перегородка посчитана', parts.length === 1)
+  t.ok('по площади перегородок', parts[0].area === modelTotals(withPart.model, TYPES).partitionArea)
+  t.ok('и это не площадь стен', parts[0].area !== A.total.wallNet)
+
+  // Продольная перегородка короче поперечной — считать их одинаково значит
+  // выставить счёт за метры, которых нет.
+  t.ok('площадь перегородок положительная', pieArea(withPart.model, 'layers', TYPES) > 0)
+
+  const money = pieCost(withPie.model, 'skin', PIE_PROD, TYPES)
+  t.ok('узел знает свою стоимость', money.total === pos.reduce((a, p) => a + p.cost, 0))
+  t.ok('и цену квадрата', money.perM2 === Math.round(money.total / money.area))
+  t.ok('и сколько слоёв без товара', money.layers === 3 && money.priced === 2)
+
+  // Правка толщины не сбрасывает товар: слой — это не только миллиметры.
+  const again = applyLayers(withPie.model, 'skin', withPie.model.skin.map((l) => Object.assign({}, l, { mm: (l.mm || 0) + 1 })))
+  t.ok('товар слоя переживает правку', (again.skin[1] || {}).pid === 'p_ppu')
+  t.ok('и этап тоже', (again.skin[2] || {}).stage === 3)
+
+  // Пироги включаются тем же ключом, что и правила: боевые спецификации их не видят.
+  const ctx = { estimates: EST, products: PIE_PROD, winTypes: TYPES, rules: [] }
+  t.ok('без ключа пирогов строк нет',
+    allPositions(withPie, ctx).every((p) => p.from !== 'layer'))
+  t.ok('с ключом — есть',
+    allPositions(withPie, Object.assign({ pies: true }, ctx)).filter((p) => p.from === 'layer').length === 2)
 }
 
 t.done()

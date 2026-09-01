@@ -18,8 +18,8 @@
 // спецификациям заведены договора, объекты и транши, и молча изменить их сумму
 // новым правилом нельзя.
 
-import { positionFor, roomArea, roomPoints, pointMeta, sheetPositions } from "./spec.js";
-import { modelToSpecs, modelTotals } from "./model.js";
+import { positionFor, roomArea, roomPoints, pointMeta, sheetPositions, matQtyForArea } from "./spec.js";
+import { modelToSpecs, modelTotals, modelAreas } from "./model.js";
 
 // Чем меряется правило. `need` — что ещё обязано быть заполнено, иначе правило
 // не о чем: поверхность без «пол/стены/потолок» и точка без вида точки — это
@@ -203,6 +203,96 @@ export function rulePositions(sheet, rules, estimates, products, winTypes) {
   return out;
 }
 
+
+// ─── ДОМ КАК КОНСТРУКЦИЯ: ПИРОГ СЧИТАЕТ СЕБЯ САМ ─────────────────────────────
+// Пироги стен уже описывают, из чего собран дом: металл, ППУ, обрешётка, ОСП,
+// фанера. До сих пор они знали только толщину — по ней шёл план. Дай слою товар
+// из каталога, и он посчитает себя сам: площадь × цена, тем же `matQtyForArea`,
+// которым считается вся остальная смета.
+//
+// Источник здесь — КОНСТРУКЦИЯ, а не справочник смет: одно место правды о том,
+// из чего сделана стена, вместо двух — пирога в узле и позиции в справочнике.
+// Конструктивом дом не исчерпывается (печь, сантехника, доставка), поэтому это
+// не замена правилам, а вторая половина: пироги дают стены, правила — остальное.
+export const PIE_SOURCES = [
+  { key: "skin",   n: "наружная стена", surface: "wall" },
+  { key: "layers", n: "перегородка",    surface: "" },
+];
+
+// Чем меряется пирог. Наружная стена — ЧИСТОЙ площадью: проём режет её насквозь,
+// и все слои в этом месте отсутствуют. Перегородки — своей площадью из модели.
+export function pieArea(model, key, winTypes) {
+  if (!model) return 0;
+  if (key === "skin") return modelAreas(model, winTypes || []).total.wallNet;
+  return modelTotals(model, winTypes || []).partitionArea;
+}
+
+export function pieMeta(key) {
+  return PIE_SOURCES.find(function (x) { return x.key === key; }) || PIE_SOURCES[0];
+}
+
+// Материал слоя по карточке каталога, с количеством под площадь.
+export function layerMat(layer, product, area) {
+  const p = product || {};
+  const mat = {
+    pid: (layer && layer.pid) || "", n: p.name || "", store: p.store || "", url: p.url || "", note: "",
+    cost: Number(p.unitCost) || 0, mode: p.mode || "piece", qty: 0, unitCost: Number(p.unitCost) || 0,
+  };
+  ["packBase", "packPer", "lenPer", "sheetM2"].forEach(function (k) { if (p[k] != null) mat[k] = p[k]; });
+  mat.qty = matQtyForArea(mat, area);
+  return mat;
+}
+
+// Позиции, которые дают пироги. Слой без товара молчит: он описывает конструкцию,
+// но о деньгах ничего не сказал, и придумывать за него цену нельзя.
+export function layerPositions(sheet, estimates, products, winTypes) {
+  const sh = sheet || {};
+  const model = sh.model;
+  if (!model) return [];
+  const prodById = {};
+  (products || []).forEach(function (p) { if (p && p.id) prodById[p.id] = p; });
+  const out = [];
+  PIE_SOURCES.forEach(function (src) {
+    const list = model[src.key] || [];
+    if (!list.length) return;
+    const area = pieArea(model, src.key, winTypes);
+    if (!(area > 0)) return;
+    list.forEach(function (l, i) {
+      if (!l || !l.pid) return;
+      const prod = prodById[l.pid];
+      if (!prod) return;
+      const mat = layerMat(l, prod, area);
+      const cost = Math.round((Number(mat.cost) || 0) * (Number(mat.qty) || 0));
+      out.push({
+        key: "layer:" + src.key + ":" + (l.id || i), estId: "", from: "layer",
+        pie: src.key, layerId: l.id || String(i),
+        name: (l.n || prod.name || "Слой") + " — " + src.n,
+        stage: Number(l.stage) > 0 ? Number(l.stage) : 2,
+        room: "", roomId: "", surface: src.surface, group: "", label: "",
+        area: Math.round(area * 100) / 100, point: "", count: 0,
+        mats: [mat], cost: cost, factor: 1,
+        why: src.n + " " + String(Math.round(area * 100) / 100).replace(".", ",") + " м²",
+      });
+    });
+  });
+  return out;
+}
+
+// Сколько стоит квадрат этой стены по нынешнему пирогу. Число для узла: правишь
+// слой — сразу видно, во что он обходится, и ходить за этим в смету не надо.
+export function pieCost(model, key, products, winTypes) {
+  const area = pieArea(model, key, winTypes);
+  const pos = layerPositions({ model: model }, [], products, winTypes)
+    .filter(function (p) { return p.pie === key; });
+  const total = pos.reduce(function (a, p) { return a + p.cost; }, 0);
+  const list = (model && model[key]) || [];
+  return {
+    area: Math.round(area * 100) / 100, total: Math.round(total),
+    perM2: area > 0 ? Math.round(total / area) : 0,
+    priced: pos.length, layers: list.length,
+  };
+}
+
 // Полный состав дома: то, что выбрано руками в справочнике, плюс то, что дали
 // правила. ОДНА функция на экран и на сборку объекта — иначе на экране одна
 // смета, а в стройке другая, и находится это на приёмке этапа.
@@ -229,7 +319,10 @@ export function allPositions(sheet, ctx) {
   const base = sheetPositions(probe, c.estimates, c.products)
     .filter(function (p) { return !(String(p.key || "").indexOf("base:") === 0 && ruled[p.estId]); })
     .map(function (p) { return Object.assign({}, p, { from: "est", why: positionWhy(p) }); });
-  return base.concat(rulePositions(sheet, c.rules, c.estimates, c.products, c.winTypes));
+  const out = base.concat(rulePositions(sheet, c.rules, c.estimates, c.products, c.winTypes));
+  // Пироги считают себя сами там же, где работают правила: боевые спецификации
+  // ни того, ни другого не видят — по ним заведены договора, объекты и транши.
+  return c.pies ? out.concat(layerPositions(sheet, c.estimates, c.products, c.winTypes)) : out;
 }
 
 // Позиция → работа объекта. ОДНА машинка на сборку объекта и на подпись состава:

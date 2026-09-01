@@ -54,7 +54,8 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2, works2 } from "../src/spec2.js";
-import { allPositions, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES } from "../src/recipe.js";
+import { allPositions, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
+  pieCost, pieMeta, layerMat } from "../src/recipe.js";
 import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
 import { isoScene } from "../src/iso.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
@@ -9736,7 +9737,7 @@ function specPlanTiles(kind, sel, action){
 function specCtx(sh){
   const war=!!sh&&(specSheets||[]).some(function(x){return x.id===sh.id;});
   return { estimates:estimates, products:expProducts, winTypes:winTypes,
-    stages:EST_STAGES, rules: war?[]:(buildRules||[]) };
+    stages:EST_STAGES, rules: war?[]:(buildRules||[]), pies: !war };
 }
 function specTot(sh){ return specIs2(sh)?totals2(sh, specCtx(sh)):sheetTotals(sh, estimates, expProducts); }
 function specIssuesOf(sh){ return (specIs2(sh)||specIsProject(sh))?issues2(sh, winTypes):sheetIssues(sh, estimates, expProducts); }
@@ -10162,13 +10163,37 @@ function pieBlock(sh, key, light){
       '<span style="font-size:10px;font-weight:700;color:'+C.head+';letter-spacing:0.6px;flex:1">ПИРОГ '+(key==="skin"?"НАРУЖНОЙ СТЕНЫ":"ПЕРЕГОРОДКИ")+' · '+numRu(total)+' ММ</span>'+
       '<button data-a="model-layer-add" data-sh="'+esc(sh.id)+'" data-key="'+key+'" style="padding:5px 11px;background:#16a085;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">+ слой</button>'+
     '</div>';
+  // Слой знает не только толщину, но и из чего он и по чём куплен: дом — это и
+  // есть его конструкция, и считать её стоимость по второму справочнику незачем.
+  const money=canRuleSheet(sh)?pieCost(m, key, expProducts, winTypes):null;
   h+=list.map(function(l,i){
-    return '<div style="display:flex;align-items:center;gap:5px;margin-bottom:5px">'+
-      '<span style="width:14px;text-align:center;font-size:10px;color:'+C.dim+';flex-shrink:0">'+(i+1)+'</span>'+
-      '<input data-a="model-layer-n" data-sh="'+esc(sh.id)+'" data-key="'+key+'" data-i="'+i+'" value="'+esc(l.n||"")+'" placeholder="Материал" style="flex:1;min-width:0;padding:6px 8px;border-radius:7px;border:'+C.inp+';background:'+C.bg+';color:'+C.txt+';font-size:12px;outline:none;box-sizing:border-box">'+
-      '<input data-a="model-layer-mm" data-sh="'+esc(sh.id)+'" data-key="'+key+'" data-i="'+i+'" value="'+numInpMm(l.mm)+'" type="number" step="0.1" inputmode="decimal" title="Толщина слоя поперёк стены, мм" style="width:64px;padding:6px 7px;border-radius:7px;border:'+C.inp+';background:'+C.bg+';color:'+C.txt+';font-size:12px;outline:none;box-sizing:border-box;text-align:right">'+
-      '<span style="font-size:10.5px;color:'+C.dim+';flex-shrink:0">мм</span>'+
-      '<button data-a="model-layer-del" data-sh="'+esc(sh.id)+'" data-key="'+key+'" data-i="'+i+'" style="width:26px;height:26px;border:1px solid rgba(232,116,106,.5);background:transparent;border-radius:7px;cursor:pointer;color:#e8746a;font-size:11px;flex-shrink:0">🗑</button>'+
+    const prod=l.pid?expProducts.find(function(x){return x.id===l.pid;}):null;
+    // Количество и цену слоя считает общий модуль — тот же, что кладёт эту
+    // строку в смету: два разных счёта одного слоя разошлись бы сразу.
+    const mat=(money&&prod)?layerMat(l, prod, money.area):null;
+    const cost=mat?Math.round((Number(mat.cost)||0)*(Number(mat.qty)||0)):0;
+    return '<div style="margin-bottom:7px">'+
+      '<div style="display:flex;align-items:center;gap:5px">'+
+        '<span style="width:14px;text-align:center;font-size:10px;color:'+C.dim+';flex-shrink:0">'+(i+1)+'</span>'+
+        '<input data-a="model-layer-n" data-sh="'+esc(sh.id)+'" data-key="'+key+'" data-i="'+i+'" value="'+esc(l.n||"")+'" placeholder="Материал" style="flex:1;min-width:0;padding:6px 8px;border-radius:7px;border:'+C.inp+';background:'+C.bg+';color:'+C.txt+';font-size:12px;outline:none;box-sizing:border-box">'+
+        '<input data-a="model-layer-mm" data-sh="'+esc(sh.id)+'" data-key="'+key+'" data-i="'+i+'" value="'+numInpMm(l.mm)+'" type="number" step="0.1" inputmode="decimal" title="Толщина слоя поперёк стены, мм" style="width:64px;padding:6px 7px;border-radius:7px;border:'+C.inp+';background:'+C.bg+';color:'+C.txt+';font-size:12px;outline:none;box-sizing:border-box;text-align:right">'+
+        '<span style="font-size:10.5px;color:'+C.dim+';flex-shrink:0">мм</span>'+
+        '<button data-a="model-layer-del" data-sh="'+esc(sh.id)+'" data-key="'+key+'" data-i="'+i+'" style="width:26px;height:26px;border:1px solid rgba(232,116,106,.5);background:transparent;border-radius:7px;cursor:pointer;color:#e8746a;font-size:11px;flex-shrink:0">🗑</button>'+
+      '</div>'+
+      (money
+        ? '<div style="display:flex;align-items:center;gap:5px;margin-top:4px;padding-left:19px">'+
+            '<select data-a="model-layer-pid" data-sh="'+esc(sh.id)+'" data-key="'+key+'" data-i="'+i+'" title="Товар из каталога — по нему считается стоимость слоя" style="flex:1;min-width:0;padding:5px 7px;border-radius:7px;border:'+C.inp+';background:'+C.bg+';color:'+C.txt+';font-size:11px;outline:none;box-sizing:border-box">'+
+              '<option value="">— товар из каталога —</option>'+
+              expProducts.map(function(x){return '<option value="'+x.id+'"'+(x.id===l.pid?" selected":"")+'>'+esc(x.name||"")+'</option>';}).join("")+
+            '</select>'+
+            (prod
+              ? '<select data-a="model-layer-stage" data-sh="'+esc(sh.id)+'" data-key="'+key+'" data-i="'+i+'" title="На каком этапе эта работа" style="width:96px;flex-shrink:0;padding:5px 7px;border-radius:7px;border:'+C.inp+';background:'+C.bg+';color:'+C.txt+';font-size:11px;outline:none;box-sizing:border-box">'+
+                  EST_STAGES.map(function(st){return '<option value="'+st.n+'"'+((Number(l.stage)||2)===st.n?" selected":"")+'>'+esc(st.short)+'</option>';}).join("")+
+                '</select>'+
+                '<span style="font-size:11px;font-weight:700;color:'+C.txt+';white-space:nowrap;flex-shrink:0">'+cost.toLocaleString("ru-RU")+' ₽</span>'
+              : '<span style="font-size:10.5px;color:'+C.note+';white-space:nowrap;flex-shrink:0">без цены</span>')+
+          '</div>'
+        : '')+
     '</div>';
   }).join("");
   // План идёт за пирогом: правка слоя тут же двигает толщину в плане, и площади
@@ -10178,6 +10203,18 @@ function pieBlock(sh, key, light){
       'в плане '+numRu(th)+' мм'+
       (Math.abs(total-th)>0.5?' — разойдётся, пока пирог типовой; правка слоя перенесёт сумму в план':' — сумма пирога')+
     '</div>';
+  // Деньги стоят там же, где пирог: правишь слой — сразу видно, во что он обходится.
+  if(money&&money.area>0){
+    h+='<div style="font-size:11px;color:'+C.txt+';margin-top:7px;line-height:1.45;font-weight:700">'+
+        esc(pieMeta(key).n)+' · '+numRu(money.area)+' м² · <span style="color:#16a085">'+money.total.toLocaleString("ru-RU")+' ₽</span>'+
+        (money.perM2?' <span style="font-weight:400;color:'+C.dim+'">('+money.perM2.toLocaleString("ru-RU")+' ₽/м²)</span>':'')+
+      '</div>'+
+      '<div style="font-size:10px;color:'+C.note+';margin-top:3px;line-height:1.4">'+
+        (money.priced<money.layers
+          ? 'Слоёв без товара: '+(money.layers-money.priced)+' — их стоимость в смету не попадает.'
+          : 'Все слои с товаром: эти строки уходят в смету и в объект как есть.')+
+      '</div>';
+  }
   if(!own)h+='<div style="font-size:10px;color:'+C.note+';margin-top:5px;line-height:1.4">Типовой пирог. Правка запишет его в модель — дальше он живёт вместе с домом, и план идёт за ним.</div>';
   return h+'</div>';
 }
@@ -20947,6 +20984,29 @@ function bind(){
       // число, которое кто-то вписал руками. Площади пересчитаются следом.
       sh.model=applyLayers(sh.model, key, list);
       modelSync(sh); fl();
+    };}
+    // Товар слоя: по нему пирог считает себя сам. `applyLayers` бережёт эти поля,
+    // поэтому правка толщины товар не сбрасывает.
+    else if(a==="model-layer-pid"){el.onchange=()=>{
+      const sh=specSheet(el.dataset.sh||specOpenId); if(!sh||!sh.model)return;
+      const key=el.dataset.key==="skin"?"skin":"layers";
+      const i=parseInt(el.dataset.i,10)||0;
+      const list=pieList(sh.model,key).map(function(l,n){
+        if(n!==i)return l;
+        const c=Object.assign({},l);
+        if(el.value)c.pid=el.value; else delete c.pid;
+        return c;
+      });
+      sh.model=applyLayers(sh.model, key, list); modelSync(sh); fl();
+    };}
+    else if(a==="model-layer-stage"){el.onchange=()=>{
+      const sh=specSheet(el.dataset.sh||specOpenId); if(!sh||!sh.model)return;
+      const key=el.dataset.key==="skin"?"skin":"layers";
+      const i=parseInt(el.dataset.i,10)||0;
+      const list=pieList(sh.model,key).map(function(l,n){
+        return n!==i?l:Object.assign({},l,{stage:parseInt(el.value,10)||2});
+      });
+      sh.model=applyLayers(sh.model, key, list); modelSync(sh); fl();
     };}
     else if(a==="model-layer-del"){el.onclick=()=>{
       const sh=specSheet(el.dataset.sh||specOpenId); if(!sh||!sh.model)return;

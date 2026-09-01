@@ -88,7 +88,14 @@ export function skinLayers(model) { return listOf(model && model.skin, SKIN_LAYE
 // иначе на чертеже одно, а на площадке другое. В план уходит целое число: миллиметры
 // геометрии целые, и «77,2» обещало бы точность, которой в плане нет.
 export function applyLayers(model, key, list) {
-  const cut = (list || []).map(function (l) { return { id: l.id, n: l.n, mm: Number(l.mm) || 0 }; });
+  // Лишние поля слоя (товар, этап) переживают правку толщины: слой — это не только
+  // миллиметры, а ещё и то, из чего он сделан и по чём куплен.
+  const cut = (list || []).map(function (l) {
+    const out = { id: l.id, n: l.n, mm: Number(l.mm) || 0 };
+    if (l.pid) out.pid = l.pid;
+    if (Number(l.stage) > 0) out.stage = Number(l.stage);
+    return out;
+  });
   const mm = Math.max(1, Math.round(layersThick(cut)));
   const patch = { };
   patch[key] = cut;
@@ -960,13 +967,23 @@ export function modelTotals(model, winTypes) {
     openings += Number(t.cost) || 0;
     area += (Number(t.w) || 0) * (Number(t.h) || 0) / 1000000;
   });
-  const walls = Math.max(0, (model.rooms || []).length - 1) +
-    (model.rooms || []).filter(function (b) { return b.sub; }).length;
+  const cross = Math.max(0, (model.rooms || []).length - 1);
+  const subs = (model.rooms || []).filter(function (b) { return b.sub; });
+  const walls = cross + subs.length;
+  // Поперечная перегородка идёт по ШИРИНЕ контейнера, продольная — по длине своего
+  // отсека. Считать их одинаково значит выставить счёт за метры, которых нет.
+  const H = Number(model.h) || 0;
+  const bays = modelBays(model);
+  const partMm2 = cross * (Number(model.w) || 0) * H +
+    subs.reduce(function (a, b) {
+      const bay = bays.find(function (x) { return x.id === b.id; });
+      return a + (bay ? bay.len : 0) * H;
+    }, 0);
   return {
     openingsCost: Math.round(openings),
     openingsArea: Math.round(area * 100) / 100,
     partitions: walls,
-    partitionArea: Math.round(walls * (Number(model.w) || 0) * (Number(model.h) || 0) / 1000000 * 100) / 100,
+    partitionArea: Math.round(partMm2 / 1000000 * 100) / 100,
     floorArea: Math.round(modelRooms(model).reduce(function (a, r) { return a + r.area; }, 0) * 100) / 100,
   };
 }
