@@ -1,0 +1,322 @@
+// ─── ЧУЖОЙ ЧЕРТЁЖ → НАША МОДЕЛЬ ──────────────────────────────────────────────
+// Заказчик приходит с планировкой: PDF от архитектора, скрин из «Планоплана»,
+// фотография бумаги в клетку. Раньше её перечерчивали руками — полчаса на дом и
+// опечатка в метре, которая всплывает на сдаче. Здесь чертёж читает Claude, а
+// человек СВЕРЯЕТ прочитанное с подложкой: из этих метров считается смета, и
+// «модель почти всегда права» — не тот порог, за которым можно выставлять счёт.
+//
+// Поэтому модуль устроен как перевод, а не как оракул:
+//   planRequest()  — что именно спросить у модели (чистая сборка запроса);
+//   planNormalize()— привести ответ к нашим единицам и отсеять невозможное;
+//   planToModel()  — собрать модель портала, ЗАПОМНИВ каждое расхождение.
+// Ни одна из трёх функций не ходит в сеть: их гоняют тесты на выдуманных ответах,
+// а Worker только подставляет байты файла.
+//
+// Все размеры — миллиметры, как во всей модели.
+import {
+  CONTAINERS, emptyModel, FINISH_THICK, MIN_ROOM,
+  WIN_CATALOG, winTypeFrom, totalLength, alignHeads,
+} from "./model.js";
+
+// Читает чертёж модель посильнее: план — это картинка с цифрами, и ошибка в
+// цифре стоит дороже разницы в цене запроса.
+export const PLAN_MODEL = "claude-opus-5";
+
+// Схема ответа. Строгая (`strict: true`): не «попроси JSON и надейся», а
+// гарантия формата на стороне API — разбирать текст с числами мы не будем.
+// Чего на чертеже не видно, приходит как null: выдуманный размер хуже пустого,
+// пустой человек впишет сам, выдуманный он подпишет не глядя.
+const NUM = { type: ["number", "null"] };
+export const PLAN_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["length", "width", "height", "bays", "openings", "notes"],
+  properties: {
+    length: Object.assign({ description: "Длина дома снаружи, мм" }, NUM),
+    width: Object.assign({ description: "Ширина дома снаружи, мм" }, NUM),
+    height: Object.assign({ description: "Высота помещений в чистоте, мм" }, NUM),
+    bays: {
+      type: "array",
+      description: "Помещения слева направо вдоль длинной стены",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "len"],
+        properties: {
+          name: { type: "string", description: "Подпись помещения на чертеже" },
+          len: Object.assign({ description: "Длина помещения в чистоте, мм" }, NUM),
+        },
+      },
+    },
+    openings: {
+      type: "array",
+      description: "Окна и двери",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "side", "after_bay", "pos", "width", "height", "label"],
+        properties: {
+          kind: { type: "string", enum: ["win", "door"] },
+          side: { type: "string", enum: ["n", "s", "w", "e", "part"] },
+          after_bay: Object.assign({ description: "Для side=part: номер помещения слева от перегородки, с нуля" }, NUM),
+          pos: Object.assign({ description: "От наружного левого угла (n/s) или от верхней длинной стены (w/e/part) до ближнего края проёма, мм" }, NUM),
+          width: Object.assign({ description: "Ширина проёма, мм" }, NUM),
+          height: Object.assign({ description: "Высота проёма, мм" }, NUM),
+          label: { type: "string", description: "Подпись у проёма на чертеже — по ней человек найдёт его глазами" },
+        },
+      },
+    },
+    notes: { type: "string", description: "Что прочитать не удалось и что пришлось предположить" },
+  },
+};
+
+export const PLAN_TOOL = {
+  name: "plan_read",
+  description: "Вернуть прочитанную планировку контейнерного дома",
+  input_schema: PLAN_SCHEMA,
+  strict: true,
+};
+
+export const PLAN_SYSTEM = [
+  "Ты читаешь планировку модульного дома из морского контейнера — вид сверху.",
+  "Дом вытянут вдоль длинной стены; помещения идут друг за другом по этой длине.",
+  "Стороны: n — верхняя длинная стена на чертеже, s — нижняя, w — левый торец, e — правый торец,",
+  "part — внутренняя перегородка (тогда after_bay — номер помещения слева от неё, считая с нуля).",
+  "Размеры бери С ЧЕРТЕЖА: сначала подписанные числа, и только если размер не подписан — меряй по масштабу.",
+  "Все размеры переводи в МИЛЛИМЕТРЫ (на чертежах бывают см и метры: 2,4 м и 240 см — это 2400).",
+  "Длины помещений — В ЧИСТОТЕ, между отделанными стенами, как их подписывают на плане.",
+  "Положение проёма — до его БЛИЖНЕГО края (левого для n/s, верхнего для w/e/part), от наружного угла дома.",
+  "Чего на чертеже нет — оставляй null и пиши об этом в notes. Не достраивай планировку по здравому смыслу:",
+  "по этим числам выставляют счёт, и придуманный размер дороже пропущенного.",
+].join(" ");
+
+// Запрос к Messages API. PDF уходит как есть — Claude читает страницы сам, и
+// растрировать его на нашей стороне не нужно. Картинка — тем же блоком, но типом
+// image: тип блока обязан совпадать с типом файла, иначе API отвечает 400.
+export function planRequest(mediaType, base64, opts) {
+  const o = opts || {};
+  const isPdf = String(mediaType || "").indexOf("pdf") >= 0;
+  const block = isPdf
+    ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } }
+    : { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } };
+  return {
+    model: o.model || PLAN_MODEL,
+    max_tokens: o.max_tokens || 8000,
+    system: PLAN_SYSTEM,
+    tools: [PLAN_TOOL],
+    // Инструмент ровно один и он обязателен: ответ нужен структурой, а не рассказом.
+    tool_choice: { type: "tool", name: PLAN_TOOL.name },
+    messages: [{
+      role: "user",
+      content: [block, { type: "text", text: o.hint || "Прочитай эту планировку и верни её через plan_read." }],
+    }],
+  };
+}
+
+// Ответ API → аргументы инструмента. Ошибку API и «модель отказалась» различаем:
+// первое чинит настройка, второе — другой файл.
+export function planFromResponse(resp) {
+  const blocks = (resp && resp.content) || [];
+  const call = blocks.find(function (b) { return b && b.type === "tool_use" && b.name === PLAN_TOOL.name; });
+  if (!call) {
+    const text = blocks.filter(function (b) { return b && b.type === "text"; })
+      .map(function (b) { return b.text; }).join(" ").trim();
+    throw new Error(text ? ("Не удалось прочитать чертёж: " + text.slice(0, 300)) : "Модель не вернула планировку");
+  }
+  return call.input;
+}
+
+// Метры и сантиметры, просочившиеся в ответ. Модель просят про миллиметры, но
+// чертёж подписан в метрах, и «2,4 м» иногда доезжает как есть.
+//
+// Множитель ОДИН на всю планировку, а не на каждое число: чертёж подписывают в
+// одних единицах, и «эта длина в метрах, а та в миллиметрах» — не про чертежи, а
+// про угадывание. Узнаём его по длине дома: контейнерный дом — это 3…20 метров,
+// и в каком бы виде эта величина ни пришла, она себя выдаёт порядком.
+function unitScale(r) {
+  const L = Number(r.length) || 0;
+  if (L >= 3000) return 1;          // миллиметры
+  if (L >= 300) return 10;          // сантиметры
+  if (L >= 3) return 1000;          // метры
+  // Длину не прочитали — идём от самого большого числа на чертеже.
+  const nums = [];
+  (r.bays || []).forEach(function (b) { nums.push(Number(b && b.len) || 0); });
+  (r.openings || []).forEach(function (o) { nums.push(Number(o && o.pos) || 0); });
+  const max = nums.length ? Math.max.apply(null, nums) : 0;
+  if (max >= 1000) return 1;
+  if (max >= 100) return 10;
+  return max ? 1000 : 1;
+}
+
+function toMm(v, k, lo, hi) {
+  const n = Math.round((Number(v) || 0) * k);
+  if (!isFinite(n) || n <= 0) return 0;
+  return (n >= lo && n <= hi) ? n : 0;
+}
+
+// Прочитанное → наши единицы и наши границы. Всё, что пришлось поправить или
+// выбросить, возвращается списком: человек увидит это списком у себя на экране.
+export function planNormalize(raw) {
+  const r = raw || {};
+  const warn = [];
+  const k = unitScale(r);
+  const bays = (r.bays || []).map(function (b, i) {
+    return { name: String((b && b.name) || "").trim() || ("Помещение " + (i + 1)), len: toMm(b && b.len, k, 900, 20000) };
+  }).filter(function (b, i) {
+    if (b.len) return true;
+    warn.push("«" + b.name + "»: длина не прочиталась — помещение пропущено");
+    return false;
+  });
+
+  const openings = (r.openings || []).map(function (o, i) {
+    const it = o || {};
+    const side = ["n", "s", "w", "e", "part"].indexOf(it.side) >= 0 ? it.side : "s";
+    const label = String(it.label || "").trim();
+    const nameOf = label || ((it.kind === "door" ? "Дверь" : "Окно") + " №" + (i + 1));
+    const w = toMm(it.width, k, 300, 6000);
+    if (!w) { warn.push(nameOf + ": ширина не прочиталась — проём пропущен"); return null; }
+    return {
+      kind: (it.kind === "door") ? "door" : "win",
+      side: side,
+      after: (it.after_bay == null) ? null : Math.max(0, Math.round(Number(it.after_bay) || 0)),
+      pos: toMm(it.pos, k, 1, 20000),
+      w: w,
+      // Высоту не прочитали — ставим типовую: без неё изделие не заказать, а
+      // 2100 у двери и 1400 у окна человек поправит быстрее, чем впишет с нуля.
+      h: toMm(it.height, k, 300, 3000) || (it.kind === "door" ? 2100 : 1400),
+      label: label,
+      guessH: !toMm(it.height, k, 300, 3000),
+    };
+  }).filter(Boolean);
+
+  openings.forEach(function (o) {
+    if (o.guessH) warn.push((o.label || "проём " + o.w) + ": высота не подписана, поставили " + o.h);
+  });
+
+  return {
+    plan: {
+      length: toMm(r.length, k, 3000, 20000),
+      width: toMm(r.width, k, 1800, 5000),
+      height: toMm(r.height, k, 1800, 4000),
+      bays: bays, openings: openings,
+      notes: String(r.notes || "").trim(),
+    },
+    warnings: warn,
+  };
+}
+
+// Ближайший типоразмер контейнера. Обмер чужого чертежа гуляет на сантиметры, и
+// 11 950 — это 40 футов, а не «свой размер»: у типоразмера правильная ширина и
+// высота, а они на чертеже подписаны редко.
+function pickContainer(len, width, height) {
+  let best = null, bestD = Infinity;
+  CONTAINERS.forEach(function (c) {
+    // Высота помещения в чистоте больше высоты коробки не бывает: 2500 в чистоте —
+    // это HC, и обычный сорокафутовый отпадает, хотя по длине они близнецы.
+    if (height && height > c.h) return;
+    const d = Math.abs(c.l - (len || 0)) + Math.abs(c.w - (width || c.w)) / 2;
+    if (d < bestD) { bestD = d; best = c; }
+  });
+  return (bestD <= 500) ? best : null;
+}
+
+// Изделие под прочитанный размер: сначала справочник дома (там согласованная
+// цена), потом каталог поставщика (там раскладка и цена), и только потом —
+// пустышка с нулевой ценой, которую человек заполнит руками.
+function findType(types, kind, w, h, gen) {
+  const has = types.find(function (t) {
+    return t && (t.kind || "win") === kind && Math.abs(Number(t.w) - w) <= 50 && Math.abs(Number(t.h) - h) <= 50;
+  });
+  if (has) return { id: has.id, added: null };
+  const cat = WIN_CATALOG.find(function (c) {
+    return c.kind === kind && Math.abs(c.w - w) <= 50 && Math.abs(c.h - h) <= 50;
+  });
+  const t = cat ? winTypeFrom(cat, gen())
+    : { id: gen(), kind: kind, n: (kind === "door" ? "Дверь " : "Окно ") + w + "×" + h, w: w, h: h, cost: 0, face: null };
+  return { id: t.id, added: t };
+}
+
+// Прочитанное → модель портала. Здесь чистовые размеры чертежа становятся
+// размерами ПО КОРОБКЕ: у крайних помещений отделка съедает ещё и торец, и
+// чистовым 2000 соответствует 2076 по коробке. Считать наоборот нельзя — площади
+// разъедутся с чертежом ровно на толщину обшивки, а по ним считают деньги.
+export function planToModel(plan, winTypes, newId) {
+  const p = plan || {};
+  let seq = 0;
+  const gen = (typeof newId === "function") ? newId : function () { return "pl-" + (++seq); };
+  const warn = [];
+  const c = pickContainer(p.length, p.width, p.height);
+  const model = emptyModel(c ? c.k : "40hc");
+  if (!c && p.length) {
+    // Не типоразмер — бывают сборки из двух контейнеров и распилы. Типоразмер не
+    // навязываем, ширину и высоту берём контейнерные, если их не прочитали.
+    model.type = "custom";
+    warn.push("Длина " + p.length + " мм не совпала с типоразмером — оставили как есть");
+  }
+  // Длина — с ЧЕРТЕЖА, а не из справочника: 11 952 у заказчика и 12 032 в
+  // каталоге — это один контейнер, но считать надо по его чертежу.
+  if (p.length) { model.l = p.length; model.rooms[0].len = p.length; }
+  if (p.width) model.w = p.width;
+  if (p.height) model.h = p.height;
+
+  // Чистовые длины → длины по коробке.
+  const fin = Number(model.finish) || FINISH_THICK;
+  const bays = (p.bays || []).map(function (b, i, all) {
+    const ends = (i === 0 ? fin : 0) + (i === all.length - 1 ? fin : 0);
+    return { id: gen(), name: b.name, len: b.len + ends, pts: {} };
+  });
+  if (bays.length) {
+    model.rooms = bays;
+    // Сумма отсеков обязана сойтись с длиной коробки до миллиметра: иначе
+    // последняя перегородка окажется за торцом, а площади — вымышленными.
+    // Расхождение чужого обмера кладём в САМОЕ ДЛИННОЕ помещение: там сантиметр
+    // незаметен, а в санузле он — четверть процента площади.
+    const gap = model.l - totalLength(model);
+    if (gap) {
+      const big = bays.reduce(function (a, b) { return (b.len > a.len) ? b : a; });
+      big.len = Math.max(MIN_ROOM, big.len + gap);
+      if (Math.abs(gap) > 100) {
+        warn.push("Сумма помещений разошлась с длиной дома на " + Math.abs(gap) +
+          " мм — разницу добавили в «" + big.name + "», проверьте");
+      }
+    }
+  }
+
+  const types = (winTypes || []).slice();
+  model.openings = (p.openings || []).map(function (o) {
+    const found = findType(types, o.kind, o.w, o.h, gen);
+    if (found.added) types.push(found.added);
+    const op = { id: gen(), side: o.side, pos: o.pos, typeId: found.id };
+    if (o.side === "part") {
+      const bay = bays[o.after == null ? 0 : o.after];
+      if (!bay || bay === bays[bays.length - 1]) {
+        warn.push((o.label || "проём " + o.w) + ": не понятно, на какой перегородке — пропущен");
+        return null;
+      }
+      op.after = bay.id;
+      op.into = 1;
+      op.hinge = "start";
+    }
+    // Проём, вылезший за стену, — это не планировка, а ошибка чтения: прижимаем
+    // к стене и говорим об этом, чтобы человек посмотрел именно на него.
+    const wallLen = (o.side === "n" || o.side === "s") ? totalLength(model) : (Number(model.w) || 0);
+    if (op.pos + o.w > wallLen) {
+      const fixed = Math.max(0, wallLen - o.w);
+      warn.push((o.label || "проём " + o.w) + ": не помещается в стену — сдвинули на " + fixed + " мм");
+      op.pos = fixed;
+    }
+    return op;
+  }).filter(Boolean);
+
+  // Подоконник с вида сверху не виден вообще. Ставим его по общей линии верха —
+  // ровно так же, как выравнивает редактор: двери от пола, окна подвешены под
+  // перемычку. Разнобой по верху человек на чертеже не заметит, а на фасаде — да.
+  model.openings = alignHeads(model, types).openings.map(function (op) {
+    if (op.side !== "part") return op;
+    const p = Object.assign({}, op);
+    delete p.sill;                    // у двери в перегородке порога нет
+    return p;
+  });
+
+  return { model: model, winTypes: types, warnings: warn };
+}

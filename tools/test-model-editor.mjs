@@ -939,4 +939,92 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   t.ok('и инструмент уходит вместе с ней', p.run('modelFullOverlay()').indexOf('data-k="under"') < 0)
 }
 
+// ── 20. Чтение планировки заказчика ──────────────────────────────────────────
+// Кнопка отправляет файл на сервер, а прочитанное НЕ применяется само: оно
+// показывается списком рядом с подложкой, и чертит человек. Из этих метров
+// считается смета, и молчаливая замена планировки — это молчаливая замена счёта.
+{
+  t.section('Распознавание планировки')
+  // Сервер под нашим управлением: ответ Claude подменяем, чтобы проверять панель,
+  // а не сеть.
+  const answer = {
+    success: true,
+    plan: {
+      length: 11952, width: 2352, height: 2500,
+      bays: [{ name: 'Санузел', len: 2000 }, { name: 'Зал', len: 6400 }, { name: 'Спальня', len: 3200 }],
+      openings: [
+        { kind: 'win', side: 's', after: null, pos: 2976, w: 1500, h: 1400, label: 'ОК-1' },
+        { kind: 'door', side: 'part', after: 0, pos: 826, w: 700, h: 2050, label: 'Д-1' },
+      ],
+      notes: 'размеры окон сняты по масштабу',
+    },
+    warnings: ['ОК-1: высота не подписана, поставили 1400'],
+  }
+  let sent = null
+  const net = (url, init) => {
+    if (String(url).indexOf('/api/plan-read') < 0) return new Promise(() => {})
+    sent = { url: String(url), body: JSON.parse(init.body) }
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(answer) })
+  }
+  const p = boot({ net })
+  p.set({
+    expProducts: [], estimates: [], dbPlans: [], crmClients: [],
+    specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [],
+    contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: {},
+  })
+  p.run('specShowNew=true;specNew=Object.assign({},specNew,{kind:"house",model:"40hc"});')
+  p.dom.field('spec-n-name', 'Импорт'); p.dom.field('spec-n-client', '')
+  const b = p.dom.node({ a: 'spec-create' }); p.run('bind();'); b.onclick()
+  p.run('specOpenId=specSheets[0].id;')
+  click(p, { a: 'model-full' })
+
+  // Кнопки нет, пока к проекту не приложена планировка: читать нечего.
+  t.ok('без файла кнопки нет', p.run('modelFullOverlay()').indexOf('model-plan-read') < 0)
+  p.run('specSheets[0].plan={name:"план.pdf",url:"/api/file/plans/x.pdf",pdf:true};')
+  t.ok('с файлом кнопка появилась', p.run('modelFullOverlay()').indexOf('model-plan-read') >= 0)
+
+  click(p, { a: 'model-plan-read' })
+  await new Promise((res) => setTimeout(res, 0))
+  t.ok('файл ушёл на сервер', !!sent && sent.body.key === '/api/file/plans/x.pdf', JSON.stringify(sent))
+  t.ok('ключ Claude в браузер не попадает', p.run('String(modelPlanRecognize)').indexOf('api.anthropic.com') < 0,
+    'читает сервер — иначе ключ живёт в панели, открытой каждому продавцу')
+
+  // Прочитанное ждёт сверки: модель ещё прежняя, панель уже показывает числа.
+  const dom = p.run('modelFullOverlay()')
+  t.ok('прочитанное показано списком', dom.indexOf('Прочитано с планировки') >= 0)
+  t.ok('в нём помещения с чертежа', dom.indexOf('Санузел') >= 0 && dom.indexOf('Спальня') >= 0)
+  t.ok('и проёмы', dom.indexOf('ОК-1') >= 0 && dom.indexOf('Д-1') >= 0)
+  t.ok('домыслы вынесены отдельно', dom.indexOf('ПРОВЕРЬТЕ РУКАМИ') >= 0 && dom.indexOf('высота не подписана') >= 0,
+    'ошибку чтения видно только здесь — на чертеже она выглядит обычной стеной')
+  t.ok('заметки модели видны', dom.indexOf('по масштабу') >= 0)
+  t.ok('планировка ещё НЕ применена', p.q('specSheets[0].model.rooms').length === 1,
+    'чертит человек, а не ответ сети')
+
+  // Отмена не оставляет следов.
+  click(p, { a: 'model-read-close' })
+  t.ok('отмена убирает панель', p.run('modelFullOverlay()').indexOf('Прочитано с планировки') < 0)
+  t.ok('и модель не тронута', p.q('specSheets[0].model.rooms').length === 1)
+
+  // Применение: помещения, проёмы и изделия появляются разом.
+  click(p, { a: 'model-plan-read' })
+  await new Promise((res) => setTimeout(res, 0))
+  p.run('specSheets[0].model=Object.assign({},specSheets[0].model,' +
+    '{under:{url:"plan.png",x:0,y:-200,w:11952,h:2800,op:0.45}});')
+  click(p, { a: 'model-read-apply' })
+  const rooms = p.q('modelRooms(specSheets[0].model)')
+  t.ok('помещения начерчены', rooms.length === 3, String(rooms.length))
+  t.ok('имена с чертежа', rooms.map((r) => r.name).join(',') === 'Санузел,Зал,Спальня', rooms.map((r) => r.name).join(','))
+  t.ok('санузел ≈ 4,4 м²', Math.abs(rooms[0].area - 4.4) < 0.05, String(rooms[0].area))
+  t.ok('проёмы на местах', p.q('specSheets[0].model.openings').length === 2)
+  t.ok('изделия заведены', p.q('winTypes').length === 2, String(p.q('winTypes').length))
+  // Подложка — то, ПО чему сверяют: пережить замену модели она обязана.
+  t.ok('подложка осталась', !!p.q('specSheets[0].model.under'))
+  t.ok('панель сверки закрылась', p.run('modelFullOverlay()').indexOf('Прочитано с планировки') < 0)
+  // Прежняя планировка обязана остаться в «Вернуть»: чужой чертёж читается не с
+  // первого раза, и откат — единственный способ не потерять свою работу.
+  t.ok('прежнюю планировку можно вернуть', p.q('modelCanUndo(specSheets[0])') === true)
+  click(p, { a: 'model-undo' })
+  t.ok('и она возвращается', p.q('specSheets[0].model.rooms').length === 1, String(p.q('specSheets[0].model.rooms').length))
+}
+
 t.done()

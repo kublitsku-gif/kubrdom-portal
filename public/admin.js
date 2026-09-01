@@ -58,6 +58,7 @@ import { allPositions, rulePositions, positionWork, ruleText, ruleReady, RULE_WH
   pieCost, pieMeta, layerMat } from "../src/recipe.js";
 import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
 import { isoScene } from "../src/iso.js";
+import { planNormalize, planToModel } from "../src/plan-read.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
 const APP_BUILD = "2026-08-30.9";
@@ -685,6 +686,55 @@ function imageAspect(url){
     im.onerror=function(){ rej(new Error("картинка не открылась")); };
     im.src=url;
   });
+}
+
+// ─── ЧТЕНИЕ ПЛАНИРОВКИ ЗАКАЗЧИКА ────────────────────────────────────────────
+// Подложку обводят руками, и на 12 метрах это полчаса. Здесь чертёж читает Claude
+// на сервере (ключ — секрет Worker'а, в браузер ему нельзя), а СВЕРЯЕТ человек:
+// прочитанное показывается списком рядом с подложкой и применяется только по
+// кнопке. Из этих метров считается смета, и «модель обычно права» — не тот порог,
+// за которым выставляют счёт.
+let modelReadBusy=false;    // идёт запрос — кнопка не должна множить запросы
+let modelRead=null;         // {sheetId, plan, warnings} — прочитанное, ждущее сверки
+
+async function modelPlanRecognize(sh){
+  if(modelReadBusy||!sh||!sh.plan||!sh.plan.url)return;
+  modelReadBusy=true; modelRead=null; fl();
+  try{
+    const r=await fetch(API_BASE+"/api/plan-read",{
+      method:"POST", headers:authHeaders({"Content-Type":"application/json"}),
+      body:JSON.stringify({ key:sh.plan.url })
+    });
+    const j=await r.json().catch(function(){ return null; });
+    if(!j||!j.success)throw new Error((j&&j.error)||("HTTP "+r.status));
+    // Нормализуем ещё раз на своей стороне: сервер отдаёт то же самое, но панель
+    // не обязана верить сети на слово — она рисует по этим числам.
+    const norm=planNormalize({
+      length:j.plan.length, width:j.plan.width, height:j.plan.height,
+      bays:(j.plan.bays||[]).map(function(b){ return { name:b.name, len:b.len }; }),
+      openings:(j.plan.openings||[]).map(function(o){
+        return { kind:o.kind, side:o.side, after_bay:o.after, pos:o.pos, width:o.w, height:o.h, label:o.label };
+      }),
+      notes:j.plan.notes,
+    });
+    modelRead={ sheetId:sh.id, plan:norm.plan, warnings:(j.warnings||[]).concat(norm.warnings), model:j.model||"" };
+  }catch(err){
+    alert("Не удалось прочитать планировку: "+((err&&err.message)||err));
+  }
+  modelReadBusy=false; fl();
+}
+
+// Применяем прочитанное. Модель заменяется целиком — это и есть «открыть чужую
+// планировку у нас»; предыдущая уходит в «Вернуть», как любая другая правка.
+function modelReadApply(sh){
+  if(!modelRead||!sh||modelRead.sheetId!==sh.id)return;
+  const r=planToModel(modelRead.plan, winTypes, gid);
+  // Подложка переезжает в новую модель: по ней и сверяют прочитанное, а начерченное
+  // поверх неё без неё превращается в «поверьте на слово».
+  if(sh.model&&sh.model.under)r.model.under=sh.model.under;
+  sh.model=r.model; winTypes=r.winTypes;
+  modelSync(sh); scheduleSave();
+  modelRead=null; modelTool="sel"; fl();
 }
 
 async function uploadFileR2(file, alreadyCompressed){
@@ -10393,6 +10443,50 @@ function modelPlaceBar(){
   return h+'</div>';
 }
 
+// Прочитанное — списком поверх редактора. Не «применилось и разбирайтесь», а
+// сверка: слева числа, справа подложка, и всё, что модель домыслила или поправила,
+// вынесено отдельным списком. Ошибку чтения видно только здесь — на чертеже она
+// выглядит как обычная стена.
+function modelReadPanel(sh){
+  if(!modelRead||!sh||modelRead.sheetId!==sh.id)return "";
+  const p=modelRead.plan;
+  // Метры с запятой, как их пишут на чертеже: «2 м» и «2.00 m» читаются как чужие
+  // числа, а сверять человеку придётся именно глазами.
+  const mm=function(v){ return v?(numRu(Math.round(v/10)/100)+" м"):"—"; };
+  const row=function(a,b){ return '<div style="display:flex;gap:10px;font-size:12.5px;padding:4px 0;border-bottom:1px solid #eef3f8"><span style="flex:1;color:#5a7a9a">'+esc(a)+'</span><span style="font-weight:700;color:#0d1b2e">'+esc(b)+'</span></div>'; };
+  const SIDES={n:"длинная стена (верх)",s:"длинная стена (низ)",w:"торец слева",e:"торец справа",part:"перегородка"};
+  let h='<div style="position:absolute;inset:0;background:rgba(13,27,46,.72);display:flex;align-items:center;justify-content:center;padding:18px;z-index:20">'+
+    '<div style="background:#fff;border-radius:14px;max-width:560px;width:100%;max-height:100%;overflow:auto;padding:18px">'+
+    '<div style="font-size:15px;font-weight:800;color:#0d1b2e;margin-bottom:4px">Прочитано с планировки</div>'+
+    '<div style="font-size:12px;color:#7a9aaa;margin-bottom:12px">Сверьте с чертежом заказчика — по этим размерам считается смета.'+
+      (modelRead.model?' <span style="color:#9aabbf">Читал '+esc(modelRead.model)+'.</span>':'')+'</div>';
+  h+='<div style="margin-bottom:12px">'+
+      row("Длина дома", mm(p.length))+row("Ширина", mm(p.width))+row("Высота помещений", mm(p.height))+
+    '</div>';
+  h+='<div style="font-size:12px;font-weight:800;color:#5a7a9a;margin:10px 0 4px">ПОМЕЩЕНИЯ</div>'+
+    (p.bays.length?p.bays.map(function(b){ return row(b.name, mm(b.len)); }).join("")
+      :'<div style="font-size:12.5px;color:#c0392b">не прочитались</div>');
+  h+='<div style="font-size:12px;font-weight:800;color:#5a7a9a;margin:12px 0 4px">ОКНА И ДВЕРИ</div>'+
+    (p.openings.length?p.openings.map(function(o){
+        return row((o.kind==="door"?"🚪 ":"🪟 ")+(o.label||(o.w+"×"+o.h))+" · "+(SIDES[o.side]||o.side),
+          o.w+"×"+o.h+" · от "+mm(o.pos));
+      }).join("")
+      :'<div style="font-size:12.5px;color:#c0392b">не прочитались</div>');
+  if(p.notes)h+='<div style="margin-top:12px;background:#f4f7fa;border-radius:9px;padding:9px 11px;font-size:12.5px;color:#5a7a9a">📝 '+esc(p.notes)+'</div>';
+  if(modelRead.warnings.length){
+    h+='<div style="margin-top:12px;background:#fff4e5;border:1px solid #f0c99a;border-radius:9px;padding:9px 11px">'+
+      '<div style="font-size:12px;font-weight:800;color:#b9770e;margin-bottom:4px">ПРОВЕРЬТЕ РУКАМИ</div>'+
+      modelRead.warnings.map(function(w){ return '<div style="font-size:12.5px;color:#7a5a2a;padding:2px 0">• '+esc(w)+'</div>'; }).join("")+
+    '</div>';
+  }
+  h+='<div style="display:flex;gap:8px;margin-top:16px">'+
+      '<button data-a="model-read-apply" style="flex:1;padding:11px;background:#16a085;color:#fff;border:none;border-radius:10px;font-size:13px;font-weight:800;cursor:pointer">Начертить по прочитанному</button>'+
+      '<button data-a="model-read-close" style="padding:11px 16px;background:#f4f7fa;color:#5a7a9a;border:none;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer">Отмена</button>'+
+    '</div>'+
+    '<div style="font-size:11.5px;color:#9aabbf;margin-top:8px">Прежняя планировка останется в «Вернуть».</div>';
+  return h+'</div></div>';
+}
+
 function modelFullOverlay(){
   const sh=specSheet(specOpenId); if(!sh||!sh.model)return "";
   const m=sh.model, tot=modelTotals(m, winTypes);
@@ -10451,6 +10545,11 @@ function modelFullOverlay(){
       const can=modelCanUndo(sh);
       return '<button data-a="model-undo"'+(can?'':' disabled')+' title="Вернуть последнее изменение планировки" style="display:flex;align-items:center;gap:6px;border:1.5px solid rgba(255,255,255,'+(can?'.35':'.12')+');background:transparent;color:'+(can?'#fff':'rgba(255,255,255,.3)')+';border-radius:9px;padding:7px 12px;font-size:12px;font-weight:700;cursor:'+(can?'pointer':'default')+'"><span>↶</span>Вернуть'+(can?' <span style="opacity:.6">'+modelHist.length+'</span>':'')+'</button>';
     })()+
+    // Чтение чужой планировки — там же, где её подложка: файл прикреплён к проекту,
+    // и кнопка обязана стоять рядом с тем, что она прочтёт.
+    (sh.plan&&sh.plan.url
+      ? '<button data-a="model-plan-read"'+(modelReadBusy?' disabled':'')+' title="Прочитать размеры с планировки заказчика через Claude" style="display:flex;align-items:center;gap:6px;border:1.5px solid rgba(255,255,255,'+(modelReadBusy?'.12':'.35')+');background:transparent;color:'+(modelReadBusy?'rgba(255,255,255,.35)':'#fff')+';border-radius:9px;padding:7px 12px;font-size:12px;font-weight:700;cursor:'+(modelReadBusy?'default':'pointer')+'"><span>🔍</span>'+(modelReadBusy?'Читаю чертёж…':'Распознать')+'</button>'
+      : "")+
     // Пока двигают подложку, рядом с инструментом стоят её же ручки: размер и
     // прозрачность. В другом инструменте они были бы шумом.
     (modelTool==="under"&&m.under&&m.under.url
@@ -10481,6 +10580,7 @@ function modelFullOverlay(){
         '<div style="width:'+(modelZoom*100)+'%;min-width:100%">'+modelPlanSvg(sh, true)+'</div>'+
       '</div>'+
       modelAreasPanel(sh)+
+      modelReadPanel(sh)+
     '</div>';
   // Подсказка
   h+='<div style="padding:9px 14px;background:#122236;color:#9fb3c8;font-size:12px;flex-shrink:0;display:flex;gap:10px;align-items:center">'+
@@ -21538,6 +21638,15 @@ function bind(){
       const m2=Object.assign({}, sh.model); delete m2.under;
       sh.model=m2; modelTool="sel"; fl();
     };}
+    else if(a==="model-plan-read"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh)return;
+      modelPlanRecognize(sh);
+    };}
+    else if(a==="model-read-apply"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh)return;
+      modelReadApply(sh);
+    };}
+    else if(a==="model-read-close"){el.onclick=()=>{ modelRead=null; fl(); };}
     else if(a==="model-under-drag"){
       // Подложку двигают пальцем — как проём: без render() внутри жеста, иначе
       // элемент с захваченным указателем исчезает вместе с разметкой.

@@ -13,6 +13,7 @@ import { viewText, viewCallback } from "./botview.js";
 import { ensureTopic } from "./tgapi.js";
 import { workText, workCallback, workMedia } from "./botwork.js";
 import { issueText, issueCallback, issueMedia, issueReplyToAuthor } from "./botissue.js";
+import { planRequest, planFromResponse, planNormalize, PLAN_MODEL } from "./plan-read.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
@@ -639,6 +640,77 @@ async function putFile(env, request, url) {
   // Относительный URL: рендерится как <img src="/api/file/..."> на любом домене (same-origin
   // через прокси). Иначе бы зашили *.workers.dev — а его режут в РФ.
   return json({ success: true, key, url: "/api/file/" + key });
+}
+
+// POST /api/plan-read {key} — прочитать планировку заказчика из R2 глазами Claude.
+// Требует токен.
+//
+// Зачем сервером, а не из панели: ключ Anthropic живёт секретом Worker'а и в
+// браузер попасть не должен — панель открыта у всех, у кого есть пароль админки.
+// Отвечаем ПРОЧИТАННЫМ, а не готовой моделью: модель собирает панель, показывает
+// её поверх подложки, и применяет человек. Из этих метров считается смета.
+async function planRead(env, request) {
+  if (!env.FILES) return json({ success: false, error: "R2 не настроен" }, 500);
+  if (!env.CLAUDE_API_KEY) return json({ success: false, error: "Не настроен ключ Claude (секрет CLAUDE_API_KEY)" }, 400);
+  const body = await request.json().catch(function () { return {}; });
+  const key = String((body && body.key) || "").replace(/^\/api\/file\//, "");
+  if (!key) return json({ success: false, error: "Не указан файл" }, 400);
+
+  const obj = await env.FILES.get(key);
+  if (!obj) return json({ success: false, error: "Файл не найден" }, 404);
+  const ct = (obj.httpMetadata && obj.httpMetadata.contentType) || "";
+  if (ct !== "application/pdf" && ct.indexOf("image/") !== 0) {
+    return json({ success: false, error: "Читаем только PDF и картинки — а тут " + (ct || "неизвестно что") }, 415);
+  }
+  const buf = await obj.arrayBuffer();
+  // Запрос к API целиком не больше 32 МБ, а base64 раздувает файл в полтора раза.
+  if (buf.byteLength > 20 * 1024 * 1024) return json({ success: false, error: "Файл больше 20 МБ — распознавание не потянет" }, 413);
+
+  const b64 = base64of(buf);
+  const ask = async function (model) {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": env.CLAUDE_API_KEY, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify(planRequest(ct, b64, model ? { model: model } : {})),
+    });
+    const j = await r.json().catch(function () { return null; });
+    return { ok: r.ok, status: r.status, j: j };
+  };
+
+  // Читает чертёж модель посильнее. Доступа к ней у аккаунта может не быть — тогда
+  // читает та, что возит нейропродавца: хуже, но лучше, чем «не работает». Какая
+  // именно прочитала, возвращаем: человек сверяет и должен знать, чьи это цифры.
+  const fallback = env.CLAUDE_PLAN_MODEL || env.CLAUDE_MODEL || "claude-sonnet-4-6";
+  let used = env.CLAUDE_PLAN_MODEL || "";
+  let res = await ask(used || null);
+  if (!res.ok && res.status === 404 && !used) {
+    used = fallback;
+    res = await ask(used);
+  }
+  if (!res.ok || !res.j) {
+    const msg = (res.j && res.j.error && res.j.error.message) || ("HTTP " + res.status);
+    return json({ success: false, error: "Claude: " + String(msg).slice(0, 300) }, 502);
+  }
+  // Отказ модели — не сбой: она отвечает 200 и рассказывает, что увидела.
+  let read;
+  try { read = planNormalize(planFromResponse(res.j)); }
+  catch (err) { return json({ success: false, error: String((err && err.message) || err) }, 422); }
+
+  return json({
+    success: true, plan: read.plan, warnings: read.warnings,
+    model: res.j.model || used || PLAN_MODEL, usage: res.j.usage || null,
+  });
+}
+
+// Двоичные данные → base64. Через строку целиком нельзя: аргументы у
+// String.fromCharCode кладутся в стек, и мегабайтный файл роняет воркер.
+function base64of(buf) {
+  const bytes = new Uint8Array(buf);
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    out += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(out);
 }
 
 // ensureTopic живёт в src/tgapi.js — им пользуется и бот при приёме фото от бригадира.
@@ -1578,6 +1650,12 @@ export default {
     if (url.pathname === "/api/file" && request.method === "POST") {
       try { return await putFile(env, request, url); }
       catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+
+    // Распознавание планировки заказчика через Claude (с токеном).
+    if (url.pathname === "/api/plan-read" && request.method === "POST") {
+      try { return await planRead(env, request); }
+      catch (err) { return json({ success: false, error: String((err && err.message) || err) }, 500); }
     }
 
     // Загрузка видео в Telegram-тему объекта (с токеном).
