@@ -11375,15 +11375,18 @@ function jambDetailSvg(){
   // за трубой дальше. Раньше узел показывал трубу внутри реза и обещал рез на две
   // трубы шире — по такому чертежу дырку вырезали бы больше, чем нужно.
   const wallY=190, wallH=250;                 // от гребня гофры до обрешётки
-  const TUBE=120, TUBEH=120;                  // труба 40×40 — квадрат в узле
+  const TUBE=92, TUBEH=92;                    // труба 40×40 — квадрат в узле
   const X={ w0:0, t1:300, cut1:420, g1:520, pb0:670, pb1:760, g2:900, cut2:1000, t2:1120, w1:1400 };
-  const CORR=60, CORRSTEP=150;                // волна: глубина и шаг
+  // Шаг волны берём ОТ ТРУБЫ: впадина обязана вместить её вместе с пеной по бокам,
+  // иначе «во впадине» на чертеже не покажешь. Узел без масштаба, и это законная
+  // вольность: в жизни шаг гофры под три сотни миллиметров, а труба сорок.
+  const CORR=58, CORRSTEP=300;                // волна: глубина и шаг
   const STEEL=14;                             // толщина листа в узле
   // Труба стоит ВО ВПАДИНЕ гофры и НЕ КАСАЕТСЯ железа: между ней и листом — ППУ.
   // Приваренная к листу труба — это сквозной металл от улицы внутрь, то есть мостик
   // холода, и никакая заливка его уже не лечит. Поэтому её обжимает пена со всех
   // сторон, кроме той, что смотрит в проём.
-  const PPU_GAP=32;                           // слой пены между трубой и листом
+  const PPU_GAP=20;                           // слой ППУ между трубой и листом
   const tubeY=wallY+CORR+STEEL+PPU_GAP;
   const t=function(cx,cy,str,size,col,anchor){
     return '<text x="'+cx+'" y="'+cy+'" font-size="'+(size||34)+'" fill="'+(col||"#5a7a9a")+'" font-weight="700" text-anchor="'+(anchor||"middle")+'">'+esc(str)+'</text>';
@@ -11418,17 +11421,27 @@ function jambDetailSvg(){
   // У самого реза волна обязана быть ВПАДИНОЙ шириной с трубу — в неё труба и
   // садится. Регулярная волна попадает туда как придётся, поэтому последний период
   // строим руками: узел без масштаба, и показать посадку важнее, чем выдержать шаг.
-  const nest=TUBE+2*PPU_GAP+26, ramp=Math.round(CORRSTEP*0.2), inner=wallY+CORR;
-  // Кромка листа: регулярная волна, а у самого реза — впадина шириной с трубу.
+  const inner=wallY+CORR;
+  // Кромку строим ОТ РЕЗА: у реза обязана быть впадина, в которой стоит труба, а
+  // дальше волна идёт как ей положено — холмик, впадина, холмик. Если строить от
+  // дальнего края, фаза приходит к резу как придётся, и вместо впадины там оказывался
+  // длинный плоский гребень.
   const edgePts=function(x0, x1, dir){               // dir=+1 — рез справа
-    const from=(dir>0)?x0:(x0+nest+ramp), to=(dir>0)?(x1-nest-ramp):x1;
-    const wave=corrPts(from, to, wallY, inner, CORRSTEP);
-    const out=(dir>0)?wave.slice():wave.slice().reverse();
-    const last=out[out.length-1];
-    if(last[1]!==wallY)out.push([last[0]+dir*ramp, wallY]);   // выходим на гребень
-    const edge=(dir>0)?x1:x0;
-    out.push([edge-dir*nest, wallY], [edge-dir*(nest-ramp), inner], [edge, inner]);
-    return out;
+    const flat=Math.round(CORRSTEP*0.42), slope=Math.round(CORRSTEP*0.16);
+    const edge=(dir>0)?x1:x0, far=(dir>0)?x0:x1, s=-dir;
+    const done=function(x){ return (s<0) ? (x<=far) : (x>=far); };
+    const pts=[[edge, inner]];
+    let x=edge, y=inner;
+    while(!done(x)){
+      x+=s*flat;   pts.push([x, y]);                 // полка
+      if(done(x))break;
+      y=(y===inner)?wallY:inner;
+      x+=s*slope;  pts.push([x, y]);                 // скат
+    }
+    // Последнюю точку прижимаем к краю чертежа: обрубленная волна честнее, чем
+    // волна, вылезшая за лист.
+    pts[pts.length-1]=[far, pts[pts.length-1][1]];
+    return (s<0) ? pts.slice().reverse() : pts;
   };
   const poly=function(pts){ return pts.map(function(q){ return Math.round(q[0])+" "+Math.round(q[1]); }).join(" L "); };
   [[X.w0,X.cut1,1],[X.cut2,X.w1,-1]].forEach(function(p){
