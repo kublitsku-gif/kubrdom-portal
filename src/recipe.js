@@ -138,7 +138,9 @@ export function rulePositions(sheet, rules, estimates, products, winTypes) {
           return Object.assign({}, m, { qty: Math.round((Number(m.qty) || 0) * mult * 100) / 100 });
         });
         p.cost = Math.round(p.mats.reduce(function (a, m) { return a + (Number(m.cost) || 0) * (Number(m.qty) || 0); }, 0));
-        p.factor = mult;
+        // `factor` остаётся единицей: множитель уже вшит в количества материалов, и
+        // второй раз его применять нельзя — иначе пересчёт строки удвоит цену.
+        p.mult = mult;
       }
       p.stage = Number(r.stage) > 0 ? Number(r.stage) : p.stage;
       p.ruleId = r.id;
@@ -293,6 +295,59 @@ export function pieCost(model, key, products, winTypes) {
   };
 }
 
+
+// ─── ЗАМЕНА МАТЕРИАЛА В СТРОКЕ СМЕТЫ ─────────────────────────────────────────
+// Состав строки приезжает из справочника (или из пирога), но дом живёт своей
+// сметой: «эту гофру берём другую». Замена лежит НА ЛИСТЕ (`sheet.mats`), а не
+// правит справочник: справочник общий, и правка в нём меняла бы состав всех
+// будущих домов заодно.
+//
+// Ключ — адрес позиции и старый товар: `sheet.mats[posKey][oldPid] = newPid`.
+// По этому же адресу собирается объект и считается подпись состава, поэтому
+// замена доезжает и до стройки, и до «в проекте изменилось» сама.
+export function matSwapsOf(sheet, key) {
+  return (((sheet && sheet.mats) || {})[key]) || {};
+}
+
+// Материал по карточке каталога, с пересчётом количества. Площадные позиции
+// пересчитываются под новую фасовку (лист 2,9 м² и лист 3 м² — разное число
+// листов), штучные количество не меняют: там считались штуки, а не квадраты.
+export function swapMat(mat, product, area) {
+  const p = product || {};
+  const next = Object.assign({}, mat, {
+    pid: p.id || "", n: p.name || "", store: p.store || "", url: p.url || "",
+    cost: Number(p.unitCost) || 0, unitCost: Number(p.unitCost) || 0, mode: p.mode || "piece",
+    swapped: true,
+  });
+  ["packBase", "packPer", "lenPer", "sheetM2"].forEach(function (k) {
+    if (p[k] != null) next[k] = p[k]; else delete next[k];
+  });
+  if (Number(area) > 0) next.qty = matQtyForArea(next, Number(area));
+  return next;
+}
+
+export function applyMatSwaps(positions, sheet, products) {
+  const swaps = (sheet && sheet.mats) || {};
+  if (!Object.keys(swaps).length) return positions;
+  const prodById = {};
+  (products || []).forEach(function (p) { if (p && p.id) prodById[p.id] = p; });
+  return (positions || []).map(function (pos) {
+    const sw = swaps[pos.key];
+    if (!sw || !Object.keys(sw).length) return pos;
+    let hit = false;
+    const mats = (pos.mats || []).map(function (m) {
+      const nid = sw[m.pid || ""];
+      const prod = nid && prodById[nid];
+      if (!prod) return m;
+      hit = true;
+      return swapMat(m, prod, pos.area);
+    });
+    if (!hit) return pos;
+    const sum = mats.reduce(function (a, m) { return a + (Number(m.cost) || 0) * (Number(m.qty) || 0); }, 0);
+    return Object.assign({}, pos, { mats: mats, cost: Math.round(sum * (Number(pos.factor) || 1)) });
+  });
+}
+
 // Полный состав дома: то, что выбрано руками в справочнике, плюс то, что дали
 // правила. ОДНА функция на экран и на сборку объекта — иначе на экране одна
 // смета, а в стройке другая, и находится это на приёмке этапа.
@@ -322,7 +377,8 @@ export function allPositions(sheet, ctx) {
   const out = base.concat(rulePositions(sheet, c.rules, c.estimates, c.products, c.winTypes));
   // Пироги считают себя сами там же, где работают правила: боевые спецификации
   // ни того, ни другого не видят — по ним заведены договора, объекты и транши.
-  return c.pies ? out.concat(layerPositions(sheet, c.estimates, c.products, c.winTypes)) : out;
+  const all = c.pies ? out.concat(layerPositions(sheet, c.estimates, c.products, c.winTypes)) : out;
+  return applyMatSwaps(all, sheet, c.products);
 }
 
 // Позиция → работа объекта. ОДНА машинка на сборку объекта и на подпись состава:

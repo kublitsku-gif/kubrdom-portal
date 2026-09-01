@@ -55,7 +55,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2, works2 } from "../src/spec2.js";
 import { allPositions, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
-  pieCost, pieMeta, layerMat } from "../src/recipe.js";
+  pieCost, pieMeta, layerMat, matSwapsOf } from "../src/recipe.js";
 import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
 import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel } from "../src/plan-read.js";
@@ -2209,6 +2209,7 @@ let schemeView="dim";      // чей чертёж: dim — рабочий с р�
 let nodeTab="n1";          // какой узел раскрыт под чертежом
 let spec2Tab="scheme";     // что смотрим в разделе: чертёж или смету по нему
 let estWhyOpen="";         // у какой сметы раскрыт редактор правила прямо в строке
+let matSwapOpen="";        // какой материал сметы сейчас меняют: "<ключ позиции>|<pid>"
 let modelStageTab=0;       // 0 = все этапы
 let specSheets=[];
 // «Спецификация 2» — опытный раздел (см. src/spec2.js). Листы держим ОТДЕЛЬНО: по
@@ -12315,6 +12316,60 @@ function spec2RulesHtml(built, sh, pr){
 // Тело сметы одно на два экрана: опытный раздел и карточка проекта. Второй экран
 // с теми же числами разошёлся бы с первым на первой же правке.
 // `live` — лист, из которого можно заводить объект и договор (у заготовки его нет).
+// ── МАТЕРИАЛЫ СТРОКИ СМЕТЫ: ПЕРЕЧНЕМ И С ЗАМЕНОЙ ────────────────────────────
+// Состав строки — это и есть спецификация, и читают его глазами: одной серой
+// строкой в три ряда «Кабель — 1 шт · Гофра — 50 шт · …» не читается ничего.
+// Поэтому перечень, у каждого материала своя строка, цена и количество, а рядом
+// «⇄» — заменить на товар из базы. Замена лежит на листе, справочник не трогает.
+function matSwapKey(pos, m){ return pos.key+"|"+(m.pid||""); }
+function specMatsListHtml(pos, sh, live){
+  const mats=(pos.mats||[]).filter(function(m){ return (Number(m.qty)||0)>0 && String(m.n||"").trim(); });
+  if(!mats.length)return "";
+  const can=!!live&&canRuleSheet(sh);
+  const sw=matSwapsOf(sh, pos.key);
+  return '<div style="margin-top:6px;border-top:1px dashed #eef2f7">'+
+    mats.map(function(m){
+      const unit=specMatUnit(m);
+      const qty=Math.round((Number(m.qty)||0)*100)/100;
+      const cost=Math.round((Number(m.cost)||0)*qty);
+      const open=matSwapOpen===matSwapKey(pos,m);
+      const was=!!(m.swapped||sw[m.pid||""]);
+      return '<div style="padding:5px 0;border-bottom:1px solid #f6f9fc">'+
+        '<div style="display:flex;align-items:baseline;gap:7px">'+
+          '<span style="flex:1;min-width:0;font-size:11.5px;color:#0d1b2e;line-height:1.35">'+esc(m.n||"")+
+            (was?' <span style="font-size:9.5px;font-weight:700;color:#8e44ad;background:#f3ecf9;border-radius:5px;padding:1px 5px">заменён</span>':'')+
+            '<span style="display:block;font-size:10px;color:#9aabbf;margin-top:1px">'+
+              (m.store?esc(m.store)+' · ':'')+
+              ((Number(m.cost)||0)>0?Math.round(Number(m.cost)).toLocaleString("ru-RU")+' ₽/'+esc(unit)+' × ':'')+
+              numRu(qty)+' '+esc(unit)+
+            '</span>'+
+          '</span>'+
+          '<span style="font-size:11.5px;font-weight:700;color:#5a7a9a;white-space:nowrap">'+cost.toLocaleString("ru-RU")+' ₽</span>'+
+          (can?'<button data-a="est-mat-open" data-k="'+esc(matSwapKey(pos,m))+'" title="Заменить материал из базы" style="width:24px;height:24px;background:'+(open?"#2980b9":"transparent")+';border:1px solid #2980b955;border-radius:6px;cursor:pointer;color:'+(open?"#fff":"#2980b9")+';font-size:11px;flex-shrink:0">⇄</button>':'')+
+        '</div>'+
+        (open?matSwapEditor(pos, m, sh, was):'')+
+      '</div>';
+    }).join("")+
+  '</div>';
+}
+function matSwapEditor(pos, m, sh, was){
+  return '<div style="margin-top:6px;background:#eaf1f8;border:1px solid #2980b944;border-radius:9px;padding:9px 10px">'+
+    '<div style="font-size:9px;font-weight:800;color:#2980b9;letter-spacing:0.3px;margin-bottom:5px">⇄ ЗАМЕНИТЬ НА МАТЕРИАЛ ИЗ БАЗЫ</div>'+
+    '<input id="msw-input" list="msw-catalog" autocomplete="off" placeholder="Начните вводить название из базы…" style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;margin-bottom:6px;outline:none;box-sizing:border-box">'+
+    '<datalist id="msw-catalog">'+expProducts.map(function(x){return '<option value="'+esc(x.name||"").replace(/"/g,"&quot;")+'"></option>';}).join("")+'</datalist>'+
+    '<div style="display:flex;gap:6px;flex-wrap:wrap">'+
+      '<button data-a="est-mat-do" data-k="'+esc(matSwapKey(pos,m))+'" style="flex:1;min-width:120px;padding:8px;background:#2980b9;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Заменить</button>'+
+      (was&&pos.from!=="layer"?'<button data-a="est-mat-reset" data-k="'+esc(matSwapKey(pos,m))+'" style="padding:8px 12px;background:#fff;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;color:#7a9aaa;font-size:12px">Вернуть из базы</button>':'')+
+      '<button data-a="est-mat-open" data-k="" style="padding:8px 12px;background:#fff;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;color:#7a9aaa;font-size:12px">Отмена</button>'+
+    '</div>'+
+    '<div style="font-size:10px;color:#7a9aaa;line-height:1.4;margin-top:6px">'+
+      (pos.from==="layer"
+        ? 'Это слой пирога — замена поменяет товар в самом узле, и стена пересчитается.'
+        : 'Замена живёт в этом доме: справочник смет остаётся прежним. Количество пересчитается под фасовку нового товара.')+
+    '</div>'+
+  '</div>';
+}
+
 // ── ПРАВИЛО ПРЯМО В СТРОКЕ СМЕТЫ ────────────────────────────────────────────
 // Чип «на весь дом» под строкой — это и есть правило, по которому она посчитана.
 // Читать его там, а править в другой вкладке, — значит каждый раз искать нужное
@@ -12425,7 +12480,6 @@ function estBodyHtml(sh, types, live, actions){
           '<span style="font-size:12.5px;font-weight:800;color:#0d1b2e;white-space:nowrap">'+Math.round(st.cost).toLocaleString("ru-RU")+' ₽</span>'+
         '</div>'+
         st.positions.map(function(p){
-          const mats=specMatsText(p);
           // Редактор раскрываем у ПЕРВОЙ строки этой сметы: правило по помещениям
           // даёт их несколько, и три одинаковых редактора подряд — это не выбор.
           const first=seen[p.estId]!==true; if(p.estId)seen[p.estId]=true;
@@ -12440,7 +12494,7 @@ function estBodyHtml(sh, types, live, actions){
                 ? '<button data-a="est-why" data-est="'+p.estId+'" title="Чем меряется эта строка" style="background:'+(open?RULE_COL:"#eef6ff")+';color:'+(open?"#fff":"#2980b9")+';border:none;border-radius:7px;padding:3px 8px;font-size:10.5px;font-weight:700;cursor:pointer">'+esc(p.why)+' ⚙</button>'
                 : '<span style="background:#eef6ff;color:#2980b9;border-radius:7px;padding:2px 7px;font-size:10.5px;font-weight:700">'+esc(p.why)+'</span>')+
             '</div>'+
-            (mats?'<div style="font-size:10.5px;color:#9aabbf;line-height:1.45;margin-top:4px">'+esc(mats)+'</div>':'')+
+            specMatsListHtml(p, sh, live)+
             (open?estWhyEditor(p, sh):'')+
           '</div>';
         }).join("")+
@@ -21321,6 +21375,56 @@ function bind(){
     // Правила сборки. Правка пишется сразу в раздел снимка: отдельной кнопки
     // «сохранить» в панели нет нигде, и заводить её здесь значило бы объяснять,
     // почему этот экран не такой, как все.
+    // ── Замена материала в строке сметы ────────────────────────────────────
+    else if(a==="est-mat-open"){el.onclick=()=>{
+      const k=el.dataset.k||"";
+      matSwapOpen=(matSwapOpen===k)?"":k;
+      render();
+    };}
+    else if(a==="est-mat-do"){el.onclick=()=>{
+      const k=el.dataset.k||"";
+      const cut=k.lastIndexOf("|");
+      const posKey=k.slice(0,cut), oldPid=k.slice(cut+1);
+      const sh=schemeSheet()||spec2Sheet();
+      if(!sh)return;
+      const name=((document.getElementById("msw-input")||{}).value||"").trim();
+      if(!name)return;
+      const prod=expProducts.find(function(x){ return String(x.name||"").trim().toLowerCase()===name.toLowerCase(); });
+      if(!prod){ alert("Такого товара нет в базе.\n\nВыберите название из списка — цена, единица и магазин подтянутся сами."); return; }
+      const pos=works2(sh, specCtx(sh)).positions.find(function(x){return x.key===posKey;});
+      if(!pos)return;
+      // Слой пирога меняем в самом пироге: у стены один источник правды о том,
+      // из чего она сделана, и вторая запись про тот же слой разошлась бы с ним.
+      if(pos.from==="layer"&&sh.model){
+        const key=pos.pie==="skin"?"skin":"layers";
+        const list=pieList(sh.model,key).map(function(l,i){
+          return (String(l.id||i)!==String(pos.layerId))?l:Object.assign({},l,{pid:prod.id});
+        });
+        sh.model=applyLayers(sh.model, key, list); modelSync(sh);
+      } else {
+        const mats=Object.assign({}, sh.mats||{});
+        const row=Object.assign({}, mats[posKey]||{});
+        row[oldPid]=prod.id;
+        mats[posKey]=row;
+        sh.mats=mats;
+      }
+      matSwapOpen=""; fl();
+    };}
+    else if(a==="est-mat-reset"){el.onclick=()=>{
+      const k=el.dataset.k||"";
+      const cut=k.lastIndexOf("|");
+      const posKey=k.slice(0,cut), pid=k.slice(cut+1);
+      const sh=schemeSheet()||spec2Sheet();
+      if(!sh||!sh.mats||!sh.mats[posKey])return;
+      const mats=Object.assign({}, sh.mats);
+      const row=Object.assign({}, mats[posKey]);
+      // Заменённый материал ищем и по новому pid: строка уже показывает новый товар,
+      // а в замене ключом остался старый.
+      delete row[pid];
+      Object.keys(row).forEach(function(oldPid){ if(row[oldPid]===pid)delete row[oldPid]; });
+      if(Object.keys(row).length)mats[posKey]=row; else delete mats[posKey];
+      sh.mats=mats; matSwapOpen=""; fl();
+    };}
     // ── Правило прямо в строке сметы ───────────────────────────────────────
     else if(a==="est-why"){el.onclick=()=>{
       const id=el.dataset.est||"";

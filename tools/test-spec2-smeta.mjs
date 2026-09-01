@@ -298,10 +298,81 @@ const SHEET = {
   p.run('bind();'); mm.oninput ? mm.oninput() : (mm.onchange && mm.onchange())
   t.ok('товар пережил правку толщины', p.q('spec2Sheet().model.skin[1].pid') === 'p_ppu')
 
+  // Замена материала в строке пирога правит САМ ПИРОГ: у стены один источник
+  // правды о том, из чего она сделана.
+  const lkey = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.from==="layer";})[0].key') + '|p_ppu'
+  const lopen = p.dom.node({ a: 'est-mat-open', k: lkey }); p.run('spec2Tab="est";tSpec2();bind();'); lopen.onclick()
+  p.dom.field('msw-input', 'Монтажный комплект окна')
+  const ldo = p.dom.node({ a: 'est-mat-do', k: lkey }); p.run('bind();'); ldo.onclick()
+  t.ok('замена слоя ушла в пирог', p.q('spec2Sheet().model.skin[1].pid') === 'p_win')
+  t.ok('и лист заменами не оброс', p.q('Object.keys(spec2Sheet().mats||{}).length') === 0)
+
   // Объект собирается тем же списком — вместе со строками пирога.
   const shown = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.length')
   const nWorks = p.q('specBuildStages(spec2Sheet()).reduce(function(a,s){return a+s.works.length;},0)')
   t.ok('строки пирога уехали в объект', nWorks === shown, 'объект ' + nWorks + ', смета ' + shown)
+}
+
+// ── 10. Материалы перечнем и с заменой ──────────────────────────────────────
+// Состав строки — это и есть спецификация, и читают его глазами. Заменa живёт на
+// листе: справочник общий, и правка в нём меняла бы состав всех будущих домов.
+{
+  t.section('Материалы строки')
+  const PROD2 = PRODUCTS.concat([
+    { id: 'p_alt', name: 'Гофра усиленная', unitCost: 90, store: 'Лемана', mode: 'piece' },
+    { id: 'p_sheet2', name: 'ОСП 12 мм', unitCost: 1300, store: 'Лемана', mode: 'sheet', packBase: 'м²', packPer: 3 },
+  ])
+  const EST3 = EST.concat([
+    { id: 'e_el', kind: 'house', name: 'Разводка электрики', stage: 1,
+      lines: [{ pid: 'p_win', qty: 1 }, { pid: 'p_dr', qty: 50 }] },
+  ])
+  const p = boot({})
+  p.set({
+    expProducts: PROD2, estimates: EST3, dbPlans: [], crmClients: [],
+    specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [],
+    contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+    buildRules: [],
+  })
+  p.run('spec2Tab="scheme";tSpec2();')
+  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+  const est = p.run('modelFull=false;spec2Tab="est";tSpec2()')
+
+  t.ok('материалы идут перечнем, а не строкой', (est.match(/data-a="est-mat-open"/g) || []).length >= 2)
+  t.ok('у каждого своя цена и количество', /₽\/шт × /.test(est))
+  t.ok('и сумма по материалу', /50 шт/.test(est))
+
+  // Тап по ⇄ раскрывает выбор из базы.
+  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0].key') + '|p_dr'
+  const open = p.dom.node({ a: 'est-mat-open', k: key }); p.run('bind();'); open.onclick()
+  const shown = p.run('tSpec2()')
+  t.ok('раскрылся выбор из базы', /ЗАМЕНИТЬ НА МАТЕРИАЛ ИЗ БАЗЫ/.test(shown))
+  t.ok('и это список каталога', shown.indexOf('id="msw-catalog"') >= 0 && /Гофра усиленная/.test(shown))
+
+  // Меняем товар.
+  const before = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0].cost')
+  p.dom.field('msw-input', 'Гофра усиленная')
+  const go = p.dom.node({ a: 'est-mat-do', k: key }); p.run('bind();'); go.onclick()
+  const pos = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0]')
+  t.ok('материал заменён', pos.mats.some((m) => m.pid === 'p_alt' && m.n === 'Гофра усиленная'))
+  t.ok('количество сохранено', pos.mats.find((m) => m.pid === 'p_alt').qty === 50)
+  t.ok('цена строки пересчиталась', pos.cost !== before, before + ' → ' + pos.cost)
+  t.ok('замена лежит на листе', p.q('Object.keys(spec2Sheet().mats).length') === 1)
+  t.ok('справочник не тронут', p.q('estimates.find(function(e){return e.id==="e_el";}).lines[1].pid') === 'p_dr')
+  t.ok('в строке видно, что материал заменён', /заменён/.test(p.run('tSpec2()')))
+
+  // Замена уезжает в объект вместе с составом.
+  const works = p.q('specBuildStages(spec2Sheet()).reduce(function(a,s){return a.concat(s.works);},[])')
+  t.ok('объект собран с новым материалом',
+    works.some((w) => (w.mats || []).some((m) => m.pid === 'p_alt')))
+
+  // Возврат к справочнику.
+  const key2 = pos.key + '|p_alt'
+  const open2 = p.dom.node({ a: 'est-mat-open', k: key2 }); p.run('bind();'); open2.onclick()
+  const back = p.dom.node({ a: 'est-mat-reset', k: key2 }); p.run('bind();'); back.onclick()
+  const after = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0]')
+  t.ok('вернулся товар из справочника', after.mats.some((m) => m.pid === 'p_dr'))
+  t.ok('и цена прежняя', after.cost === before)
+  t.ok('замена с листа убрана', p.q('Object.keys(spec2Sheet().mats).length') === 0)
 }
 
 t.done()
