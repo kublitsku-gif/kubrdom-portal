@@ -45,11 +45,11 @@ import { needStatus, needState, objectSupply, migrateLegacy, needQty, isSelectio
 import { sheetPositions, sheetTotals, sheetIssues, optionGroups, roomArea, optionCost,
   SPEC_POINTS, pointMeta, pointTotals, roomPoints } from "../src/spec.js";
 import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyContainer, modelRooms,
-  modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom,
+  modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom, wallFits,
   splitLengthwise, mergeLengthwise, moveLengthwise, elevation,
   bayAt, splitAt, splitLengthwiseAt, nearestSide, opPosAt,
   modelToSpecs, modelTotals, modelIssues, modelScheme, modelAreas, modelWalls, snapWall, addWall, headSill, alignHeads, partitionAt, INNER_DOOR,
-  WIN_CATALOG, winCatItem, winFace, winTypeFrom,
+  WIN_CATALOG, winCatItem, winFace, winTypeFrom, frameNeeded, JAMB_TUBE, JAMB_GAP_MIN, JAMB_GAP,
   MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2 } from "../src/spec2.js";
@@ -9965,6 +9965,13 @@ function modelSwingBar(sh){
     (t.kind==="door"
       ? btn("model-op-hinge","⇄","Петли на другой откос")+btn("model-op-into","⇅","Открывать в другую сторону")
       : '')+
+    // Усиление — узел монтажа, и у глухого витража в торце его нет. Угадать за
+    // человека, что именно тут стоит, нельзя, поэтому это кнопка, а не догадка.
+    (op.side==="part"?''
+      :(function(){
+        const on=frameNeeded(op, t);
+        return '<button data-a="model-op-frame" data-id="'+op.id+'" title="Труба 40×40 по обеим сторонам проёма" style="flex-shrink:0;display:flex;align-items:center;gap:6px;border:1.5px solid '+(on?"#e8975a":"rgba(255,255,255,.3)")+';background:'+(on?"#e8975a22":"transparent")+';color:#fff;border-radius:9px;padding:6px 12px;font-size:11.5px;font-weight:700;cursor:pointer"><span style="font-size:13px">🔩</span>'+(on?"усиление 40×40":"без усиления")+'</button>';
+      })())+
     // Положение числом. В торце витраж 2000 стоит в стене 2352 — ходу 352 мм, и
     // пальцем это три сантиметра на экране: там проём ставят размером, а не жестом.
     //
@@ -11013,6 +11020,12 @@ function schemeParts(sc, view){
     // ИМЕННО ЕЁ, а не перерисовывает весь чертёж (см. `model-op-drag`).
     g+='<g data-op="'+esc(op.id)+'">';
     g+='<rect x="'+op.x+'" y="'+op.y+'" width="'+op.w+'" height="'+op.h+'" fill="#fff" stroke="#0d1b2e" stroke-width="26"/>';
+    // Усиление: труба 40×40 по обе стороны проёма, во всю высоту. На плане это два
+    // квадрата в толще стены — по ним размечают стойки. Клиенту их не показываем:
+    // это узел монтажа, а не планировка.
+    if(!plain)(op.jambs||[]).forEach(function(j){
+      g+='<rect x="'+j.x+'" y="'+j.y+'" width="'+j.w+'" height="'+j.h+'" fill="#2f4a63" stroke="#fff" stroke-width="10"/>';
+    });
     if(op.kind==="door"){ g+=schDoorSwing(op); }
     else {
       const along=(op.side==="n"||op.side==="s");
@@ -11171,10 +11184,24 @@ function spec2Sheet(){ return (specSheets2||[])[0]||null; }
 // Два вида одного чертежа: рабочий с размерами и лист для клиента. Ни один не
 // «главнее» — это один дом, показанный тому, кто его читает.
 const SCHEME_VIEWS=[
-  ["dim",   "📐 Размеры",    "цепочки, марки проёмов — по ним размечают и заказывают"],
+  ["dim",   "📐 Размеры",    "цепочки, марки проёмов и усиление — по ним размечают и заказывают"],
   ["plain", "🏠 Планировка", "имена помещений и площадь пола — лист для клиента"],
 ];
 function schemeViewMeta(){ return SCHEME_VIEWS.find(function(v){return v[0]===schemeView;})||SCHEME_VIEWS[0]; }
+// Что означают квадраты у проёмов. Числа здесь — те же константы, по которым труба
+// нарисована: пояснение, живущее отдельно от чертежа, разойдётся с ним первым же.
+function schemeLegend(){
+  if(schemeView!=="dim")return "";
+  return '<div style="display:flex;gap:9px;align-items:flex-start;background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:10px 12px;margin-bottom:9px">'+
+    '<span style="font-size:15px;line-height:1.1">🔩</span>'+
+    '<div style="flex:1;min-width:0;font-size:11.5px;color:#5a7a9a;line-height:1.5">'+
+      '<b style="color:#0d1b2e">Усиление проёмов</b> — труба '+JAMB_TUBE+'×'+JAMB_TUBE+' мм по обеим сторонам окна и входной двери, во всю высоту; изделие встаёт между трубами.'+
+      '<br>Зазор до изделия '+JAMB_GAP_MIN+'–'+JAMB_GAP+' мм, поэтому <b style="color:#0d1b2e">проём режется на '+(2*(JAMB_TUBE+JAMB_GAP_MIN))+'–'+(2*(JAMB_TUBE+JAMB_GAP))+' мм шире изделия</b>.'+
+      '<br>На чертеже это тёмные квадраты у откосов. У глухого витража в торце усиления нет — снять или вернуть его можно у выбранного проёма в редакторе.'+
+    '</div>'+
+  '</div>';
+}
+
 function schemeViewTabs(){
   return '<div style="display:flex;gap:5px;margin-bottom:8px">'+
     SCHEME_VIEWS.map(function(v){
@@ -11250,7 +11277,8 @@ function tSpec2(){
     '<div data-a="spec2-scheme" title="Открыть крупно" style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:12px;margin-bottom:9px;cursor:zoom-in">'+
       modelSchemeSvg(built.model, built.winTypes, 0, schemeView)+
       '<div style="font-size:10.5px;color:#9aabbf;text-align:center;margin-top:8px">тап — открыть крупно</div>'+
-    '</div>';
+    '</div>'+
+    schemeLegend();
   // Площади рядом со схемой: их считают по этому же чертежу, и держать их на
   // другом экране значит заставить сверять два экрана.
   h+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
@@ -19630,14 +19658,14 @@ function bind(){
       const j=(i<rooms.length-1)?i:i-1;
       if(j<0){ render(); return; }
       const d=(i===j)?(mm-(Number(rooms[i].len)||0)):((Number(rooms[i].len)||0)-mm);
-      sh.model=moveBoundary(sh.model, j, d);
+      sh.model=moveBoundary(sh.model, j, d, winTypes);
       modelSync(sh); fl();
     };}
     else if(a==="model-split"){el.onclick=()=>{
       const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
       const before=(sh.model.rooms||[]).length;
-      sh.model=splitRoom(sh.model, el.dataset.id, gid());
-      if((sh.model.rooms||[]).length===before){ alert("Помещение слишком короткое, чтобы делить его перегородкой."); return; }
+      sh.model=splitRoom(sh.model, el.dataset.id, gid(), null, winTypes);
+      if((sh.model.rooms||[]).length===before){ alert("Разделить нечем: помещение слишком короткое или посередине окно."); return; }
       modelSync(sh); fl();
     };}
     else if(a==="model-merge"){el.onclick=()=>{
@@ -19697,6 +19725,12 @@ function bind(){
       const op=(sh.model.openings||[]).find(function(o){return o.id===el.dataset.id;}); if(!op)return;
       op.into=((op.into==null?1:(Number(op.into)||1))>=0)?-1:1;
       fl();
+    };}
+    else if(a==="model-op-frame"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
+      const op=(sh.model.openings||[]).find(function(o){return o.id===el.dataset.id;}); if(!op)return;
+      op.frame=!frameNeeded(op, winType(op.typeId));
+      modelSync(sh); fl();
     };}
     else if(a==="model-op-hinge"){el.onclick=()=>{
       const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
@@ -19908,8 +19942,11 @@ function bind(){
         const m=sh.model, L=totalLength(m), W=Number(m.w)||0;
         if(modelTool==="wall"){
           if(x<0||x>L){ return; }
+          // Стену в проём не ставим: окно режет наружную стену насквозь, и
+          // перегородка упёрлась бы в стеклопакет. Говорим, что именно мешает.
+          if(!wallFits(m, Math.round(x), winTypes)){ alert("Здесь окно или дверь — перегородку в проём не поставить."); return; }
           const before=(m.rooms||[]).length;
-          sh.model=splitAt(m, x, gid(), gid());
+          sh.model=splitAt(m, x, gid(), gid(), winTypes);
           if((sh.model.rooms||[]).length===before){ alert("Слишком близко к соседней стене — помещение получилось бы меньше "+(MIN_ROOM/1000)+" м."); return; }
         } else if(modelTool==="wallw"){
           const bay=bayAt(m, x); if(!bay)return;
@@ -20102,7 +20139,7 @@ function bind(){
         const up=function(){
           el.onpointermove=null; el.onpointerup=null; el.onpointercancel=null;
           if(!moved||!d)return;                      // случайный тап границу не двигает
-          sh.model=moveBoundary(sh.model, i, d);
+          sh.model=moveBoundary(sh.model, i, d, winTypes);
           modelSync(sh); fl();
         };
         el.onpointermove=move; el.onpointerup=up; el.onpointercancel=up;

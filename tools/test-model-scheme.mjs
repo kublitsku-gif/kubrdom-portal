@@ -175,6 +175,58 @@ const sum = (a) => a.reduce((x, y) => x + y, 0)
   ok('все четыре положения различаются', seen.size === 4, [...seen].join(' | '))
 }
 
+// ── 3б. Усиление проёмов ─────────────────────────────────────────────────────
+// По обе стороны окна и входной двери стоит труба 40×40 во всю высоту, изделие
+// встаёт между трубами. Значит проём в стене шире изделия на две трубы и два
+// зазора — по этим числам режут стену, и ошибка здесь стоит переваренного проёма.
+{
+  console.log('Усиление проёмов')
+  const { model, winTypes } = presetModel('c12-san-liv-bed', [], ids())
+  const sc = modelScheme(model, winTypes)
+  const outer = sc.openings.filter((o) => o.side !== 'part')
+
+  const win1 = sc.openings.find((o) => o.mark === 'О-1')
+  ok('у окна две трубы', win1.frame === true && win1.jambs.length === 2, JSON.stringify(win1.jambs))
+  ok('труба 40×40', win1.jambs.every((j) => j.w === 40 && j.h === 40))
+  ok('зазор до изделия 20 мм с обеих сторон',
+    win1.x - (win1.jambs[0].x + 40) === 20 && win1.jambs[1].x - (win1.x + win1.w) === 20,
+    JSON.stringify([win1.x, win1.w, win1.jambs[0].x, win1.jambs[1].x]))
+  ok('и проём выходит шире изделия на 120',
+    (win1.jambs[1].x + 40) - win1.jambs[0].x === win1.width + 120)
+  ok('труба стоит в толще стены',
+    win1.jambs.every((j) => j.y >= win1.y && j.y + j.h <= win1.y + win1.h), JSON.stringify(win1.jambs))
+
+  const door = sc.openings.find((o) => o.mark === 'Д-1')
+  ok('у входной двери усиление тоже есть', door.frame === true && door.jambs.length === 2)
+
+  // Торцевой витраж глухой: он стоит между собственными стойками контейнера.
+  const vitr = sc.openings.find((o) => o.mark === 'О-2')
+  ok('у глухого витража усиления нет', vitr.frame === false && vitr.jambs.length === 0)
+  // Межкомнатные двери стоят в каркасной перегородке — варить не во что.
+  ok('в перегородках усиления нет',
+    sc.openings.filter((o) => o.side === 'part').every((o) => o.frame === false && !o.jambs.length))
+  ok('трубы считаются только у наружных проёмов',
+    outer.filter((o) => o.jambs.length).length === 2, String(outer.filter((o) => o.jambs.length).length))
+
+  // Решение человека сильнее умолчания — в обе стороны.
+  const off = Object.assign({}, model, {
+    openings: model.openings.map((o) => (o.side === 's' ? Object.assign({}, o, { frame: false }) : o)),
+  })
+  ok('снятое усиление не рисуется',
+    modelScheme(off, winTypes).openings.filter((o) => o.side === 's').every((o) => !o.jambs.length))
+  const on = Object.assign({}, model, {
+    openings: model.openings.map((o) => (o.side === 'e' ? Object.assign({}, o, { frame: true }) : o)),
+  })
+  ok('и включённое у глухого — рисуется',
+    modelScheme(on, winTypes).openings.find((o) => o.side === 'e').jambs.length === 2)
+
+  // Торцевой проём меряется по ширине: трубы стоят сверху и снизу от него.
+  const endOn = modelScheme(on, winTypes).openings.find((o) => o.side === 'e')
+  ok('у торцевого проёма трубы разнесены по ширине контейнера',
+    endOn.jambs[0].y + 40 + 20 === endOn.y && endOn.jambs[1].y === endOn.y + endOn.h + 20,
+    JSON.stringify(endOn.jambs))
+}
+
 // ── 4. Ничего лишнего ────────────────────────────────────────────────────────
 {
   console.log('Чего на схеме нет')

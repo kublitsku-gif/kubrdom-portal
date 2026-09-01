@@ -8,9 +8,10 @@
 // висит раскладка и выбранная отделка.
 import { CONTAINERS, MIN_ROOM, FINISH_THICK, addWall, modelScheme, alignHeads, headHeight, containerMeta, emptyModel, applyContainer, modelRooms,
   modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom,
+  openingSpans, wallFits,
   splitLengthwise, mergeLengthwise, moveLengthwise, elevation,
   bayAt, splitAt, splitLengthwiseAt, nearestSide, opPosAt,
-  openingCounts, modelToSpecs, modelTotals, modelIssues, modelAreas } from '../src/model.js'
+  openingCounts, modelToSpecs, modelTotals, modelIssues, modelAreas, presetModel, MODEL_PRESETS } from '../src/model.js'
 // Смета — сосед по деньгам: проверяем, что площадь непрямоугольной комнаты доходит
 // до расчёта, а не теряется по дороге.
 import { roomArea } from '../src/spec.js'
@@ -68,6 +69,37 @@ function house() {
   const squashed = moveBoundary(m, 0, 99999)
   ok('соседа нельзя съесть до нуля', squashed.rooms[1].len === MIN_ROOM, String(squashed.rooms[1].len))
   ok('контейнер всё ещё сходится', totalLength(squashed) === m.l)
+}
+
+
+// ── Стена не заезжает на проём ───────────────────────────────────────────────
+// Окно режет наружную стену насквозь: перегородка, доехавшая до него, упирается в
+// стеклопакет, а на чертеже получается дыра в стене вместо планировки.
+{
+  console.log('Перегородка и проёмы')
+  const { model, winTypes } = presetModel('c12-san-liv-bed', [], (() => { let i = 0; return () => 'w' + (++i) })())
+  const at = (mm) => modelBays(mm).map((b) => b.x1)
+  const spans = openingSpans(model, winTypes)
+  ok('пролёты проёмов посчитаны с усилением', spans.length === 2 && spans[0].x0 === 2916 && spans[0].x1 === 4536,
+    JSON.stringify(spans))
+
+  const x0 = at(model)[0]
+  const onto = moveBoundary(model, 0, 1200, winTypes)
+  ok('граница остановилась у окна', at(onto)[0] === spans[0].x0 - model.wallThick,
+    at(onto)[0] + ' вместо ' + (spans[0].x0 - model.wallThick))
+  ok('и это дальше, чем было', at(onto)[0] > x0)
+  const back = moveBoundary(model, 1, -2500, winTypes)
+  ok('слева тоже упирается', at(back)[1] === spans[1].x1, String(at(back)[1]))
+  // Свободный ход не трогаем: стена ездит, пока ей есть куда.
+  ok('в свободное место едет как раньше', at(moveBoundary(model, 0, 600, winTypes))[0] === x0 + 600)
+
+  ok('на месте окна стены быть не может', wallFits(model, 3000, winTypes) === false)
+  ok('между проёмами — можно', wallFits(model, 4800, winTypes) === true)
+  ok('и splitAt туда не ставит', splitAt(model, 3000, 'nw', 'ns', winTypes).rooms.length === model.rooms.length)
+  ok('а в свободное место ставит', splitAt(model, 4800, 'nw', 'ns', winTypes).rooms.length === model.rooms.length + 1)
+  // Без справочника изделий ширину проёма узнать не из чего — тогда сторожа нет,
+  // и это честнее, чем угадывать: молчаливая блокировка была бы необъяснимой.
+  ok('без winTypes ограничения нет', at(moveBoundary(model, 0, 1200))[0] === x0 + 1200)
 }
 
 // ── 3. Слияние ───────────────────────────────────────────────────────────────

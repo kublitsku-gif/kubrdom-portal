@@ -43,6 +43,12 @@ export const WALL_THICK = 100;    // каркасная перегородка �
 // модель считает по железу контейнера и даёт лишний квадрат на комнату — а это уже
 // материалы и деньги: в проекте №7640467 при ширине контейнера 2352 комнаты 2200.
 export const FINISH_THICK = 76;
+// Усиление проёма: по обе стороны окна или входной двери стоит труба 40×40 во всю
+// высоту, и изделие вставляется МЕЖДУ трубами с зазором на монтаж. Значит проём в
+// коробке шире изделия на две трубы и два зазора — по этим числам режут стену, и
+// ошибка здесь стоит переваренного проёма.
+export const JAMB_TUBE = 40;          // труба 40×40 мм
+export const JAMB_GAP_MIN = 15, JAMB_GAP = 20;   // зазор до изделия, мм
 
 export function containerMeta(k) {
   return CONTAINERS.find(function (c) { return c.k === k; }) || CONTAINERS[1];
@@ -200,7 +206,9 @@ export const MODEL_PRESETS = [
     needs: [
       { kind: "win",  n: "Окно 1500×2100 поворотно-откидное", w: 1500, h: 2100, cost: 0 },
       { kind: "door", n: "Дверь входная 1000×2100",           w: 1000, h: 2100, cost: 0 },
-      { kind: "win",  n: "Витраж 2000×2200 панорамный",       w: 2000, h: 2200, cost: 0 },
+      // Витраж глухой: створок нет, и усиление ему не рисуется (см. `frameNeeded`).
+      { kind: "win",  n: "Витраж 2000×2200 панорамный",       w: 2000, h: 2200, cost: 0,
+        face: [{ cells: [{}] }] },
       Object.assign({ cost: 0 }, INNER_DOOR),
     ],
     // Проём на перегородке ссылается на отсек НОМЕРОМ (`afterRoom`) — id отсека
@@ -237,7 +245,11 @@ export function presetModel(preset, winTypes, newId) {
         Number(t.w) === Number(nd.w) && Number(t.h) === Number(nd.h);
     });
     if (has) return has.id;
+    // Раскладку копируем вглубь: по ней рисуется мини-картинка изделия и решается,
+    // глухое ли оно, — а общий массив означал бы, что правка в одном доме меняет
+    // картинку во всех.
     const t = { id: gen(), kind: nd.kind || "win", n: nd.n, w: nd.w, h: nd.h, cost: Number(nd.cost) || 0 };
+    if (nd.face) t.face = JSON.parse(JSON.stringify(nd.face));
     types.push(t);
     return t.id;
   });
@@ -624,13 +636,57 @@ export function openingRoom(model, op) {
 
 // Перенос границы между помещениями i и i+1. Двигаем не «границу», а миллиметры
 // из одного помещения в другое: так сумма длин остаётся равной контейнеру.
-export function moveBoundary(model, i, deltaMm) {
+// Куски длинной стены, занятые проёмами, — вместе с усилением: труба стоит в той же
+// стене, и перегородка не может занять её место. По этим отрезкам перегородка
+// понимает, докуда ей можно ехать.
+export function openingSpans(model, winTypes) {
+  const byType = {};
+  (winTypes || []).forEach(function (t) { if (t && t.id) byType[t.id] = t; });
+  return (model.openings || []).map(function (o) {
+    if (o.side !== "n" && o.side !== "s") return null;
+    const t = byType[o.typeId];
+    if (!t) return null;
+    const pad = frameNeeded(o, t) ? (JAMB_TUBE + JAMB_GAP) : 0;
+    const p = Number(o.pos) || 0, w = Number(t.w) || 0;
+    return { id: o.id, x0: p - pad, x1: p + w + pad };
+  }).filter(Boolean);
+}
+
+// Влезает ли поперечная стена [x, x+th] между проёмами.
+export function wallFits(model, x, winTypes) {
+  const th = Number(model.wallThick) || 0;
+  return !openingSpans(model, winTypes).some(function (s) { return x < s.x1 && x + th > s.x0; });
+}
+
+// Стена, доехавшая до окна, — это дыра в наружной стене, а не планировка: проём
+// режет её насквозь, и перегородка упирается в стеклопакет. Поэтому граница
+// останавливается У проёма, а не проходит сквозь него: жест продолжается, стена
+// стоит — так же, как она стоит, упёршись в соседнюю комнату короче MIN_ROOM.
+function stopAtOpenings(spans, x0, th, d) {
+  let x = x0 + d;
+  for (let pass = 0; pass < 2; pass++) {
+    spans.forEach(function (s) {
+      if (x < s.x1 && x + th > s.x0) x = (d > 0) ? Math.min(x, s.x0 - th) : Math.max(x, s.x1);
+    });
+  }
+  return x;
+}
+
+export function moveBoundary(model, i, deltaMm, winTypes) {
   const rooms = (model.rooms || []).map(function (r) { return Object.assign({}, r); });
   const a = rooms[i], b = rooms[i + 1];
   if (!a || !b) return model;
   let d = Math.round(Number(deltaMm) || 0);
   d = Math.max(d, MIN_ROOM - (Number(a.len) || 0));
   d = Math.min(d, (Number(b.len) || 0) - MIN_ROOM);
+  if (d) {
+    // Позиция границы — сумма длин слева: столько же, сколько насчитал `modelBays`.
+    const th = Number(model.wallThick) || 0;
+    const x0 = rooms.slice(0, i + 1).reduce(function (acc, r) { return acc + (Number(r.len) || 0); }, 0) +
+      i * th;
+    const x = stopAtOpenings(openingSpans(model, winTypes), x0, th, d);
+    d = Math.round(x - x0);
+  }
   if (!d) return model;
   a.len = (Number(a.len) || 0) + d;
   b.len = (Number(b.len) || 0) - d;
@@ -649,7 +705,7 @@ function repointParts(model, from, to) {
 
 // Разделить помещение перегородкой пополам. Новое помещение получает свой id —
 // раскладка и отделка привязаны к id, и делить их пополам было бы враньём.
-export function splitRoom(model, roomId, newId, newSubId) {
+export function splitRoom(model, roomId, newId, newSubId, winTypes) {
   const rooms = model.rooms || [];
   const i = rooms.findIndex(function (r) { return r.id === roomId; });
   if (i < 0) return model;
@@ -657,6 +713,9 @@ export function splitRoom(model, roomId, newId, newSubId) {
   const len = Number(r.len) || 0;
   const half = Math.round((len - (Number(model.wallThick) || 0)) / 2);
   if (half < MIN_ROOM) return model;   // делить нечего
+  // Середина отсека может прийтись ровно на окно — тогда делить нечем.
+  const bay = modelBays(model).find(function (b) { return b.id === roomId; });
+  if (bay && !wallFits(model, bay.x0 + half, winTypes)) return model;
   const left = Object.assign({}, r, { len: half });
   const right = { id: newId, name: "Помещение", len: len - half - (Number(model.wallThick) || 0), pts: {} };
   // Отсек с продольной перегородкой делится вместе с ней: иначе санузел в углу
@@ -717,7 +776,7 @@ export function bayAt(model, x) {
 
 // Поперечная стена ровно там, где её нарисовали. Это то же деление отсека, но
 // не пополам: рисуя стену, человек показывает место, а не факт деления.
-export function splitAt(model, x, newId, newSubId) {
+export function splitAt(model, x, newId, newSubId, winTypes) {
   const bay = bayAt(model, x);
   if (!bay) return model;
   const rooms = model.rooms || [];
@@ -727,6 +786,8 @@ export function splitAt(model, x, newId, newSubId) {
   const left = Math.round(x - bay.x0);
   const right = (Number(rooms[i].len) || 0) - left - th;
   if (left < MIN_ROOM || right < MIN_ROOM) return model;   // слишком близко к соседу
+  // И не в проём: окно режет наружную стену насквозь, перегородке там не на что встать.
+  if (!wallFits(model, Math.round(x), winTypes)) return model;
   const a = Object.assign({}, rooms[i], { len: left });
   const b = { id: newId, name: "Помещение", len: right, pts: {} };
   if (rooms[i].sub) b.sub = { id: newSubId || (newId + "s"), name: "Помещение", pts: {}, at: rooms[i].sub.at };
@@ -969,6 +1030,19 @@ export function modelAreas(model, winTypes) {
 // Стена коробки на схеме — это ОБШИВКА (`finish`): своей толщины у железа
 // контейнера модель не знает, а обрешётка с утеплителем — знает, и именно она
 // съедает те сантиметры, из-за которых площади не сходятся с чертежом.
+// Нужно ли усиление этому проёму. Общая функция: по ней и рисуется труба на
+// чертеже, и подписана кнопка у выбранного проёма — иначе экран обещал бы одно,
+// а чертёж показывал другое.
+export function frameNeeded(op, type) {
+  if (!op) return false;
+  if (op.frame != null) return !!op.frame;
+  if (op.side === "part") return false;          // перегородка каркасная, варить не во что
+  const blind = !!(type && type.face && type.face.length) && winFace(type).rows.every(function (r) {
+    return r.cells.every(function (c) { return !c.o; });
+  });
+  return !blind;                                  // глухой витраж в торце усиливать нечем
+}
+
 export function modelScheme(model, winTypes) {
   const m = model || {};
   const fin = (m.finish == null) ? FINISH_THICK : (Number(m.finish) || 0);
@@ -997,6 +1071,18 @@ export function modelScheme(model, winTypes) {
     const J = (hinge === "start") ? B : A;
     const len = along ? box.w : box.h;
     return { hinge: H, jamb: J, tip: { x: H.x + out[0] * len, y: H.y + out[1] * len } };
+  };
+
+  // Трубы стоят вплотную к откосам, через зазор. На плане это два квадрата 40×40 в
+  // толще стены — по ним бригада размечает стойки, а по зазору понимает, что проём
+  // режется шире изделия.
+  const jambsOf = function (box, along) {
+    const t2 = JAMB_TUBE, g = JAMB_GAP;
+    return along
+      ? [{ x: box.x - g - t2, y: box.y + (box.h - t2) / 2, w: t2, h: t2 },
+         { x: box.x + box.w + g, y: box.y + (box.h - t2) / 2, w: t2, h: t2 }]
+      : [{ x: box.x + (box.w - t2) / 2, y: box.y - g - t2, w: t2, h: t2 },
+         { x: box.x + (box.w - t2) / 2, y: box.y + box.h + g, w: t2, h: t2 }];
   };
 
   const openings = (m.openings || []).map(function (op) {
@@ -1033,10 +1119,18 @@ export function modelScheme(model, winTypes) {
       along = (op.side === "n" || op.side === "s");
     }
     const kind = t.kind || "win";
+    // Усиление ставят у проёмов НАРУЖНОЙ стены: перегородка каркасная, трубу в неё
+    // не варят. Глухой витраж — исключение: он стоит в торце во всю стену, между
+    // собственными стойками контейнера, и усиливать там нечего. Глухим считаем то,
+    // что само изделие о себе говорит раскладкой; изделие без раскладки о себе
+    // ничего не сказало, поэтому усиление ему рисуем — а снять его можно у проёма
+    // (`op.frame === false`): угадать за человека, что именно тут стоит, нельзя.
+    const frame = frameNeeded(op, t);
     return {
       id: op.id, side: op.side, after: op.after || "", kind: kind, name: t.n || "Проём",
       pos: pos, width: wd, height: Number(t.h) || 0, sill: sill,
       x: box.x, y: box.y, w: box.w, h: box.h,
+      frame: frame, jambs: frame ? jambsOf(box, along) : [],
       swing: (kind === "door") ? swingOf(box, along, out, op.hinge || (along ? "end" : "start")) : null,
     };
   }).filter(function (o) { return o && o.width > 0; });

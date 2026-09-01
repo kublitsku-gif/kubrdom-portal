@@ -241,8 +241,12 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
 
   // Деление прямо из панели.
   const n0 = p.q('specSheets[0].model.rooms.length')
+  // Кухню посередине делить нельзя: там ровно входная дверь — стене не на что встать.
   click(p, { a: 'model-split', id: bays[1] })
-  t.ok('отсек разделился', p.q('specSheets[0].model.rooms.length') === n0 + 1)
+  t.ok('через дверь отсек не делится', p.q('specSheets[0].model.rooms.length') === n0,
+    String(p.q('specSheets[0].model.rooms.length')))
+  click(p, { a: 'model-split', id: bays[0] })
+  t.ok('отсек без проёмов разделился', p.q('specSheets[0].model.rooms.length') === n0 + 1)
 }
 
 // ── 8. После стены снова можно двигать ──────────────────────────────────────
@@ -257,7 +261,14 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   const canvas = p.dom.node({ a: 'model-canvas', vb: '-700 -700 13352 3752' })
   canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1000, height: 281 })
   p.run('bind();')
-  canvas.onclick({ clientX: 500, clientY: 140 })
+  // Сначала целимся ровно в окно: перегородке там не на что встать.
+  const onWin = (2916 + 4536) / 2
+  canvas.onclick({ clientX: (onWin + 700) / 13352 * 1000, clientY: 140 })
+  t.ok('в проём стена не встаёт', p.q('specSheets[0].model.rooms.length') === 3,
+    String(p.q('specSheets[0].model.rooms.length')))
+  t.ok('и инструмент остался включённым', p.q('modelTool') === 'wall')
+  // А в свободное место — встаёт.
+  canvas.onclick({ clientX: (7400 + 700) / 13352 * 1000, clientY: 140 })
   t.ok('стена поставлена', p.q('specSheets[0].model.rooms.length') === 4,
     String(p.q('specSheets[0].model.rooms.length')))
   // Стену ставят по одной: остаться в режиме рисования значит спрятать ручки и
@@ -361,6 +372,42 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   click(p, { a: 'model-tool', k: 'del' })
   click(p, { a: 'model-op-hit', id: door.id })
   t.ok('в «Убрать» тап удаляет', !open().some((o) => o.id === door.id))
+}
+
+// ── 9в. Стена не заезжает на окно, а усиление снимается кнопкой ──────────────
+// Перегородка, доехавшая до окна, упирается в стеклопакет: на чертеже это дыра в
+// наружной стене, а не планировка. Жест при этом не отменяется — стена просто
+// встаёт у проёма, как встаёт у соседней комнаты короче MIN_ROOM.
+{
+  t.section('Стена, окно и усиление')
+  const p = lab()
+  const at = () => p.q('modelBays(specSheet(specOpenId).model).map(function(b){return b.x1;})')
+  const was = at()[0]
+
+  const el = p.dom.node({ a: 'model-drag', i: '0' })
+  el.ownerSVGElement = { dataset: { vbw: '13352' }, getBoundingClientRect: () => ({ width: 1000, height: 300 }) }
+  p.run('bind();')
+  // Тянем на окно: 1200 мм вправо — это 90 px при таком масштабе.
+  el.onpointerdown({ clientX: 0, clientY: 0, pointerId: 1, preventDefault() {} })
+  el.onpointermove({ clientX: 1200 / 13352 * 1000, clientY: 0 })
+  el.onpointerup()
+  const win = p.q('specSheet(specOpenId).model.openings.filter(function(o){return o.side==="s";})[0]')
+  t.ok('граница поехала', at()[0] > was, was + ' -> ' + at()[0])
+  t.ok('но встала перед окном с усилением', at()[0] + p.q('specSheet(specOpenId).model.wallThick') <= win.pos - 60,
+    at()[0] + ' при окне с ' + win.pos)
+
+  // Усиление у выбранного проёма снимается и возвращается кнопкой: у глухого
+  // витража его нет, а что стоит в этом проёме, знает человек, а не чертёж.
+  p.run('modelOpSel=' + JSON.stringify(win.id) + ';')
+  const bar = p.run('modelFullOverlay()')
+  t.ok('кнопка усиления предлагается', /data-a="model-op-frame"/.test(bar) && /усиление 40×40/.test(bar))
+  click(p, { a: 'model-op-frame', id: win.id })
+  t.ok('усиление снято', p.q('specSheet(specOpenId).model.openings.filter(function(o){return o.id===' + JSON.stringify(win.id) + ';})[0].frame') === false)
+  t.ok('и с чертежа тоже',
+    p.run('modelSchemeSvg(specSheet(specOpenId).model, winTypes, 0, "dim")').split('fill="#2f4a63"').length - 1 === 2)
+  t.ok('кнопка это показывает', /без усиления/.test(p.run('modelFullOverlay()')))
+  click(p, { a: 'model-op-frame', id: win.id })
+  t.ok('и возвращается', p.q('specSheet(specOpenId).model.openings.filter(function(o){return o.id===' + JSON.stringify(win.id) + ';})[0].frame') === true)
 }
 
 // ── 10. «Вернуть» отменяет удаление ──────────────────────────────────────────
