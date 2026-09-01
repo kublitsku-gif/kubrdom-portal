@@ -953,7 +953,7 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
       length: 11952, width: 2352, height: 2500,
       bays: [{ name: 'Санузел', len: 2000 }, { name: 'Зал', len: 6400 }, { name: 'Спальня', len: 3200 }],
       openings: [
-        { kind: 'win', side: 's', after: null, pos: 2976, w: 1500, h: 1400, label: 'ОК-1' },
+        { kind: 'win', side: 's', after: null, pos: 2976, w: 1500, h: 1400, sill: 200, label: 'ОК-1' },
         { kind: 'door', side: 'part', after: 0, pos: 826, w: 700, h: 2050, label: 'Д-1' },
       ],
       notes: 'размеры окон сняты по масштабу',
@@ -982,16 +982,30 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   t.ok('без файла кнопки нет', p.run('modelFullOverlay()').indexOf('model-plan-read') < 0)
   p.run('specSheets[0].plan={name:"план.pdf",url:"/api/file/plans/x.pdf",pdf:true};')
   t.ok('с файлом кнопка появилась', p.run('modelFullOverlay()').indexOf('model-plan-read') >= 0)
+  // Листов у дома бывает несколько: план, фасады, разрезы. Уходят они одним
+  // запросом — дом на них один, и сшивать прочитанное по кускам пришлось бы нам.
+  t.ok('добавить лист можно всегда', p.run('modelFullOverlay()').indexOf('model-plan-add') >= 0)
+  p.run('specSheets[0].plans=[specSheets[0].plan,{name:"фасад.jpg",url:"/api/file/plans/f.jpg",pdf:false}];')
+  const two = p.run('modelFullOverlay()')
+  t.ok('на кнопке видно, сколько листов уйдёт', two.indexOf('2 л.') >= 0,
+    'иначе чтение одного файла из трёх выглядит так же успешно')
+  t.ok('и в подсказке их имена', two.indexOf('фасад.jpg') >= 0)
 
   click(p, { a: 'model-plan-read' })
   await new Promise((res) => setTimeout(res, 0))
-  t.ok('файл ушёл на сервер', !!sent && sent.body.key === '/api/file/plans/x.pdf', JSON.stringify(sent))
+  t.ok('оба листа ушли одним запросом', !!sent && sent.body.keys.length === 2, JSON.stringify(sent && sent.body.keys))
+  t.ok('вместе с именами', !!sent && sent.body.names['/api/file/plans/f.jpg'] === 'фасад.jpg')
+  t.ok('файл ушёл на сервер', !!sent && sent.body.keys[0] === '/api/file/plans/x.pdf', JSON.stringify(sent))
   t.ok('ключ Claude в браузер не попадает', p.run('String(modelPlanRecognize)').indexOf('api.anthropic.com') < 0,
     'читает сервер — иначе ключ живёт в панели, открытой каждому продавцу')
 
   // Прочитанное ждёт сверки: модель ещё прежняя, панель уже показывает числа.
   const dom = p.run('modelFullOverlay()')
   t.ok('прочитанное показано списком', dom.indexOf('Прочитано с планировки') >= 0)
+  t.ok('и по каким листам', dom.indexOf('по 2 листам') >= 0, 'человек сверяет с теми же листами')
+  // «Н под.=20» на чертеже — это замер, а не наша догадка: он обязан доехать до
+  // панели целым, иначе высокое окно санузла встанет вровень с окном спальни.
+  t.ok('подоконник с чертежа виден', dom.indexOf('подоконник 0,2 м') >= 0, 'ожидали подоконник в строке проёма')
   t.ok('в нём помещения с чертежа', dom.indexOf('Санузел') >= 0 && dom.indexOf('Спальня') >= 0)
   t.ok('и проёмы', dom.indexOf('ОК-1') >= 0 && dom.indexOf('Д-1') >= 0)
   t.ok('домыслы вынесены отдельно', dom.indexOf('ПРОВЕРЬТЕ РУКАМИ') >= 0 && dom.indexOf('высота не подписана') >= 0,
@@ -1021,6 +1035,8 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   t.ok('имена с чертежа', rooms.map((r) => r.name).join(',') === 'Санузел,Зал,Спальня', rooms.map((r) => r.name).join(','))
   t.ok('санузел ≈ 4,4 м²', Math.abs(rooms[0].area - 4.4) < 0.05, String(rooms[0].area))
   t.ok('проёмы на местах', p.q('specSheets[0].model.openings').length === 2)
+  t.ok('и подоконник доехал до модели', p.q('specSheets[0].model.openings')[0].sill === 200,
+    String(p.q('specSheets[0].model.openings')[0].sill))
   t.ok('изделия заведены', p.q('winTypes').length === 2, String(p.q('winTypes').length))
   // Подложка — то, ПО чему сверяют: пережить замену модели она обязана.
   t.ok('подложка осталась', !!p.q('specSheets[0].model.under'))

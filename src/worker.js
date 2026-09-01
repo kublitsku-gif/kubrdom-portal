@@ -13,7 +13,7 @@ import { viewText, viewCallback } from "./botview.js";
 import { ensureTopic } from "./tgapi.js";
 import { workText, workCallback, workMedia } from "./botwork.js";
 import { issueText, issueCallback, issueMedia, issueReplyToAuthor } from "./botissue.js";
-import { planRequest, planFromResponse, planNormalize, PLAN_MODEL } from "./plan-read.js";
+import { planRequest, planFromResponse, planNormalize, PLAN_MODEL, PLAN_MAX_FILES } from "./plan-read.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
@@ -653,25 +653,39 @@ async function planRead(env, request) {
   if (!env.FILES) return json({ success: false, error: "R2 не настроен" }, 500);
   if (!env.CLAUDE_API_KEY) return json({ success: false, error: "Не настроен ключ Claude (секрет CLAUDE_API_KEY)" }, 400);
   const body = await request.json().catch(function () { return {}; });
-  const key = String((body && body.key) || "").replace(/^\/api\/file\//, "");
-  if (!key) return json({ success: false, error: "Не указан файл" }, 400);
+  // Листов у одного дома бывает несколько: план, фасады, разрезы. Принимаем список,
+  // одиночный `key` оставляем — им ходят проекты, заведённые до этой правки.
+  const names = (body && body.names) || {};
+  const keys = ((body && body.keys) || [(body && body.key) || ""])
+    .map(function (k) { return String(k || "").replace(/^\/api\/file\//, ""); })
+    .filter(Boolean)
+    .slice(0, PLAN_MAX_FILES);
+  if (!keys.length) return json({ success: false, error: "Не указан файл" }, 400);
 
-  const obj = await env.FILES.get(key);
-  if (!obj) return json({ success: false, error: "Файл не найден" }, 404);
-  const ct = (obj.httpMetadata && obj.httpMetadata.contentType) || "";
-  if (ct !== "application/pdf" && ct.indexOf("image/") !== 0) {
-    return json({ success: false, error: "Читаем только PDF и картинки — а тут " + (ct || "неизвестно что") }, 415);
+  const files = [];
+  let total = 0;
+  for (const key of keys) {
+    const obj = await env.FILES.get(key);
+    if (!obj) return json({ success: false, error: "Файл не найден: " + key }, 404);
+    const ct = (obj.httpMetadata && obj.httpMetadata.contentType) || "";
+    if (ct !== "application/pdf" && ct.indexOf("image/") !== 0) {
+      return json({ success: false, error: "Читаем только PDF и картинки — а тут " + (ct || "неизвестно что") }, 415);
+    }
+    const buf = await obj.arrayBuffer();
+    total += buf.byteLength;
+    // Запрос к API целиком не больше 32 МБ, а base64 раздувает файл в полтора раза.
+    // Считаем ВСЕ листы вместе: по отдельности каждый проходит, а вместе — нет.
+    if (total > 20 * 1024 * 1024) {
+      return json({ success: false, error: "Файлы вместе больше 20 МБ — распознавание не потянет, уберите лишние листы" }, 413);
+    }
+    files.push({ type: ct, b64: base64of(buf), name: String(names[key] || names["/api/file/" + key] || "") });
   }
-  const buf = await obj.arrayBuffer();
-  // Запрос к API целиком не больше 32 МБ, а base64 раздувает файл в полтора раза.
-  if (buf.byteLength > 20 * 1024 * 1024) return json({ success: false, error: "Файл больше 20 МБ — распознавание не потянет" }, 413);
 
-  const b64 = base64of(buf);
   const ask = async function (model) {
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": env.CLAUDE_API_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify(planRequest(ct, b64, model ? { model: model } : {})),
+      body: JSON.stringify(planRequest(files, model ? { model: model } : {})),
     });
     const j = await r.json().catch(function () { return null; });
     return { ok: r.ok, status: r.status, j: j };
@@ -697,7 +711,7 @@ async function planRead(env, request) {
   catch (err) { return json({ success: false, error: String((err && err.message) || err) }, 422); }
 
   return json({
-    success: true, plan: read.plan, warnings: read.warnings,
+    success: true, plan: read.plan, warnings: read.warnings, files: keys.length,
     model: res.j.model || used || PLAN_MODEL, usage: res.j.usage || null,
   });
 }

@@ -7,8 +7,7 @@
 // расхождение доехало до человека списком. Молчаливая правка чужого обмера
 // страшнее ошибки: ошибку видно, поправку — нет.
 import {
-  planRequest, planFromResponse, planNormalize, planToModel, PLAN_TOOL, PLAN_MODEL, PLAN_SCHEMA,
-} from '../src/plan-read.js'
+  planRequest, planFromResponse, planNormalize, planToModel, PLAN_TOOL, PLAN_MODEL, PLAN_SCHEMA, PLAN_SYSTEM } from '../src/plan-read.js'
 import { totalLength, modelRooms, FINISH_THICK } from '../src/model.js'
 
 let failed = 0
@@ -41,12 +40,15 @@ const READ = {
 // распозналось» окажется не про чертёж.
 {
   console.log('Запрос')
-  const pdf = planRequest('application/pdf', 'QkFTRTY0')
-  ok('PDF уходит документом', pdf.messages[0].content[0].type === 'document')
-  ok('и не растрируется на нашей стороне', pdf.messages[0].content[0].source.media_type === 'application/pdf')
-  const png = planRequest('image/png', 'QkFTRTY0')
-  ok('картинка уходит картинкой', png.messages[0].content[0].type === 'image')
-  ok('с её собственным типом', png.messages[0].content[0].source.media_type === 'image/png')
+  const pdf = planRequest([{ type: 'application/pdf', b64: 'QkFTRTY0', name: 'план.pdf' }])
+  const blocks = pdf.messages[0].content
+  ok('PDF уходит документом', blocks.some((b) => b.type === 'document'))
+  ok('и не растрируется на нашей стороне',
+    blocks.find((b) => b.type === 'document').source.media_type === 'application/pdf')
+  const png = planRequest([{ type: 'image/png', b64: 'QkFTRTY0', name: 'скрин.png' }])
+  const img = png.messages[0].content.find((b) => b.type === 'image')
+  ok('картинка уходит картинкой', !!img)
+  ok('с её собственным типом', img.source.media_type === 'image/png')
 
   // Ответ нужен структурой, а не рассказом: инструмент один и он обязателен.
   ok('инструмент навязан', pdf.tool_choice.type === 'tool' && pdf.tool_choice.name === PLAN_TOOL.name)
@@ -55,6 +57,31 @@ const READ = {
   // Все поля обязательные: пропущенное поле молча стало бы «нулём», а ноль в
   // размере — это не «не прочитал», это неверный счёт.
   ok('все поля обязательные', PLAN_SCHEMA.required.length === Object.keys(PLAN_SCHEMA.properties).length)
+}
+
+// ── 1б. Несколько листов одного дома ─────────────────────────────────────────
+// Заказчик присылает план, фасады и разрезы отдельными файлами. Уходят они ОДНИМ
+// запросом: высоту окна с разреза не с чем связать, кроме плана, — сшивать
+// прочитанное по одному листу пришлось бы нам, и вслепую.
+{
+  console.log('Несколько листов')
+  const many = planRequest([
+    { type: 'application/pdf', b64: 'AAA', name: 'план.pdf' },
+    { type: 'image/jpeg', b64: 'BBB', name: 'фасад.jpg' },
+    { type: 'image/png', b64: 'CCC', name: 'разрез.png' },
+  ])
+  const content = many.messages[0].content
+  ok('все листы в одном запросе', content.filter((b) => b.type === 'document' || b.type === 'image').length === 3)
+  ok('и в одном сообщении', many.messages.length === 1)
+  ok('порядок сохранён',
+    content.filter((b) => b.type !== 'text').map((b) => b.source.data).join('') === 'AAABBBCCC')
+  // Имя файла — бесплатная подсказка о том, что на листе: «фасад.jpg» стоит
+  // дешевле любого догадывания по картинке.
+  const texts = content.filter((b) => b.type === 'text').map((b) => b.text).join(' | ')
+  ok('имена листов подписаны', /план\.pdf/.test(texts) && /разрез\.png/.test(texts), texts)
+  ok('сказано, что дом один', /ОДНОГО дома/i.test(texts), texts)
+  ok('и правило про листы есть в инструкции', /РАЗНЫЕ ЛИСТЫ ОДНОГО дома/.test(PLAN_SYSTEM))
+  ok('не удваивать помещения — тоже', /не удваивай/i.test(PLAN_SYSTEM))
 }
 
 // ── 2. Разбор ответа ─────────────────────────────────────────────────────────
@@ -235,6 +262,43 @@ const READ = {
   const doors = [{ id: 'd1', kind: 'door', n: 'Дверь входная 1000×2100', w: 1000, h: 2100, cost: 27150 }]
   const grab = one({ kind: 'door', side: 'part', after_bay: 0, pos: 800, width: 700, height: 2050, label: 'Д-1' }, doors)
   ok('входная дверь не перехватывает межкомнатную', grab.t.id !== 'd1' && grab.t.w === 700, grab.t.n)
+}
+
+// ── 6б. Подоконник читается с чертежа ────────────────────────────────────────
+// «H=190 Н под.=20» на плане — это ЗАМЕР: высота проёма и высота подоконника.
+// Наша общая линия верха — правило на случай, когда замера нет, и подменять им
+// подписанное число нельзя: окно санузла под потолком встало бы вровень с окном
+// спальни, и на фасаде это увидят все.
+{
+  console.log('Подоконник')
+  const cm = planNormalize({
+    length: 1195.2, width: 230, height: 250,
+    bays: [{ name: 'Спальня', len: 478 }, { name: 'Зал', len: 600 }],
+    openings: [
+      { kind: 'win', side: 's', pos: 200, width: 90, height: 190, sill: 20, label: 'ОК-1' },
+      { kind: 'win', side: 'n', pos: 800, width: 40, height: 80, sill: 110, label: 'санузел' },
+      { kind: 'door', side: 's', pos: 722, width: 90, height: 210, sill: null, label: 'вход' },
+      { kind: 'win', side: 'n', pos: 300, width: 130, height: 115, sill: null, label: 'без подписи' },
+    ],
+    notes: '',
+  })
+  const [ok1, san, dv, none] = cm.plan.openings
+  ok('подоконник переведён в мм', ok1.sill === 200, String(ok1.sill))
+  ok('высокое окно санузла узнано', san.sill === 1100, String(san.sill))
+  ok('у двери подоконника нет', dv.sill === 0, String(dv.sill))
+  ok('не подписан — не выдуман', none.sill === null, String(none.sill))
+  ok('схема спрашивает подоконник',
+    PLAN_SCHEMA.properties.openings.items.required.indexOf('sill') >= 0)
+  ok('и объясняет подпись «Н под.»', /Н под/.test(PLAN_SYSTEM))
+
+  let i = 0
+  const r = planToModel(cm.plan, [], () => 'i' + (++i))
+  const ops = r.model.openings
+  ok('замер доехал до модели', ops[0].sill === 200, String(ops[0].sill))
+  ok('и высокое окно осталось высоким', ops[1].sill === 1100, String(ops[1].sill))
+  // Неподписанное окно вешаем под перемычку — иначе оно молча ляжет на пол.
+  ok('неподписанное — по линии верха', ops[3].sill > 0, String(ops[3].sill))
+  ok('дверь стоит на полу', ops[2].sill === 0, String(ops[2].sill))
 }
 
 // ── 7. Пустой ответ не роняет разбор ─────────────────────────────────────────

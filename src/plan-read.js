@@ -22,6 +22,10 @@ import {
 // цифре стоит дороже разницы в цене запроса.
 export const PLAN_MODEL = "claude-opus-5";
 
+// Сколько листов принимаем за раз. Ограничение не техническое, а смысловое: это
+// листы ОДНОГО дома, и когда их десяток — читают уже не дом, а архив проекта.
+export const PLAN_MAX_FILES = 8;
+
 // Схема ответа. Строгая (`strict: true`): не «попроси JSON и надейся», а
 // гарантия формата на стороне API — разбирать текст с числами мы не будем.
 // Чего на чертеже не видно, приходит как null: выдуманный размер хуже пустого,
@@ -54,14 +58,15 @@ export const PLAN_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["kind", "side", "after_bay", "pos", "width", "height", "label"],
+        required: ["kind", "side", "after_bay", "pos", "width", "height", "sill", "label"],
         properties: {
           kind: { type: "string", enum: ["win", "door"] },
           side: { type: "string", enum: ["n", "s", "w", "e", "part"] },
           after_bay: Object.assign({ description: "Для side=part: номер помещения слева от перегородки, с нуля" }, NUM),
           pos: Object.assign({ description: "От наружного левого угла (n/s) или от верхней длинной стены (w/e/part) до ближнего края проёма, мм" }, NUM),
           width: Object.assign({ description: "Ширина проёма, мм" }, NUM),
-          height: Object.assign({ description: "Высота проёма, мм" }, NUM),
+          height: Object.assign({ description: "Высота проёма, мм (на чертежах подписывают H=…)" }, NUM),
+          sill: Object.assign({ description: "Высота низа проёма от чистого пола, мм (на чертежах «Н под.=…»); у дверей 0" }, NUM),
           label: { type: "string", description: "Подпись у проёма на чертеже — по ней человек найдёт его глазами" },
         },
       },
@@ -86,6 +91,12 @@ export const PLAN_SYSTEM = [
   "Все размеры переводи в МИЛЛИМЕТРЫ (на чертежах бывают см и метры: 2,4 м и 240 см — это 2400).",
   "Длины помещений — В ЧИСТОТЕ, между отделанными стенами, как их подписывают на плане.",
   "Положение проёма — до его БЛИЖНЕГО края (левого для n/s, верхнего для w/e/part), от наружного угла дома.",
+  "Подписи у проёмов читай так: H=190 — высота проёма, «Н под.=20» — высота подоконника от пола (в тех же единицах, что и весь чертёж).",
+  "У дверей подоконник 0. Ширину проёма бери из размерной цепочки по стене, а не из подписи H.",
+  "Файлов может быть несколько — это РАЗНЫЕ ЛИСТЫ ОДНОГО дома (план, фасады, разрезы, страницы одного PDF).",
+  "Читай их вместе и верни ОДНУ планировку: план даёт длины и положения, разрез и фасад — высоты проёмов.",
+  "Не складывай листы как разные дома и не удваивай помещения, увидев их на двух листах.",
+  "Если листы противоречат друг другу — верь плану в размерах и напиши о расхождении в notes.",
   "Чего на чертеже нет — оставляй null и пиши об этом в notes. Не достраивай планировку по здравому смыслу:",
   "по этим числам выставляют счёт, и придуманный размер дороже пропущенного.",
 ].join(" ");
@@ -93,12 +104,33 @@ export const PLAN_SYSTEM = [
 // Запрос к Messages API. PDF уходит как есть — Claude читает страницы сам, и
 // растрировать его на нашей стороне не нужно. Картинка — тем же блоком, но типом
 // image: тип блока обязан совпадать с типом файла, иначе API отвечает 400.
-export function planRequest(mediaType, base64, opts) {
+//
+// Файлов может быть НЕСКОЛЬКО, и уходят они одним запросом: заказчик присылает
+// план, фасады и разрезы отдельными листами, а дом на них один. Прочитанное по
+// одному листу пришлось бы сшивать самим — и сшивать вслепую: высоту окна с
+// разреза не с чем связать, кроме как с планом, который в том же запросе.
+// Перед каждым файлом кладём его имя: «фасад.pdf» — это подсказка о том, что
+// на листе, и стоит она дешевле любого догадывания по картинке.
+export function planRequest(files, opts) {
   const o = opts || {};
-  const isPdf = String(mediaType || "").indexOf("pdf") >= 0;
-  const block = isPdf
-    ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } }
-    : { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } };
+  const list = (files || []).map(function (f) {
+    const type = String((f && f.type) || "");
+    const isPdf = type.indexOf("pdf") >= 0;
+    return {
+      name: String((f && f.name) || ""),
+      block: isPdf
+        ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: f.b64 } }
+        : { type: "image", source: { type: "base64", media_type: type, data: f.b64 } },
+    };
+  });
+  const content = [];
+  list.forEach(function (f, i) {
+    if (list.length > 1 || f.name) content.push({ type: "text", text: "Файл " + (i + 1) + ": " + (f.name || "без имени") });
+    content.push(f.block);
+  });
+  content.push({ type: "text", text: o.hint || (list.length > 1
+    ? "Это листы ОДНОГО дома. Прочитай их вместе и верни одну планировку через plan_read."
+    : "Прочитай эту планировку и верни её через plan_read.") });
   return {
     model: o.model || PLAN_MODEL,
     max_tokens: o.max_tokens || 8000,
@@ -106,10 +138,7 @@ export function planRequest(mediaType, base64, opts) {
     tools: [PLAN_TOOL],
     // Инструмент ровно один и он обязателен: ответ нужен структурой, а не рассказом.
     tool_choice: { type: "tool", name: PLAN_TOOL.name },
-    messages: [{
-      role: "user",
-      content: [block, { type: "text", text: o.hint || "Прочитай эту планировку и верни её через plan_read." }],
-    }],
+    messages: [{ role: "user", content: content }],
   };
 }
 
@@ -148,6 +177,15 @@ function unitScale(r) {
   return max ? 1000 : 1;
 }
 
+// Подоконник особенный: НОЛЬ — это ответ («окно от пола»), а «не подписан» —
+// это null. Через toMm их не различить: там ноль означает «не прочитали», и
+// неподписанное окно молча легло бы на пол.
+function sillOf(v, k) {
+  if (v == null) return null;
+  if (Number(v) === 0) return 0;
+  return toMm(v, k, 1, 2500) || null;
+}
+
 function toMm(v, k, lo, hi) {
   const n = Math.round((Number(v) || 0) * k);
   if (!isFinite(n) || n <= 0) return 0;
@@ -184,6 +222,9 @@ export function planNormalize(raw) {
       // Высоту не прочитали — ставим типовую: без неё изделие не заказать, а
       // 2100 у двери и 1400 у окна человек поправит быстрее, чем впишет с нуля.
       h: toMm(it.height, k, 300, 3000) || (it.kind === "door" ? 2100 : 1400),
+      // Подоконник читаем, если подписан: чертёж знает его точнее, чем наша общая
+      // линия верха. Ноль — тоже ответ (дверь), поэтому «не подписан» — это null.
+      sill: (it.kind === "door") ? 0 : sillOf(it.sill, k),
       label: label,
       guessH: !toMm(it.height, k, 300, 3000),
     };
@@ -327,6 +368,7 @@ export function planToModel(plan, winTypes, newId) {
     }
     picks.push({
       label: o.label, kind: o.kind, side: o.side, pos: o.pos,
+      sill: o.sill,
       w: o.w, h: o.h,                       // что на чертеже
       name: found.n, tw: found.w, th: found.h,   // что поедет в заказ
       cost: (found.added ? Number(found.added.cost) || 0 : null),
@@ -364,14 +406,22 @@ export function planToModel(plan, winTypes, newId) {
     return op;
   }).filter(Boolean);
 
-  // Подоконник с вида сверху не виден вообще. Ставим его по общей линии верха —
-  // ровно так же, как выравнивает редактор: двери от пола, окна подвешены под
-  // перемычку. Разнобой по верху человек на чертеже не заметит, а на фасаде — да.
-  model.openings = alignHeads(model, types).openings.map(function (op) {
-    if (op.side !== "part") return op;
-    const p = Object.assign({}, op);
-    delete p.sill;                    // у двери в перегородке порога нет
-    return p;
+  // Подоконник: подписанный на чертеже («Н под.=20») читаем с него, остальным
+  // ставим общую линию верха — ровно так же, как выравнивает редактор: двери от
+  // пола, окна подвешены под перемычку. Разнобой по верху человек на плане не
+  // заметит, а на фасаде — сразу.
+  const sills = {};
+  (p.openings || []).forEach(function (o, i) { sills[i] = o.sill; });
+  model.openings = alignHeads(model, types).openings.map(function (op, i) {
+    if (op.side === "part") {
+      const cut = Object.assign({}, op);
+      delete cut.sill;                // у двери в перегородке порога нет
+      return cut;
+    }
+    // Подписанный на чертеже подоконник выигрывает у нашей линии верха: это ЗАМЕР,
+    // а не правило.
+    const said = sills[i];
+    return (said == null) ? op : Object.assign({}, op, { sill: said });
   });
 
   return { model: model, winTypes: types, warnings: warn, picks: picks };

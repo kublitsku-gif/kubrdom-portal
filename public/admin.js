@@ -58,7 +58,7 @@ import { allPositions, rulePositions, positionWork, ruleText, ruleReady, RULE_WH
   pieCost, pieMeta, layerMat, matSwapsOf } from "../src/recipe.js";
 import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
 import { isoScene } from "../src/iso.js";
-import { planNormalize, planToModel } from "../src/plan-read.js";
+import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
 const APP_BUILD = "2026-08-30.9";
@@ -659,22 +659,46 @@ async function photoQueueFlush(){
 //
 // Размер по умолчанию — по габариту дома: чаще всего планировку и рисуют на весь дом,
 // а дальше её подгоняют по известному размеру.
-async function attachPlanFile(projId, file){
-  const isPdf=/pdf$/i.test(file.type||"")||/\.pdf$/i.test(file.name||"");
-  try{
-    const url=await uploadFileR2(file);
-    const pr=projects.find(function(x){return x.id===projId;});
-    if(!pr||!pr.model)return;
-    pr.plan={ name:file.name||"планировка", url:url, pdf:isPdf };
-    if(!isPdf){
-      const ar=await imageAspect(url).catch(function(){ return 3; });
-      const L=totalLength(pr.model), W=Number(pr.model.w)||0;
-      const w=L, h=Math.round(L/(ar||3));
-      pr.model=Object.assign({}, pr.model, { under:{ url:url, x:0, y:Math.round((W-h)/2), w:w, h:h, op:0.45 } });
-    }
-    fl();
-    if(isPdf)alert("PDF прикреплён к проекту.\n\nПодложкой в редакторе он пока не встаёт — для обводки приложите снимок страницы (PNG/JPG).");
-  }catch(err){ alert("Не удалось загрузить планировку: "+((err&&err.message)||err)); }
+// Листы проекта. Заказчик присылает не один файл: план, фасады, разрезы, а то и
+// три снимка одной бумаги. Храним списком, а `plan` оставляем первым листом —
+// им пользуются проекты, заведённые до появления списка.
+function planFiles(sh){
+  if(!sh)return [];
+  if(sh.plans&&sh.plans.length)return sh.plans;
+  return (sh.plan&&sh.plan.url)?[sh.plan]:[];
+}
+
+async function attachPlanFiles(projId, files){
+  const list=Array.prototype.slice.call(files||[]).slice(0, PLAN_MAX_FILES);
+  if(!list.length)return;
+  let added=0, pdfOnly=true;
+  for(const file of list){
+    const isPdf=/pdf$/i.test(file.type||"")||/\.pdf$/i.test(file.name||"");
+    try{
+      const url=await uploadFileR2(file);
+      // Лист прикладывают и к проекту, и к листу спецификации: редактор у них один,
+      // и «добавить лист» из него обязано работать одинаково.
+      const pr=specSheet(projId);
+      if(!pr||!pr.model)return;
+      const rec={ name:file.name||"планировка", url:url, pdf:isPdf };
+      pr.plans=planFiles(pr).concat([rec]);
+      pr.plan=pr.plans[0];
+      added++;
+      // Подложка — ПЕРВАЯ картинка: чертят по ней, и подкладывать вместо неё
+      // фасад, приехавший следом, значит стереть уже начатую обводку.
+      if(!isPdf){
+        pdfOnly=false;
+        if(!pr.model.under||!pr.model.under.url){
+          const ar=await imageAspect(url).catch(function(){ return 3; });
+          const L=totalLength(pr.model), W=Number(pr.model.w)||0;
+          const w=L, h=Math.round(L/(ar||3));
+          pr.model=Object.assign({}, pr.model, { under:{ url:url, x:0, y:Math.round((W-h)/2), w:w, h:h, op:0.45 } });
+        }
+      }
+      fl();
+    }catch(err){ alert("Не удалось загрузить «"+(file.name||"файл")+"»: "+((err&&err.message)||err)); }
+  }
+  if(added&&pdfOnly)alert("PDF прикреплён к проекту — его прочитает «Распознать».\n\nПодложкой в редакторе он пока не встаёт: для обводки руками приложите снимок страницы (PNG/JPG).");
 }
 
 // Пропорции картинки — из самой картинки: подложка, растянутая наугад, врёт в обе
@@ -698,12 +722,17 @@ let modelReadBusy=false;    // идёт запрос — кнопка не до�
 let modelRead=null;         // {sheetId, plan, warnings} — прочитанное, ждущее сверки
 
 async function modelPlanRecognize(sh){
-  if(modelReadBusy||!sh||!sh.plan||!sh.plan.url)return;
+  const files=planFiles(sh);
+  if(modelReadBusy||!files.length)return;
   modelReadBusy=true; modelRead=null; fl();
   try{
+    // Все листы уходят ОДНИМ запросом: дом на них один, и сшивать прочитанное по
+    // отдельности пришлось бы нам — вслепую, без чертежа перед глазами.
+    const names={};
+    files.forEach(function(f){ names[f.url]=f.name||""; });
     const r=await fetch(API_BASE+"/api/plan-read",{
       method:"POST", headers:authHeaders({"Content-Type":"application/json"}),
-      body:JSON.stringify({ key:sh.plan.url })
+      body:JSON.stringify({ keys:files.map(function(f){return f.url;}), names:names })
     });
     const j=await r.json().catch(function(){ return null; });
     if(!j||!j.success)throw new Error((j&&j.error)||("HTTP "+r.status));
@@ -713,11 +742,11 @@ async function modelPlanRecognize(sh){
       length:j.plan.length, width:j.plan.width, height:j.plan.height,
       bays:(j.plan.bays||[]).map(function(b){ return { name:b.name, len:b.len }; }),
       openings:(j.plan.openings||[]).map(function(o){
-        return { kind:o.kind, side:o.side, after_bay:o.after, pos:o.pos, width:o.w, height:o.h, label:o.label };
+        return { kind:o.kind, side:o.side, after_bay:o.after, pos:o.pos, width:o.w, height:o.h, sill:o.sill, label:o.label };
       }),
       notes:j.plan.notes,
     });
-    modelRead={ sheetId:sh.id, plan:norm.plan, warnings:(j.warnings||[]).concat(norm.warnings), model:j.model||"" };
+    modelRead={ sheetId:sh.id, plan:norm.plan, warnings:(j.warnings||[]).concat(norm.warnings), model:j.model||"", files:files.map(function(f){return f.name||"лист";}) };
   }catch(err){
     alert("Не удалось прочитать планировку: "+((err&&err.message)||err));
   }
@@ -10466,7 +10495,10 @@ function modelReadPanel(sh){
     '<div style="font-size:15px;font-weight:800;color:#0d1b2e;margin-bottom:4px">Прочитано с планировки</div>'+
     '<div style="font-size:12px;color:#7a9aaa;margin-bottom:12px">Сверьте с чертежом заказчика — по этим размерам считается смета.'+
       (modelRead.model?' <span style="color:#9aabbf">Читал '+esc(modelRead.model)+'.</span>':'')+'</div>';
-  h+='<div style="margin-bottom:12px">'+
+  h+=((modelRead.files&&modelRead.files.length>1)
+    ? '<div style="font-size:11.5px;color:#9aabbf;margin-bottom:10px">Прочитано по '+modelRead.files.length+' листам: '+esc(modelRead.files.join(", "))+'</div>'
+    : "")+
+    '<div style="margin-bottom:12px">'+
       row("Длина дома", mm(p.length))+row("Ширина", mm(p.width))+row("Высота помещений", mm(p.height))+
     '</div>';
   h+='<div style="font-size:12px;font-weight:800;color:#5a7a9a;margin:10px 0 4px">ПОМЕЩЕНИЯ</div>'+
@@ -10482,7 +10514,7 @@ function modelReadPanel(sh){
           ? '<span style="font-weight:700;color:#0d1b2e">'+k.tw+'×'+k.th+'</span>'
           : '<span style="color:#b9770e">'+k.w+'×'+k.h+'</span> <span style="color:#9aabbf">→</span> <span style="font-weight:700;color:#0d1b2e">'+k.tw+'×'+k.th+'</span>';
         return '<div style="display:flex;gap:10px;font-size:12.5px;padding:4px 0;border-bottom:1px solid #eef3f8">'+
-            '<span style="flex:1;color:#5a7a9a">'+esc(head)+'<br><span style="font-size:11.5px;color:'+(k.none?"#c0392b":"#9aabbf")+'">'+esc(k.name)+(k.none?" · цены нет":(k.cost?" · "+numRu(k.cost)+" ₽":""))+" · от "+mm(k.pos)+'</span></span>'+
+            '<span style="flex:1;color:#5a7a9a">'+esc(head)+'<br><span style="font-size:11.5px;color:'+(k.none?"#c0392b":"#9aabbf")+'">'+esc(k.name)+(k.none?" · цены нет":(k.cost?" · "+numRu(k.cost)+" ₽":""))+" · от "+mm(k.pos)+(k.sill?" · подоконник "+mm(k.sill):"")+'</span></span>'+
             '<span style="text-align:right;white-space:nowrap">'+swap+'</span>'+
           '</div>';
       }).join("")
@@ -10563,9 +10595,15 @@ function modelFullOverlay(){
     })()+
     // Чтение чужой планировки — там же, где её подложка: файл прикреплён к проекту,
     // и кнопка обязана стоять рядом с тем, что она прочтёт.
-    (sh.plan&&sh.plan.url
-      ? '<button data-a="model-plan-read"'+(modelReadBusy?' disabled':'')+' title="Прочитать размеры с планировки заказчика через Claude" style="display:flex;align-items:center;gap:6px;border:1.5px solid rgba(255,255,255,'+(modelReadBusy?'.12':'.35')+');background:transparent;color:'+(modelReadBusy?'rgba(255,255,255,.35)':'#fff')+';border-radius:9px;padding:7px 12px;font-size:12px;font-weight:700;cursor:'+(modelReadBusy?'default':'pointer')+'"><span>🔍</span>'+(modelReadBusy?'Читаю чертёж…':'Распознать')+'</button>'
-      : "")+
+    (function(){
+      const pf=planFiles(sh);
+      const add='<input id="model-plan-add" type="file" accept="image/*,application/pdf" multiple style="display:none">'+
+        '<button data-a="model-plan-add" title="Добавить листы: фасады, разрезы, вторую страницу" style="display:flex;align-items:center;gap:6px;border:1.5px dashed rgba(255,255,255,.35);background:transparent;color:#fff;border-radius:9px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer"><span>＋</span>Лист</button>';
+      if(!pf.length)return add;
+      // Сколько листов уйдёт на чтение — на кнопке: «Распознать» молча по одному
+      // файлу из трёх выглядит одинаково успешно и одинаково неверно.
+      return '<button data-a="model-plan-read"'+(modelReadBusy?' disabled':'')+' title="'+esc(pf.map(function(f){return f.name;}).join(", "))+'" style="display:flex;align-items:center;gap:6px;border:1.5px solid rgba(255,255,255,'+(modelReadBusy?'.12':'.35')+');background:transparent;color:'+(modelReadBusy?'rgba(255,255,255,.35)':'#fff')+';border-radius:9px;padding:7px 12px;font-size:12px;font-weight:700;cursor:'+(modelReadBusy?'default':'pointer')+'"><span>🔍</span>'+(modelReadBusy?'Читаю чертёж…':('Распознать'+(pf.length>1?' · '+pf.length+' л.':'')))+'</button>'+add;
+    })()+
     // Пока двигают подложку, рядом с инструментом стоят её же ручки: размер и
     // прозрачность. В другом инструменте они были бы шумом.
     (modelTool==="under"&&m.under&&m.under.url
@@ -12571,8 +12609,8 @@ function projNewFormHtml(){
     // Планировка заказчика — подложкой под наш чертёж: по ней ставят стены, и она же
     // остаётся в проекте как исходник, с которым сверяют результат.
     '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:5px">ПЛАНИРОВКА ЗАКАЗЧИКА (необязательно)</div>'+
-    '<input id="proj-n-plan" type="file" accept="image/*,application/pdf" style="width:100%;font-size:12px;margin-bottom:4px">'+
-    '<div style="font-size:10px;color:#a0b4c8;margin:0 0 9px;line-height:1.45">Ляжет подложкой в редакторе: масштабируете по известному размеру и обводите стены нашими инструментами.</div>'+
+    '<input id="proj-n-plan" type="file" accept="image/*,application/pdf" multiple style="width:100%;font-size:12px;margin-bottom:4px">'+
+    '<div style="font-size:10px;color:#a0b4c8;margin:0 0 9px;line-height:1.45">Можно несколько листов сразу — план, фасады, разрезы: их прочитают вместе как один дом. Первая картинка ляжет подложкой в редакторе.</div>'+
     '<select id="proj-n-client" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:10px">'+
       '<option value="">— клиент из CRM (необязательно) —</option>'+
       crmClients.map(function(c){return '<option value="'+c.id+'"'+(n.clientId===c.id?" selected":"")+'>'+esc(c.name||"")+'</option>';}).join("")+
@@ -21476,8 +21514,7 @@ function bind(){
       // Файл грузим ПОСЛЕ создания: проект уже открыт и им можно заниматься, пока
       // планировка едет в R2. Упадёт загрузка — проект от этого не пострадает.
       const fi=document.getElementById("proj-n-plan");
-      const file=fi&&fi.files&&fi.files[0];
-      if(file)attachPlanFile(p.id, file);
+      if(fi&&fi.files&&fi.files.length)attachPlanFiles(p.id, fi.files);
     };}
     else if(a==="proj-open"){el.onclick=()=>{ projOpenId=el.dataset.id; projBand="plan"; render(); window.scrollTo(0,0); };}
     else if(a==="proj-back"){el.onclick=()=>{ projOpenId=null; render(); window.scrollTo(0,0); };}
@@ -21766,6 +21803,12 @@ function bind(){
       modelReadApply(sh);
     };}
     else if(a==="model-read-close"){el.onclick=()=>{ modelRead=null; fl(); };}
+    else if(a==="model-plan-add"){el.onclick=()=>{
+      const sh=specSheet(specOpenId); if(!sh)return;
+      const inp=document.getElementById("model-plan-add"); if(!inp)return;
+      inp.onchange=function(){ attachPlanFiles(sh.id, inp.files); };
+      inp.click();
+    };}
     else if(a==="model-under-drag"){
       // Подложку двигают пальцем — как проём: без render() внутри жеста, иначе
       // элемент с захваченным указателем исчезает вместе с разметкой.
