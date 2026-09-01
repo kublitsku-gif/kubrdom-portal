@@ -11387,7 +11387,11 @@ function jambDetailSvg(){
   // холода, и никакая заливка его уже не лечит. Поэтому её обжимает пена со всех
   // сторон, кроме той, что смотрит в проём.
   const PPU_GAP=20;                           // слой ППУ между трубой и листом
-  const tubeY=wallY+CORR+STEEL+PPU_GAP;
+  // Труба стоит в ВЫСТУПЕ гофры — том, что снаружи выпирает, а изнутри и есть
+  // впадина. Там она глубже в толще стены и меньше лезет в комнату, а ППУ обжимает
+  // её сверху и сбоку. Под соседним участком, который ближе к комнате, труба
+  // выпирала бы внутрь и упиралась в обрешётку.
+  const tubeY=wallY+STEEL+PPU_GAP;
   const t=function(cx,cy,str,size,col,anchor){
     return '<text x="'+cx+'" y="'+cy+'" font-size="'+(size||34)+'" fill="'+(col||"#5a7a9a")+'" font-weight="700" text-anchor="'+(anchor||"middle")+'">'+esc(str)+'</text>';
   };
@@ -11430,8 +11434,10 @@ function jambDetailSvg(){
     const flat=Math.round(CORRSTEP*0.42), slope=Math.round(CORRSTEP*0.16);
     const edge=(dir>0)?x1:x0, far=(dir>0)?x0:x1, s=-dir;
     const done=function(x){ return (s<0) ? (x<=far) : (x>=far); };
-    const pts=[[edge, inner]];
-    let x=edge, y=inner;
+    // У реза кромка идёт по ВЫСТУПУ: в нём и сидит труба.
+    const y0=wallY;
+    const pts=[[edge, y0]];
+    let x=edge, y=y0;
     while(!done(x)){
       x+=s*flat;   pts.push([x, y]);                 // полка
       if(done(x))break;
