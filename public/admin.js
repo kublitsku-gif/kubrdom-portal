@@ -2109,6 +2109,7 @@ let modelPlace={win:"",door:""};
 let modelPlaceTab="mine";  // mine | cat — свои изделия или каталог поставщика
 let modelPlaceType="";     // боевой инструмент «Проём»: одно изделие на оба вида
 let modelZoom=1;           // 1 = вписать по ширине
+let schemeZoom=0;          // схема плана крупно: 0 — закрыта, иначе кратность
 let modelStageTab=0;       // 0 = все этапы
 let specSheets=[];
 // «Спецификация 2» — опытный раздел (см. src/spec2.js). Листы держим ОТДЕЛЬНО: по
@@ -4537,6 +4538,10 @@ function render(){
   // рисуют на большом экране — поэтому он выходит из колонки оверлеем.
   if(modelFull&&specOpenId){
     a.insertAdjacentHTML("beforeend", modelFullOverlay());
+  }
+  // Схема плана крупно: на вкладке она миниатюра, а разглядывают её здесь.
+  if(schemeZoom){
+    a.insertAdjacentHTML("beforeend", spec2SchemeOverlay());
   }
   // Мастер записи времени/фото («+ Запись»)
   if(tlWizard){
@@ -11039,9 +11044,14 @@ function schemeParts(sc){
   return { g:g, vb:(-pL)+" "+(-pT)+" "+(L+pL+pR)+" "+(W+pT+pB), vbw:(L+pL+pR) };
 }
 
-function modelSchemeSvg(model, types){
+// `minW` — с какой ширины чертёж перестаёт сжиматься и начинает прокручиваться.
+// На вкладке он МИНИАТЮРА (minW=0): 12-метровая схема, уезжающая вправо, читается
+// как поломка вёрстки, а не как чертёж — её листают вслепую и не видят целиком.
+// Разглядывают её в оверлее по тапу, там прокрутка уместна и есть чем увеличить.
+function modelSchemeSvg(model, types, minW){
   const f=schemeParts(modelScheme(model, types));
-  return '<svg viewBox="'+f.vb+'" style="width:100%;min-width:560px;height:auto;display:block;user-select:none">'+f.g+'</svg>';
+  const mw=(minW==null)?560:(Number(minW)||0);
+  return '<svg viewBox="'+f.vb+'" style="width:100%;'+(mw?'min-width:'+mw+'px;':'')+'height:auto;display:block;user-select:none">'+f.g+'</svg>';
 }
 
 // ═══ ВКЛАДКА «СПЕЦИФИКАЦИЯ 2» ════════════════════════════════════════════════
@@ -11052,6 +11062,34 @@ function modelSchemeSvg(model, types){
 // Раздел правит ОДИН рабочий лист: модель живёт в снимке, а не в коде, иначе
 // править её можно было бы только правкой заготовки — и правка терялась бы у всех.
 function spec2Sheet(){ return (specSheets2||[])[0]||null; }
+
+// Схема крупно. Миниатюра на вкладке отвечает на вопрос «что это за дом», а
+// разглядывают чертёж здесь: оверлей выходит из колонки 480 px на весь экран, и
+// только тут прокрутка вбок уместна — её включает увеличение, а не вёрстка.
+function spec2SchemeOverlay(){
+  const sh=spec2Sheet();
+  const pr=MODEL_PRESETS[0];
+  const built=(sh&&sh.model)?{model:sh.model,winTypes:winTypes}:(pr?presetModel(pr, winTypes, gid):null);
+  if(!built)return "";
+  return '<div id="spec2-scheme-full" style="position:fixed;inset:0;z-index:900;background:#0d1b2e;display:flex;flex-direction:column">'+
+    '<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.12);flex-shrink:0">'+
+      '<span style="font-size:13px;font-weight:800;color:#fff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📐 '+esc((sh&&sh.name)||(pr&&pr.n)||"Схема плана")+'</span>'+
+      // Увеличение — теми же ступенями и той же кнопкой, что в редакторе модели:
+      // два разных способа увеличить один и тот же чертёж пришлось бы объяснять.
+      [1,2,4].map(function(z){
+        const on=schemeZoom===z;
+        return '<button data-a="spec2-scheme-zoom" data-z="'+z+'" style="border:1.5px solid '+(on?"#2980b9":"rgba(255,255,255,.18)")+';background:'+(on?"#2980b9":"transparent")+';color:#fff;border-radius:8px;padding:6px 11px;font-size:11.5px;font-weight:700;cursor:pointer;flex-shrink:0">'+z+'×</button>';
+      }).join("")+
+      '<button data-a="spec2-scheme-close" style="padding:7px 14px;background:rgba(255,255,255,.12);border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:12px;font-weight:700;flex-shrink:0">Готово</button>'+
+    '</div>'+
+    // 1× — чертёж целиком по ширине экрана, дальше он растёт и едет вбок. Белый лист
+    // под ним: схема — это бумага, и на тёмном фоне тонкие линии теряются.
+    '<div style="flex:1;min-height:0;overflow:auto;background:#f4f7fa;padding:16px">'+
+      '<div style="width:'+(schemeZoom*100)+'%;min-width:100%">'+
+        modelSchemeSvg(built.model, built.winTypes, 0)+
+      '</div>'+
+    '</div>';
+}
 
 function tSpec2(){
   const sh=spec2Sheet();
@@ -11074,8 +11112,9 @@ function tSpec2(){
     '</div>'+
     '<button data-a="spec2-edit" style="padding:9px 15px;background:#8e44ad;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700;flex-shrink:0">⛶ '+(sh?"Редактировать":"Открыть редактор")+'</button>'+
   '</div>';
-  h+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:12px;margin-bottom:9px;overflow-x:auto">'+
-      modelSchemeSvg(built.model, built.winTypes)+
+  h+='<div data-a="spec2-scheme" title="Открыть крупно" style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:12px;margin-bottom:9px;cursor:zoom-in">'+
+      modelSchemeSvg(built.model, built.winTypes, 0)+
+      '<div style="font-size:10.5px;color:#9aabbf;text-align:center;margin-top:8px">тап — открыть крупно</div>'+
     '</div>';
   // Площади рядом со схемой: их считают по этому же чертежу, и держать их на
   // другом экране значит заставить сверять два экрана.
@@ -19587,6 +19626,9 @@ function bind(){
       specOpenId=sh.id; modelFull=true; modelTool="sel"; fl();
     };}
     else if(a==="model-full-close"){el.onclick=()=>{ modelFull=false; render(); };}
+    else if(a==="spec2-scheme"){el.onclick=()=>{ schemeZoom=1; render(); };}
+    else if(a==="spec2-scheme-zoom"){el.onclick=()=>{ schemeZoom=parseInt(el.dataset.z,10)||1; render(); };}
+    else if(a==="spec2-scheme-close"){el.onclick=()=>{ schemeZoom=0; render(); };}
     else if(a==="model-tool"){el.onclick=()=>{
       modelTool=el.dataset.k;
       if(modelTool==="op"&&!modelPlaceType&&winTypes.length)modelPlaceType=winTypes[0].id;

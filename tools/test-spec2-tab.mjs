@@ -61,6 +61,35 @@ function create(p, preset) {
   t.ok('изделия в портале не заводятся', p.q('winTypes').length === 0, String(p.q('winTypes').length))
 }
 
+// ── 1б. Схема на вкладке — миниатюра, крупно она по тапу ─────────────────────
+// Колонка панели 480 px, а дом двенадцатиметровый: чертёж с min-width уезжал вбок,
+// и его листали вслепую, ни разу не увидев целиком. На вкладке он теперь помещается,
+// а прокрутка живёт там, где уместна, — в оверлее, и её включает увеличение.
+{
+  t.section('Миниатюра и увеличение')
+  const p = panel()
+  const html = p.run('tSpec2()')
+  t.ok('чертёж вписан в колонку', html.indexOf('min-width:560px') < 0)
+  t.ok('вбок вкладка не едет', html.indexOf('overflow-x:auto') < 0)
+  t.ok('и понятно, что делать', html.indexOf('data-a="spec2-scheme"') >= 0 && /тап — открыть крупно/.test(html))
+  t.ok('пока не тапнули, оверлея нет', p.q('schemeZoom') === 0)
+
+  const tap = p.dom.node({ a: 'spec2-scheme' }); p.run('bind();'); tap.onclick()
+  t.ok('тап открывает крупно', p.q('schemeZoom') === 1)
+  const ov = p.run('spec2SchemeOverlay()')
+  const svg = ov.slice(ov.indexOf('<svg'), ov.indexOf('</svg>') + 6)
+  t.ok('в оверлее тот же чертёж', /<text[^>]*>11952</.test(svg) && svg.indexOf('sch-hatch') >= 0)
+  t.ok('и он вписан по ширине экрана', svg.indexOf('min-width') < 0)
+  t.ok('есть чем увеличить', /data-a="spec2-scheme-zoom" data-z="4"/.test(ov))
+
+  const z = p.dom.node({ a: 'spec2-scheme-zoom', z: '4' }); p.run('bind();'); z.onclick()
+  t.ok('увеличение запомнилось', p.q('schemeZoom') === 4)
+  t.ok('и лист стал шире экрана', p.run('spec2SchemeOverlay()').indexOf('width:400%') >= 0)
+
+  const close = p.dom.node({ a: 'spec2-scheme-close' }); p.run('bind();'); close.onclick()
+  t.ok('«Готово» закрывает', p.q('schemeZoom') === 0)
+}
+
 // ── 1.5 Рабочий лист становится источником схемы ─────────────────────────────
 {
   t.section('Рабочий лист раздела')
