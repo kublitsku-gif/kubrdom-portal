@@ -15,12 +15,33 @@
 //     другая, и находится это в лучшем случае на приёмке этапа. Понадобится своя
 //     цена — её место здесь, в totals2, осознанной развилкой.
 
-import { sheetTotals, sheetPositions, pointTotals, pointMeta } from "./spec.js";
-import { modelIssues, modelToSpecs, modelAreas, modelTotals } from "./model.js";
+import { sheetTotals, pointTotals, pointMeta } from "./spec.js";
+import { modelIssues, modelAreas, modelTotals } from "./model.js";
+import { allPositions, probeSheet, positionWhy } from "./recipe.js";
 
-// Деньги — общие с боевым разделом. См. заголовок: это решение, а не заглушка.
-export function totals2(sheet, estimates, products) {
-  return sheetTotals(sheet, estimates, products);
+// Пробный лист и объяснение количества живут в src/recipe.js — там же, где
+// правила, которые ими пользуются. Здесь они переэкспортированы, потому что
+// раздел спрашивает их у своего модуля, а не ходит за ними через голову.
+export { probeSheet, positionWhy };
+
+// Деньги — общие с боевым разделом: позиции считает та же машинка (`positionFor`),
+// а состав дома — тот же `allPositions`, которым собирается объект. Своя копия
+// формул означала бы, что клиенту называют одну цену, а в договор и объект уходит
+// другая, и находится это в лучшем случае на приёмке этапа.
+//
+// Отличие одно и осознанное: сюда входят позиции, которые дали ПРАВИЛА. Без них
+// договор заводился бы на сумму, которой на экране никто не видел.
+export function totals2(sheet, ctx) {
+  const c = ctx || {};
+  if (!c.rules || !c.rules.length) return sheetTotals(probeSheet(sheet, c.winTypes), c.estimates, c.products);
+  const pos = allPositions(sheet, c);
+  const cost = pos.reduce(function (a, p) { return a + (Number(p.cost) || 0); }, 0);
+  const markup = Number(sheet && sheet.markup);
+  const mk = isFinite(markup) && markup >= 0 ? markup : 0;
+  const byStage = {};
+  pos.forEach(function (p) { byStage[p.stage] = (byStage[p.stage] || 0) + p.cost; });
+  return { positions: pos, cost: cost, markup: mk, price: Math.round(cost * (1 + mk / 100)),
+    byStage: byStage, count: pos.length };
 }
 
 // Что мешает считать по этому листу. Спрашиваем МОДЕЛЬ, а не отделку: раздел про
@@ -51,18 +72,6 @@ const SURFACE2 = { floor: "пол", wall: "стены", ceil: "потолок" }
 function num2(v) {
   const n = Math.round((Number(v) || 0) * 100) / 100;
   return String(n).replace(".", ",");
-}
-
-// Лист, у которого характеристики взяты из МОДЕЛИ. Сам лист не трогаем: расчёт
-// не имеет права молча переписать данные, по которым его же и проверяют.
-export function probeSheet(sheet, winTypes) {
-  const sh = sheet || {};
-  if (!sh.model) return sh;
-  const keep = sh.specs || {};
-  const specs = modelToSpecs(sh.model, winTypes || []);
-  specs.planUrl = keep.planUrl || "";
-  specs.planName = keep.planName || "";
-  return Object.assign({}, sh, { specs: specs });
 }
 
 // Что дом рассказал о себе: площади, изделия в проёмах, раскладка точек. Это те
@@ -103,35 +112,22 @@ export function modelFacts(sheet, winTypes) {
     partitions: mt.partitions, goodsCost: mt.openingsCost };
 }
 
-// Откуда у строки количество. Формулировка одна на экран и на печать: разойдись
-// они, на бумаге стояло бы не то, что показывали.
-export function positionWhy(pos) {
-  const p = pos || {};
-  if (p.point) {
-    const m = pointMeta(p.point);
-    return ((m && m.n) || "точки") + " " + (Number(p.count) || 0) + " шт";
-  }
-  if (Number(p.area) > 0) {
-    return (SURFACE2[p.surface] || "площадь") + " " + num2(p.area) + " м²" + (p.room ? " · " + p.room : "");
-  }
-  return p.room || "на весь дом";
-}
-
 // Смета по этому дому: позиции с объяснением количества, разложенные по этапам.
 // Стройка меряется этапами, по ним же идут сроки, приёмка и транши — значит и
 // смета читается в этом разрезе, а не сплошным списком.
-export function works2(sheet, estimates, products, winTypes, estStages) {
-  const probe = probeSheet(sheet, winTypes);
-  const positions = sheetPositions(probe, estimates, products).map(function (p) {
-    return Object.assign({}, p, { why: positionWhy(p) });
-  });
+// ctx = {estimates, products, winTypes, stages, rules} — одним объектом, потому
+// что тот же контекст уходит в сборку объекта: список аргументов, который надо
+// повторить в двух местах в одном порядке, рано или поздно повторят неправильно.
+export function works2(sheet, ctx) {
+  const c = ctx || {};
+  const positions = allPositions(sheet, c);
   const cost = positions.reduce(function (a, p) { return a + (Number(p.cost) || 0); }, 0);
   const mk = (function () {
     const m = Number(sheet && sheet.markup);
     return isFinite(m) && m >= 0 ? m : 0;
   })();
   const known = {};
-  (estStages || []).forEach(function (s) { if (s) known[Number(s.n)] = s; });
+  (c.stages || []).forEach(function (s) { if (s) known[Number(s.n)] = s; });
   const byStage = {};
   const order = [];
   positions.forEach(function (p) {
@@ -148,20 +144,24 @@ export function works2(sheet, estimates, products, winTypes, estStages) {
     });
   });
   return {
-    facts: modelFacts(sheet, winTypes),
+    facts: modelFacts(sheet, c.winTypes),
     positions: positions, stages: stages,
     cost: Math.round(cost), markup: mk, price: Math.round(cost * (1 + mk / 100)),
-    gaps: gaps2(sheet, estimates, products, winTypes),
+    gaps: gaps2(sheet, c),
   };
 }
 
 // Что дом посчитал, а смета не использовала. Это не украшение экрана: ровно этот
 // список и есть задание на правила сборки — пока розетки посчитаны, а позиции,
 // которая их считает, в справочнике нет, дом продаётся не целиком.
-export function gaps2(sheet, estimates, products, winTypes) {
+export function gaps2(sheet, ctx) {
+  const c = ctx || {};
+  const winTypes = c.winTypes;
   const probe = probeSheet(sheet, winTypes);
   if (!probe.model) return [];
-  const pos = sheetPositions(probe, estimates, products);
+  // Пробел закрывается и правилом тоже — иначе список не пустел бы по мере
+  // настройки, а именно ради этого он и написан.
+  const pos = allPositions(sheet, c);
   const out = [];
 
   const totals = pointTotals(probe);

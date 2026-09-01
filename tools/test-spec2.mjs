@@ -41,7 +41,7 @@ function sheet2() {
 {
   console.log('Цена')
   const sh = sheet2()
-  const a = totals2(sh, EST, PRODUCTS), b = sheetTotals(sh, EST, PRODUCTS)
+  const a = totals2(sh, { estimates: EST, products: PRODUCTS }), b = sheetTotals(sh, EST, PRODUCTS)
   ok('себестоимость совпадает', a.cost === b.cost && a.cost > 0, a.cost + ' / ' + b.cost)
   ok('цена клиенту совпадает', a.price === b.price, a.price + ' / ' + b.price)
   ok('разбивка по этапам совпадает', JSON.stringify(a.byStage) === JSON.stringify(b.byStage))

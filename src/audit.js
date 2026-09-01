@@ -22,6 +22,7 @@ export const SECTION_LABELS = {
   objects:      "Объекты",
   templates:    "Шаблоны",
   estimates:    "Сметы",
+  buildRules:   "Правила сборки",
   dbWorks:      "База · работы",
   expProducts:  "База · материалы",
   dbPlans:      "База · планировки",

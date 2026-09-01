@@ -54,6 +54,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2, works2 } from "../src/spec2.js";
+import { allPositions, rulePositions, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES } from "../src/recipe.js";
 import { isoScene } from "../src/iso.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
@@ -278,6 +279,7 @@ function serializeState(){
     { work_id: "stock",           data: stock           },
     { work_id: "specSheets",      data: specSheets      },
     { work_id: "specSheets2",     data: specSheets2     },
+    { work_id: "buildRules",      data: buildRules      },
     { work_id: "winTypes",        data: winTypes        },
     { work_id: "purchased",       data: purchased       },
     { work_id: "arrived",         data: arrived         },
@@ -328,6 +330,7 @@ function applyState(items){
   stock           = arr("stock",           stock);
   specSheets      = arr("specSheets",      specSheets);
   specSheets2     = arr("specSheets2",     specSheets2);
+  buildRules      = arr("buildRules",      buildRules);
   winTypes        = arr("winTypes",        winTypes);
   purchased       = obj("purchased",       purchased);
   arrived         = obj("arrived",         arrived);
@@ -2120,6 +2123,9 @@ let specSheets=[];
 // боевым спецификациям уже заведены договора, объекты и транши, и эксперимент,
 // который пишет в них, — это не эксперимент, а авария.
 let specSheets2=[];
+// Правила сборки: «эта смета применяется к стенам каждого помещения». Живут
+// отдельным разделом снимка — их правят и читают независимо от листов.
+let buildRules=[];
 let specOpenId=null;      // открытая спецификация (null = список)
 let specNew={name:"",kind:"banya",clientId:"",planId:"",model:"",preset:""};
 let specShowNew=false;
@@ -9567,7 +9573,14 @@ function specPlanTiles(kind, sel, action){
 
 // Деньги у обоих разделов общие (см. src/spec2.js) — расходится только критерий
 // готовности. Развилка одна и здесь: панель не должна знать, чем они отличаются.
-function specTot(sh){ return specIs2(sh)?totals2(sh, estimates, expProducts):sheetTotals(sh, estimates, expProducts); }
+// Контекст расчёта листа. Правила даём ТОЛЬКО опытному разделу: по боевым
+// спецификациям заведены договора, объекты и транши, и молча изменить их сумму
+// новым правилом нельзя — сначала правила обкатываются здесь.
+function specCtx(sh){
+  return { estimates:estimates, products:expProducts, winTypes:winTypes,
+    stages:EST_STAGES, rules: specIs2(sh)?(buildRules||[]):[] };
+}
+function specTot(sh){ return specIs2(sh)?totals2(sh, specCtx(sh)):sheetTotals(sh, estimates, expProducts); }
 function specIssuesOf(sh){ return specIs2(sh)?issues2(sh, winTypes):sheetIssues(sh, estimates, expProducts); }
 const SPEC_SURFACE={floor:"пол", wall:"стены", ceil:"потолок"};
 // Что физически входит в позицию. Одна формулировка на экран продавца и на печать
@@ -10690,7 +10703,9 @@ function buildSpecPrint(sh){
 // _tplEstWork для шаблона, поэтому дальше объект живёт обычной жизнью — закупка, приёмка,
 // сроки и ревизии работают без единой правки.
 function specBuildStages(sh){
-  const pos=sheetPositions(sh, estimates, expProducts);
+  // Состав дома берём ТЕМ ЖЕ `allPositions`, что показан на экране сметы: объект,
+  // собранный по другому списку, — это стройка не по той смете, которую продали.
+  const pos=allPositions(sh, specCtx(sh));
   const byStage={};
   pos.forEach(function(p){
     const n=Number(p.stage)||0;
@@ -11783,8 +11798,9 @@ function spec2SchemeOverlay(){
 // поехали. Поэтому это вкладки одного раздела, а не разные экраны: считать
 // смету, глядя на вчерашний чертёж, нельзя.
 const SPEC2_TABS=[
-  ["scheme","📐 Схема",  "чертёж, площади и узлы"],
-  ["est",   "🧾 Смета",  "работы и материалы, посчитанные по этому чертежу"],
+  ["scheme","📐 Схема",   "чертёж, площади и узлы"],
+  ["est",   "🧾 Смета",   "работы и материалы, посчитанные по этому чертежу"],
+  ["rules", "⚙️ Правила", "по каким правилам смета собирается из чертежа"],
 ];
 function spec2TabsHtml(){
   return '<div style="display:flex;gap:5px;margin-bottom:9px">'+
@@ -11835,9 +11851,98 @@ function spec2FactsHtml(f){
   }
   return h+'</div>';
 }
+
+// ── ПРАВИЛА СБОРКИ ──────────────────────────────────────────────────────────
+// Правило говорит одно: К ЧЕМУ применяется смета из справочника. Материалов у
+// него своих нет — они уже описаны в смете, и вторая их копия разошлась бы с
+// первой на первой же правке. Считает всё общий модуль (src/recipe.js), здесь
+// только показ и мышь.
+const RULE_COL="#8e44ad";
+function ruleChips(a, list, cur, extra){
+  return '<div style="display:flex;flex-wrap:wrap;gap:4px">'+
+    list.map(function(x){
+      const on=cur===x[0];
+      return '<button data-a="'+a+'" data-v="'+x[0]+'"'+(extra||"")+' style="border:1.5px solid '+(on?RULE_COL:"#dde6f0")+';background:'+(on?RULE_COL:"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:8px;padding:5px 9px;font-size:11px;font-weight:700;cursor:pointer">'+esc(x[1])+'</button>';
+    }).join("")+
+  '</div>';
+}
+function ruleLab(t){ return '<div style="font-size:9.5px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin:8px 0 4px">'+t+'</div>'; }
+function ruleSet(id, fn){
+  buildRules=(buildRules||[]).map(function(r){
+    if(r.id!==id)return r;
+    const c=Object.assign({},r); fn(c); return c;
+  });
+  fl();
+}
+function spec2RulesHtml(built, sh, pr){
+  const probe=spec2Probe(built, sh, pr);
+  const kind=probe.kind||"house";
+  const mine=(buildRules||[]).filter(function(r){return (r.kind||"banya")===kind;});
+  const ests=estimates.filter(function(e){return (e.kind||"banya")===kind;});
+  const all=rulePositions(probe, mine, estimates, expProducts, built.winTypes);
+  const sum=all.reduce(function(a,p){return a+(Number(p.cost)||0);},0);
+
+  let h='<div style="background:#f6f2fa;border:1px solid #e2d4ee;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
+    '<div style="font-size:11px;font-weight:700;color:'+RULE_COL+';letter-spacing:0.5px;margin-bottom:5px">ПРАВИЛА СБОРКИ · '+esc(estKindMeta(kind).n)+'</div>'+
+    '<div style="font-size:11.5px;color:#5a7a9a;line-height:1.5">Правило говорит, <b>к чему</b> применяется смета из справочника: «Стены ОСП — на стены каждого помещения». Материалы берутся из самой сметы, второй справочник не заводится. Правила работают только в этом разделе — боевые спецификации они не трогают.</div>'+
+    (all.length
+      ? '<div style="font-size:11.5px;color:#0d1b2e;margin-top:7px">Сейчас дают <b>'+all.length+'</b> строк на <b>'+Math.round(sum).toLocaleString("ru-RU")+' ₽</b></div>'
+      : '')+
+  '</div>';
+
+  if(!ests.length){
+    h+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:14px;margin-bottom:9px;font-size:12px;color:#7a9aaa;line-height:1.5">В справочнике нет ни одной сметы этого вида — правилу нечего применять. Заведите смету во вкладке «Сметы».</div>';
+  }
+
+  h+=mine.map(function(r){
+    const est=estimates.find(function(e){return e.id===r.estId;});
+    const bad=ruleReady(r);
+    const got=rulePositions(probe, [r], estimates, expProducts, built.winTypes);
+    const gsum=got.reduce(function(a,p){return a+(Number(p.cost)||0);},0);
+    const need=(RULE_WHATS.find(function(x){return x.k===(r.what||"surface");})||{}).need||"";
+    let c='<div style="background:#fff;border:1px solid '+(r.off?"#e9eef4":"#dde6f0")+';border-radius:13px;padding:11px 13px;margin-bottom:9px;opacity:'+(r.off?"0.6":"1")+'">'+
+      '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px">'+
+        '<span style="flex:1;min-width:0;font-size:13px;font-weight:800;color:#0d1b2e">'+esc((est&&est.name)||"Смета не выбрана")+'</span>'+
+        '<button data-a="rule-off" data-id="'+r.id+'" style="border:1px solid #dde6f0;background:#fff;border-radius:7px;padding:3px 8px;font-size:10.5px;color:#7a9aaa;cursor:pointer">'+(r.off?"включить":"выключить")+'</button>'+
+        '<button data-a="rule-del" data-id="'+r.id+'" style="border:none;background:transparent;font-size:14px;color:#c0392b;cursor:pointer">✕</button>'+
+      '</div>'+
+      '<div style="font-size:11.5px;color:'+(bad?"#c0392b":"#5a7a9a")+';line-height:1.45;margin-bottom:6px">'+
+        (bad?"⚠ "+esc(bad):esc(ruleText(r))+' → <b style="color:#0d1b2e">'+got.length+'</b> строк на <b style="color:#0d1b2e">'+Math.round(gsum).toLocaleString("ru-RU")+' ₽</b>')+
+      '</div>'+
+      ruleLab("СМЕТА ИЗ СПРАВОЧНИКА")+
+      '<select data-a="rule-est" data-id="'+r.id+'" style="width:100%;padding:8px 10px;border-radius:9px;border:1px solid #d0dae8;font-size:12.5px;outline:none;box-sizing:border-box">'+
+        '<option value="">— выберите смету —</option>'+
+        ests.map(function(e){return '<option value="'+e.id+'"'+(e.id===r.estId?" selected":"")+'>'+esc(e.name||"")+'</option>';}).join("")+
+      '</select>'+
+      ruleLab("ЧЕМ МЕРЯЕТСЯ")+
+      ruleChips("rule-what", RULE_WHATS.map(function(x){return [x.k,x.n];}), r.what||"surface", ' data-id="'+r.id+'"');
+    if(need==="surface")c+=ruleLab("ПОВЕРХНОСТЬ")+ruleChips("rule-k", RULE_SURFACES, r.k||"", ' data-id="'+r.id+'"');
+    if(need==="point")c+=ruleLab("ТОЧКА РАСКЛАДКИ")+ruleChips("rule-k", SPEC_POINTS.map(function(pt){return [pt.k, pt.emoji+" "+pt.n];}), r.k||"", ' data-id="'+r.id+'"');
+    if(need)c+=ruleLab("СЧИТАТЬ")+ruleChips("rule-scope", RULE_SCOPES, r.scope||"room", ' data-id="'+r.id+'"');
+    c+='<div style="display:flex;gap:6px;margin-top:8px">'+
+        '<div style="flex:1;min-width:0">'+ruleLab("ТОЛЬКО В ПОМЕЩЕНИЯХ (ЧАСТЬ ИМЕНИ)")+
+          '<input data-a="rule-room" data-id="'+r.id+'" value="'+esc(r.room||"")+'" placeholder="все помещения" style="width:100%;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box">'+
+        '</div>'+
+        '<div style="width:92px;flex-shrink:0">'+ruleLab("МНОЖИТЕЛЬ")+
+          '<input data-a="rule-qty" data-id="'+r.id+'" type="number" step="0.1" min="0.1" value="'+String(Number(r.qty)||1)+'" style="width:100%;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box">'+
+        '</div>'+
+      '</div>'+
+      ruleLab("ЭТАП")+
+      ruleChips("rule-stage", [["0","из сметы"]].concat(EST_STAGES.map(function(st){return [String(st.n), st.short];})), String(Number(r.stage)||0), ' data-id="'+r.id+'"')+
+    '</div>';
+    return c;
+  }).join("");
+
+  h+='<button data-a="rule-add" style="width:100%;padding:11px;background:'+RULE_COL+';border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700;margin-bottom:9px">+ Правило</button>';
+  h+='<div style="font-size:10.5px;color:#9aabbf;line-height:1.5;margin-bottom:20px">'+
+      'Строки из правил попадают в смету и в объект вместе с выбранными вручную — считает их один и тот же модуль, поэтому экран и стройка не разойдутся.'+
+    '</div>';
+  return h;
+}
+
 function spec2EstHtml(built, sh, pr){
   const probe=spec2Probe(built, sh, pr);
-  const w=works2(probe, estimates, expProducts, built.winTypes, EST_STAGES);
+  const w=works2(probe, Object.assign(specCtx(sh), { winTypes:built.winTypes }));
   let h='';
   // Деньги сверху: с них начинается любой разговор про смету, и лезть за итогом
   // в конец списка из сорока строк никто не будет.
@@ -11938,6 +12043,7 @@ function tSpec2(){
   // что нарисована рядом: разъехаться им негде.
   h+=spec2TabsHtml();
   if(spec2Tab==="est")return h+spec2EstHtml(built, sh, pr)+'</div>';
+  if(spec2Tab==="rules")return h+spec2RulesHtml(built, sh, pr)+'</div>';
   // Один чертёж, два читателя: бригаде размеры, клиенту имена и метры. Вкладка
   // выбирает, чей это сейчас лист, — второй чертёж заводить не надо, геометрия одна.
   // Лист для бригады печатают целиком: чертёж, узлы и таблицы. Кнопка стоит у
@@ -20508,7 +20614,37 @@ function bind(){
     else if(a==="spec2-scheme-close"){el.onclick=()=>{ schemeZoom=0; render(); };}
     else if(a==="spec2-scheme-view"){el.onclick=()=>{ schemeView=(el.dataset.v==="plain")?"plain":"dim"; render(); };}
     else if(a==="spec2-node-tab"){el.onclick=()=>{ nodeTab=el.dataset.v||"n1"; render(); };}
-    else if(a==="spec2-tab"){el.onclick=()=>{ spec2Tab=(el.dataset.v==="est")?"est":"scheme"; render(); window.scrollTo(0,0); };}
+    else if(a==="spec2-tab"){el.onclick=()=>{ const v=el.dataset.v; spec2Tab=(v==="est"||v==="rules")?v:"scheme"; render(); window.scrollTo(0,0); };}
+    // Правила сборки. Правка пишется сразу в раздел снимка: отдельной кнопки
+    // «сохранить» в панели нет нигде, и заводить её здесь значило бы объяснять,
+    // почему этот экран не такой, как все.
+    else if(a==="rule-add"){el.onclick=()=>{
+      const sh=spec2Sheet();
+      const kind=(sh&&sh.kind)||"house";
+      buildRules=buildRules.concat([{ id:gid(), kind:kind, estId:"", what:"surface", k:"wall",
+        scope:"room", room:"", qty:1, stage:0, off:false }]);
+      fl();
+    };}
+    else if(a==="rule-del"){el.onclick=()=>{
+      const r=(buildRules||[]).find(function(x){return x.id===el.dataset.id;});
+      if(r&&!confirm("Удалить правило"+(r.estId?" «"+((estimates.find(function(e){return e.id===r.estId;})||{}).name||"")+"»":"")+"?"))return;
+      buildRules=buildRules.filter(function(x){return x.id!==el.dataset.id;}); fl();
+    };}
+    else if(a==="rule-off"){el.onclick=()=>{ ruleSet(el.dataset.id, function(r){ r.off=!r.off; }); };}
+    else if(a==="rule-what"){el.onclick=()=>{ ruleSet(el.dataset.id, function(r){
+      r.what=el.dataset.v||"surface";
+      // Ключ принадлежит виду измерения: «стены» в правиле по точкам — мусор,
+      // который потом молча посчитается не тем.
+      r.k=(r.what==="surface")?"wall":(r.what==="point"?"":"");
+    }); };}
+    else if(a==="rule-k"){el.onclick=()=>{ ruleSet(el.dataset.id, function(r){ r.k=el.dataset.v||""; }); };}
+    else if(a==="rule-scope"){el.onclick=()=>{ ruleSet(el.dataset.id, function(r){ r.scope=(el.dataset.v==="house")?"house":"room"; }); };}
+    else if(a==="rule-stage"){el.onclick=()=>{ ruleSet(el.dataset.id, function(r){ r.stage=parseInt(el.dataset.v,10)||0; }); };}
+    else if(a==="rule-est"){el.onchange=()=>{ ruleSet(el.dataset.id, function(r){ r.estId=el.value||""; }); };}
+    // Имя помещения и множитель пишем по `change`, а не по `input`: перерисовка
+    // на каждой букве выбивала бы поле из-под пальца.
+    else if(a==="rule-room"){el.onchange=()=>{ ruleSet(el.dataset.id, function(r){ r.room=el.value||""; }); };}
+    else if(a==="rule-qty"){el.onchange=()=>{ ruleSet(el.dataset.id, function(r){ const v=parseFloat(String(el.value).replace(",",".")); r.qty=(isFinite(v)&&v>0)?v:1; }); };}
     else if(a==="spec2-print"){el.onclick=()=>{ buildSchemePrint(); };}
     else if(a==="model-tool"){el.onclick=()=>{
       modelTool=el.dataset.k;

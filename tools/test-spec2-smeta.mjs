@@ -46,7 +46,7 @@ const SHEET = {
 // ── 1. Числа приезжают из чертежа ────────────────────────────────────────────
 {
   t.section('Смета считается по модели')
-  const w = works2(SHEET, EST, PRODUCTS, TYPES, STAGES)
+  const w = works2(SHEET, { estimates: EST, products: PRODUCTS, winTypes: TYPES, stages: STAGES })
   const f = modelFacts(SHEET, TYPES)
   const wins = f.points.find((p) => p.k === 'win')
   const doors = f.points.find((p) => p.k === 'door')
@@ -70,7 +70,7 @@ const SHEET = {
 // находится это в лучшем случае на приёмке этапа.
 {
   t.section('Расчёт не свой, а общий')
-  const w = works2(SHEET, EST, PRODUCTS, TYPES, STAGES)
+  const w = works2(SHEET, { estimates: EST, products: PRODUCTS, winTypes: TYPES, stages: STAGES })
   const base = sheetPositions(probeSheet(SHEET, TYPES), EST, PRODUCTS)
   t.ok('позиции те же', w.positions.length === base.length, 'получили: ' + w.positions.length)
   t.ok('сумма та же', w.cost === base.reduce((a, p) => a + p.cost, 0), 'получили: ' + w.cost)
@@ -81,7 +81,7 @@ const SHEET = {
 // ── 3. Этапы ────────────────────────────────────────────────────────────────
 {
   t.section('Смета читается этапами')
-  const w = works2(SHEET, EST, PRODUCTS, TYPES, STAGES)
+  const w = works2(SHEET, { estimates: EST, products: PRODUCTS, winTypes: TYPES, stages: STAGES })
   t.ok('этапов два', w.stages.length === 2, 'получили: ' + w.stages.length)
   t.ok('и они по порядку', w.stages.map((s) => s.n).join(',') === '2,3')
   t.ok('подпись из справочника этапов', w.stages[0].label === 'Этап 2 — Черновые работы', 'получили: ' + w.stages[0].label)
@@ -95,7 +95,7 @@ const SHEET = {
 // Этот список — не украшение экрана, а задание на правила сборки.
 {
   t.section('Посчитано, но в смету не попало')
-  const g = gaps2(SHEET, EST, PRODUCTS, TYPES)
+  const g = gaps2(SHEET, { estimates: EST, products: PRODUCTS, winTypes: TYPES })
   const surf = g.filter((x) => x.kind === 'surface').map((x) => x.k)
   t.ok('пол в пробелах', surf.indexOf('floor') >= 0)
   t.ok('стены тоже', surf.indexOf('wall') >= 0)
@@ -109,7 +109,7 @@ const SHEET = {
 // ── 5. Пустой дом ───────────────────────────────────────────────────────────
 {
   t.section('Без модели считать нечего')
-  const w = works2({ id: 'x', kind: 'house', specs: { height: 2.5, rooms: [] }, rooms: {}, global: {}, qty: {} }, EST, PRODUCTS, TYPES, STAGES)
+  const w = works2({ id: 'x', kind: 'house', specs: { height: 2.5, rooms: [] }, rooms: {}, global: {}, qty: {} }, { estimates: EST, products: PRODUCTS, winTypes: TYPES, stages: STAGES })
   t.ok('позиций нет', w.positions.length === 0, 'получили: ' + w.positions.length)
   t.ok('денег нет', w.cost === 0, 'получили: ' + w.cost)
   t.ok('пробелов нет', w.gaps.length === 0, 'получили: ' + w.gaps.length)
@@ -124,6 +124,7 @@ const SHEET = {
     expProducts: PRODUCTS, estimates: EST, dbPlans: [], crmClients: [],
     specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [],
     contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+    buildRules: [],
   })
   const scheme = p.run('spec2Tab="scheme";tSpec2()')
   t.ok('вкладки есть на обоих видах', scheme.indexOf('data-a="spec2-tab"') >= 0)
@@ -149,6 +150,57 @@ const SHEET = {
   const est2 = p.run('modelFull=false;spec2Tab="est";tSpec2()')
   t.ok('по заведённому листу объект собирается', est2.indexOf('data-a="spec-to-object"') >= 0)
   t.ok('и договор заводится', est2.indexOf('data-a="spec-to-contract"') >= 0)
+}
+
+// ── 7. Правила в панели ─────────────────────────────────────────────────────
+// Правила меняют смету и состав объекта, поэтому здесь сторожим главное: что
+// боевые спецификации они не трогают, а объект собирается тем же списком, что
+// показан на экране.
+{
+  t.section('Правила сборки на экране')
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS, estimates: EST, dbPlans: [], crmClients: [],
+    specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [],
+    contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+    buildRules: [],
+  })
+  const rules = p.run('spec2Tab="rules";tSpec2()')
+  t.ok('вкладка правил есть', rules.indexOf('data-a="rule-add"') >= 0)
+  t.ok('и объясняет, что это', /ПРАВИЛА СБОРКИ/.test(rules))
+
+  // Заводим лист и правило руками, как это делает человек.
+  p.run('spec2Tab="scheme";')
+  const edit = p.dom.node({ a: 'spec2-edit' })
+  p.run('bind();')
+  edit.onclick()
+  p.run('modelFull=false;spec2Tab="rules";tSpec2();')
+  const add = p.dom.node({ a: 'rule-add' })
+  p.run('bind();')
+  add.onclick()
+  t.ok('правило завелось', p.q('buildRules.length') === 1)
+  const rid = p.q('buildRules[0].id')
+  p.run('ruleSet(' + JSON.stringify(rid) + ', function(r){ r.estId="e_wall"; r.what="surface"; r.k="wall"; r.scope="room"; });')
+
+  const shown = p.run('tSpec2()')
+  t.ok('правило показано словами', /каждого помещения/.test(shown))
+  t.ok('и сколько строк даёт', /строк на/.test(shown))
+
+  const est = p.run('spec2Tab="est";tSpec2()')
+  t.ok('строки правила попали в смету', /ОСП/.test(est))
+  t.ok('стены больше не пробел', est.indexOf('стены') < 0 || !/В СМЕТУ НЕ ПОПАЛО[\s\S]{0,400}стены/.test(est))
+
+  // Объект собирается ТЕМ ЖЕ списком: иначе продали одно, а строят другое.
+  const nWorks = p.q('specBuildStages(spec2Sheet()).reduce(function(a,s){return a+s.works.length;},0)')
+  const nPos = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.length')
+  t.ok('в объекте столько же работ, сколько в смете', nWorks === nPos, 'объект ' + nWorks + ', смета ' + nPos)
+
+  // Боевая спецификация правил не видит — по ней заведены договора и транши.
+  p.run('specSheets=[{id:"war",name:"Боевая",kind:"house",markup:30,specs:{height:2.5,rooms:[{id:"r1",name:"Зал",w:3,l:4,wallLen:14,pts:{}}]},rooms:{},global:{},qty:{}}];')
+  const warRules = p.q('specCtx(specSheet("war")).rules.length')
+  const labRules = p.q('specCtx(spec2Sheet()).rules.length')
+  t.ok('у боевого листа правил нет', warRules === 0)
+  t.ok('у опытного — есть', labRules === 1)
 }
 
 t.done()

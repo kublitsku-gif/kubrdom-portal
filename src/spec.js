@@ -136,7 +136,11 @@ function globalCtx(est, specs, H, totals, group) {
 // Позиция спецификации: работа из сметы с посчитанным количеством и ценой.
 // key — устойчивый адрес позиции: по нему хранится ручная правка количества и по нему
 // же собирается объект, поэтому он не должен зависеть от порядка комнат.
-function position(est, ctx, prodById, qtyOverride) {
+//
+// Экспортируется ради правил сборки (src/recipe.js): правило говорит, К ЧЕМУ
+// применяется смета, а считается позиция всё той же машинкой. Своя копия формул
+// там означала бы, что правило обещает одну сумму, а спецификация показывает другую.
+export function positionFor(est, ctx, prodById, qtyOverride) {
   const mats = (est.lines || []).map(function (l) {
     const p = prodById[l.pid] || {};
     const base = {
@@ -181,7 +185,7 @@ export function sheetPositions(sheet, estimates, products) {
   baseEstimates(estimates, kind).forEach(function (e) {
     const cnt = e.optPoint ? (totals[e.optPoint] || 0) : 0;
     if (e.optPoint && !cnt) return;
-    out.push(position(e, { key: "base:" + e.id, area: 0, count: cnt, point: e.optPoint || "" },
+    out.push(positionFor(e, { key: "base:" + e.id, area: 0, count: cnt, point: e.optPoint || "" },
       prodById, qty["base:" + e.id]));
   });
 
@@ -195,7 +199,7 @@ export function sheetPositions(sheet, estimates, products) {
       if (!e) return;
       const ctx = roomCtx(e, r, H, group);
       if (e.optPoint && !ctx.count) return;
-      out.push(position(e, ctx, prodById, qty[ctx.key]));
+      out.push(positionFor(e, ctx, prodById, qty[ctx.key]));
     });
   });
 
@@ -205,7 +209,7 @@ export function sheetPositions(sheet, estimates, products) {
     if (!e) return;
     const ctx = globalCtx(e, specs, H, totals, group);
     if (e.optPoint && !ctx.count) return;
-    out.push(position(e, ctx, prodById, qty[ctx.key]));
+    out.push(positionFor(e, ctx, prodById, qty[ctx.key]));
   });
 
   return out;
@@ -225,7 +229,7 @@ export function optionCost(sheet, est, room, products) {
     ? roomCtx(est, room, H, est.optGroup || "")
     : globalCtx(est, specs, H, pointTotals(sheet), est.optGroup || "");
   if (est.optPoint && !ctx.count) return 0;
-  return position(est, ctx, prodById, ((sheet && sheet.qty) || {})[ctx.key]).cost;
+  return positionFor(est, ctx, prodById, ((sheet && sheet.qty) || {})[ctx.key]).cost;
 }
 
 // Итоги: себестоимость, цена клиенту и разбивка по этапам. Наценка одна на спецификацию —
