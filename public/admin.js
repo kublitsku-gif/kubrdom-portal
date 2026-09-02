@@ -742,6 +742,8 @@ async function modelPlanRecognize(sh){
     const norm=planNormalize({
       length:j.plan.length, width:j.plan.width, height:j.plan.height,
       bays:(j.plan.bays||[]).map(function(b){ return { name:b.name, len:b.len }; }),
+      walls:(j.plan.walls||[]).slice(),
+      rooms:(j.plan.rooms||[]).slice(),
       openings:(j.plan.openings||[]).map(function(o){
         return { kind:o.kind, side:o.side, after_bay:o.after, pos:o.pos, width:o.w, height:o.h, sill:o.sill, label:o.label };
       }),
@@ -10502,9 +10504,17 @@ function modelReadPanel(sh){
     '<div style="margin-bottom:12px">'+
       row("Длина дома", mm(p.length))+row("Ширина", mm(p.width))+row("Высота помещений", mm(p.height))+
     '</div>';
+  // Площадь с чертежа — бесплатная проверка чтения: сошлась с нашей — длины
+  // прочитаны верно. Поэтому показываем ОБА числа рядом, а не только своё.
   h+='<div style="font-size:12px;font-weight:800;color:#5a7a9a;margin:10px 0 4px">ПОМЕЩЕНИЯ</div>'+
-    (p.bays.length?p.bays.map(function(b){ return row(b.name, mm(b.len)); }).join("")
-      :'<div style="font-size:12.5px;color:#c0392b">не прочитались</div>');
+    (prev.areas&&prev.areas.length
+      ? prev.areas.map(function(a){
+          const bad=a.said&&Math.abs(a.got-a.said)>0.3&&Math.abs(a.got-a.said)/a.said>0.05;
+          return row(a.name, (a.said?(numRu(a.said)+" м² по чертежу · "):"")+
+            (a.got?(bad?"у нас "+numRu(a.got):numRu(a.got)):"не нашлось")+(a.got?" м²":""));
+        }).join("")
+      : (p.bays.length?p.bays.map(function(b){ return row(b.name, mm(b.len)); }).join("")
+        :'<div style="font-size:12.5px;color:#c0392b">не прочитались</div>'));
   // Окна и двери показываем ПАРОЙ: что нарисовано и что поедет в заказ. Дом
   // собирают из каталога, и «1450×1300 по чертежу» купить негде — в заказ уйдёт
   // ближайшее, и увидеть эту подмену человек обязан здесь, а не в спецификации.

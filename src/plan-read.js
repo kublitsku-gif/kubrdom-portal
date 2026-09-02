@@ -15,7 +15,7 @@
 // Все размеры — миллиметры, как во всей модели.
 import {
   CONTAINERS, emptyModel, FINISH_THICK, MIN_ROOM,
-  WIN_CATALOG, INNER_DOOR, winTypeFrom, totalLength, alignHeads,
+  WIN_CATALOG, INNER_DOOR, winTypeFrom, totalLength, alignHeads, addWall, modelRooms, WALL_THICK,
 } from "./model.js";
 
 // Читает чертёж модель посильнее: план — это картинка с цифрами, и ошибка в
@@ -34,7 +34,7 @@ const NUM = { type: ["number", "null"] };
 export const PLAN_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["length", "width", "height", "bays", "openings", "notes"],
+  required: ["length", "width", "height", "bays", "walls", "rooms", "openings", "notes"],
   properties: {
     length: Object.assign({ description: "Длина дома снаружи, мм" }, NUM),
     width: Object.assign({ description: "Ширина дома снаружи, мм" }, NUM),
@@ -71,6 +71,31 @@ export const PLAN_SCHEMA = {
         },
       },
     },
+    walls: {
+      type: "array",
+      description: "Куски внутренних стен, которые НЕ идут через весь дом: стенка санузла, перегородка коридора. Отрезок по оси стены, мм от наружного левого верхнего угла дома",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["x1", "y1", "x2", "y2"],
+        properties: { x1: NUM, y1: NUM, x2: NUM, y2: NUM },
+      },
+    },
+    rooms: {
+      type: "array",
+      description: "Подписи помещений на плане: имя, точка ВНУТРИ помещения и площадь, как она подписана (S=7.34 м²)",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "x", "y", "area"],
+        properties: {
+          name: { type: "string", description: "Подпись помещения" },
+          x: Object.assign({ description: "Точка внутри помещения вдоль дома, мм от левого угла" }, NUM),
+          y: Object.assign({ description: "Она же поперёк дома, мм от верхней стены" }, NUM),
+          area: Object.assign({ description: "Площадь в КВАДРАТНЫХ МЕТРАХ, как подписана на плане" }, NUM),
+        },
+      },
+    },
     notes: { type: "string", description: "Что прочитать не удалось и что пришлось предположить" },
   },
 };
@@ -93,6 +118,10 @@ export const PLAN_SYSTEM = [
   "Положение проёма — до его БЛИЖНЕГО края (левого для n/s, верхнего для w/e/part), от наружного угла дома.",
   "Подписи у проёмов читай так: H=190 — высота проёма, «Н под.=20» — высота подоконника от пола (в тех же единицах, что и весь чертёж).",
   "У дверей подоконник 0. Ширину проёма бери из размерной цепочки по стене, а не из подписи H.",
+  "bays — только те перегородки, что идут ЧЕРЕЗ ВЕСЬ дом от стены до стены и делят его на отсеки.",
+  "Стена, которая не доходит до противоположной стены (стенка санузла, выгородка коридора), в bays НЕ идёт:",
+  "её кладут отрезком в walls, а помещения, которые из этого вышли, перечисляют в rooms с точкой внутри и площадью.",
+  "Площадь бери подписанную на плане (S=7.34 м²) и не пересчитывай: по ней мы проверим, верно ли прочитали размеры.",
   "Файлов может быть несколько — это РАЗНЫЕ ЛИСТЫ ОДНОГО дома (план, фасады, разрезы, страницы одного PDF).",
   "Читай их вместе и верни ОДНУ планировку: план даёт длины и положения, разрез и фасад — высоты проёмов.",
   "Не складывай листы как разные дома и не удваивай помещения, увидев их на двух листах.",
@@ -234,12 +263,36 @@ export function planNormalize(raw) {
     if (o.guessH) warn.push((o.label || "проём " + o.w) + ": высота не подписана, поставили " + o.h);
   });
 
+  // Куски стен и подписи помещений — в тех же единицах, что и весь чертёж.
+  // Площадь исключение: она в КВАДРАТНЫХ метрах, и множитель длины к ней не идёт.
+  const walls = (r.walls || []).map(function (w) {
+    const it = w || {};
+    const seg = {
+      x1: Math.round((Number(it.x1) || 0) * k), y1: Math.round((Number(it.y1) || 0) * k),
+      x2: Math.round((Number(it.x2) || 0) * k), y2: Math.round((Number(it.y2) || 0) * k),
+    };
+    const len = Math.max(Math.abs(seg.x2 - seg.x1), Math.abs(seg.y2 - seg.y1));
+    return (len >= 300) ? seg : null;          // огрызок короче 300 мм — это не стена, а помарка
+  }).filter(Boolean);
+
+  const rooms = (r.rooms || []).map(function (rm) {
+    const it = rm || {};
+    const name = String(it.name || "").trim();
+    const area = Number(it.area) || 0;
+    if (!name) return null;
+    return {
+      name: name,
+      x: Math.round((Number(it.x) || 0) * k), y: Math.round((Number(it.y) || 0) * k),
+      area: (area > 0 && area < 200) ? Math.round(area * 100) / 100 : 0,
+    };
+  }).filter(Boolean);
+
   return {
     plan: {
       length: toMm(r.length, k, 3000, 20000),
       width: toMm(r.width, k, 1800, 5000),
       height: toMm(r.height, k, 1800, 4000),
-      bays: bays, openings: openings,
+      bays: bays, walls: walls, rooms: rooms, openings: openings,
       notes: String(r.notes || "").trim(),
     },
     warnings: warn,
@@ -352,6 +405,30 @@ export function planToModel(plan, winTypes, newId) {
     }
   }
 
+  // Куски стен — то, из-за чего санузел на чертеже Г-образный, а рядом коридор.
+  // Кладём их через addWall: он прилипает к соседним стенам и обрезает свесы —
+  // щель в миллиметр читается заливкой как проход, и кладовка становится нишей.
+  (p.walls || []).forEach(function (seg) {
+    const th = Number(model.wallThick) || WALL_THICK;
+    const horiz = Math.abs(seg.x2 - seg.x1) >= Math.abs(seg.y2 - seg.y1);
+    const rect = horiz
+      ? { x: Math.min(seg.x1, seg.x2), y: Math.round((seg.y1 + seg.y2) / 2 - th / 2),
+          w: Math.abs(seg.x2 - seg.x1), h: th }
+      : { x: Math.round((seg.x1 + seg.x2) / 2 - th / 2), y: Math.min(seg.y1, seg.y2),
+          w: th, h: Math.abs(seg.y2 - seg.y1) };
+    const next = addWall(model, rect, gen());
+    model.walls = next.walls || model.walls;
+  });
+
+  // Подписи помещений — точкой внутри. Отсек своё имя носит сам, а комнате,
+  // вырезанной кусками стен, имя дать больше нечем: номера областей меняются от
+  // любого движения стены, а точка внутри комнаты остаётся в ней.
+  if ((p.rooms || []).length) {
+    model.spots = p.rooms.map(function (rm) {
+      return { id: gen(), name: rm.name, x: rm.x, y: rm.y, pts: {} };
+    });
+  }
+
   const types = (winTypes || []).slice();
   // Подбор изделий — отдельный список, а не только предупреждения: человек сверяет
   // «что нарисовано» с «что заказываем» построчно, и в панели это таблица, а не
@@ -424,5 +501,28 @@ export function planToModel(plan, winTypes, newId) {
     return (said == null) ? op : Object.assign({}, op, { sill: said });
   });
 
-  return { model: model, winTypes: types, warnings: warn, picks: picks };
+  // Площади с чертежа — бесплатная проверка чтения. Совпали наши метры с
+  // подписанными «S=7.34 м²» — значит длины прочитаны верно; разошлись — значит
+  // где-то не тот размер, и лучше узнать это здесь, чем в смете.
+  const areas = [];
+  if ((p.rooms || []).length) {
+    const built = modelRooms(model);
+    p.rooms.forEach(function (rm) {
+      const got = built.find(function (b) { return b.name === rm.name; });
+      const row = { name: rm.name, said: rm.area, got: got ? got.area : 0 };
+      areas.push(row);
+      if (!got) {
+        warn.push("«" + rm.name + "»: подпись не попала ни в одно помещение — проверьте стены");
+        return;
+      }
+      if (!rm.area) return;
+      const diff = Math.abs(got.area - rm.area);
+      if (diff > 0.3 && diff / rm.area > 0.05) {
+        warn.push("«" + rm.name + "»: на чертеже " + rm.area + " м², у нас вышло " + got.area +
+          " м² — где-то не тот размер");
+      }
+    });
+  }
+
+  return { model: model, winTypes: types, warnings: warn, picks: picks, areas: areas };
 }
