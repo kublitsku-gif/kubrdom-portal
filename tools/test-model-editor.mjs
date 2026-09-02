@@ -80,7 +80,7 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   // Переключаемся на ВТОРУЮ перегородку и ставим дверь туда.
   const second = p.q('specSheets[0].model.rooms[1].id')
   click(p, { a: 'model-part', id: second })
-  const doorType = p.q('winTypes.filter(function(t){return t.kind==="door"&&t.w===700;})[0].id')
+  const doorType = p.q('winTypes.filter(function(t){return t.kind==="door"&&t.w===600;})[0].id')
   click(p, { a: 'model-op-add', t: doorType })
   const onSecond = doors(p).filter((o) => o.after === second)
   t.ok('дверь встала на выбранную перегородку, а не в первую', onSecond.length === 2, String(onSecond.length))
@@ -181,7 +181,7 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   // У дверей каталог свой, и межкомнатное полотно лежит в нём же.
   click(p, { a: 'model-tool', k: 'door' })
   const dcat = p.run('modelFullOverlay()')
-  t.ok('в дверях — двери', /Дверь входная 1000×2100/.test(dcat) && /Дверь межкомнатная 700×2050/.test(dcat))
+  t.ok('в дверях — двери', /Дверь входная 1000×2100/.test(dcat) && /Дверь межкомнатная 600×2050/.test(dcat))
   t.ok('и ни одного окна', dcat.indexOf('Витраж 2160×2390') < 0)
 
   // Карточка листа следует за инструментом: вид первой вкладкой, перегородки
@@ -513,15 +513,15 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   t.section('Завести межкомнатное полотно')
   const p = panel()
   p.run('specSheets[0].model.openings=specSheets[0].model.openings.filter(function(o){return o.side!=="part";});' +
-    'winTypes=winTypes.filter(function(t){return !(t.kind==="door"&&t.w===700);});modelSync(specSheets[0]);')
+    'winTypes=winTypes.filter(function(t){return !(t.kind==="door"&&t.w===600);});modelSync(specSheets[0]);')
   click(p, { a: 'model-full' })
   click(p, { a: 'model-tool', k: 'op' })
   const bar = p.run('modelFullOverlay()')
-  t.ok('кнопка «завести полотно» предлагается', /data-a="wt-cat-add" data-k="inner-700x2050"/.test(bar))
+  t.ok('кнопка «завести полотно» предлагается', /data-a="wt-cat-add" data-k="inner-600x2050"/.test(bar))
 
-  click(p, { a: 'wt-cat-add', k: 'inner-700x2050' })
-  const d = p.q('winTypes.filter(function(t){return t.kind==="door"&&t.w===700;})')
-  t.ok('полотно заведено 700×2050', d.length === 1 && d[0].h === 2050, JSON.stringify(d))
+  click(p, { a: 'wt-cat-add', k: 'inner-600x2050' })
+  const d = p.q('winTypes.filter(function(t){return t.kind==="door"&&t.w===600;})')
+  t.ok('полотно заведено 600×2050', d.length === 1 && d[0].h === 2050, JSON.stringify(d))
   t.ok('цена нулевая — её ставит человек', d[0].cost === 0, String(d[0].cost))
   t.ok('и оно сразу выбрано для установки', p.q('modelPlaceType') === d[0].id)
   t.ok('инструмент — «Проём»', p.q('modelTool') === 'op')
@@ -529,11 +529,11 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   // Второй тап дубля не заводит: то же изделие двумя строками развело бы по двум
   // ценам один и тот же заказ, поэтому кнопка и пропадает.
   t.ok('второй раз кнопка не предлагается',
-    p.run('modelFullOverlay()').indexOf('data-k="inner-700x2050"') < 0)
+    p.run('modelFullOverlay()').indexOf('data-k="inner-600x2050"') < 0)
   click(p, { a: 'wt-new' })
-  click(p, { a: 'wt-cat-add', k: 'inner-700x2050' })
+  click(p, { a: 'wt-cat-add', k: 'inner-600x2050' })
   t.ok('и повтором дубля не завести',
-    p.q('winTypes.filter(function(t){return t.kind==="door"&&t.w===700;}).length') === 1)
+    p.q('winTypes.filter(function(t){return t.kind==="door"&&t.w===600;}).length') === 1)
 
   // И этим полотном дверь ставится тапом по перегородке.
   const plan = p.run('modelPlanSvg(specSheets[0], true)')
@@ -736,7 +736,7 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   t.ok('и говорит, почему не приняло',
     p.run('modelFullOverlay()').indexOf('не влезает — максимум') >= 0,
     'молча подставленный максимум читается как «оно меня не поняло»')
-  const w = p.q('specSheets[0].model.w'), dw = 700
+  const w = p.q('specSheets[0].model.w'), dw = 600
   t.ok('и с другого края тоже',
     p.q('specSheets[0].model.openings.filter(function(o){return o.id===' + JSON.stringify(door.id) + ';})[0].pos') === w - fin - dw,
     String(p.q('specSheets[0].model.openings.filter(function(o){return o.id===' + JSON.stringify(door.id) + ';})[0].pos')))
@@ -1069,7 +1069,7 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   p.run('specSheets[0].model.openings=specSheets[0].model.openings.filter(function(o){return o.side!=="wall";});modelSync(specSheets[0]);')
   click(p, { a: 'model-full' })
 
-  const doorType = p.q('winTypes.find(function(x){return x.kind==="door"&&x.w===700;}).id')
+  const doorType = p.q('winTypes.find(function(x){return x.kind==="door"&&x.w===600;}).id')
   click(p, { a: 'model-tool', k: 'op' })
   click(p, { a: 'model-place-type', t: doorType })
 
@@ -1088,7 +1088,7 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   const door = ops.find((o) => o.side === 'wall')
   t.ok('дверь встала в кусок стены', !!door, JSON.stringify(ops.map((o) => o.side)))
   t.ok('и именно в тот, по которому тапнули', door.wall === wl.id)
-  t.ok('по центру тапа', Math.abs(door.pos + 350 - tapX) <= 60, String(door.pos))
+  t.ok('по центру тапа', Math.abs(door.pos + 300 - tapX) <= 60, String(door.pos))
   // Стена с дверью остаётся стеной: заливка не должна слить санузел с коридором,
   // иначе 2,71 м² превратятся в 4,3 и уедут в смету.
   const rooms = p.q('modelRooms(specSheets[0].model)')
@@ -1103,7 +1103,7 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
 
   // Едет она по СВОЕЙ стене и с торца не съезжает.
   const base = p.q('opPosBase(specSheets[0].model, specSheets[0].model.openings.filter(function(o){return o.side==="wall";})[0])')
-  t.ok('пределы — по своей стене', base.min === wl.x && base.max === wl.x + wl.w - 700,
+  t.ok('пределы — по своей стене', base.min === wl.x && base.max === wl.x + wl.w - 600,
     JSON.stringify(base))
 
   // Убрали стену — ушла и дверь: проём без стены никуда не ведёт, а в смете

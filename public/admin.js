@@ -745,7 +745,7 @@ async function modelPlanRecognize(sh){
       walls:(j.plan.walls||[]).slice(),
       rooms:(j.plan.rooms||[]).slice(),
       openings:(j.plan.openings||[]).map(function(o){
-        return { kind:o.kind, side:o.side, after_bay:o.after, pos:o.pos, width:o.w, height:o.h, sill:o.sill, label:o.label };
+        return { kind:o.kind, side:o.side, after_bay:o.after, wall_index:o.wallIdx, pos:o.pos, width:o.w, height:o.h, sill:o.sill, label:o.label };
       }),
       notes:j.plan.notes,
     });
@@ -10442,7 +10442,7 @@ function modelOpBarPlain(){
     // Дверь между комнатами ставить нечем, пока такого полотна нет в справочнике:
     // лист, собранный до появления межкомнатных дверей, их и не знает. Заводим
     // тут же — уходить из редактора за одной строкой справочника незачем.
-    (inner?'':'<button data-a="wt-cat-add" data-k="inner-700x2050" title="Завести стандартное межкомнатное полотно и выбрать его" style="flex-shrink:0;border:1.5px dashed #8e44ad;background:transparent;color:#c79ae0;border-radius:9px;padding:6px 11px;font-size:11.5px;font-weight:700;cursor:pointer">+ 🚪 '+esc(INNER_DOOR.n)+'</button>')+
+    (inner?'':'<button data-a="wt-cat-add" data-k="inner-600x2050" title="Завести стандартное межкомнатное полотно и выбрать его" style="flex-shrink:0;border:1.5px dashed #8e44ad;background:transparent;color:#c79ae0;border-radius:9px;padding:6px 11px;font-size:11.5px;font-weight:700;cursor:pointer">+ 🚪 '+esc(INNER_DOOR.n)+'</button>')+
   '</div>';
 }
 
@@ -10514,7 +10514,7 @@ function modelReadPanel(sh){
   // числа, а сверять человеку придётся именно глазами.
   const mm=function(v){ return v?(numRu(Math.round(v/10)/100)+" м"):"—"; };
   const row=function(a,b){ return '<div style="display:flex;gap:10px;font-size:12.5px;padding:4px 0;border-bottom:1px solid #eef3f8"><span style="flex:1;color:#5a7a9a">'+esc(a)+'</span><span style="font-weight:700;color:#0d1b2e">'+esc(b)+'</span></div>'; };
-  const SIDES={n:"длинная стена (верх)",s:"длинная стена (низ)",w:"торец слева",e:"торец справа",part:"перегородка"};
+  const SIDES={n:"длинная стена (верх)",s:"длинная стена (низ)",w:"торец слева",e:"торец справа",part:"перегородка",wall:"кусок стены"};
   let h='<div style="position:absolute;inset:0;background:rgba(13,27,46,.72);display:flex;align-items:center;justify-content:center;padding:18px;z-index:20">'+
     '<div style="background:#fff;border-radius:14px;max-width:560px;width:100%;max-height:100%;overflow:auto;padding:18px">'+
     '<div style="font-size:15px;font-weight:800;color:#0d1b2e;margin-bottom:4px">Прочитано с планировки</div>'+

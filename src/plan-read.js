@@ -58,11 +58,12 @@ export const PLAN_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["kind", "side", "after_bay", "pos", "width", "height", "sill", "label"],
+        required: ["kind", "side", "after_bay", "wall_index", "pos", "width", "height", "sill", "label"],
         properties: {
           kind: { type: "string", enum: ["win", "door"] },
-          side: { type: "string", enum: ["n", "s", "w", "e", "part"] },
+          side: { type: "string", enum: ["n", "s", "w", "e", "part", "wall"] },
           after_bay: Object.assign({ description: "Для side=part: номер помещения слева от перегородки, с нуля" }, NUM),
+          wall_index: Object.assign({ description: "Для side=wall: номер куска стены из walls, с нуля" }, NUM),
           pos: Object.assign({ description: "От наружного левого угла (n/s) или от верхней длинной стены (w/e/part) до ближнего края проёма, мм" }, NUM),
           width: Object.assign({ description: "Ширина проёма, мм" }, NUM),
           height: Object.assign({ description: "Высота проёма, мм (на чертежах подписывают H=…)" }, NUM),
@@ -122,6 +123,8 @@ export const PLAN_SYSTEM = [
   "Стена, которая не доходит до противоположной стены (стенка санузла, выгородка коридора), в bays НЕ идёт:",
   "её кладут отрезком в walls, а помещения, которые из этого вышли, перечисляют в rooms с точкой внутри и площадью.",
   "Площадь бери подписанную на плане (S=7.34 м²) и не пересчитывай: по ней мы проверим, верно ли прочитали размеры.",
+  "Дверь в таком куске стены — это side=wall и wall_index: номер той стены из walls, в которой она стоит.",
+  "Так стоит дверь санузла, вырезанного стенами: перегородки во всю ширину рядом с ним нет, и side=part для неё неверен.",
   "Файлов может быть несколько — это РАЗНЫЕ ЛИСТЫ ОДНОГО дома (план, фасады, разрезы, страницы одного PDF).",
   "Читай их вместе и верни ОДНУ планировку: план даёт длины и положения, разрез и фасад — высоты проёмов.",
   "Не складывай листы как разные дома и не удваивай помещения, увидев их на двух листах.",
@@ -237,7 +240,7 @@ export function planNormalize(raw) {
 
   const openings = (r.openings || []).map(function (o, i) {
     const it = o || {};
-    const side = ["n", "s", "w", "e", "part"].indexOf(it.side) >= 0 ? it.side : "s";
+    const side = ["n", "s", "w", "e", "part", "wall"].indexOf(it.side) >= 0 ? it.side : "s";
     const label = String(it.label || "").trim();
     const nameOf = label || ((it.kind === "door" ? "Дверь" : "Окно") + " №" + (i + 1));
     const w = toMm(it.width, k, 300, 6000);
@@ -246,6 +249,7 @@ export function planNormalize(raw) {
       kind: (it.kind === "door") ? "door" : "win",
       side: side,
       after: (it.after_bay == null) ? null : Math.max(0, Math.round(Number(it.after_bay) || 0)),
+      wallIdx: (it.wall_index == null) ? null : Math.max(0, Math.round(Number(it.wall_index) || 0)),
       pos: toMm(it.pos, k, 1, 20000),
       w: w,
       // Высоту не прочитали — ставим типовую: без неё изделие не заказать, а
@@ -405,6 +409,7 @@ export function planToModel(plan, winTypes, newId) {
     }
   }
 
+  const wallIds = [];
   // Куски стен — то, из-за чего санузел на чертеже Г-образный, а рядом коридор.
   // Кладём их через addWall: он прилипает к соседним стенам и обрезает свесы —
   // щель в миллиметр читается заливкой как проход, и кладовка становится нишей.
@@ -416,8 +421,12 @@ export function planToModel(plan, winTypes, newId) {
           w: Math.abs(seg.x2 - seg.x1), h: th }
       : { x: Math.round((seg.x1 + seg.x2) / 2 - th / 2), y: Math.min(seg.y1, seg.y2),
           w: th, h: Math.abs(seg.y2 - seg.y1) };
-    const next = addWall(model, rect, gen());
+    const id = gen();
+    const next = addWall(model, rect, id);
     model.walls = next.walls || model.walls;
+    // Помним номер стены: дверь санузла ссылается на неё именно номером — id
+    // рождается здесь, и в ответе модели его быть не может.
+    wallIds.push((model.walls || []).some(function (w) { return w.id === id; }) ? id : "");
   });
 
   // Подписи помещений — точкой внутри. Отсек своё имя носит сам, а комнате,
@@ -457,6 +466,28 @@ export function planToModel(plan, winTypes, newId) {
     // сдвигать его вбок.
     const pos = Math.max(0, Math.round(o.pos + (o.w - found.w) / 2));
     const op = { id: gen(), side: o.side, pos: pos, typeId: found.id };
+    if (o.side === "wall") {
+      // Дверь в куске стены: у неё нет ни отсека, ни наружной стены — только своя
+      // стенка, и без неё это не проём, а число в воздухе.
+      const id = wallIds[o.wallIdx == null ? 0 : o.wallIdx];
+      const wl = id ? (model.walls || []).find(function (w) { return w.id === id; }) : null;
+      if (!wl) {
+        warn.push(named + ": не понятно, в какой стене — пропущен");
+        return null;
+      }
+      const along = (wl.w >= wl.h);
+      const lo = along ? wl.x : wl.y, span = along ? wl.w : wl.h;
+      op.wall = id;
+      op.into = 1;
+      op.hinge = "start";
+      // Прижимаем к своей стене: дверь, съехавшая с её торца, ведёт в воздух.
+      const at = Math.max(lo, Math.min(lo + span - found.w, op.pos));
+      if (at !== op.pos) {
+        warn.push(named + ": не помещается в свою стену — сдвинули на " + at + " мм");
+        op.pos = at;
+      }
+      return op;
+    }
     if (o.side === "part") {
       const bay = bays[o.after == null ? 0 : o.after];
       if (!bay || bay === bays[bays.length - 1]) {
@@ -490,9 +521,9 @@ export function planToModel(plan, winTypes, newId) {
   const sills = {};
   (p.openings || []).forEach(function (o, i) { sills[i] = o.sill; });
   model.openings = alignHeads(model, types).openings.map(function (op, i) {
-    if (op.side === "part") {
+    if (op.side === "part" || op.side === "wall") {
       const cut = Object.assign({}, op);
-      delete cut.sill;                // у двери в перегородке порога нет
+      delete cut.sill;                // у двери во внутренней стене порога нет
       return cut;
     }
     // Подписанный на чертеже подоконник выигрывает у нашей линии верха: это ЗАМЕР,

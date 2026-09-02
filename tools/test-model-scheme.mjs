@@ -130,10 +130,10 @@ const sum = (a) => a.reduce((x, y) => x + y, 0)
 
   // Цепочка двери в перегородке меряется от ЧИСТОВЫХ стен, как на чертеже.
   const d2 = sc.dims.find((d) => d.name === 'Д-2')
-  ok('Д-2: 750 · 700 · 750', d2 && d2.segs.join(' ') === '750 700 750', d2 && d2.segs.join(' '))
+  ok('Д-2: 800 · 600 · 800', d2 && d2.segs.join(' ') === '800 600 800', d2 && d2.segs.join(' '))
   ok('Д-2 стоит у своей перегородки', d2 && d2.at === sc.walls.find((w) => w.kind === 'part').x)
   const d3 = sc.dims.find((d) => d.name === 'Д-3')
-  ok('Д-3: 1450 · 700 · 50', d3 && d3.segs.join(' ') === '1450 700 50', d3 && d3.segs.join(' '))
+  ok('Д-3: 1500 · 600 · 100', d3 && d3.segs.join(' ') === '1500 600 100', d3 && d3.segs.join(' '))
   ok('обе цепочки внутренние', d2 && d3 && d2.inner === true && d3.inner === true)
   ok('высота и подоконник приехали из изделия',
     sc.openings.some((o) => o.height === 2200 && o.sill === 200), JSON.stringify(sc.openings.map((o) => [o.height, o.sill])))

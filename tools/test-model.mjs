@@ -179,7 +179,7 @@ function house() {
   const drawn = sc.openings.find((o) => o.id === door.id)
   ok('проём начерчен в стене', drawn.y === wl.y && drawn.h === wl.h,
     JSON.stringify([drawn.x, drawn.y, drawn.w, drawn.h]))
-  ok('шириной в полотно', drawn.w === 700, String(drawn.w))
+  ok('шириной в полотно', drawn.w === 600, String(drawn.w))
   ok('без усиления', drawn.frame === false && drawn.jambs.length === 0)
   ok('со створкой', !!drawn.swing)
   // Размер двери на чертеже меряется от концов её стены: цепочка через весь дом

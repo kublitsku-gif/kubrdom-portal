@@ -29,7 +29,7 @@ const READ = {
   openings: [
     { kind: 'win', side: 's', after_bay: null, pos: 2976, width: 1300, height: 1150, label: 'ОК-1' },
     { kind: 'door', side: 's', after_bay: null, pos: 5276, width: 1000, height: 2100, label: 'Вход' },
-    { kind: 'door', side: 'part', after_bay: 0, pos: 826, width: 700, height: 2050, label: 'Д-1' },
+    { kind: 'door', side: 'part', after_bay: 0, pos: 826, width: 600, height: 2050, label: 'Д-1' },
   ],
   notes: '',
 }
@@ -248,8 +248,8 @@ const READ = {
 
   // Межкомнатная дверь — стандартное полотно, а не «ближайшая входная»: у входной
   // разница всего 300 мм, а это другая дверь и другие деньги.
-  const inner = one({ kind: 'door', side: 'part', after_bay: 0, pos: 800, width: 700, height: 2050, label: 'Д-1' })
-  ok('межкомнатная дверь — стандартное полотно', inner.t.w === 700 && /межкомнатная/i.test(inner.t.n), inner.t.n)
+  const inner = one({ kind: 'door', side: 'part', after_bay: 0, pos: 800, width: 600, height: 2050, label: 'Д-1' })
+  ok('межкомнатная дверь — стандартное полотно', inner.t.w === 600 && /межкомнатная/i.test(inner.t.n), inner.t.n)
 
   // Справочник дома важнее каталога: там СОГЛАСОВАННАЯ цена проданного дома.
   const mine = [{ id: 'w1', kind: 'win', n: 'Окно 1300×1150 п/о', w: 1300, h: 1150, cost: 31000 }]
@@ -260,8 +260,8 @@ const READ = {
   // Но «своё» — это то же самое, а не «что-то похожее»: входная дверь, уже
   // заведённая в проекте, не должна перехватывать межкомнатную.
   const doors = [{ id: 'd1', kind: 'door', n: 'Дверь входная 1000×2100', w: 1000, h: 2100, cost: 27150 }]
-  const grab = one({ kind: 'door', side: 'part', after_bay: 0, pos: 800, width: 700, height: 2050, label: 'Д-1' }, doors)
-  ok('входная дверь не перехватывает межкомнатную', grab.t.id !== 'd1' && grab.t.w === 700, grab.t.n)
+  const grab = one({ kind: 'door', side: 'part', after_bay: 0, pos: 800, width: 600, height: 2050, label: 'Д-1' }, doors)
+  ok('входная дверь не перехватывает межкомнатную', grab.t.id !== 'd1' && grab.t.w === 600, grab.t.n)
 }
 
 // ── 6б. Подоконник читается с чертежа ────────────────────────────────────────
@@ -343,6 +343,35 @@ const READ = {
   const san = rooms.find((x) => x.name === 'Санузел')
   ok('санузел отдельное помещение', Math.abs(san.area - 3.05) < 0.2, String(san.area))
   ok('и он не прямоугольный отсек', san.x1 < r.model.l - 100, san.x0 + '…' + san.x1)
+
+  // Дверь санузла стоит в куске стены — ни отсека, ни наружной стены у неё нет.
+  // Это единственный способ её прочитать: side=part для неё просто неверен.
+  const withDoor = planNormalize(Object.assign({}, raw, {
+    openings: [{ kind: 'door', side: 'wall', wall_index: 1, pos: 4600, width: 600, height: 2050, label: 'Д-1' }],
+  }))
+  let k = 0
+  const wd = planToModel(withDoor.plan, [], () => 'k' + (++k))
+  const door = wd.model.openings.find((o) => o.side === 'wall')
+  ok('дверь санузла прочиталась', !!door, JSON.stringify(wd.model.openings))
+  ok('и встала в свою стену',
+    (wd.model.walls || []).some((w) => w.id === door.wall && w.w > w.h), door.wall)
+  ok('порога у неё нет', !('sill' in door), JSON.stringify(door))
+  // Стена с дверью остаётся стеной для площадей: иначе санузел сольётся с
+  // коридором и 3 м² превратятся в 4,5.
+  ok('санузел остался помещением',
+    Math.abs((wd.areas.find((x) => x.name === 'Санузел') || {}).got - 3.02) < 0.05,
+    JSON.stringify(wd.areas))
+  // Стена, которой нет, — это не «поставим куда-нибудь», а пропуск с объяснением.
+  const nowhere = planNormalize(Object.assign({}, raw, {
+    openings: [{ kind: 'door', side: 'wall', wall_index: 9, pos: 4600, width: 600, height: 2050, label: 'Д-9' }],
+  }))
+  let n = 0
+  const bad = planToModel(nowhere.plan, [], () => 'n' + (++n))
+  ok('дверь в несуществующей стене пропущена', !bad.model.openings.some((o) => o.side === 'wall'))
+  ok('и названа', bad.warnings.some((w) => /Д-9/.test(w)), bad.warnings.join(' | '))
+  ok('схема спрашивает номер стены',
+    PLAN_SCHEMA.properties.openings.items.required.indexOf('wall_index') >= 0 &&
+    PLAN_SCHEMA.properties.openings.items.properties.side.enum.indexOf('wall') >= 0)
 
   // Площади с чертежа сошлись — значит длины прочитаны верно, и молчание уместно.
   ok('совпавшие площади не тревожат', !r.warnings.length, r.warnings.join(' | '))
