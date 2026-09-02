@@ -2255,7 +2255,7 @@ let buildRules=[];
 // спецификация (модель, отделка, наценка), плюс ссылки на объект и договор —
 // поэтому редактор модели, смета, печать и сборка объекта работают без правок.
 let projects=[];
-let projOpenId=null, projBand="plan", projNew=null;
+let projOpenId=null, projBand="plan", projNew=null, projRulesOpen=false;
 let specOpenId=null;      // открытая спецификация (null = список)
 let specNew={name:"",kind:"banya",clientId:"",planId:"",model:"",preset:""};
 let specShowNew=false;
@@ -12531,7 +12531,9 @@ function estWhyEditor(p, sh){
     '<div style="display:flex;gap:6px;margin-top:9px;flex-wrap:wrap">'+
       (r?'<button data-a="est-rule-del" data-est="'+p.estId+'" style="padding:7px 11px;background:#fff;border:1px solid #f0d5d0;border-radius:8px;cursor:pointer;color:#c0392b;font-size:11px;font-weight:700">Убрать правило</button>':'')+
       '<button data-a="est-why" data-est="'+p.estId+'" style="padding:7px 11px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:11px;font-weight:700">Свернуть</button>'+
-      '<button data-a="spec2-tab" data-v="rules" style="padding:7px 11px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:11px;font-weight:700">Все правила</button>'+
+      (tab==="projects"
+        ? '<button data-a="proj-rules" style="padding:7px 11px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:11px;font-weight:700">Все правила</button>'
+        : '<button data-a="spec2-tab" data-v="rules" style="padding:7px 11px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:11px;font-weight:700">Все правила</button>')+
     '</div>'+
     '<div style="font-size:10px;color:#a08ab8;line-height:1.45;margin-top:7px">'+
       (r?'Правило считает эту смету вместо обязательной строки. Убрать правило — вернуть счёт «как в справочнике».'
@@ -12821,7 +12823,15 @@ function projCardHtml(p){
   '</div>';
   h+=projBandsHtml();
   if(projBand==="plan")h+=projPlanHtml(p);
-  else if(projBand==="parts")h+=estBodyHtml(p, winTypes, p, false);
+  else if(projBand==="parts"){
+    h+=estBodyHtml(p, winTypes, p, false);
+    // Правила — там же, где смета, которую они собирают: уходить за ними в другой
+    // раздел значит терять из виду дом, ради которого их и правят.
+    h+='<button data-a="proj-rules" style="width:100%;padding:10px;background:#fff;border:1px solid #dde6f0;border-radius:10px;cursor:pointer;color:#0d1b2e;font-size:12.5px;font-weight:700;margin-bottom:9px">'+
+        (projRulesOpen?"⚙️ Скрыть правила сборки":"⚙️ Правила сборки — по ним собрана эта смета")+
+      '</button>';
+    if(projRulesOpen)h+=spec2RulesHtml({model:p.model, winTypes:winTypes}, p, null);
+  }
   else if(projBand==="money")h+=projMoneyHtml(p);
   else h+=projBuildHtml(p);
   if(projBand!=="parts"){
@@ -21675,6 +21685,9 @@ function bind(){
       const p=proj(el.dataset.id); if(!p)return;
       const v=parseFloat(String(el.value).replace(",",".")); p.markup=(isFinite(v)&&v>=0)?v:0; fl();
     };}
+    else if(a==="proj-rules"){el.onclick=()=>{
+      projRulesOpen=!projRulesOpen; projBand="parts"; estWhyOpen=""; render();
+    };}
     else if(a==="proj-open-obj"){el.onclick=()=>{ tab="assign"; openObject=el.dataset.oid; render(); window.scrollTo(0,0); };}
     else if(a==="proj-del"){el.onclick=()=>{
       const p=proj(el.dataset.id); if(!p)return;
@@ -21685,7 +21698,8 @@ function bind(){
       specDrop(p.id); projOpenId=null; fl();
     };}
     else if(a==="rule-add"){el.onclick=()=>{
-      const sh=spec2Sheet();
+      // Вид берём у открытого листа: правила заводят и из проекта тоже.
+      const sh=schemeSheet()||spec2Sheet();
       const kind=(sh&&sh.kind)||"house";
       buildRules=buildRules.concat([{ id:gid(), kind:kind, estId:"", what:"surface", k:"wall",
         scope:"room", room:"", qty:1, stage:0, off:false }]);

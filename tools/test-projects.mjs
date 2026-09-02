@@ -164,4 +164,58 @@ function create(p, name) {
   t.ok('вкладка спецификации от проектов не изменилась', p.run('tab="spec";tSpec()').indexOf('data-a="proj-') < 0)
 }
 
+// ── 6. Смета проекта правится там же, где показана ──────────────────────────
+// Всё, что умеет опытный раздел, обязано работать и здесь: иначе «проект» это
+// красивый экран, а работают всё равно в другом месте.
+{
+  t.section('Правки состава внутри проекта')
+  const EST2 = EST.concat([
+    { id: 'e_p3', kind: 'house', name: 'Утепление — ППУ 3 см', stage: 1, lines: [{ pid: 'p_sock', qty: 1 }] },
+    { id: 'e_p5', kind: 'house', name: 'Утепление — ППУ 5 см', stage: 1, lines: [{ pid: 'p_sock', qty: 2 }] },
+  ])
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS.concat([{ id: 'p_alt', name: 'Розетка влагозащищённая', unitCost: 500, store: 'Белка', mode: 'piece' }]),
+    estimates: EST2, dbPlans: [], crmClients: [{ id: 'c1', name: 'Иванов' }],
+    specSheets: [], specSheets2: [], projects: [], buildRules: [],
+    winTypes: [], objects: [], templates: [], contractDocs: [], purchases: [], issues: [],
+    users: [], stock: [], settings: { specMarkup: 30 },
+  })
+  create(p)
+  const parts = p.run('projBand="parts";tProjects()')
+  t.ok('материалы перечнем', parts.indexOf('data-a="est-mat-open"') >= 0)
+  t.ok('количество правится руками', parts.indexOf('data-a="est-mat-qty"') >= 0)
+  t.ok('чип «откуда число» тапается', parts.indexOf('data-a="est-why"') >= 0)
+  t.ok('правила раскрываются тут же', parts.indexOf('data-a="proj-rules"') >= 0)
+  t.ok('но по умолчанию свёрнуты', parts.indexOf('data-a="rule-add"') < 0)
+
+  const open = p.dom.node({ a: 'proj-rules' }); p.run('bind();'); open.onclick()
+  const withRules = p.run('tProjects()')
+  t.ok('раскрылись', /ПРАВИЛА СБОРКИ/.test(withRules) && withRules.indexOf('data-a="rule-add"') >= 0)
+  const add = p.dom.node({ a: 'rule-add' }); p.run('bind();'); add.onclick()
+  t.ok('правило заводится из проекта', p.q('buildRules.length') === 1)
+  t.ok('и вида проекта', p.q('buildRules[0].kind') === 'house')
+
+  // Замена материала внутри проекта.
+  const key = p.q('works2(projects[0], specCtx(projects[0])).positions.filter(function(x){return x.estId==="e_p3";})[0].key') + '|p_sock'
+  const chip = p.dom.node({ a: 'est-mat-open', k: key }); p.run('bind();'); chip.onclick()
+  p.dom.field('msw-input', 'Розетка влагозащищённая')
+  const go = p.dom.node({ a: 'est-mat-do', k: key }); p.run('bind();'); go.onclick()
+  t.ok('замена записалась в проект', p.q('Object.keys(projects[0].mats||{}).length') === 1)
+
+  // Варианты — переключателем, как в опытном разделе.
+  p.run('estWhyOpen="e_p5";tProjects();')
+  const auto = p.dom.node({ a: 'est-opt-auto', e: 'e_p5', g: 'Утепление' }); p.run('bind();'); auto.onclick()
+  t.ok('группа собрана в проекте', p.q('Object.keys(projects[0].optOf||{}).length') === 2)
+  t.ok('в доме один вариант',
+    p.q('works2(projects[0], specCtx(projects[0])).positions.filter(function(x){return /ППУ/.test(x.name);}).length') === 1)
+  const chips = p.run('estWhyOpen="";tProjects()')
+  t.ok('и переключатель на месте', (chips.match(/data-a="est-opt-pick"/g) || []).length === 2)
+
+  // Всё это уезжает в объект тем же составом.
+  const shown = p.q('works2(projects[0], specCtx(projects[0])).positions.length')
+  const nWorks = p.q('specBuildStages(projects[0]).reduce(function(a,s){return a+s.works.length;},0)')
+  t.ok('объект собран тем же списком', nWorks === shown, 'объект ' + nWorks + ', смета ' + shown)
+}
+
 t.done()
