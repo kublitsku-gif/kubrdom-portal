@@ -56,7 +56,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
 import { totals2, issues2, works2 } from "../src/spec2.js";
 import { allPositions, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
   pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
-  optGroupOf, optLabelOf, optPrefixOf } from "../src/recipe.js";
+  optGroupOf, optLabelOf, optPrefixOf, matAddOf } from "../src/recipe.js";
 import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
 import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
@@ -2242,6 +2242,7 @@ let nodeTab="n1";          // какой узел раскрыт под черт
 let spec2Tab="scheme";     // что смотрим в разделе: чертёж или смету по нему
 let estWhyOpen="";         // у какой сметы раскрыт редактор правила прямо в строке
 let matSwapOpen="";        // какой материал сметы сейчас меняют: "<ключ позиции>|<pid>"
+let matAddOpen="";         // у какой строки сметы открыта форма «+ материал»
 let modelStageTab=0;       // 0 = все этапы
 let specSheets=[];
 // «Спецификация 2» — опытный раздел (см. src/spec2.js). Листы держим ОТДЕЛЬНО: по
@@ -12420,10 +12421,12 @@ function specMatsListHtml(pos, sh, live){
       const cost=Math.round((Number(m.cost)||0)*qty);
       const open=matSwapOpen===matSwapKey(pos,m);
       const was=!!(m.swapped||sw[m.pid||""]);
+      const added=!!m.added;
       return '<div style="padding:5px 0;border-bottom:1px solid #f6f9fc">'+
         '<div style="display:flex;align-items:baseline;gap:7px">'+
           '<span style="flex:1;min-width:0;font-size:11.5px;color:#0d1b2e;line-height:1.35">'+esc(m.n||"")+
             (was?' <span style="font-size:9.5px;font-weight:700;color:#8e44ad;background:#f3ecf9;border-radius:5px;padding:1px 5px">заменён</span>':'')+
+            (added?' <span style="font-size:9.5px;font-weight:700;color:#16a085;background:#e8f6f3;border-radius:5px;padding:1px 5px">добавлен</span>':'')+
             '<span style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;font-size:10px;color:#9aabbf;margin-top:2px">'+
               (m.store?'<span>'+esc(m.store)+' ·</span>':'')+
               ((Number(m.cost)||0)>0?'<span>'+Math.round(Number(m.cost)).toLocaleString("ru-RU")+' ₽/'+esc(unit)+' ×</span>':'')+
@@ -12440,17 +12443,43 @@ function specMatsListHtml(pos, sh, live){
           '</span>'+
           '<span style="font-size:11.5px;font-weight:700;color:#5a7a9a;white-space:nowrap">'+cost.toLocaleString("ru-RU")+' ₽</span>'+
           (can?'<button data-a="est-mat-open" data-k="'+esc(matSwapKey(pos,m))+'" title="Заменить материал из базы" style="width:24px;height:24px;background:'+(open?"#2980b9":"transparent")+';border:1px solid #2980b955;border-radius:6px;cursor:pointer;color:'+(open?"#fff":"#2980b9")+';font-size:11px;flex-shrink:0">⇄</button>':'')+
+          (can&&added?'<button data-a="est-mat-add-del" data-k="'+esc(pos.key)+'" data-m="'+esc(m.id||"")+'" title="Убрать дописанный материал" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>':'')+
         '</div>'+
         (open?matSwapEditor(pos, m, sh, was):'')+
       '</div>';
     }).join("")+
+    // Смета из справочника описывает типовой дом, а на этом бывает лишний уголок
+    // или вторая коробка: дописать его в строке честнее, чем править справочник
+    // ради одного дома.
+    (can?matAddHtml(pos):'')+
+  '</div>';
+}
+function matAddHtml(pos){
+  if(matAddOpen!==pos.key){
+    return '<div style="padding:6px 0 2px">'+
+      '<button data-a="est-mat-add-open" data-k="'+esc(pos.key)+'" style="border:1px dashed #c9d6e4;background:#fff;border-radius:8px;padding:5px 10px;font-size:11px;color:#5a7a9a;cursor:pointer">+ материал</button>'+
+    '</div>';
+  }
+  return '<div style="margin:7px 0 2px;background:#eefaf6;border:1px solid #16a08544;border-radius:9px;padding:9px 10px">'+
+    '<div style="font-size:9px;font-weight:800;color:#16a085;letter-spacing:0.3px;margin-bottom:5px">+ ДОБАВИТЬ МАТЕРИАЛ В ЭТУ СТРОКУ</div>'+
+    '<input id="mad-n" list="msw-catalog" autocomplete="off" placeholder="Название — можно выбрать из базы" style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;margin-bottom:5px;outline:none;box-sizing:border-box">'+
+    '<datalist id="msw-catalog">'+expProducts.map(function(x){return '<option value="'+esc(x.name||"").replace(/"/g,"&quot;")+'"></option>';}).join("")+'</datalist>'+
+    '<div style="display:flex;gap:5px;margin-bottom:6px">'+
+      '<input id="mad-qty" placeholder="Кол-во" value="1" inputmode="decimal" style="flex:1;min-width:0;padding:7px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none">'+
+      '<input id="mad-cost" placeholder="Цена ₽ (из базы)" inputmode="decimal" style="flex:2;min-width:0;padding:7px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none">'+
+    '</div>'+
+    '<div style="display:flex;gap:6px">'+
+      '<button data-a="est-mat-add-do" data-k="'+esc(pos.key)+'" style="flex:1;padding:8px;background:#16a085;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Добавить</button>'+
+      '<button data-a="est-mat-add-open" data-k="" style="padding:8px 12px;background:#fff;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;color:#7a9aaa;font-size:12px">Отмена</button>'+
+    '</div>'+
+    '<div style="font-size:10px;color:#7a9aaa;line-height:1.4;margin-top:6px">Название из базы подтянет цену, единицу и магазин. Материал живёт в этом доме — справочник не меняется.</div>'+
   '</div>';
 }
 function matSwapEditor(pos, m, sh, was){
   return '<div style="margin-top:6px;background:#eaf1f8;border:1px solid #2980b944;border-radius:9px;padding:9px 10px">'+
     '<div style="font-size:9px;font-weight:800;color:#2980b9;letter-spacing:0.3px;margin-bottom:5px">⇄ ЗАМЕНИТЬ НА МАТЕРИАЛ ИЗ БАЗЫ</div>'+
-    '<input id="msw-input" list="msw-catalog" autocomplete="off" placeholder="Начните вводить название из базы…" style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;margin-bottom:6px;outline:none;box-sizing:border-box">'+
-    '<datalist id="msw-catalog">'+expProducts.map(function(x){return '<option value="'+esc(x.name||"").replace(/"/g,"&quot;")+'"></option>';}).join("")+'</datalist>'+
+    '<input id="msw-input" list="msw-cat2" autocomplete="off" placeholder="Начните вводить название из базы…" style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;margin-bottom:6px;outline:none;box-sizing:border-box">'+
+    '<datalist id="msw-cat2">'+expProducts.map(function(x){return '<option value="'+esc(x.name||"").replace(/"/g,"&quot;")+'"></option>';}).join("")+'</datalist>'+
     '<div style="display:flex;gap:6px;flex-wrap:wrap">'+
       '<button data-a="est-mat-do" data-k="'+esc(matSwapKey(pos,m))+'" style="flex:1;min-width:120px;padding:8px;background:#2980b9;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Заменить</button>'+
       (was&&pos.from!=="layer"?'<button data-a="est-mat-reset" data-k="'+esc(matSwapKey(pos,m))+'" style="padding:8px 12px;background:#fff;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;color:#7a9aaa;font-size:12px">Вернуть из базы</button>':'')+
@@ -21481,6 +21510,42 @@ function bind(){
     // Правила сборки. Правка пишется сразу в раздел снимка: отдельной кнопки
     // «сохранить» в панели нет нигде, и заводить её здесь значило бы объяснять,
     // почему этот экран не такой, как все.
+    // ── Дописать материал в строку сметы ───────────────────────────────────
+    else if(a==="est-mat-add-open"){el.onclick=()=>{
+      const k=el.dataset.k||"";
+      matAddOpen=(matAddOpen===k)?"":k;
+      matSwapOpen=""; render();
+    };}
+    else if(a==="est-mat-add-do"){el.onclick=()=>{
+      const posKey=el.dataset.k||"";
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!posKey)return;
+      const name=((document.getElementById("mad-n")||{}).value||"").trim();
+      if(!name){ alert("Без названия материал не завести."); return; }
+      const qv=parseFloat(String(((document.getElementById("mad-qty")||{}).value||"1")).replace(",","."));
+      const cv=parseFloat(String(((document.getElementById("mad-cost")||{}).value||"")).replace(",","."));
+      const prod=expProducts.find(function(x){ return String(x.name||"").trim().toLowerCase()===name.toLowerCase(); });
+      // Название из базы подтягивает цену, единицу и магазин — ровно как при
+      // добавлении материала в объект, чтобы не перебивать характеристики руками.
+      const m={ id:gid(), pid:(prod&&prod.id)||"", n:(prod&&prod.name)||name,
+        store:(prod&&prod.store)||"", url:(prod&&prod.url)||"", note:"",
+        mode:(prod&&prod.mode)||"piece",
+        cost:isFinite(cv)&&cv>=0?cv:(Number(prod&&prod.unitCost)||0),
+        qty:isFinite(qv)&&qv>0?qv:1 };
+      m.unitCost=m.cost;
+      if(prod)["packBase","packPer","lenPer","sheetM2"].forEach(function(k){ if(prod[k]!=null)m[k]=prod[k]; });
+      const map=Object.assign({}, sh.matAdd||{});
+      map[posKey]=(map[posKey]||[]).concat([m]);
+      sh.matAdd=map; matAddOpen=""; fl();
+    };}
+    else if(a==="est-mat-add-del"){el.onclick=()=>{
+      const posKey=el.dataset.k||"", mid=el.dataset.m||"";
+      const sh=schemeSheet()||spec2Sheet();
+      if(!sh||!sh.matAdd||!sh.matAdd[posKey])return;
+      const map=Object.assign({}, sh.matAdd);
+      const row=(map[posKey]||[]).filter(function(x){return x.id!==mid;});
+      if(row.length)map[posKey]=row; else delete map[posKey];
+      sh.matAdd=map; fl();
+    };}
     // ── Варианты: один из нескольких ───────────────────────────────────────
     else if(a==="est-opt-pick"){el.onclick=()=>{
       const sh=schemeSheet()||spec2Sheet(); if(!sh)return;

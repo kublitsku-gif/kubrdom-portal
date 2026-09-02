@@ -334,17 +334,27 @@ export function matQtyOf(sheet, key) {
   return (((sheet && sheet.matQty) || {})[key]) || {};
 }
 
+// Материал, добавленный руками к строке (`sheet.matAdd[posKey]`). Смета из
+// справочника описывает типовой дом, а на этом доме бывает лишний уголок или
+// вторая коробка — дописать его прямо в строке честнее, чем править справочник
+// ради одного дома.
+export function matAddOf(sheet, key) {
+  return (((sheet && sheet.matAdd) || {})[key]) || [];
+}
+
 export function applyMatEdits(positions, sheet, products) {
   const swaps = (sheet && sheet.mats) || {};
   const qtys = (sheet && sheet.matQty) || {};
-  if (!Object.keys(swaps).length && !Object.keys(qtys).length) return positions;
+  const adds = (sheet && sheet.matAdd) || {};
+  if (!Object.keys(swaps).length && !Object.keys(qtys).length && !Object.keys(adds).length) return positions;
   const prodById = {};
   (products || []).forEach(function (p) { if (p && p.id) prodById[p.id] = p; });
   return (positions || []).map(function (pos) {
     const sw = swaps[pos.key] || {};
     const q = qtys[pos.key] || {};
-    if (!Object.keys(sw).length && !Object.keys(q).length) return pos;
-    let hit = false;
+    const add = adds[pos.key] || [];
+    if (!Object.keys(sw).length && !Object.keys(q).length && !add.length) return pos;
+    let hit = !!add.length;
     const mats = (pos.mats || []).map(function (m) {
       let out = m;
       const nid = sw[m.pid || ""];
@@ -362,8 +372,11 @@ export function applyMatEdits(positions, sheet, products) {
       return out;
     });
     if (!hit) return pos;
-    const sum = mats.reduce(function (a, m) { return a + (Number(m.cost) || 0) * (Number(m.qty) || 0); }, 0);
-    return Object.assign({}, pos, { mats: mats, cost: Math.round(sum * (Number(pos.factor) || 1)) });
+    // Дописанные идут в конце списка и помечены: по строке видно, что в ней от
+    // справочника, а что добавил человек на этом доме.
+    const full = mats.concat(add.map(function (a) { return Object.assign({}, a, { added: true }); }));
+    const sum = full.reduce(function (a, m) { return a + (Number(m.cost) || 0) * (Number(m.qty) || 0); }, 0);
+    return Object.assign({}, pos, { mats: full, cost: Math.round(sum * (Number(pos.factor) || 1)) });
   });
 }
 

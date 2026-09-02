@@ -347,7 +347,7 @@ const SHEET = {
   const open = p.dom.node({ a: 'est-mat-open', k: key }); p.run('bind();'); open.onclick()
   const shown = p.run('tSpec2()')
   t.ok('раскрылся выбор из базы', /ЗАМЕНИТЬ НА МАТЕРИАЛ ИЗ БАЗЫ/.test(shown))
-  t.ok('и это список каталога', shown.indexOf('id="msw-catalog"') >= 0 && /Гофра усиленная/.test(shown))
+  t.ok('и это список каталога', shown.indexOf('id="msw-cat2"') >= 0 && /Гофра усиленная/.test(shown))
 
   // Меняем товар.
   const before = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0].cost')
@@ -360,6 +360,42 @@ const SHEET = {
   t.ok('замена лежит на листе', p.q('Object.keys(spec2Sheet().mats).length') === 1)
   t.ok('справочник не тронут', p.q('estimates.find(function(e){return e.id==="e_el";}).lines[1].pid') === 'p_dr')
   t.ok('в строке видно, что материал заменён', /заменён/.test(p.run('tSpec2()')))
+
+  // Материал можно дописать руками: смета описывает типовой дом, а на этом бывает
+  // лишний уголок.
+  t.ok('кнопка «+ материал» есть у строки', p.run('tSpec2()').indexOf('data-a="est-mat-add-open"') >= 0)
+  const addOpen = p.dom.node({ a: 'est-mat-add-open', k: pos.key }); p.run('bind();'); addOpen.onclick()
+  t.ok('форма раскрылась', /ДОБАВИТЬ МАТЕРИАЛ В ЭТУ СТРОКУ/.test(p.run('tSpec2()')))
+  p.dom.field('mad-n', 'Гофра усиленная')
+  p.dom.field('mad-qty', '7')
+  p.dom.field('mad-cost', '')
+  const addDo = p.dom.node({ a: 'est-mat-add-do', k: pos.key }); p.run('bind();'); addDo.onclick()
+  const withAdd = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0]')
+  const extra = withAdd.mats.filter((m) => m.added)
+  t.ok('материал дописан', extra.length === 1 && extra[0].n === 'Гофра усиленная')
+  t.ok('цена подтянулась из базы', extra[0].cost === 90)
+  t.ok('количество своё', extra[0].qty === 7)
+  t.ok('и сумма строки выросла', withAdd.cost === pos.cost + 90 * 7, withAdd.cost + ' против ' + pos.cost)
+  t.ok('помечен как добавленный', /добавлен/.test(p.run('tSpec2()')))
+  t.ok('справочник не тронут', p.q('estimates.find(function(e){return e.id==="e_el";}).lines.length') === 2)
+  t.ok('уехал в объект',
+    p.q('specBuildStages(spec2Sheet()).reduce(function(a,s){return a.concat(s.works);},[])')
+      .some((w) => (w.mats || []).some((m) => m.n === 'Гофра усиленная' && m.qty === 7)))
+
+  // Ручной материал без базы — с ценой из формы.
+  const addOpen2 = p.dom.node({ a: 'est-mat-add-open', k: pos.key }); p.run('bind();'); addOpen2.onclick()
+  p.dom.field('mad-n', 'Уголок монтажный')
+  p.dom.field('mad-qty', '4')
+  p.dom.field('mad-cost', '120')
+  const addDo2 = p.dom.node({ a: 'est-mat-add-do', k: pos.key }); p.run('bind();'); addDo2.onclick()
+  const hand = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0].mats').filter((m) => m.added)
+  t.ok('материала не из базы тоже можно', hand.length === 2 && hand[1].n === 'Уголок монтажный')
+  t.ok('и цена из формы', hand[1].cost === 120 && hand[1].pid === '')
+
+  // Убрали дописанное.
+  const del = p.dom.node({ a: 'est-mat-add-del', k: pos.key, m: hand[0].id }); p.run('bind();'); del.onclick()
+  const del2 = p.dom.node({ a: 'est-mat-add-del', k: pos.key, m: hand[1].id }); p.run('bind();'); del2.onclick()
+  t.ok('дописанное убирается', p.q('Object.keys(spec2Sheet().matAdd||{}).length') === 0)
 
   // Замена уезжает в объект вместе с составом.
   const works = p.q('specBuildStages(spec2Sheet()).reduce(function(a,s){return a.concat(s.works);},[])')
