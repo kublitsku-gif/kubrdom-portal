@@ -398,19 +398,22 @@ export function optGroupOf(sheet, estId) {
   return String((((sheet && sheet.optOf) || {})[estId]) || "");
 }
 
-// Метка варианта — то, чем он отличается: имя после тире. Полное имя в чипе не
-// помещается, а «ППУ 5 см» и есть ответ на вопрос «какой из трёх».
-export function optLabelOf(name) {
-  const s = String(name || "");
-  const i = s.lastIndexOf(" — ");
-  return i > 0 ? s.slice(i + 3) : s;
+// Имя варианта режется по ПОСЛЕДНЕМУ тире: «Утепление стен и потолка — ППУ 5 см».
+// Тире в справочнике бывает любое — длинное, среднее и обычный дефис, — а пробелы
+// вокруг него двойные и неразрывные: имена набирают руками, и требовать ровно
+// « — » значит не узнать половину вариантов. Ровно на этом ППУ и не собирался,
+// когда ЭППС собирался.
+function splitOpt(name) {
+  const s = String(name || "").replace(/[\u00a0\u2007\u202f]/g, " ").replace(/\s+/g, " ").trim();
+  const m = /^(.*)\s[—–‒−-]\s(.+)$/.exec(s);
+  return m ? { pref: m[1].trim(), label: m[2].trim() } : { pref: s, label: s };
 }
+
+// Метка варианта — то, чем он отличается. Полное имя в чипе не помещается,
+// а «ППУ 5 см» и есть ответ на вопрос «какой из трёх».
+export function optLabelOf(name) { return splitOpt(name).label; }
 // Общая часть имени: по ней предлагается объединить строки в группу одним тапом.
-export function optPrefixOf(name) {
-  const s = String(name || "");
-  const i = s.lastIndexOf(" — ");
-  return i > 0 ? s.slice(0, i) : s;
-}
+export function optPrefixOf(name) { return splitOpt(name).pref; }
 
 // Отсев невыбранных вариантов. Отдаёт и сами группы — экрану нужно показать, из
 // чего выбирали и почём: чип без цены не помогает выбрать.
