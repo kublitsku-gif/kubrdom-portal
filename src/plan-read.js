@@ -174,6 +174,70 @@ export function planRequest(files, opts) {
   };
 }
 
+
+// ─── ВТОРОЙ ЧИТАТЕЛЬ: KIMI (MOONSHOT) ────────────────────────────────────────
+// Ключ Claude на воркере может быть не задан или протухнуть — и тогда чтение
+// чертежа мертво целиком, хотя всё остальное работает. Kimi отвечает по
+// OpenAI-совместимому протоколу, поэтому нужен только другой конверт: схема
+// ответа, системная подсказка и разбор остаются ТЕМИ ЖЕ. Две копии правил
+// чтения разошлись бы на первой правке, а сверять их пришлось бы человеку по
+// расхождению в метрах.
+export const PLAN_MODEL_KIMI = "kimi-latest";
+
+// Функция в терминах OpenAI — та же схема, что и инструмент Anthropic.
+export const PLAN_FUNCTION = {
+  type: "function",
+  function: {
+    name: PLAN_TOOL.name,
+    description: PLAN_TOOL.description,
+    parameters: PLAN_SCHEMA,
+  },
+};
+
+// Картинка уходит как data-URL: у OpenAI-совместимого протокола нет блока
+// «документ», поэтому PDF сюда не отправляем — воркер скажет об этом словами,
+// а не пришлёт модели то, чего она не поймёт.
+export function planRequestOpenAI(files, opts) {
+  const o = opts || {};
+  const content = [];
+  (files || []).forEach(function (f, i) {
+    const type = String((f && f.type) || "");
+    const name = String((f && f.name) || "");
+    if ((files || []).length > 1 || name) content.push({ type: "text", text: "Файл " + (i + 1) + ": " + (name || "без имени") });
+    content.push({ type: "image_url", image_url: { url: "data:" + type + ";base64," + f.b64 } });
+  });
+  content.push({ type: "text", text: o.hint || ((files || []).length > 1
+    ? "Это листы ОДНОГО дома. Прочитай их вместе и верни одну планировку через plan_read."
+    : "Прочитай эту планировку и верни её через plan_read.") });
+  return {
+    model: o.model || PLAN_MODEL_KIMI,
+    max_tokens: o.max_tokens || 8000,
+    temperature: 0,
+    messages: [
+      { role: "system", content: PLAN_SYSTEM },
+      { role: "user", content: content },
+    ],
+    tools: [PLAN_FUNCTION],
+    // Инструмент ровно один и он обязателен: ответ нужен структурой, а не рассказом.
+    tool_choice: { type: "function", function: { name: PLAN_TOOL.name } },
+  };
+}
+
+export function planFromOpenAI(resp) {
+  const msg = (((resp && resp.choices) || [])[0] || {}).message || {};
+  const call = ((msg.tool_calls || [])[0] || {}).function;
+  if (!call || call.name !== PLAN_TOOL.name) {
+    const text = String(msg.content || "").trim();
+    throw new Error(text ? ("Не удалось прочитать чертёж: " + text.slice(0, 300)) : "Модель не вернула планировку");
+  }
+  let args = call.arguments;
+  if (typeof args === "string") {
+    try { args = JSON.parse(args); }
+    catch (e) { throw new Error("Модель вернула не JSON: " + String(args).slice(0, 200)); }
+  }
+  return args;
+}
+
 // Ответ API → аргументы инструмента. Ошибку API и «модель отказалась» различаем:
 // первое чинит настройка, второе — другой файл.
 export function planFromResponse(resp) {

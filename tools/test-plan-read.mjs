@@ -7,7 +7,8 @@
 // расхождение доехало до человека списком. Молчаливая правка чужого обмера
 // страшнее ошибки: ошибку видно, поправку — нет.
 import {
-  planRequest, planFromResponse, planNormalize, planToModel, PLAN_TOOL, PLAN_MODEL, PLAN_SCHEMA, PLAN_SYSTEM } from '../src/plan-read.js'
+  planRequest, planFromResponse, planNormalize, planToModel, PLAN_TOOL, PLAN_MODEL, PLAN_SCHEMA, PLAN_SYSTEM,
+  planRequestOpenAI, planFromOpenAI, PLAN_MODEL_KIMI, PLAN_FUNCTION } from '../src/plan-read.js'
 import { totalLength, modelRooms, FINISH_THICK } from '../src/model.js'
 
 let failed = 0
@@ -410,6 +411,53 @@ const READ = {
   ok('нормализация пережила пустоту', plan.bays.length === 0 && warnings.length === 0)
   ok('модель собралась пустой коробкой', model.rooms.length === 1 && model.openings.length === 0)
   ok('и длина у неё осмысленная', totalLength(model) === model.l, totalLength(model) + ' против ' + model.l)
+}
+
+
+// ── Второй читатель: Kimi ────────────────────────────────────────────────────
+// Ключ Claude может быть не задан или протухнуть, и тогда чтение чертежа мертво
+// целиком. Kimi отвечает по OpenAI-совместимому протоколу — подменяется конверт,
+// а схема, системная подсказка и разбор остаются ТЕ ЖЕ: две копии правил чтения
+// разошлись бы на первой правке, и сверять их пришлось бы человеку по метрам.
+console.log('Kimi: тот же вопрос другим конвертом')
+{
+  const files = [
+    { type: 'image/png', b64: 'AAA', name: 'план.png' },
+    { type: 'image/jpeg', b64: 'BBB', name: 'фасад.jpg' },
+  ]
+  const q = planRequestOpenAI(files)
+  ok('модель по умолчанию — Kimi', q.model === PLAN_MODEL_KIMI)
+  ok('системная подсказка общая с Claude', q.messages[0].role === 'system' && q.messages[0].content === PLAN_SYSTEM)
+  ok('инструмент один и обязательный',
+    q.tools.length === 1 && q.tool_choice.function.name === PLAN_TOOL.name)
+  ok('и схема у него та же', q.tools[0].function.parameters === PLAN_SCHEMA)
+  ok('функция собрана из того же инструмента', PLAN_FUNCTION.function.name === PLAN_TOOL.name)
+
+  const parts = q.messages[1].content
+  ok('каждый лист подписан именем', parts[0].text.indexOf('план.png') >= 0 && parts[2].text.indexOf('фасад.jpg') >= 0)
+  ok('картинки уходят data-URL с их типом',
+    parts[1].image_url.url === 'data:image/png;base64,AAA' && parts[3].image_url.url === 'data:image/jpeg;base64,BBB')
+  ok('в конце — что именно сделать', /одного дома/i.test(parts[parts.length - 1].text.replace('ОДНОГО', 'одного')))
+  ok('температура нулевая: чертёж читают, а не сочиняют', q.temperature === 0)
+
+  // Ответ приходит строкой аргументов — это OpenAI-протокол, а не наш каприз.
+  const resp = { choices: [{ message: { tool_calls: [{ function: { name: 'plan_read', arguments: JSON.stringify(READ) } }] } }] }
+  const got = planFromOpenAI(resp)
+  ok('аргументы разобраны из строки', got.length === READ.length && got.bays.length === 3)
+  ok('и дальше идут той же дорогой', planNormalize(got).plan.bays[1].len === 6400)
+
+  const obj = { choices: [{ message: { tool_calls: [{ function: { name: 'plan_read', arguments: READ } }] } }] }
+  ok('объект вместо строки тоже принимаем', planFromOpenAI(obj).width === 2352)
+
+  // Отказ модели — не сбой протокола: она отвечает текстом, и текст надо показать.
+  let said = ''
+  try { planFromOpenAI({ choices: [{ message: { content: 'На листе не планировка, а фасад' } }] }) }
+  catch (e) { said = e.message }
+  ok('отказ модели доезжает словами', /фасад/.test(said), said)
+  let broke = ''
+  try { planFromOpenAI({ choices: [{ message: { tool_calls: [{ function: { name: 'plan_read', arguments: '{не json' } }] } }] }) }
+  catch (e) { broke = e.message }
+  ok('битый JSON назван битым', /не JSON/i.test(broke), broke)
 }
 
 console.log(failed ? `\n✘ провалено проверок: ${failed}` : '\n✓ все проверки прошли')

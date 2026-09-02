@@ -13,7 +13,8 @@ import { viewText, viewCallback } from "./botview.js";
 import { ensureTopic } from "./tgapi.js";
 import { workText, workCallback, workMedia } from "./botwork.js";
 import { issueText, issueCallback, issueMedia, issueReplyToAuthor } from "./botissue.js";
-import { planRequest, planFromResponse, planNormalize, PLAN_MODEL, PLAN_MAX_FILES } from "./plan-read.js";
+import { planRequest, planFromResponse, planNormalize, PLAN_MODEL, PLAN_MAX_FILES,
+  planRequestOpenAI, planFromOpenAI, PLAN_MODEL_KIMI } from "./plan-read.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
@@ -651,7 +652,17 @@ async function putFile(env, request, url) {
 // её поверх подложки, и применяет человек. Из этих метров считается смета.
 async function planRead(env, request) {
   if (!env.FILES) return json({ success: false, error: "R2 не настроен" }, 500);
-  if (!env.CLAUDE_API_KEY) return json({ success: false, error: "Не настроен ключ Claude (секрет CLAUDE_API_KEY)" }, 400);
+  // Читателей два. Ключ Claude может быть не задан или протухнуть — и тогда
+  // чтение чертежа мертво целиком, хотя всё остальное работает. Kimi отвечает по
+  // OpenAI-совместимому протоколу тем же инструментом и той же схемой, поэтому
+  // подменяется конверт, а не правила чтения.
+  const want = String(env.PLAN_PROVIDER || "").toLowerCase();
+  const hasClaude = !!env.CLAUDE_API_KEY, hasKimi = !!env.KIMI_API_KEY;
+  if (!hasClaude && !hasKimi) {
+    return json({ success: false, error: "Не настроен ключ распознавания: секрет CLAUDE_API_KEY или KIMI_API_KEY на воркере" }, 400);
+  }
+  if (want === "claude" && !hasClaude) return json({ success: false, error: "PLAN_PROVIDER=claude, но секрета CLAUDE_API_KEY нет" }, 400);
+  if (want === "kimi" && !hasKimi) return json({ success: false, error: "PLAN_PROVIDER=kimi, но секрета KIMI_API_KEY нет" }, 400);
   const body = await request.json().catch(function () { return {}; });
   // Листов у одного дома бывает несколько: план, фасады, разрезы. Принимаем список,
   // одиночный `key` оставляем — им ходят проекты, заведённые до этой правки.
@@ -681,7 +692,7 @@ async function planRead(env, request) {
     files.push({ type: ct, b64: base64of(buf), name: String(names[key] || names["/api/file/" + key] || "") });
   }
 
-  const ask = async function (model) {
+  const askClaude = async function (model) {
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": env.CLAUDE_API_KEY, "anthropic-version": "2023-06-01" },
@@ -690,29 +701,60 @@ async function planRead(env, request) {
     const j = await r.json().catch(function () { return null; });
     return { ok: r.ok, status: r.status, j: j };
   };
+  // У OpenAI-совместимого протокола нет блока «документ»: PDF туда слать нечего,
+  // и сказать об этом надо словами, а не пустым ответом модели.
+  const askKimi = async function (model) {
+    if (files.some(function (f) { return String(f.type).indexOf("pdf") >= 0; })) {
+      return { ok: false, status: 415, j: { error: { message: "Kimi читает только картинки — приложите снимок листа (PNG/JPG) вместо PDF" } } };
+    }
+    const base = String(env.KIMI_BASE_URL || "https://api.moonshot.ai/v1").replace(/\/+$/, "");
+    const r = await fetch(base + "/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + env.KIMI_API_KEY },
+      body: JSON.stringify(planRequestOpenAI(files, { model: model || env.KIMI_MODEL || PLAN_MODEL_KIMI })),
+    });
+    const j = await r.json().catch(function () { return null; });
+    return { ok: r.ok, status: r.status, j: j };
+  };
 
   // Читает чертёж модель посильнее. Доступа к ней у аккаунта может не быть — тогда
   // читает та, что возит нейропродавца: хуже, но лучше, чем «не работает». Какая
   // именно прочитала, возвращаем: человек сверяет и должен знать, чьи это цифры.
-  const fallback = env.CLAUDE_PLAN_MODEL || env.CLAUDE_MODEL || "claude-sonnet-4-6";
-  let used = env.CLAUDE_PLAN_MODEL || "";
-  let res = await ask(used || null);
-  if (!res.ok && res.status === 404 && !used) {
-    used = fallback;
-    res = await ask(used);
+  const runClaude = async function () {
+    const fallback = env.CLAUDE_PLAN_MODEL || env.CLAUDE_MODEL || "claude-sonnet-4-6";
+    let used = env.CLAUDE_PLAN_MODEL || "";
+    let res = await askClaude(used || null);
+    if (!res.ok && res.status === 404 && !used) {
+      used = fallback;
+      res = await askClaude(used);
+    }
+    return { res: res, used: used, who: "Claude", parse: planFromResponse, def: PLAN_MODEL };
+  };
+  const runKimi = async function () {
+    const used = env.KIMI_MODEL || PLAN_MODEL_KIMI;
+    return { res: await askKimi(used), used: used, who: "Kimi", parse: planFromOpenAI, def: PLAN_MODEL_KIMI };
+  };
+
+  const first = (want === "kimi" || (!hasClaude && hasKimi)) ? runKimi : runClaude;
+  let out = await first();
+  // Ключ протух или не тот — это не «чертёж плохой», а настройка. Если второй
+  // читатель настроен, молчать об этом незачем: пробуем им.
+  const authFail = !out.res.ok && (out.res.status === 401 || out.res.status === 403);
+  if (authFail && hasClaude && hasKimi && want !== "claude" && want !== "kimi" && out.who === "Claude") {
+    out = await runKimi();
   }
-  if (!res.ok || !res.j) {
-    const msg = (res.j && res.j.error && res.j.error.message) || ("HTTP " + res.status);
-    return json({ success: false, error: "Claude: " + String(msg).slice(0, 300) }, 502);
+  if (!out.res.ok || !out.res.j) {
+    const msg = (out.res.j && out.res.j.error && out.res.j.error.message) || ("HTTP " + out.res.status);
+    return json({ success: false, error: out.who + ": " + String(msg).slice(0, 300) }, 502);
   }
   // Отказ модели — не сбой: она отвечает 200 и рассказывает, что увидела.
   let read;
-  try { read = planNormalize(planFromResponse(res.j)); }
+  try { read = planNormalize(out.parse(out.res.j)); }
   catch (err) { return json({ success: false, error: String((err && err.message) || err) }, 422); }
 
   return json({
     success: true, plan: read.plan, warnings: read.warnings, files: keys.length,
-    model: res.j.model || used || PLAN_MODEL, usage: res.j.usage || null,
+    provider: out.who, model: out.res.j.model || out.used || out.def, usage: out.res.j.usage || null,
   });
 }
 

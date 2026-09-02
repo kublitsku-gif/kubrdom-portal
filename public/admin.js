@@ -749,7 +749,9 @@ async function modelPlanRecognize(sh){
       }),
       notes:j.plan.notes,
     });
-    modelRead={ sheetId:sh.id, plan:norm.plan, warnings:(j.warnings||[]).concat(norm.warnings), model:j.model||"", files:files.map(function(f){return f.name||"лист";}) };
+    // Кто читал — часть ответа: человек сверяет метры и должен знать, чьи они.
+    modelRead={ sheetId:sh.id, plan:norm.plan, warnings:(j.warnings||[]).concat(norm.warnings),
+      model:j.model||"", provider:j.provider||"", files:files.map(function(f){return f.name||"лист";}) };
   }catch(err){
     alert("Не удалось прочитать планировку: "+((err&&err.message)||err));
   }
@@ -10533,7 +10535,7 @@ function modelReadPanel(sh){
     '<div style="background:#fff;border-radius:14px;max-width:560px;width:100%;max-height:100%;overflow:auto;padding:18px">'+
     '<div style="font-size:15px;font-weight:800;color:#0d1b2e;margin-bottom:4px">Прочитано с планировки</div>'+
     '<div style="font-size:12px;color:#7a9aaa;margin-bottom:12px">Сверьте с чертежом заказчика — по этим размерам считается смета.'+
-      (modelRead.model?' <span style="color:#9aabbf">Читал '+esc(modelRead.model)+'.</span>':'')+'</div>';
+      (modelRead.model?' <span style="color:#9aabbf">Читал '+esc(modelRead.provider?(modelRead.provider+" · "+modelRead.model):modelRead.model)+'.</span>':'')+'</div>';
   h+=((modelRead.files&&modelRead.files.length>1)
     ? '<div style="font-size:11.5px;color:#9aabbf;margin-bottom:10px">Прочитано по '+modelRead.files.length+' листам: '+esc(modelRead.files.join(", "))+'</div>'
     : "")+
