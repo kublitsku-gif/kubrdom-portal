@@ -104,9 +104,12 @@ const ids = () => { let i = 0; return () => 'id' + (++i) }
   ok('модель без замечаний', modelIssues(model, winTypes).length === 0,
     JSON.stringify(modelIssues(model, winTypes)))
   ok('все изделия каталожные', winTypes.every((t) => !!t.cat), JSON.stringify(winTypes.map((t) => t.cat)))
-  // Окно зала — новое каталожное 1550×2100: на чертеже 1500, ближе в каталоге нет.
-  ok('окно зала — ближайшее каталожное',
-    winTypes.some((t) => t.cat === 'os-1550x2100'), JSON.stringify(winTypes.map((t) => t.cat)))
+  // Окно зала — изделие №3 спецификации: 1500×1200 с поворотно-откидной створкой.
+  // Ширина сходится с чертежом в ноль, подоконник выходит 900 — обычная отметка.
+  ok('окно зала — каталожное 1500×1200',
+    winTypes.some((t) => t.cat === 'os-1500x1200'), JSON.stringify(winTypes.map((t) => t.cat)))
+  const zal = model.openings.find((o) => o.side === 's' && o.sill === 900)
+  ok('и подоконник у него 900', !!zal, JSON.stringify(model.openings.map((o) => [o.side, o.sill])))
   ok('в торце спальни окно 1850×2100', winTypes.some((t) => t.cat === 'os-1850x2100'))
 }
 
