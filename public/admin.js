@@ -756,6 +756,20 @@ async function modelPlanRecognize(sh){
   modelReadBusy=false; fl();
 }
 
+// Приложили чертёж — значит дом собираются читать с него, а не с заготовки.
+// Поэтому сразу открываем редактор и запускаем чтение: человек выбрал файл, и
+// ждать от него ещё одного тапа по кнопке, спрятанной в панели редактора, —
+// это ровно тот случай, когда «портал ничего не сделал». Заготовка при этом
+// остаётся под рукой: прочитанное применяется отдельной кнопкой, и пока его не
+// применили, в проекте стоит она.
+function projStartRead(pid){
+  const pr=specSheet(pid);
+  if(!pr||!planFiles(pr).length)return false;
+  specOpenId=pr.id; modelFull=true; modelTool="sel"; fl();
+  modelPlanRecognize(pr);
+  return true;
+}
+
 // Применяем прочитанное. Модель заменяется целиком — это и есть «открыть чужую
 // планировку у нас»; предыдущая уходит в «Вернуть», как любая другая правка.
 function modelReadApply(sh){
@@ -12784,12 +12798,12 @@ function projNewFormHtml(){
         return '<button data-a="proj-n-preset" data-k="'+pr.k+'" style="border:1.5px solid '+(on?PROJ_COL:"#dde6f0")+';background:'+(on?PROJ_COL:"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:7px 11px;font-size:11.5px;font-weight:700;cursor:pointer">📐 '+esc(pr.n)+'</button>';
       }).join("")+
     '</div>'+
-    '<div style="font-size:10px;color:#a0b4c8;margin:2px 0 9px;line-height:1.45">Заготовка — уже начерченный контейнер: отсеки, длины и проёмы стоят, дальше их двигают в редакторе.</div>'+
+    '<div style="font-size:10px;color:#a0b4c8;margin:2px 0 9px;line-height:1.45">Заготовка — уже начерченный контейнер: отсеки, длины и проёмы стоят, дальше их двигают в редакторе. Если приложите чертёж заказчика, дом прочитается с него, а заготовка останется запасным вариантом.</div>'+
     // Планировка заказчика — подложкой под наш чертёж: по ней ставят стены, и она же
     // остаётся в проекте как исходник, с которым сверяют результат.
     '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:5px">ПЛАНИРОВКА ЗАКАЗЧИКА (необязательно)</div>'+
     '<input id="proj-n-plan" type="file" accept="image/*,application/pdf" multiple style="width:100%;font-size:12px;margin-bottom:4px">'+
-    '<div style="font-size:10px;color:#a0b4c8;margin:0 0 9px;line-height:1.45">Можно несколько листов сразу — план, фасады, разрезы: их прочитают вместе как один дом. Первая картинка ляжет подложкой в редакторе.</div>'+
+    '<div style="font-size:10px;color:#a0b4c8;margin:0 0 9px;line-height:1.45">Можно несколько листов сразу — план, фасады, разрезы: их прочитают вместе как один дом. Первая картинка ляжет подложкой в редакторе.<br><b style="color:'+PROJ_COL+'">Портал прочитает чертёж сразу после создания</b> и покажет прочитанное для сверки — в дом оно встанет по вашей кнопке.</div>'+
     '<select id="proj-n-client" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:10px">'+
       '<option value="">— клиент из CRM (необязательно) —</option>'+
       crmClients.map(function(c){return '<option value="'+c.id+'"'+(n.clientId===c.id?" selected":"")+'>'+esc(c.name||"")+'</option>';}).join("")+
@@ -21819,7 +21833,9 @@ function bind(){
       // Файл грузим ПОСЛЕ создания: проект уже открыт и им можно заниматься, пока
       // планировка едет в R2. Упадёт загрузка — проект от этого не пострадает.
       const fi=document.getElementById("proj-n-plan");
-      if(fi&&fi.files&&fi.files.length)attachPlanFiles(p.id, fi.files);
+      if(fi&&fi.files&&fi.files.length){
+        attachPlanFiles(p.id, fi.files).then(function(){ projStartRead(p.id); });
+      }
     };}
     else if(a==="proj-open"){el.onclick=()=>{ projOpenId=el.dataset.id; projBand="plan"; render(); window.scrollTo(0,0); };}
     else if(a==="proj-back"){el.onclick=()=>{ projOpenId=null; render(); window.scrollTo(0,0); };}

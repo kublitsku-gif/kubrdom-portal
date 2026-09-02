@@ -218,4 +218,32 @@ function create(p, name) {
   t.ok('объект собран тем же списком', nWorks === shown, 'объект ' + nWorks + ', смета ' + shown)
 }
 
+// ── 7. Приложили чертёж — портал его читает ─────────────────────────────────
+// Человек выбрал файл: ждать от него ещё одного тапа по кнопке, спрятанной в
+// панели редактора, — это ровно тот случай, когда «портал ничего не сделал».
+{
+  t.section('Чертёж заказчика читается сразу')
+  const p = panel()
+  create(p)
+  const pid = p.q('projects[0].id')
+  p.run('window.__read="";modelPlanRecognize=function(sh){ window.__read=sh.id; };')
+
+  // Файла нет — читать нечего, редактор сам не открывается.
+  t.ok('без чертежа чтение не запускается', p.run('projStartRead(' + JSON.stringify(pid) + ')') === false)
+  t.ok('и редактор закрыт', p.q('modelFull') !== true)
+
+  // Лист приложен — открываем редактор и читаем.
+  p.run('projects[0].plans=[{name:"plan.png",url:"u1",pdf:false}];projects[0].plan=projects[0].plans[0];')
+  t.ok('с чертежом чтение запускается', p.run('projStartRead(' + JSON.stringify(pid) + ')') === true)
+  t.ok('редактор открыт на этом проекте', p.q('modelFull') === true && p.q('specOpenId') === pid)
+  t.ok('и чтение ушло по этому листу', p.q('window.__read') === pid)
+  t.ok('инструмент — «двигать», а не рисование', p.q('modelTool') === 'sel')
+
+  // Форма говорит, что будет дальше: иначе человек ждёт чтения, а видит заготовку.
+  p.run('modelFull=false;projOpenId=null;projNew={name:"",preset:MODEL_PRESETS[0].k,clientId:""};')
+  const form = p.run('tab="projects";tProjects()')
+  t.ok('форма обещает чтение', /прочитает чертёж сразу после создания/.test(form))
+  t.ok('и объясняет роль заготовки', /заготовка останется запасным вариантом/.test(form))
+}
+
 t.done()
