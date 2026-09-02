@@ -367,6 +367,76 @@ export function applyMatEdits(positions, sheet, products) {
   });
 }
 
+
+// ─── ВАРИАНТЫ: ОДИН ИЗ НЕСКОЛЬКИХ ────────────────────────────────────────────
+// «Утепление — ППУ 3 см», «— ППУ 5 см», «— ППУ 8 см» — это не три работы, а одно
+// решение с тремя ответами. В справочнике они лежат обязательными позициями и
+// лезут в дом все сразу.
+//
+// Почему ПЕРЕКЛЮЧАТЕЛЬ, а не «удалить лишние»: удаление — разовое действие,
+// которое пришлось бы повторять на каждом доме, и в следующем доме уже никто не
+// вспомнит, что вариантов было три. Переключатель — одно решение, принятое один
+// раз, и по нему видно, что выбор вообще есть.
+//
+// Разметка живёт НА ЛИСТЕ (`sheet.optOf` / `sheet.optPick`), а не в справочнике:
+// превратить обязательную смету в вариант — значит убрать её из состава всех
+// боевых спецификаций, где выбор ещё не сделан. По ним заведены договора.
+export function optGroupOf(sheet, estId) {
+  return String((((sheet && sheet.optOf) || {})[estId]) || "");
+}
+
+// Метка варианта — то, чем он отличается: имя после тире. Полное имя в чипе не
+// помещается, а «ППУ 5 см» и есть ответ на вопрос «какой из трёх».
+export function optLabelOf(name) {
+  const s = String(name || "");
+  const i = s.lastIndexOf(" — ");
+  return i > 0 ? s.slice(i + 3) : s;
+}
+// Общая часть имени: по ней предлагается объединить строки в группу одним тапом.
+export function optPrefixOf(name) {
+  const s = String(name || "");
+  const i = s.lastIndexOf(" — ");
+  return i > 0 ? s.slice(0, i) : s;
+}
+
+// Отсев невыбранных вариантов. Отдаёт и сами группы — экрану нужно показать, из
+// чего выбирали и почём: чип без цены не помогает выбрать.
+export function applyPicks(positions, sheet) {
+  const map = (sheet && sheet.optOf) || {};
+  if (!Object.keys(map).length) return { positions: positions, groups: [] };
+  const picks = (sheet && sheet.optPick) || {};
+  const byGroup = {};
+  const order = [];
+  (positions || []).forEach(function (p) {
+    const g = p.estId ? String(map[p.estId] || "") : "";
+    if (!g) return;
+    if (!byGroup[g]) { byGroup[g] = { group: g, variants: [], byEst: {} }; order.push(g); }
+    const grp = byGroup[g];
+    if (!grp.byEst[p.estId]) {
+      grp.byEst[p.estId] = { estId: p.estId, name: p.name, label: optLabelOf(p.name), cost: 0 };
+      grp.variants.push(grp.byEst[p.estId]);
+    }
+    // Правило даёт по строке на помещение — в цене варианта они складываются.
+    grp.byEst[p.estId].cost += Number(p.cost) || 0;
+  });
+  const chosen = {};
+  order.forEach(function (g) {
+    const grp = byGroup[g];
+    const want = picks[g];
+    const has = grp.variants.some(function (v) { return v.estId === want; });
+    // Выбор не сделан — берём первый: молча обнулить дом, потому что человек ещё
+    // не дошёл до этой группы, хуже, чем показать один из вариантов.
+    chosen[g] = has ? want : (grp.variants[0] || {}).estId;
+    grp.picked = chosen[g];
+    grp.variants.forEach(function (v) { v.on = v.estId === chosen[g]; });
+  });
+  const kept = (positions || []).filter(function (p) {
+    const g = p.estId ? String(map[p.estId] || "") : "";
+    return !g || chosen[g] === p.estId;
+  });
+  return { positions: kept, groups: order.map(function (g) { return byGroup[g]; }) };
+}
+
 // Полный состав дома: то, что выбрано руками в справочнике, плюс то, что дали
 // правила. ОДНА функция на экран и на сборку объекта — иначе на экране одна
 // смета, а в стройке другая, и находится это на приёмке этапа.
@@ -387,6 +457,11 @@ export function ruledEstIds(sheet, rules) {
 }
 
 export function allPositions(sheet, ctx) {
+  return allPositionsRaw(sheet, ctx).positions;
+}
+
+// То же самое, но с группами вариантов: экрану надо показать, из чего выбирали.
+export function allPositionsRaw(sheet, ctx) {
   const c = ctx || {};
   const probe = probeSheet(sheet, c.winTypes);
   const ruled = ruledEstIds(probe, c.rules);
@@ -397,7 +472,7 @@ export function allPositions(sheet, ctx) {
   // Пироги считают себя сами там же, где работают правила: боевые спецификации
   // ни того, ни другого не видят — по ним заведены договора, объекты и транши.
   const all = c.pies ? out.concat(layerPositions(sheet, c.estimates, c.products, c.winTypes)) : out;
-  return applyMatEdits(all, sheet, c.products);
+  return applyPicks(applyMatEdits(all, sheet, c.products), sheet);
 }
 
 // Позиция → работа объекта. ОДНА машинка на сборку объекта и на подпись состава:

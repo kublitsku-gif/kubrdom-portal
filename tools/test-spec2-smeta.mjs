@@ -400,4 +400,72 @@ const SHEET = {
   t.ok('и лист чист', p.q('Object.keys(spec2Sheet().matQty||{}).length') === 0)
 }
 
+// ── 11. Варианты выбираются переключателем ──────────────────────────────────
+// Три «Утепления» в смете — это одно решение с тремя ответами. Удаление лишних
+// пришлось бы повторять на каждом доме, поэтому переключатель.
+{
+  t.section('Один вариант из нескольких')
+  const EST4 = EST.concat([
+    { id: 'e_p3', kind: 'house', name: 'Утепление стен и потолка — ППУ 3 см', stage: 1, lines: [{ pid: 'p_win', qty: 1 }] },
+    { id: 'e_p5', kind: 'house', name: 'Утепление стен и потолка — ППУ 5 см', stage: 1, lines: [{ pid: 'p_win', qty: 2 }] },
+    { id: 'e_p8', kind: 'house', name: 'Утепление стен и потолка — ППУ 8 см', stage: 1, lines: [{ pid: 'p_win', qty: 3 }] },
+  ])
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS, estimates: EST4, dbPlans: [], crmClients: [],
+    specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [],
+    contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+    buildRules: [],
+  })
+  p.run('spec2Tab="scheme";tSpec2();')
+  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+  p.run('modelFull=false;spec2Tab="est";')
+
+  const three = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return /ППУ/.test(x.name);}).length')
+  t.ok('до группировки в доме все три', three === 3)
+
+  // Собираем в группу одним тапом — из строки, где это видно.
+  const auto = p.dom.node({ a: 'est-opt-auto', e: 'e_p5', g: 'Утепление стен и потолка' })
+  p.run('tSpec2();bind();'); auto.onclick()
+  t.ok('все три размечены группой', p.q('Object.keys(spec2Sheet().optOf).length') === 3)
+  const one = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return /ППУ/.test(x.name);})')
+  t.ok('в доме остался один', one.length === 1)
+  t.ok('и это тот, из строки которого группировали', one[0].estId === 'e_p5')
+
+  const html = p.run('tSpec2()')
+  t.ok('варианты показаны переключателем', (html.match(/data-a="est-opt-pick"/g) || []).length === 3)
+  t.ok('у каждого своя цена', /ППУ 8 см/.test(html) && /4 500 ₽|4\u00a0500 ₽/.test(html))
+  t.ok('группа подписана', /ВЫБОР · Утепление стен и потолка/.test(html))
+
+  // Переключаем вариант.
+  const pick = p.dom.node({ a: 'est-opt-pick', g: 'Утепление стен и потолка', e: 'e_p8' })
+  p.run('bind();'); pick.onclick()
+  const now = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return /ППУ/.test(x.name);})')
+  t.ok('в доме теперь другой вариант', now.length === 1 && now[0].estId === 'e_p8')
+  t.ok('цена дома поехала за выбором', now[0].cost === 1500 * 3)
+  t.ok('в объект уходит только выбранный',
+    p.q('specBuildStages(spec2Sheet()).reduce(function(a,s){return a.concat(s.works);},[])')
+      .filter((w) => /ППУ/.test(w.n)).length === 1)
+  t.ok('справочник не тронут', p.q('estimates.filter(function(e){return /ППУ/.test(e.name);}).length') === 3)
+
+  // Убрали строку из группы — она снова отдельная работа, остальные остались выбором.
+  p.run('estWhyOpen="e_p8";tSpec2();')
+  const off = p.dom.node({ a: 'est-opt-off', e: 'e_p8' })
+  p.run('bind();'); off.onclick()
+  t.ok('в группе осталось двое', p.q('Object.keys(spec2Sheet().optOf||{}).length') === 2)
+  const after2 = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return /ППУ/.test(x.name);})')
+  t.ok('в доме вышедший и один из группы', after2.length === 2)
+  t.ok('вышедший — снова отдельная работа', after2.some((x) => x.estId === 'e_p8'))
+  // Выбор указывал на вышедшего — берём первый оставшийся, а не обнуляем группу.
+  t.ok('группа выбрала оставшийся вариант', after2.some((x) => x.estId === 'e_p3'))
+
+  // Второй выход распускает группу: выбор из одного — не выбор.
+  p.run('estWhyOpen="e_p5";tSpec2();')
+  const off2 = p.dom.node({ a: 'est-opt-off', e: 'e_p5' })
+  p.run('bind();'); off2.onclick()
+  t.ok('группа распалась', p.q('Object.keys(spec2Sheet().optOf||{}).length') === 0)
+  t.ok('и в доме снова все три',
+    p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return /ППУ/.test(x.name);}).length') === 3)
+}
+
 t.done()

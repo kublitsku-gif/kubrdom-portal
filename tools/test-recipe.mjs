@@ -7,8 +7,8 @@
 // список из справочника и список из правил складываются, а не подменяют друг друга.
 import { presetModel, MODEL_PRESETS } from '../src/model.js'
 import { sheetPositions } from '../src/spec.js'
-import { rulePositions, allPositions, ruleText, ruleReady, probeSheet,
-  layerPositions, pieArea, pieCost } from '../src/recipe.js'
+import { rulePositions, allPositions, allPositionsRaw, ruleText, ruleReady, probeSheet,
+  layerPositions, pieArea, pieCost, applyPicks, optLabelOf, optPrefixOf } from '../src/recipe.js'
 import { modelAreas, modelTotals, applyLayers } from '../src/model.js'
 import { gaps2 } from '../src/spec2.js'
 
@@ -223,6 +223,49 @@ const R = (o) => Object.assign({ id: 'r1', kind: 'house', what: 'surface', k: 'w
     allPositions(withPie, ctx).every((p) => p.from !== 'layer'))
   t.ok('с ключом — есть',
     allPositions(withPie, Object.assign({ pies: true }, ctx)).filter((p) => p.from === 'layer').length === 2)
+}
+
+// ── 7. Варианты: один из нескольких ─────────────────────────────────────────
+// Три «Утепления» подряд — это не три работы, а одно решение с тремя ответами.
+{
+  t.section('Варианты одной группы')
+  const P = (key, est, name, cost) => ({ key: key, estId: est, name: name, cost: cost, mats: [], stage: 2, from: 'est' })
+  const list = [
+    P('base:a', 'a', 'Утепление стен и потолка — ППУ 3 см', 62000),
+    P('base:b', 'b', 'Утепление стен и потолка — ППУ 5 см', 102000),
+    P('base:c', 'c', 'Утепление стен и потолка — ППУ 8 см', 111500),
+    P('base:z', 'z', 'Контейнер 40 фут', 175000),
+  ]
+  t.ok('метка варианта — то, чем он отличается', optLabelOf(list[1].name) === 'ППУ 5 см')
+  t.ok('общая часть имени — группа', optPrefixOf(list[1].name) === 'Утепление стен и потолка')
+  t.ok('без тире имя целиком', optPrefixOf('Контейнер 40 фут') === 'Контейнер 40 фут')
+
+  const sheet = { optOf: { a: 'Утепление', b: 'Утепление', c: 'Утепление' }, optPick: { 'Утепление': 'b' } }
+  const r = applyPicks(list, sheet)
+  t.ok('в состав идёт один вариант', r.positions.length === 2)
+  t.ok('и это выбранный', r.positions.some((p) => p.estId === 'b') && !r.positions.some((p) => p.estId === 'a'))
+  t.ok('остальные строки не тронуты', r.positions.some((p) => p.estId === 'z'))
+  t.ok('экран знает, из чего выбирали', r.groups.length === 1 && r.groups[0].variants.length === 3)
+  t.ok('и почём каждый', r.groups[0].variants.find((v) => v.estId === 'c').cost === 111500)
+  t.ok('выбранный помечен', r.groups[0].variants.filter((v) => v.on).length === 1)
+
+  // Выбор не сделан — берём первый: молча обнулить дом хуже, чем показать вариант.
+  const noPick = applyPicks(list, { optOf: sheet.optOf })
+  t.ok('без выбора в доме первый вариант', noPick.positions.some((p) => p.estId === 'a'))
+  t.ok('и он один', noPick.positions.length === 2)
+
+  // Правило даёт по строке на помещение — в цене варианта они складываются.
+  const perRoom = [
+    P('rule:r:1', 'a', 'Стены — ОСП', 1000),
+    P('rule:r:2', 'a', 'Стены — ОСП', 2000),
+    P('rule:q:1', 'b', 'Стены — МДФ', 9000),
+  ]
+  const rr = applyPicks(perRoom, { optOf: { a: 'Стены', b: 'Стены' }, optPick: { 'Стены': 'a' } })
+  t.ok('обе строки выбранного варианта на месте', rr.positions.length === 2)
+  t.ok('цена варианта — сумма его строк', rr.groups[0].variants.find((v) => v.estId === 'a').cost === 3000)
+
+  // Без разметки ничего не меняется: механизм включает человек.
+  t.ok('без групп список прежний', applyPicks(list, {}).positions.length === 4)
 }
 
 t.done()

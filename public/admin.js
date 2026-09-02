@@ -55,7 +55,8 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2, works2 } from "../src/spec2.js";
 import { allPositions, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
-  pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf } from "../src/recipe.js";
+  pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
+  optGroupOf, optLabelOf, optPrefixOf } from "../src/recipe.js";
 import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
 import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
@@ -12354,6 +12355,43 @@ function spec2RulesHtml(built, sh, pr){
 // Тело сметы одно на два экрана: опытный раздел и карточка проекта. Второй экран
 // с теми же числами разошёлся бы с первым на первой же правке.
 // `live` — лист, из которого можно заводить объект и договор (у заготовки его нет).
+// Варианты одной группы — переключателем, а не тремя строками в смете. Три
+// «Утепления» подряд читаются как три работы, а это одно решение с тремя
+// ответами: удалять лишние пришлось бы в каждом новом доме заново.
+// Разметка «это варианты одного и того же» — здесь же, в строке: только тут
+// видно, что рядом стоят три почти одинаковые позиции.
+function optEditorHtml(p, sh){
+  const g=optGroupOf(sh, p.estId);
+  const pref=optPrefixOf(p.name||"");
+  return '<div style="border-top:1px dashed #e2d4ee;margin-top:9px;padding-top:8px">'+
+    ruleLab("ВАРИАНТ ВЫБОРА")+
+    (g
+      ? '<div style="font-size:11.5px;color:#0d1b2e;line-height:1.45">В группе <b>'+esc(g)+'</b> — в дом идёт один вариант из группы.</div>'+
+        '<button data-a="est-opt-off" data-e="'+esc(p.estId)+'" style="margin-top:6px;padding:6px 10px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:11px;font-weight:700">Убрать из группы</button>'
+      : '<div style="font-size:11px;color:#7a9aaa;line-height:1.45;margin-bottom:6px">Если рядом стоят несколько таких же строк — это не разные работы, а один выбор. Соберите их в группу, и в дом пойдёт один вариант.</div>'+
+        '<button data-a="est-opt-auto" data-e="'+esc(p.estId)+'" data-g="'+esc(pref)+'" style="padding:7px 11px;background:'+RULE_COL+';border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">Собрать в группу «'+esc(pref)+'»</button>')+
+  '</div>';
+}
+
+function optChipsHtml(pos, sh, w){
+  const g=optGroupOf(sh, pos.estId);
+  if(!g)return "";
+  const grp=(w.groups||[]).find(function(x){return x.group===g;});
+  if(!grp||grp.variants.length<2)return "";
+  return '<div style="margin-top:5px">'+
+    '<div style="font-size:9.5px;font-weight:700;color:#9aabbf;letter-spacing:0.4px;margin-bottom:4px">ВЫБОР · '+esc(g)+'</div>'+
+    '<div style="display:flex;flex-wrap:wrap;gap:4px">'+
+      grp.variants.map(function(v){
+        const on=!!v.on;
+        return '<button data-a="est-opt-pick" data-g="'+esc(g)+'" data-e="'+esc(v.estId)+'" style="border:1.5px solid '+(on?"#16a085":"#dde6f0")+';background:'+(on?"#16a085":"#fff")+';color:'+(on?"#fff":"#5a7a9a")+';border-radius:8px;padding:5px 9px;font-size:11px;font-weight:700;cursor:pointer;line-height:1.3">'+
+          esc(v.label||v.name)+
+          '<span style="display:block;font-size:9.5px;font-weight:400;opacity:.85">'+Math.round(v.cost).toLocaleString("ru-RU")+' ₽</span>'+
+        '</button>';
+      }).join("")+
+    '</div>'+
+  '</div>';
+}
+
 // ── МАТЕРИАЛЫ СТРОКИ СМЕТЫ: ПЕРЕЧНЕМ И С ЗАМЕНОЙ ────────────────────────────
 // Состав строки — это и есть спецификация, и читают его глазами: одной серой
 // строкой в три ряда «Кабель — 1 шт · Гофра — 50 шт · …» не читается ничего.
@@ -12479,6 +12517,7 @@ function estWhyEditor(p, sh){
     '</div>'+
     ruleLab("ЭТАП")+
     chips("stage", [["0","из сметы"]].concat(EST_STAGES.map(function(st){return [String(st.n), st.short];})), String(Number(cur.stage)||0))+
+    optEditorHtml(p, sh)+
     '<div style="display:flex;gap:6px;margin-top:9px;flex-wrap:wrap">'+
       (r?'<button data-a="est-rule-del" data-est="'+p.estId+'" style="padding:7px 11px;background:#fff;border:1px solid #f0d5d0;border-radius:8px;cursor:pointer;color:#c0392b;font-size:11px;font-weight:700">Убрать правило</button>':'')+
       '<button data-a="est-why" data-est="'+p.estId+'" style="padding:7px 11px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:11px;font-weight:700">Свернуть</button>'+
@@ -12535,6 +12574,7 @@ function estBodyHtml(sh, types, live, actions){
               '<span style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#0d1b2e">'+esc(p.name)+'</span>'+
               '<span style="font-size:12px;font-weight:700;color:#0d1b2e;white-space:nowrap">'+Math.round(p.cost).toLocaleString("ru-RU")+' ₽</span>'+
             '</div>'+
+            optChipsHtml(p, sh, w)+
             '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:4px">'+
               (canRule&&p.estId
                 ? '<button data-a="est-why" data-est="'+p.estId+'" title="Чем меряется эта строка" style="background:'+(open?RULE_COL:"#eef6ff")+';color:'+(open?"#fff":"#2980b9")+';border:none;border-radius:7px;padding:3px 8px;font-size:10.5px;font-weight:700;cursor:pointer">'+esc(p.why)+' ⚙</button>'
@@ -21421,6 +21461,55 @@ function bind(){
     // Правила сборки. Правка пишется сразу в раздел снимка: отдельной кнопки
     // «сохранить» в панели нет нигде, и заводить её здесь значило бы объяснять,
     // почему этот экран не такой, как все.
+    // ── Варианты: один из нескольких ───────────────────────────────────────
+    else if(a==="est-opt-pick"){el.onclick=()=>{
+      const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
+      const pick=Object.assign({}, sh.optPick||{});
+      pick[el.dataset.g]=el.dataset.e;
+      sh.optPick=pick; fl();
+    };}
+    // Собираем в группу СРАЗУ все строки с тем же началом имени: три «Утепления»
+    // подряд — это одно решение, и объединять их по одной значит трижды объяснять
+    // порталу очевидное.
+    else if(a==="est-opt-auto"){el.onclick=()=>{
+      const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
+      const g=el.dataset.g||"";
+      if(!g)return;
+      const pos=works2(sh, specCtx(sh)).positions;
+      const ids={};
+      // Берём из справочника, а не из показанных строк: остальные варианты сейчас
+      // в составе стоят рядом, но после первой же группировки их видно не будет.
+      estimates.forEach(function(e){
+        if((e.kind||"banya")!==(sh.kind||"house"))return;
+        if(optPrefixOf(e.name||"")!==g)return;
+        ids[e.id]=true;
+      });
+      pos.forEach(function(x){ if(x.estId&&optPrefixOf(x.name||"")===g)ids[x.estId]=true; });
+      const n=Object.keys(ids).length;
+      if(n<2){ alert("Рядом нет других строк с таким же началом имени — группировать нечего."); return; }
+      const map=Object.assign({}, sh.optOf||{});
+      Object.keys(ids).forEach(function(id){ map[id]=g; });
+      const pick=Object.assign({}, sh.optPick||{});
+      if(!pick[g])pick[g]=el.dataset.e||Object.keys(ids)[0];
+      sh.optOf=map; sh.optPick=pick; matSwapOpen=""; estWhyOpen="";
+      alert("Собрано в группу «"+g+"»: "+n+" вариант(а).\n\nВ дом идёт один — переключается чипами в строке.");
+      fl();
+    };}
+    else if(a==="est-opt-off"){el.onclick=()=>{
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!sh.optOf)return;
+      const id=el.dataset.e||"";
+      const g=optGroupOf(sh, id);
+      const map=Object.assign({}, sh.optOf);
+      delete map[id];
+      sh.optOf=map;
+      // В группе остался один вариант — группа больше не выбор.
+      const rest=Object.keys(map).filter(function(k){return map[k]===g;});
+      if(rest.length<2){
+        rest.forEach(function(k){ delete map[k]; });
+        const pick=Object.assign({}, sh.optPick||{}); delete pick[g]; sh.optPick=pick;
+      }
+      fl();
+    };}
     // ── Замена материала в строке сметы ────────────────────────────────────
     else if(a==="est-mat-open"){el.onclick=()=>{
       const k=el.dataset.k||"";

@@ -17,7 +17,7 @@
 
 import { sheetTotals, pointTotals, pointMeta } from "./spec.js";
 import { modelIssues, modelAreas, modelTotals } from "./model.js";
-import { allPositions, probeSheet, positionWhy, PIE_SOURCES, pieCost } from "./recipe.js";
+import { allPositions, allPositionsRaw, probeSheet, positionWhy, PIE_SOURCES, pieCost } from "./recipe.js";
 
 // Пробный лист и объяснение количества живут в src/recipe.js — там же, где
 // правила, которые ими пользуются. Здесь они переэкспортированы, потому что
@@ -120,7 +120,8 @@ export function modelFacts(sheet, winTypes) {
 // повторить в двух местах в одном порядке, рано или поздно повторят неправильно.
 export function works2(sheet, ctx) {
   const c = ctx || {};
-  const positions = allPositions(sheet, c);
+  const raw = allPositionsRaw(sheet, c);
+  const positions = raw.positions;
   const cost = positions.reduce(function (a, p) { return a + (Number(p.cost) || 0); }, 0);
   const mk = (function () {
     const m = Number(sheet && sheet.markup);
@@ -145,7 +146,7 @@ export function works2(sheet, ctx) {
   });
   return {
     facts: modelFacts(sheet, c.winTypes),
-    positions: positions, stages: stages,
+    positions: positions, stages: stages, groups: raw.groups,
     cost: Math.round(cost), markup: mk, price: Math.round(cost * (1 + mk / 100)),
     gaps: gaps2(sheet, c),
   };
