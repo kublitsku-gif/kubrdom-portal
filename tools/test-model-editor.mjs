@@ -140,7 +140,7 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   click(p, { a: 'model-tool', k: 'op' })
   const ops = p.run('modelFullOverlay()')
   t.ok('изделия предлагаются одним рядом', ops.indexOf('data-a="model-place-type"') >= 0)
-  t.ok('в нём есть окно с чертежа', /Окно 1500×2100/.test(ops))
+  t.ok('в нём есть окно из каталога', /Окно 1000×2100/.test(ops))
   t.ok('и дверь тоже — список общий', /Дверь входная 1000×2100/.test(ops))
   t.ok('вкладок «Мои изделия / Каталог» в боевом нет', ops.indexOf('data-a="model-place-tab"') < 0)
 
@@ -166,7 +166,7 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   click(p, { a: 'model-tool', k: 'win' })
   const wins = p.run('modelFullOverlay()')
   t.ok('свои изделия предлагаются', wins.indexOf('data-a="model-place-type"') >= 0)
-  t.ok('в нём есть окно с чертежа', /Окно 1500×2100/.test(wins))
+  t.ok('в нём есть окно из каталога', /Окно 1000×2100/.test(wins))
   t.ok('а входной двери в окнах нет', wins.indexOf('Дверь входная 1000×2100') < 0)
   t.ok('вид переключился на окна', p.q('modelKind') === 'win')
 
@@ -658,7 +658,7 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   hit.onpointermove({ clientX: 100000, clientY: 0 })
   hit.onpointerup()
   const far = p.q('specSheets[0].model.openings.filter(function(o){return o.id===' + JSON.stringify(win.id) + ';})[0].pos')
-  t.ok('за край стены не уходит', far === 11952 - 1500, String(far))
+  t.ok('за край стены не уходит', far === 11952 - 1000, String(far))
 }
 
 // ── 14. Проём в торце: жест и точное число ───────────────────────────────────
@@ -684,19 +684,19 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   hit.onpointermove({ clientX: 0, clientY: 20 })
   hit.onpointerup()
   t.ok('жестом по торцу проём едет', pos() !== op.pos, op.pos + ' → ' + pos())
-  t.ok('и упирается в край стены', pos() <= 2352 - 2000, String(pos()))
+  t.ok('и упирается в край стены', pos() <= 2352 - 2160, String(pos()))
 
   // Точное число — там, где жестом уже не попасть.
   p.run('modelOpSel=' + JSON.stringify(op.id) + ';')
   const bar = p.run('modelFullOverlay()')
   t.ok('поле «от края» показано', bar.indexOf('data-a="model-op-posn"') >= 0)
-  t.ok('и рядом видно, сколько всего ходу', bar.indexOf('ход 0…0,35') >= 0, bar.indexOf('ход') >= 0 ? 'подпись есть, но другая' : 'подписи нет')
+  t.ok('и рядом видно, сколько всего ходу', bar.indexOf('ход 0…0,19') >= 0, bar.indexOf('ход') >= 0 ? 'подпись есть, но другая' : 'подписи нет')
   const inp = p.dom.node({ a: 'model-op-posn', id: op.id })
   p.run('bind();')
-  inp.value = '0,2'; inp.onchange()
-  t.ok('число ставит проём точно', pos() === 200, String(pos()))
+  inp.value = '0,1'; inp.onchange()
+  t.ok('число ставит проём точно', pos() === 100, String(pos()))
   inp.value = '9'; inp.onchange()
-  t.ok('за край стены число не пускает', pos() === 352, String(pos()))
+  t.ok('за край стены число не пускает', pos() === 2352 - 2160, String(pos()))
 }
 
 // ── 15. Число в поле — это число с чертежа ───────────────────────────────────

@@ -44,14 +44,14 @@ const sum = (a) => a.reduce((x, y) => x + y, 0)
   // трубы варятся ПОВЕРХ листа и в этот размер не входят (узел 1).
   const bot = sc.dims.find((d) => d.side === 'bottom')
   ok('цепочка проёмов длинной стены — по резу',
-    bot.segs.join(' ') === '2956 1540 760 1040 5656', bot.segs.join(' '))
+    bot.segs.join(' ') === '3206 1040 1010 1040 5656', bot.segs.join(' '))
   ok('и она так и названа', bot.name === 'Проёмы (вырез)', bot.name)
   ok('рез шире изделия на два зазора, без труб',
     sc.openings.filter((o) => o.frame).every((o) => o.cutW === o.width + 40))
   ok('у неусиленных рез равен изделию',
     sc.openings.filter((o) => !o.frame).every((o) => o.cutW === o.width))
   const right = sc.dims.find((d) => d.side === 'right')
-  ok('цепочка проёмов торца', right.segs.join(' ') === '176 2000 176', right.segs.join(' '))
+  ok('цепочка проёмов торца', right.segs.join(' ') === '96 2160 96', right.segs.join(' '))
   ok('ширина: обшивка и чистовой размер',
     sc.dims.find((d) => d.name === 'Ширина').segs.join(' ') === '76 2200 76')
 
@@ -135,8 +135,10 @@ const sum = (a) => a.reduce((x, y) => x + y, 0)
   const d3 = sc.dims.find((d) => d.name === 'Д-3')
   ok('Д-3: 1500 · 600 · 100', d3 && d3.segs.join(' ') === '1500 600 100', d3 && d3.segs.join(' '))
   ok('обе цепочки внутренние', d2 && d3 && d2.inner === true && d3.inner === true)
+  // Высота — из ИЗДЕЛИЯ, а подоконник из проёма: витраж 2390 при потолке 2500
+  // стоит на 100, и обе величины обязаны приехать в чертёж, а не в него вписаться.
   ok('высота и подоконник приехали из изделия',
-    sc.openings.some((o) => o.height === 2200 && o.sill === 200), JSON.stringify(sc.openings.map((o) => [o.height, o.sill])))
+    sc.openings.some((o) => o.height === 2390 && o.sill === 100), JSON.stringify(sc.openings.map((o) => [o.height, o.sill])))
 
   // Проём без изделия рисовать нечем — на схему он не попадает, а не встаёт нулевым.
   const broken = Object.assign({}, model, {

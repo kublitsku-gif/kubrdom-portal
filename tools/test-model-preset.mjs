@@ -7,7 +7,7 @@
 // уедет в другую комнату), а изделие нужного размера нельзя заводить второй раз —
 // справочник поставщика один на всю компанию.
 import { MODEL_PRESETS, modelPreset, presetModel, modelRooms, modelTotals, modelIssues,
-  openingRoom, totalLength, modelToSpecs, sideLength } from '../src/model.js'
+  openingRoom, totalLength, modelToSpecs, sideLength, winCatItem } from '../src/model.js'
 
 let failed = 0
 const ok = (name, cond, extra) => {
@@ -47,18 +47,24 @@ const ids = () => { let i = 0; return () => 'id' + (++i) }
   const where = model.openings.map((o) => (openingRoom(model, o) || {}).name)
   ok('окно и вход — в кухне-гостиной', where[0] === 'Кухня-гостиная' && where[1] === 'Кухня-гостиная', String(where))
   ok('витраж — в спальне', where[2] === 'Спальня', String(where))
-  // 800 от перегородки санузла до окна и 800 от окна до двери — это цепочка с чертежа.
+  // Изделия — из КАТАЛОГА, а не с чертежа: окна заказывают на заводе по
+  // ограниченному списку, и «окно 1500×2100, как нарисовано» купить негде.
+  // Поэтому размер каталожный, а стоит окно там, где его начертили: по центру.
   const liv = modelRooms(model)[1]
   const win = model.openings[0], dr = model.openings[1]
-  ok('окно в 800 от стены санузла', win.pos - liv.x0 === 800, String(win.pos - liv.x0))
-  ok('окно 1500 широкое', byId[win.typeId].w === 1500)
-  ok('вход в 800 от окна', dr.pos - (win.pos + 1500) === 800, String(dr.pos - (win.pos + 1500)))
+  ok('окно каталожное', byId[win.typeId].cat === 'os-1000x2100', byId[win.typeId].n)
+  ok('и стоит по центру нарисованного 1500',
+    win.pos + byId[win.typeId].w / 2 === 2976 + 750, String(win.pos))
+  ok('вход каталожный', byId[dr.typeId].cat === 'os-vd-1000x2100', byId[dr.typeId].n)
   ok('от входа до спальни 2300', liv.x1 - (dr.pos + 1000) === 2300, String(liv.x1 - (dr.pos + 1000)))
-  // Витраж в торце: 100 чистового простенка с каждой стороны (10 см на чертеже).
   const vit = model.openings[2]
-  ok('витраж 2000 с подоконником 200', byId[vit.typeId].w === 2000 && vit.sill === 200)
-  ok('витраж не выходит за торец', vit.pos + 2000 <= sideLength(model, 'e'), String(vit.pos))
-  ok('простенки торца по 100', vit.pos - model.finish === 100, String(vit.pos - model.finish))
+  ok('витраж каталожный', byId[vit.typeId].cat === 'os-2160x2390', byId[vit.typeId].n)
+  ok('витраж не выходит за торец',
+    vit.pos + byId[vit.typeId].w <= sideLength(model, 'e'), String(vit.pos))
+  // Витраж 2390 высотой: при потолке 2500 подоконник выше 110 не поднять, хотя на
+  // чертеже подписано 200. Лучше опустить его, чем нарисовать окно сквозь потолок.
+  ok('подоконник витража опущен под потолок', vit.sill + byId[vit.typeId].h <= model.h,
+    vit.sill + ' + ' + byId[vit.typeId].h + ' против ' + model.h)
   // Межкомнатные двери стоят в перегородках и считаются ровно по разу: дверь
   // принадлежит двум комнатам сразу, и посчитать её дважды значит заказать лишнюю.
   const parts = model.openings.filter((o) => o.side === 'part')
@@ -87,7 +93,18 @@ const ids = () => { let i = 0; return () => 'id' + (++i) }
   console.log('Типовые изделия')
   const a = presetModel('c12-san-liv-bed', [], ids())
   ok('четырёх изделий не хватало — завели', a.winTypes.length === 4, String(a.winTypes.length))
-  ok('цена не выдумана', a.winTypes.every((t) => t.cost === 0), JSON.stringify(a.winTypes.map((t) => t.cost)))
+  // Цена — из каталога поставщика, а не выдуманная и не нулевая: изделия в
+  // заготовке каталожные, и цена приезжает вместе с ними. Ноль остаётся только у
+  // межкомнатного полотна — его берут не у этого поставщика.
+  ok('цены из каталога', a.winTypes.every((t) => !!t.cat && (t.cost > 0 || t.cat === 'inner-600x2050')),
+    JSON.stringify(a.winTypes.map((t) => [t.cat, t.cost])))
+  // Главное правило: на заводе покупают ОГРАНИЧЕННЫЙ список. Заготовка, которая
+  // заводит своё окно «как на чертеже», ставит в смету изделие, которого не купить.
+  MODEL_PRESETS.forEach((pr) => {
+    ok(pr.k + ': все изделия из каталога',
+      (pr.needs || []).every((nd) => !!winCatItem(nd.cat)),
+      JSON.stringify((pr.needs || []).map((nd) => nd.cat || nd.n)))
+  })
 
   // Своё изделие того же размера — берём его вместе с ценой, второй копии не заводим.
   const have = [{ id: 'mine', kind: 'door', n: 'Дверь входная (наша)', w: 1000, h: 2100, cost: 27150 }]
@@ -95,8 +112,15 @@ const ids = () => { let i = 0; return () => 'id' + (++i) }
   ok('дубля по размеру нет', b.winTypes.length === 4, JSON.stringify(b.winTypes.map((t) => t.n)))
   ok('своя дверь осталась своей', b.winTypes[0].id === 'mine' && b.winTypes[0].cost === 27150)
   ok('проём ссылается на неё', b.model.openings[1].typeId === 'mine')
-  ok('цена изделий пришла из справочника', modelTotals(b.model, b.winTypes).openingsCost === 27150,
-    String(modelTotals(b.model, b.winTypes).openingsCost))
+  // Своя дверь пришла со своей ценой, остальные — с каталожной: сумма проёмов
+  // складывается из справочника дома, а не из воздуха.
+  const wanted = b.model.openings.reduce((a2, o) => {
+    const t = b.winTypes.find((x) => x.id === o.typeId)
+    return a2 + (Number(t && t.cost) || 0)
+  }, 0)
+  ok('цена изделий пришла из справочника', modelTotals(b.model, b.winTypes).openingsCost === wanted,
+    modelTotals(b.model, b.winTypes).openingsCost + ' против ' + wanted)
+  ok('и своя дверь в ней по своей цене', wanted >= 27150, String(wanted))
 
   // Заготовка не должна мутировать ни справочник, ни саму себя: её берут много раз.
   ok('чужой массив не тронут', have.length === 1)

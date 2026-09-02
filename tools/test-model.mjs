@@ -127,7 +127,7 @@ function house() {
   ok('дверь санузла — в куске стены', model.openings.filter((o) => o.side === 'wall').length === 1)
   // Отметки — по нижней цепочке чертежа: 200 · 90 · 200 · 90 · 266 · 90 · 265.
   const south = model.openings.filter((o) => o.side === 's').map((o) => o.pos).sort((a, b) => a - b)
-  ok('проёмы нижней стены по цепочке', south.join(',') === '2000,4900,8460', south.join(','))
+  ok('проёмы нижней стены по центрам чертежа', south.join(',') === '1950,4850,8410', south.join(','))
   // Окно санузла должно попасть В САНУЗЕЛ, а не в коридор рядом.
   const san = rooms.find((r) => r.name === 'Санузел')
   const win = model.openings.find((o) => o.side === 'n')
@@ -192,6 +192,47 @@ function house() {
     ch.segs.join('+') + ' против ' + wl.w)
 }
 
+// ── Створка не проходит сквозь стену ─────────────────────────────────────────
+// Полотно стоит поперёк своей стены, а напротив бывает стена ближе его длины:
+// коридор в семьдесят сантиметров и дверь шириной девяносто. Раскрытая настежь
+// створка на чертеже обещает то, чего в доме нет, — а по этой дуге расставляют
+// мебель и решают, куда вешать полотенцесушитель.
+{
+  console.log('Створка и стена')
+  const ids2 = (() => { let i = 0; return () => 'sw' + (++i) })()
+  const { model, winTypes } = presetModel('maksim-2', [], ids2)
+  const sc = modelScheme(model, winTypes)
+  const doors = sc.openings.filter((o) => o.swing)
+  ok('все двери открываются настежь', doors.every((o) => o.swing.open === 90),
+    JSON.stringify(doors.map((o) => o.mark + ':' + o.swing.open)))
+  // Полотно шире коридора — чертим на тот угол, на который она открывается.
+  const wide = { id: 'wide', kind: 'door', n: 'Дверь 900×2050', w: 900, h: 2050, cost: 0 }
+  const san = model.openings.find((o) => o.side === 'wall')
+  const m2 = Object.assign({}, model, {
+    openings: model.openings.map((o) => (o === san ? Object.assign({}, o, { typeId: 'wide' }) : o)),
+  })
+  const t2 = winTypes.concat([wide])
+  const sc2 = modelScheme(m2, t2)
+  const door = sc2.openings.find((o) => o.side === 'wall')
+  ok('в узком коридоре угол меньше', door.swing.open < 90 && door.swing.open >= 20, String(door.swing.open))
+  // Главное: кончик полотна не внутри стены. Проверяем прямо по геометрии.
+  const inWall = (pt) => sc2.walls.some((w) =>
+    pt.x > w.x + 1 && pt.x < w.x + w.w - 1 && pt.y > w.y + 1 && pt.y < w.y + w.h - 1)
+  ok('кончик створки не в стене', !inWall(door.swing.tip), JSON.stringify(door.swing.tip))
+  // И само полотно тоже: точка на середине.
+  const mid = { x: (door.swing.hinge.x + door.swing.tip.x) / 2, y: (door.swing.hinge.y + door.swing.tip.y) / 2 }
+  ok('и полотно целиком', !inWall(mid), JSON.stringify(mid))
+  ok('радиус остался шириной полотна',
+    Math.round(Math.hypot(door.swing.tip.x - door.swing.hinge.x, door.swing.tip.y - door.swing.hinge.y)) === 900,
+    String(Math.round(Math.hypot(door.swing.tip.x - door.swing.hinge.x, door.swing.tip.y - door.swing.hinge.y))))
+  // Дверь, которая едва приоткрывается, — это не мелочь вёрстки, а планировка:
+  // на плане угол видно только тому, кто присмотрелся, поэтому говорим словами.
+  ok('и об этом сказано в замечаниях',
+    modelIssues(m2, t2).some((x) => /упирается в стену/.test(x)), JSON.stringify(modelIssues(m2, t2)))
+  ok('а исправную дверь замечания не трогают', modelIssues(model, winTypes).length === 0,
+    JSON.stringify(modelIssues(model, winTypes)))
+}
+
 // ── Стена не заезжает на проём ───────────────────────────────────────────────
 // Окно режет наружную стену насквозь: перегородка, доехавшая до него, упирается в
 // стеклопакет, а на чертеже получается дыра в стене вместо планировки.
@@ -200,7 +241,7 @@ function house() {
   const { model, winTypes } = presetModel('c12-san-liv-bed', [], (() => { let i = 0; return () => 'w' + (++i) })())
   const at = (mm) => modelBays(mm).map((b) => b.x1)
   const spans = openingSpans(model, winTypes)
-  ok('пролёты проёмов посчитаны с усилением', spans.length === 2 && spans[0].x0 === 2916 && spans[0].x1 === 4536,
+  ok('пролёты проёмов посчитаны с усилением', spans.length === 2 && spans[0].x0 === 3166 && spans[0].x1 === 4286,
     JSON.stringify(spans))
 
   const x0 = at(model)[0]
@@ -213,10 +254,10 @@ function house() {
   // Свободный ход не трогаем: стена ездит, пока ей есть куда.
   ok('в свободное место едет как раньше', at(moveBoundary(model, 0, 600, winTypes))[0] === x0 + 600)
 
-  ok('на месте окна стены быть не может', wallFits(model, 3000, winTypes) === false)
-  ok('между проёмами — можно', wallFits(model, 4800, winTypes) === true)
-  ok('и splitAt туда не ставит', splitAt(model, 3000, 'nw', 'ns', winTypes).rooms.length === model.rooms.length)
-  ok('а в свободное место ставит', splitAt(model, 4800, 'nw', 'ns', winTypes).rooms.length === model.rooms.length + 1)
+  ok('на месте окна стены быть не может', wallFits(model, 3500, winTypes) === false)
+  ok('между проёмами — можно', wallFits(model, 4700, winTypes) === true)
+  ok('и splitAt туда не ставит', splitAt(model, 3500, 'nw', 'ns', winTypes).rooms.length === model.rooms.length)
+  ok('а в свободное место ставит', splitAt(model, 4700, 'nw', 'ns', winTypes).rooms.length === model.rooms.length + 1)
   // Без справочника изделий ширину проёма узнать не из чего — тогда сторожа нет,
   // и это честнее, чем угадывать: молчаливая блокировка была бы необъяснимой.
   ok('без winTypes ограничения нет', at(moveBoundary(model, 0, 1200))[0] === x0 + 1200)
