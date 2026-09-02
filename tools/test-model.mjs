@@ -121,7 +121,10 @@ function house() {
     String(rooms.reduce((a, r) => a + r.area, 0)))
 
   ok('изделий пять', winTypes.length === 5, String(winTypes.length))
-  ok('проёмов шесть', model.openings.length === 6, String(model.openings.length))
+  // Семь: три окна и панорама, входная дверь, дверь спальни в перегородке и дверь
+  // санузла — в куске стены, потому что перегородки во всю ширину там нет.
+  ok('проёмов семь', model.openings.length === 7, String(model.openings.length))
+  ok('дверь санузла — в куске стены', model.openings.filter((o) => o.side === 'wall').length === 1)
   // Отметки — по нижней цепочке чертежа: 200 · 90 · 200 · 90 · 266 · 90 · 265.
   const south = model.openings.filter((o) => o.side === 's').map((o) => o.pos).sort((a, b) => a - b)
   ok('проёмы нижней стены по цепочке', south.join(',') === '2000,4900,8460', south.join(','))
@@ -129,6 +132,64 @@ function house() {
   const san = rooms.find((r) => r.name === 'Санузел')
   const win = model.openings.find((o) => o.side === 'n')
   ok('окно санузла внутри санузла', win.pos > san.x0 && win.pos < san.x1, String(win.pos))
+}
+
+// ── Проём в куске стены ──────────────────────────────────────────────────────
+// Дверь санузла стоит в стене, которая не идёт через весь дом. Перегородкой её не
+// описать — «отсека» там нет; наружной стеной тоже. Сторожим главное: стена с
+// дверью остаётся СТЕНОЙ для площадей (иначе санузел сольётся с коридором и
+// 2,71 м² превратится в 4,3), а сама дверь считается ровно один раз.
+{
+  console.log('Проём в куске стены')
+  const ids = (() => { let i = 0; return () => 'w' + (++i) })()
+  const { model, winTypes } = presetModel('maksim-2', [], ids)
+  const door = model.openings.find((o) => o.side === 'wall')
+  ok('дверь санузла в заготовке есть', !!door && !!door.wall, JSON.stringify(door))
+  ok('и стоит она в своём куске стены',
+    (model.walls || []).some((w) => w.id === door.wall))
+
+  const before = modelRooms(model).find((r) => r.name === 'Санузел').area
+  ok('санузел остался отдельным помещением', Math.abs(before - 2.7) < 0.02, String(before))
+  // Проём — это не дыра в стене: заливка по-прежнему видит стену, иначе комната
+  // сольётся с коридором. Проверяем прямо: убираем дверь — площади те же.
+  const noDoor = Object.assign({}, model, { openings: model.openings.filter((o) => o.side !== 'wall') })
+  ok('без двери площади те же',
+    modelRooms(noDoor).find((r) => r.name === 'Санузел').area === before)
+
+  // Дверь принадлежит ОДНОЙ комнате: иначе монтаж посчитается дважды.
+  const room = openingRoom(model, door)
+  ok('у двери ровно одна комната', !!room && !!room.name, room && room.name)
+
+  // Проём меряется по СВОЕЙ стене: сравнивать его отметку с длиной контейнера —
+  // сравнивать разные вещи, и модель начинала ругаться на исправную дверь.
+  ok('замечаний по модели нет', modelIssues(model, winTypes).length === 0,
+    JSON.stringify(modelIssues(model, winTypes)))
+  const wl = (model.walls || []).find((w) => w.id === door.wall)
+  ok('длина стены — это её длина', sideLength(model, 'wall', door) === Math.max(wl.w, wl.h),
+    String(sideLength(model, 'wall', door)))
+  // Дверь, уехавшую за торец стены, модель обязана назвать.
+  const far = Object.assign({}, model, {
+    openings: model.openings.map((o) => (o === door ? Object.assign({}, o, { pos: wl.x + wl.w - 100 }) : o)),
+  })
+  ok('дверь за торцом стены — замечание', modelIssues(far, winTypes).length > 0,
+    JSON.stringify(modelIssues(far, winTypes)))
+
+  // Усиление в каркасную стену не варят — трубы у такого проёма быть не должно.
+  const sc = modelScheme(model, winTypes)
+  const drawn = sc.openings.find((o) => o.id === door.id)
+  ok('проём начерчен в стене', drawn.y === wl.y && drawn.h === wl.h,
+    JSON.stringify([drawn.x, drawn.y, drawn.w, drawn.h]))
+  ok('шириной в полотно', drawn.w === 700, String(drawn.w))
+  ok('без усиления', drawn.frame === false && drawn.jambs.length === 0)
+  ok('со створкой', !!drawn.swing)
+  // Размер двери на чертеже меряется от концов её стены: цепочка через весь дом
+  // сказала бы, где она относительно контейнера, а размечают её от стены.
+  const ch = sc.dims.find((d) => d.side === 'wallx')
+  ok('у двери есть своя цепочка', !!ch && ch.name === drawn.mark, JSON.stringify(ch))
+  ok('и она меряет по стене', ch.ticks[0] === wl.x && ch.ticks[ch.ticks.length - 1] === wl.x + wl.w,
+    JSON.stringify(ch.ticks))
+  ok('сумма цепочки равна стене', ch.segs.reduce((a, b) => a + b, 0) === wl.w,
+    ch.segs.join('+') + ' против ' + wl.w)
 }
 
 // ── Стена не заезжает на проём ───────────────────────────────────────────────

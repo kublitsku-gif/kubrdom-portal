@@ -1048,4 +1048,72 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   t.ok('и она возвращается', p.q('specSheets[0].model.rooms').length === 1, String(p.q('specSheets[0].model.rooms').length))
 }
 
+// ── 21. Дверь в куске стены ──────────────────────────────────────────────────
+// Санузел, вырезанный кусками стен, — не отсек: перегородки во всю ширину рядом с
+// ним нет, и дверь туда поставить было нечем. Тап по такой стене ставит проём в
+// НЕЁ, а не в ближайшую наружную стену за метр отсюда.
+{
+  t.section('Дверь в куске стены')
+  const p = boot({})
+  p.set({
+    expProducts: [], estimates: [], dbPlans: [], crmClients: [],
+    specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [],
+    contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: {},
+  })
+  // Заготовка дома Максима: в ней санузел и есть кусками стен.
+  p.run('specShowNew=true;specNew=Object.assign({},specNew,{kind:"house",preset:"maksim-2"});')
+  p.dom.field('spec-n-name', 'Максим'); p.dom.field('spec-n-client', '')
+  const b = p.dom.node({ a: 'spec-create' }); p.run('bind();'); b.onclick()
+  p.run('specOpenId=specSheets[0].id;')
+  // Дверь санузла в заготовке уже есть — убираем, поставим её руками.
+  p.run('specSheets[0].model.openings=specSheets[0].model.openings.filter(function(o){return o.side!=="wall";});modelSync(specSheets[0]);')
+  click(p, { a: 'model-full' })
+
+  const doorType = p.q('winTypes.find(function(x){return x.kind==="door"&&x.w===700;}).id')
+  click(p, { a: 'model-tool', k: 'op' })
+  click(p, { a: 'model-place-type', t: doorType })
+
+  const plan = p.run('modelPlanSvg(specSheets[0], true)')
+  const vb = /viewBox="([-\d]+) ([-\d]+) (\d+) (\d+)"/.exec(plan).slice(1).map(Number)
+  const PX = 1200
+  const canvas = p.dom.node({ a: 'model-canvas', vb: vb.join(' ') })
+  canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: PX, height: PX * vb[3] / vb[2] })
+  p.run('bind();')
+  // Тап по НИЖНЕЙ стенке санузла — той, что лежит вдоль дома.
+  const wl = p.q('specSheets[0].model.walls.filter(function(w){return w.w>w.h;})[0]')
+  const tapX = wl.x + wl.w / 2, tapY = wl.y + wl.h / 2
+  canvas.onclick({ clientX: (tapX - vb[0]) / vb[2] * PX, clientY: (tapY - vb[1]) / vb[2] * PX })
+
+  const ops = p.q('specSheets[0].model.openings')
+  const door = ops.find((o) => o.side === 'wall')
+  t.ok('дверь встала в кусок стены', !!door, JSON.stringify(ops.map((o) => o.side)))
+  t.ok('и именно в тот, по которому тапнули', door.wall === wl.id)
+  t.ok('по центру тапа', Math.abs(door.pos + 350 - tapX) <= 60, String(door.pos))
+  // Стена с дверью остаётся стеной: заливка не должна слить санузел с коридором,
+  // иначе 2,71 м² превратятся в 4,3 и уедут в смету.
+  const rooms = p.q('modelRooms(specSheets[0].model)')
+  t.ok('санузел остался помещением', Math.abs((rooms.find((r) => r.name === 'Санузел') || {}).area - 2.7) < 0.02,
+    JSON.stringify(rooms.map((r) => r.name + ' ' + r.area)))
+
+  // Дверь показывается во вкладке перегородок: другая внутренняя дверь дома живёт
+  // там же, и прятать одну от другой незачем.
+  p.run('modelSide="part";modelOpSel="";modelPart=specSheets[0].model.rooms[0].id;')
+  const bar = p.run('specModelHtml(specSheets[0])')
+  t.ok('видна во вкладке перегородок', bar.indexOf(door.id) >= 0)
+
+  // Едет она по СВОЕЙ стене и с торца не съезжает.
+  const base = p.q('opPosBase(specSheets[0].model, specSheets[0].model.openings.filter(function(o){return o.side==="wall";})[0])')
+  t.ok('пределы — по своей стене', base.min === wl.x && base.max === wl.x + wl.w - 700,
+    JSON.stringify(base))
+
+  // Убрали стену — ушла и дверь: проём без стены никуда не ведёт, а в смете
+  // продолжает стоить денег.
+  click(p, { a: 'model-tool', k: 'del' })
+  const hit = p.dom.node({ a: 'model-free-hit', id: wl.id })
+  p.run('bind();'); hit.onclick()
+  t.ok('стены не стало', !p.q('specSheets[0].model.walls').some((w) => w.id === wl.id))
+  t.ok('и дверь ушла с ней', !p.q('specSheets[0].model.openings').some((o) => o.side === 'wall'),
+    JSON.stringify(p.q('specSheets[0].model.openings').map((o) => o.side)))
+}
+
 t.done()

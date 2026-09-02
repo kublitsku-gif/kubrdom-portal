@@ -325,6 +325,10 @@ export const MODEL_PRESETS = [
       { side: "n", pos: 4780, sill: 1100, need: 2 },  // окно санузла, H=80 Н под.=110
       { side: "e", pos: 150,  sill: 200, need: 3 },   // панорама в торце, H=220 Н под.=20
       { side: "part", afterRoom: 0, pos: 1400, need: 4, into: 1, hinge: "end" },   // дверь спальни, H=200
+      // Дверь санузла — в НИЖНЕМ куске стены (walls[1]), открывается в коридор.
+      // Место по цепочке чертежа: 15 · 70 · 74 справа от ниши, то есть от правой
+      // стенки санузла 740 + полотно 700 → 5780 − 740 − 700 = 4340.
+      { side: "wall", wallIdx: 1, pos: 4340, need: 4, into: 1, hinge: "end" },
     ],
   },
 ];
@@ -365,8 +369,24 @@ export function presetModel(preset, winTypes, newId) {
     }),
     openings: [],
   };
+  // Куски стен и подписи вырезанных ими комнат — ДО проёмов: проём в куске стены
+  // ссылается на него номером в заготовке, а id рождается здесь.
+  if ((p.walls || []).length) {
+    model.walls = p.walls.map(function (w) { return Object.assign({ id: gen() }, w); });
+  }
+  if ((p.spots || []).length) {
+    model.spots = p.spots.map(function (sp) { return Object.assign({}, sp, { id: gen(), pts: sp.pts || {} }); });
+  }
   model.openings = (p.openings || []).map(function (o) {
     const op = { id: gen(), side: o.side, pos: o.pos, sill: o.sill, typeId: ids[o.need] };
+    if (o.side === "wall") {
+      const wl = (model.walls || [])[o.wallIdx];
+      if (!wl) return null;
+      op.wall = wl.id;
+      op.into = o.into;
+      op.hinge = o.hinge;
+      delete op.sill;                 // дверь во внутренней стене стоит на полу
+    }
     if (o.side === "part") {
       const bay = model.rooms[o.afterRoom];
       if (!bay) return null;
@@ -377,14 +397,6 @@ export function presetModel(preset, winTypes, newId) {
     }
     return op;
   }).filter(function (o) { return o && o.typeId; });
-  // Куски стен и подписи вырезанных ими комнат. Заготовка дома, где санузел стоит
-  // углом, без них не существует: отсеками такую планировку не описать вовсе.
-  if ((p.walls || []).length) {
-    model.walls = p.walls.map(function (w) { return Object.assign({ id: gen() }, w); });
-  }
-  if ((p.spots || []).length) {
-    model.spots = p.spots.map(function (sp) { return Object.assign({}, sp, { id: gen(), pts: sp.pts || {} }); });
-  }
   return { model: model, winTypes: types };
 }
 
@@ -683,11 +695,28 @@ export function modelBays(model) {
 
 // Длина стены, вдоль которой ставятся проёмы. Длинные стены идут по всему
 // контейнеру, торцы — по его ширине.
-export function sideLength(model, side) {
+export function sideLength(model, side, op) {
   const m = model || {};
+  // Кусок стены — сам себе стена: проём на нём меряется по его длине, а не по
+  // габариту дома. Стена вдоль — по x, поперёк — по y; какая она, знает она сама.
+  if (side === "wall") {
+    const w = wallOf(m, op);
+    return w ? ((w.w >= w.h) ? w.w : w.h) : 0;
+  }
   // Перегородка идёт поперёк контейнера, как и торец: проём на ней меряется по ширине.
   return (side === "w" || side === "e" || side === "part") ? (Number(m.w) || 0) : totalLength(m);
 }
+
+// Кусок стены, в котором стоит проём. Ссылаемся по id: куски стен двигают и
+// подрезают соседями, а номер в массиве переживает не всякую правку.
+export function wallOf(model, op) {
+  if (!op || op.side !== "wall") return null;
+  return ((model || {}).walls || []).find(function (w) { return w.id === op.wall; }) || null;
+}
+
+// Вдоль дома лежит стена или поперёк. Дверь санузла и дверь коридора чертятся
+// по-разному только этим, и спрашивать об этом надо у стены, а не у проёма.
+export function wallAlong(w) { return !!w && (Number(w.w) || 0) >= (Number(w.h) || 0); }
 
 // Перегородка, названная проёмом: `after` — отсек, СРАЗУ ЗА которым она стоит.
 // Ссылаемся на отсек, а не на номер стены: номера съезжают при делении и слиянии,
@@ -723,6 +752,22 @@ export function openingRoom(model, op) {
     const pos = Number(op.pos) || 0;
     const inBay = rooms.filter(function (r) { return r.bayId === p.bay.id; });
     return inBay.find(function (r) { return pos >= r.y0 && pos <= r.y1; }) || inBay[0] || null;
+  }
+  // Дверь в куске стены тоже принадлежит двум комнатам сразу, и выбрать надо ОДНУ.
+  // Берём ту, что лежит ЗА стеной по её нормали (под горизонтальной, справа от
+  // вертикальной) — правило не зависит ни от стороны открывания, ни от того, какая
+  // комната больше: и то, и другое меняется правкой, а счёт за монтаж двери — нет.
+  if (side === "wall") {
+    const wl = wallOf(model, op);
+    if (!wl) return null;
+    const along = wallAlong(wl);
+    const px = along ? ((Number(op.pos) || 0) + 1) : (wl.x + wl.w + 1);
+    const py = along ? (wl.y + wl.h + 1) : ((Number(op.pos) || 0) + 1);
+    return rooms.find(function (r) {
+      return (r.cells || []).some(function (c) {
+        return px >= c.x && px <= c.x + c.w && py >= c.y && py <= c.y + c.h;
+      });
+    }) || null;
   }
   // Стена принадлежит той комнате, которая её касается: у отсека с продольной
   // перегородкой северная стена у одной комнаты, южная — у другой. Комнаты меряются
@@ -1158,7 +1203,8 @@ export function modelAreas(model, winTypes) {
 export function frameNeeded(op, type) {
   if (!op) return false;
   if (op.frame != null) return !!op.frame;
-  if (op.side === "part") return false;          // перегородка каркасная, варить не во что
+  // Перегородка и кусок стены — каркасные, варить трубу не во что.
+  if (op.side === "part" || op.side === "wall") return false;
   const blind = !!(type && type.face && type.face.length) && winFace(type).rows.every(function (r) {
     return r.cells.every(function (c) { return !c.o; });
   });
@@ -1227,6 +1273,16 @@ export function modelScheme(model, winTypes) {
       // потому что угадать нельзя, а нарисовать створку не в ту комнату — соврать.
       out = [(Number(op.into) || 1) >= 0 ? 1 : -1, 0];
       along = false;
+    } else if (op.side === "wall") {
+      // Проём в куске стены: дверь санузла, вырезанного стенами, а не отсеком.
+      // Ставится он так же, как в перегородке, только стена может лежать и вдоль.
+      const wl = wallOf(m, op);
+      if (!wl) return null;
+      along = wallAlong(wl);
+      box = along ? { x: pos, y: wl.y, w: wd, h: wl.h }
+        : { x: wl.x, y: pos, w: wl.w, h: wd };
+      const dir = (Number(op.into) || 1) >= 0 ? 1 : -1;
+      out = along ? [0, dir] : [dir, 0];
     } else {
       box = (op.side === "n") ? { x: pos, y: 0, w: wd, h: fin }
         : (op.side === "s") ? { x: pos, y: W - fin, w: wd, h: fin }
@@ -1250,7 +1306,7 @@ export function modelScheme(model, winTypes) {
     // (`op.frame === false`): угадать за человека, что именно тут стоит, нельзя.
     const frame = frameNeeded(op, t);
     return {
-      id: op.id, side: op.side, after: op.after || "", kind: kind, name: t.n || "Проём",
+      id: op.id, side: op.side, after: op.after || "", wall: op.wall || "", kind: kind, name: t.n || "Проём",
       pos: pos, width: wd, height: Number(t.h) || 0, sill: sill,
       x: box.x, y: box.y, w: box.w, h: box.h,
       frame: frame, jambs: frame ? jambsOf(box, along) : [],
@@ -1330,6 +1386,18 @@ export function modelScheme(model, winTypes) {
   openings.filter(function (o) { return o.side === "part"; }).forEach(function (o) {
     dims.push(chain("part", W, [o.pos, o.pos + o.width], o.mark, o.x, [fin, W - fin]));
   });
+  // Проём в куске стены меряется по СВОЕЙ стене, от её концов: цепочка через весь
+  // дом сказала бы, где дверь относительно контейнера, а размечают её от стены,
+  // в которую она вставлена.
+  openings.filter(function (o) { return o.side === "wall"; }).forEach(function (o) {
+    const wl = (m.walls || []).find(function (w) { return w.id === o.wall; });
+    if (!wl) return;
+    if (wallAlong(wl)) {
+      dims.push(chain("wallx", L, [o.pos, o.pos + o.width], o.mark, wl.y + wl.h / 2, [wl.x, wl.x + wl.w]));
+    } else {
+      dims.push(chain("part", W, [o.pos, o.pos + o.width], o.mark, wl.x, [wl.y, wl.y + wl.h]));
+    }
+  });
 
   return { l: L, w: W, finish: fin, wallThick: th,
     walls: walls, outline: outline, openings: openings, labels: labels, dims: dims };
@@ -1347,9 +1415,13 @@ export function modelIssues(model, winTypes) {
   (winTypes || []).forEach(function (t) { if (t && t.id) byType[t.id] = t; });
   (model.openings || []).forEach(function (op) {
     if (!byType[op.typeId]) out.push("Проём без типового изделия — цена не посчитается");
-    const len = sideLength(model, op.side);
     const t = byType[op.typeId] || {};
     const wmm = Number(t.w) || 0;
+    // Проём в куске стены меряется от начала СВОЕЙ стены, а не от угла дома:
+    // сравнивать его отметку с длиной контейнера — сравнивать разные вещи.
+    const wl = wallOf(model, op);
+    const from = wl ? (wallAlong(wl) ? wl.x : wl.y) : 0;
+    const len = from + sideLength(model, op.side, op);
     if ((Number(op.pos) || 0) + wmm > len) out.push("«" + (t.n || "Проём") + "» выходит за стену");
   });
   if (!(model.openings || []).length) out.push("Ни одного окна или двери");

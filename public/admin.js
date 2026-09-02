@@ -47,7 +47,7 @@ import { sheetPositions, sheetTotals, sheetIssues, optionGroups, roomArea, optio
 import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyContainer, modelRooms,
   modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom, wallFits,
   splitLengthwise, mergeLengthwise, moveLengthwise, elevation,
-  bayAt, splitAt, splitLengthwiseAt, nearestSide, opPosAt,
+  bayAt, splitAt, splitLengthwiseAt, nearestSide, opPosAt, wallOf, wallAlong,
   modelToSpecs, modelTotals, modelIssues, modelScheme, modelAreas, modelWalls, snapWall, addWall, headSill, alignHeads, partitionAt, INNER_DOOR,
   WIN_CATALOG, winCatItem, winFace, winTypeFrom, frameNeeded, JAMB_TUBE, JAMB_GAP_MIN, JAMB_GAP,
   WALL_LAYERS, SKIN_LAYERS, wallLayers, skinLayers, layersThick, applyLayers,
@@ -9904,6 +9904,15 @@ function opPosBase(m, op){
   const t=winType(op.typeId)||{w:0};
   const fin=(m.finish==null?FINISH_THICK:Number(m.finish)||0);
   const part=(op.side==="part");
+  // Проём в куске стены ездит по СВОЕЙ стене и дальше её концов не уезжает:
+  // дверь, съехавшая с торца стенки санузла, — это дыра в воздухе.
+  if(op.side==="wall"){
+    const wl=wallOf(m, op);
+    if(!wl)return { min:0, max:0 };
+    const along=wallAlong(wl);
+    const min=along?wl.x:wl.y, span=along?wl.w:wl.h;
+    return { min:min, max:Math.max(min, min+span-(Number(t.w)||0)) };
+  }
   const span=part?(Number(m.w)||0):sideLength(m, op.side);
   const min=part?fin:0;
   return { min:min, max:Math.max(min, span-min-(Number(t.w)||0)) };
@@ -10113,6 +10122,18 @@ function modelPlanSvg(sh, full){
     const km=winKindMeta(t.kind), ln=Number(t.w)||0, pos=Number(op.pos)||0;
     const on=modelOpDrag===op.id||modelOpSel===op.id;
     const tint=on?"0.3":(del?"0.2":"0.08");
+    // Проём в куске стены едет по своей стене — вдоль неё или поперёк, как она лежит.
+    if(op.side==="wall"){
+      const wl=wallOf(m, op); if(!wl)return;
+      const along=wallAlong(wl);
+      const bx=along?pos:(wl.x-190), by=along?(wl.y-190):pos;
+      const bw=along?ln:(wl.w+380), bh=along?(wl.h+380):ln;
+      const base=opPosBase(m, op);
+      g+='<g data-a="'+(drag?"model-op-drag":"model-op-hit")+'" data-id="'+op.id+'" data-side="wall" data-span="'+(base.max+ln)+'" data-w="'+ln+'" data-cw="'+W+'" style="cursor:'+(along?"ew-resize":"ns-resize")+';touch-action:none">'+
+        '<rect x="'+bx+'" y="'+by+'" width="'+bw+'" height="'+bh+'" rx="60" fill="'+km.c+'" opacity="'+tint+'"/>'+
+      '</g>';
+      return;
+    }
     // Проём в перегородке едет по своей перегородке — у него другая ось.
     if(op.side==="part"){
       const pt=partitionAt(m, op.after); if(!pt)return;
@@ -10885,7 +10906,11 @@ function specModelHtml(sh){
   // В опытном разделе список — только проёмы своего вида: вкладка «Окна» показывает
   // окна, и разбирать среди них двери не нужно.
   const ops=(m.openings||[]).filter(function(op){
-    if(op.side!==modelSide || (modelSide==="part" && op.after!==modelPart))return false;
+    // Проём в куске стены — тоже внутренняя дверь, и живёт он во вкладке
+    // перегородок: заводить ему отдельную вкладку значит прятать одну дверь дома
+    // от другой.
+    if(modelSide==="part"){ if(op.side!=="wall" && (op.side!=="part" || op.after!==modelPart))return false; }
+    else if(op.side!==modelSide)return false;
     if(!lab)return true;
     const t=winType(op.typeId);
     return t?((t.kind||"win")===modelKind):(modelKind==="win");
@@ -11464,7 +11489,12 @@ function schemeParts(sc, view){
   const plain=(view==="plain");
   const L=sc.l, W=sc.w;
   const byS=function(sd){ return sc.dims.filter(function(d){return d.side===sd;}); };
-  const top=byS("top"), bottom=byS("bottom"), left=byS("left"), right=byS("right");
+  const top=byS("top"), left=byS("left"), right=byS("right");
+  // Цепочка внутренней стены (дверь санузла) идёт снизу вместе с наружными: внутри
+  // плана под ней коридор в семьдесят сантиметров, где уже стоят марки дверей.
+  // Считаем её нижней с самого начала — иначе поле под цепочки её не учтёт и
+  // последний размер уедет за край чертежа.
+  const bottom=byS("bottom").concat(plain?[]:byS("wallx"));
   // Поле под цепочки: их высота плюс запас под цифру. Если в цепочке есть узкий
   // отрезок, его число ушло на полочку — а полочка поднимается выше линии и вылезает
   // вбок за край чертежа. Не заложить это поле значит обрезать размер по краю.
@@ -11512,7 +11542,7 @@ function schemeParts(sc, view){
     // меряет), а просто перескакивает через стену: у стены ему и место.
     // Комнате напротив нужен хоть какой-то просвет — иначе цепочка встанет в стену,
     // и тогда уж лучше остаться на просторной стороне, за дугой.
-    const door=sc.openings.find(function(o){ return o.side==="part"&&o.x===at&&o.swing; });
+    const door=sc.openings.find(function(o){ return (o.side==="part"||o.side==="wall")&&o.x===at&&o.swing; });
     const swing=door?((door.swing.tip.x>door.x)?1:-1):0;
     const room=function(sd){ return sd>0?(hi-(at+th)):(at-lo); };
     chainSide[at]=(swing&&room(-swing)>=CHAIN_ROOM)?(-swing):(((hi-(at+th))>(at-lo))?1:-1);
@@ -11563,13 +11593,23 @@ function schemeParts(sc, view){
     // крупной она спорила с именем за одно и то же поле внутри стен.
     const cx=op.x+op.w/2, cy=op.y+op.h/2;
     const part=(op.side==="part");
+    // Кусок стены поперёк дома подписывается как перегородка, вдоль — как наружная
+    // стена: подпись читают по тому, как стена лежит, а не по тому, чем она названа.
+    const wall=(op.side==="wall");
+    const wallCross=wall&&op.h>op.w;
+    const partLike=part||wallCross;
     const vert=(op.side==="w"||op.side==="e");
     // Марку ставим напротив цепочки: сама створка подписи не мешает, а цепочка мешает.
-    const dirX=part?-(chainSide[op.x]||-1):((op.swing&&op.swing.tip.x>op.x)?1:-1);
-    const lx=part?(op.x+op.w/2+dirX*300):(vert?(cx+(op.side==="e"?-420:420)):cx);
-    const ly=part?(op.y-360):(vert?cy:(op.side==="n"?cy+420:cy-300));
+    const dirX=partLike?-(chainSide[op.x]||-1):((op.swing&&op.swing.tip.x>op.x)?1:-1);
+    const lx=partLike?(op.x+op.w/2+dirX*300):(vert?(cx+(op.side==="e"?-420:420)):cx);
+    // Марка проёма в стене ВДОЛЬ дома встаёт в ту комнату, где просторнее: под
+    // такой стеной обычно коридор, и марка, цепочка и марка соседней двери в нём
+    // не разойдутся — а над ней комната во всю глубину.
+    const wallUp=wall&&!wallCross&&(op.y+op.h/2)>sc.w/2;
+    const ly=partLike?(op.y-360)
+      :(vert?cy:(wall?(wallUp?cy-300:cy+480):(op.side==="n"?cy+420:cy-300)));
     const rot=vert?' transform="rotate(-90 '+lx+' '+ly+')"':'';
-    const anch=part?(dirX>0?"start":"end"):"middle";
+    const anch=partLike?(dirX>0?"start":"end"):"middle";
     const halo=' stroke="#fff" stroke-width="70" paint-order="stroke" stroke-linejoin="round"';
     const sub=op.width+"×"+op.height+(op.sill?" · h"+op.sill:"");
     if(plain){
@@ -11612,7 +11652,7 @@ function schemeParts(sc, view){
   // против такой цепочки нельзя — только вдоль комнаты, и для этого её надо знать.
   const innerChains=plain?[]:sc.dims.filter(function(d){return d.side==="part";}).map(function(ch){
     const side=chainSide[ch.at]>0?1:-1;
-    const door=sc.openings.find(function(o){ return o.side==="part"&&o.x===ch.at&&o.swing; });
+    const door=sc.openings.find(function(o){ return (o.side==="part"||o.side==="wall")&&o.x===ch.at&&o.swing; });
     const swingSide=door?((door.swing.tip.x>door.x)?1:-1):0;
     const clear=(swingSide===side&&door)?(Number(door.width)||0)+SWING_GAP:0;
     const cx=(side>0)?(ch.at+th+260+clear):(ch.at-260-clear);
@@ -11744,7 +11784,12 @@ function schemeParts(sc, view){
   // дальше от стены.
   const edge=function(side, base, sign){ return base+sign*(reach[side]>0?Math.round(reach[side])+120:90); };
   top.forEach(function(ch,i){ g+=schChainH(ch, -(first("top")+i*SCH_GAP), 1, edge("top",0,-1), outer(top,i)); });
-  bottom.forEach(function(ch,i){ g+=schChainH(ch, W+first("bottom")+i*SCH_GAP, -1, edge("bottom",W,1), outer(bottom,i)); });
+  // Выносные линии цепочки внутренней стены тянутся ОТ САМОЙ СТЕНЫ: по ним видно,
+  // что меряется дверь санузла, а не что-то на наружной стене.
+  bottom.forEach(function(ch,i){
+    g+=schChainH(ch, W+first("bottom")+i*SCH_GAP, -1,
+      (ch.side==="wallx")?ch.at:edge("bottom",W,1), outer(bottom,i));
+  });
   left.forEach(function(ch,i){ g+=schChainV(ch, -(first("left")+i*SCH_GAP), 1, edge("left",0,-1), outer(left,i)); });
   right.forEach(function(ch,i){ g+=schChainV(ch, L+first("right")+i*SCH_GAP, -1, edge("right",L,1), outer(right,i)); });
 
@@ -21959,7 +22004,11 @@ function bind(){
     else if(a==="model-free-hit"){el.onclick=()=>{
       if(modelTool!=="del")return;
       const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
-      sh.model.walls=(sh.model.walls||[]).filter(function(w){return w.id!==el.dataset.id;});
+      // Вместе со стеной уходят её проёмы: дверь, оставшаяся без стены, никуда не
+      // ведёт, а в спецификации продолжает стоить денег.
+      const gone=el.dataset.id;
+      sh.model.walls=(sh.model.walls||[]).filter(function(w){return w.id!==gone;});
+      sh.model.openings=(sh.model.openings||[]).filter(function(o){ return !(o.side==="wall"&&o.wall===gone); });
       modelSync(sh); fl();
     };}
     else if(a==="model-canvas"){
@@ -22008,6 +22057,22 @@ function bind(){
             : modelParts(m).find(function(q){ return Math.abs(x-(q.x+TH/2))<=TH/2+PART_HIT; });
           // Поставленный проём сразу и выбран: у двери тут же есть петли, сторона
           // створки и положение числом — за ними не надо идти в другой инструмент.
+          // Тап по куску стены ставит проём В НЕГО: дверь санузла, вырезанного
+          // стенами, поставить больше некуда — перегородки во всю ширину там нет.
+          const hitW=(modelPlaceKind()==="win")?null:(m.walls||[]).find(function(q){
+            return x>=q.x-PART_HIT && x<=q.x+q.w+PART_HIT && y>=q.y-PART_HIT && y<=q.y+q.h+PART_HIT;
+          });
+          if(hitW){
+            const along=wallAlong(hitW), wd=Number(t.w)||0;
+            const lo=along?hitW.x:hitW.y, span=along?hitW.w:hitW.h;
+            const op={ id:gid(), side:"wall", wall:hitW.id, into:1, hinge:"start",
+              pos:Math.max(lo, Math.min(lo+span-wd, Math.round((along?x:y)-wd/2))), typeId:t.id };
+            sh.model.openings=(sh.model.openings||[]).concat([op]);
+            modelSide="part";
+            modelOpSel=op.id; modelPosWarn=null;
+            modelSync(sh); fl();
+            return;
+          }
           if(pt){
             const max=Math.max(0, W-(Number(t.w)||0));
             const op={ id:gid(), side:"part", after:pt.id, into:1, hinge:"start",
