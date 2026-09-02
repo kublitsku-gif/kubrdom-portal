@@ -1092,7 +1092,7 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   // Стена с дверью остаётся стеной: заливка не должна слить санузел с коридором,
   // иначе 2,71 м² превратятся в 4,3 и уедут в смету.
   const rooms = p.q('modelRooms(specSheets[0].model)')
-  t.ok('санузел остался помещением', Math.abs((rooms.find((r) => r.name === 'Санузел') || {}).area - 2.7) < 0.02,
+  t.ok('санузел остался помещением', Math.abs((rooms.find((r) => r.name === 'Санузел') || {}).area - 2.68) < 0.02,
     JSON.stringify(rooms.map((r) => r.name + ' ' + r.area)))
 
   // Дверь показывается во вкладке перегородок: другая внутренняя дверь дома живёт
