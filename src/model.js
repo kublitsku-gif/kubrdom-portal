@@ -1438,15 +1438,43 @@ export function modelScheme(model, winTypes) {
     if (i < bays.length - 1) bayMarks.push(b.x1 + th);
   });
 
+  // ПРИВЯЗКИ. Размечают стену не «от угла контейнера», а от того, что рядом: от
+  // перегородки до окна, от стенки санузла до двери. Считать это вычитанием двух
+  // разных цепочек — работа, которую чертёж обязан делать сам, поэтому грани всех
+  // внутренних стен стоят в той же цепочке, что и резы проёмов этой стороны.
+  const inner = walls.filter(function (w) { return w.kind !== "shell"; });
+  const crossFaces = inner.filter(function (w) { return w.h > w.w; })
+    .reduce(function (a, w) { return a.concat([w.x, w.x + w.w]); }, []);
+  const alongFaces = inner.filter(function (w) { return w.w >= w.h; })
+    .reduce(function (a, w) { return a.concat([w.y, w.y + w.h]); }, []);
+
   const dims = [
-    chain("top", L, bayMarks, "Помещения и перегородки"),
+    // Стенка санузла — такая же внутренняя стена, как перегородка, и место ей в
+    // той же цепочке: иначе её положение вдоль дома не прочитать ниоткуда.
+    chain("top", L, bayMarks.concat(crossFaces), "Помещения и перегородки"),
     chain("top", L, [], "Габарит"),
-    chain("left", W, [fin, W - fin], "Ширина"),
+    // Ширина: обшивка, чистовой размер и грани поперечных стен — глубина санузла
+    // читается по ней же, а не прикидывается на глаз.
+    chain("left", W, [fin, W - fin].concat(alongFaces), "Ширина"),
   ];
-  if (along("s").length) dims.push(chain("bottom", L, along("s"), "Проёмы (вырез)"));
-  if (along("n").length) dims.push(chain("top", L, along("n"), "Проёмы (вырез)"));
-  if (along("e").length) dims.push(chain("right", W, along("e"), "Проёмы (вырез)"));
-  if (along("w").length) dims.push(chain("left", W, along("w"), "Проёмы (вырез)"));
+  const side = function (sd, dimSide, span) {
+    const ops = along(sd);
+    // Привязки нужны ВДОЛЬ дома: там проёмы и перегородки чередуются. Поперёк их
+    // держит цепочка «Ширина» — второй такой же у торца была бы копией.
+    const faces = (sd === "s" || sd === "n") ? crossFaces : [];
+    // Грань стены в полуметре от реза даёт отрезок в десять миллиметров — это не
+    // размер, а мусор в цепочке: цифры налезают друг на друга и не читается ни
+    // одна. Такую грань пропускаем: рядом уже стоит рез, от него и размечают.
+    const keep = faces.filter(function (f) {
+      return ops.every(function (o) { return Math.abs(o - f) >= 50; });
+    });
+    if (!ops.length) return;      // стены без проёмов держит цепочка перегородок
+    dims.push(chain(dimSide, span, ops.concat(keep), "Проёмы (вырез) и привязки"));
+  };
+  side("s", "bottom", L);
+  side("n", "top", L);
+  side("e", "right", W);
+  side("w", "left", W);
   // Дверь в перегородке меряется от чистовых стен, как на чертеже: 75 · 70 · 75.
   // Цепочка стоит у своей перегородки, поэтому у неё есть `at` — отметка по длине.
   openings.filter(function (o) { return o.side === "part"; }).forEach(function (o) {

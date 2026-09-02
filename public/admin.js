@@ -11410,6 +11410,24 @@ const SCH_OVER=130;        // выносная линия переходит р�
 // полочка ближней цепочки не должна доставать до линии дальней. Разводить соседние
 // полочки высотой нельзя по той же причине — разводим стороной, куда уходит полка.
 const SCH_LEAD=300;
+// Ближе этого две узкие цифры не разойдутся по горизонтали — вторая идёт этажом выше.
+const NARROW_APART=1500;
+// Шаг между этажами полочек. Меньше ширины самой полки нельзя: соседние цифры
+// разъедутся по высоте, но налезут боками.
+const SHELF_STEP=1.6;
+// На каком этаже стоит полочка каждого узкого отрезка. Считается ОДИН раз и здесь:
+// по этим же местам имя комнаты обходит цифры, и разъехаться двум расчётам нельзя —
+// имя село бы ровно на подпись.
+function shelfLevels(ch){
+  const out=[]; let last=null, lvl=0;
+  ch.segs.forEach(function(len,i){
+    if(len>=SCH_NARROW){ out.push(0); return; }
+    const c=(ch.ticks[i]+ch.ticks[i+1])/2;
+    const near=(last!=null)&&(c-last)<NARROW_APART;
+    lvl=near?((lvl+1)%3):0; last=c; out.push(lvl);
+  });
+  return out;
+}
 const SCH_GAPTXT=90;       // просвет между цифрой и линией, над которой она стоит
 const SWING_GAP=240;       // просвет между дугой открывания и размерной линией
 // Сколько чистого места нужно комнате, чтобы принять цепочку к своей стене.
@@ -11421,8 +11439,12 @@ function schShelfW(t){ return Math.max(320, Math.round(String(t).length*0.62*SCH
 // Выноска с полочкой. `ax`,`ay` — точка на размерной линии; `ux`,`uy` — единичное
 // направление НАРУЖУ от чертежа; `sx`,`sy` — вдоль размерной линии, в ту сторону,
 // куда уводим полку (к ближнему краю: там свободно).
-function schShelf(ax, ay, ux, uy, sx, sy, len){
-  const lead=SCH_LEAD, off=Math.round(lead*0.55);
+// `lvl` — второй этаж полочки. Две узкие соседки уводят цифры на одну высоту, и
+// «420» с «100» сливаются в «42(100». Разносим их по ТРЁМ этажам: полка та же,
+// только вынос длиннее. Двух мало — третья подряд возвращалась на первый этаж и
+// сталкивалась с ним же, если полки смотрят навстречу друг другу.
+function schShelf(ax, ay, ux, uy, sx, sy, len, lvl){
+  const lead=Math.round(SCH_LEAD*(1+(Number(lvl)||0)*SHELF_STEP)), off=Math.round(SCH_LEAD*0.55);
   const kx=ax+ux*lead+sx*off, ky=ay+uy*lead+sy*off;
   // Полка ВСЕГДА горизонтальна: на ней стоит цифра, и читать её вертикально
   // незачем — ради этого полку и делают.
@@ -11438,6 +11460,7 @@ function schShelf(ax, ay, ux, uy, sx, sy, len){
 // висят в воздухе и непонятно, что именно измерено.
 function schChainH(ch, y, dir, objEdge, out){
   let g='';
+  const lv=shelfLevels(ch);
   const mid=(ch.ticks[0]+ch.ticks[ch.ticks.length-1])/2;
   ch.ticks.forEach(function(t){
     const from=(objEdge==null)?(y-dir*(SCH_FIRST-140)):objEdge;
@@ -11448,7 +11471,7 @@ function schChainH(ch, y, dir, objEdge, out){
   ch.segs.forEach(function(len,i){
     const c=(ch.ticks[i]+ch.ticks[i+1])/2;
     if(len<SCH_NARROW){
-      g+=schShelf(c, y, 0, out*-dir, (c<mid?1:-1), 0, len);
+      g+=schShelf(c, y, 0, out*-dir, (c<mid?1:-1), 0, len, lv[i]);
     } else {
       // Цифра стоит НАД своей размерной линией — как её и читают.
       g+=schText(c, y-SCH_GAPTXT, String(len), SCH_TXT);
@@ -11460,6 +11483,7 @@ function schChainH(ch, y, dir, objEdge, out){
 // это норма чертежа), узкие уходят на полочку и остаются горизонтальными.
 function schChainV(ch, x, dir, objEdge, out){
   let g='';
+  const lv=shelfLevels(ch);
   const mid=(ch.ticks[0]+ch.ticks[ch.ticks.length-1])/2;
   // Внутренняя цепочка стоит вплотную к своей перегородке: длинная выноска
   // перечёркивала бы план поперёк комнаты.
@@ -11472,7 +11496,7 @@ function schChainV(ch, x, dir, objEdge, out){
   ch.segs.forEach(function(len,i){
     const c=(ch.ticks[i]+ch.ticks[i+1])/2;
     if(len<SCH_NARROW){
-      g+=schShelf(x, c, out*-dir, 0, 0, (c<mid?1:-1), len);
+      g+=schShelf(x, c, out*-dir, 0, 0, (c<mid?1:-1), len, lv[i]);
     } else {
       g+=schText(x-dir*SCH_GAPTXT, c, String(len), SCH_TXT, "middle", -90);
     }
@@ -11532,7 +11556,7 @@ function schemeParts(sc, view){
   const first=function(side){ return SCH_FIRST+(reach[side]>0?Math.round(reach[side])+SWING_GAP:0); };
   const pad=function(list, side){
     if(!list.length)return 600+(reach[side]>0?Math.round(reach[side]):0);
-    return first(side)+(list.length-1)*SCH_GAP+(narrow(list)?(SCH_LEAD+SCH_TXT+320):520);
+    return first(side)+(list.length-1)*SCH_GAP+(narrow(list)?Math.round(SCH_LEAD*(1+2*SHELF_STEP)+SCH_TXT+320):520);
   };
   const sideOver=narrow(top)||narrow(bottom)?1250:0;     // полки горизонтальных цепочек
   const endOver=narrow(left)||narrow(right)?900:0;       // полки вертикальных
@@ -11680,13 +11704,14 @@ function schemeParts(sc, view){
     // всю комнату и имя оставалось бы там, где мешает.
     const dir=c.side>0?-1:1;
     const ticks=c.ch.ticks, mid=(ticks[0]+ticks[ticks.length-1])/2;
+    const lv=shelfLevels(c.ch);
     busy.push({ x0:c.cx-150, y0:ticks[0], x1:c.cx+150, y1:ticks[ticks.length-1] });
     c.ch.segs.forEach(function(len,i){
       const cy=(ticks[i]+ticks[i+1])/2;
       if(len<SCH_NARROW){
         // Узкий отрезок уводит число на полочку — она уходит от перегородки в
         // комнату, и это самое дальнее, куда цепочка залезает.
-        const kx=c.cx-dir*SCH_LEAD, ex=kx-dir*schShelfW(len);
+        const kx=c.cx-dir*Math.round(SCH_LEAD*(1+lv[i]*SHELF_STEP)), ex=kx-dir*schShelfW(len);
         const ky=cy+Math.round(SCH_LEAD*0.55)*((cy<mid)?1:-1);
         busy.push(schTextBox((kx+ex)/2, ky-SCH_GAPTXT, String(len), SCH_SMALL, "middle", false));
       } else {
