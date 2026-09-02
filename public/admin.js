@@ -11421,6 +11421,24 @@ const NARROW_APART=1500;
 // Шаг между этажами полочек. Меньше ширины самой полки нельзя: соседние цифры
 // разъедутся по высоте, но налезут боками.
 const SHELF_STEP=1.6;
+// Толщина стены на чертеже называется ОДИН раз. Пирог у всех стен один: 85 обшивки,
+// 100 перегородки — и повторённое у каждого угла число ничего не добавляет, зато
+// забивает цепочку так, что перестают читать и нужные размеры. Сама толщина никуда
+// не девается: она в цепочке перегородок и в узлах, где ей и место.
+//
+// Реестр общий на весь чертёж и живёт снаружи цепочек: они рисуются в четыре
+// прохода, и «один раз» может случиться в любом из них.
+function thickReg(sc){
+  const set={};
+  (sc.walls||[]).forEach(function(w){ set[Math.min(w.w,w.h)]=1; });
+  set[sc.finish]=1; set[sc.wallThick]=1;
+  const shown={};
+  return function(len){
+    if(!set[len])return true;              // это не толщина, а размер
+    if(shown[len])return false;
+    shown[len]=1; return true;
+  };
+}
 // На каком этаже стоит полочка каждого узкого отрезка. Считается ОДИН раз и здесь:
 // по этим же местам имя комнаты обходит цифры, и разъехаться двум расчётам нельзя —
 // имя село бы ровно на подпись.
@@ -11464,7 +11482,7 @@ function schShelf(ax, ay, ux, uy, sx, sy, len, lvl){
 // Горизонтальная цепочка. `objEdge` — от какой линии идут выносные: они начинаются
 // у самого чертежа и переходят размерную линию, как на бумаге; без этого цифры
 // висят в воздухе и непонятно, что именно измерено.
-function schChainH(ch, y, dir, objEdge, out){
+function schChainH(ch, y, dir, objEdge, out, num){
   let g='';
   const lv=shelfLevels(ch);
   const mid=(ch.ticks[0]+ch.ticks[ch.ticks.length-1])/2;
@@ -11476,6 +11494,7 @@ function schChainH(ch, y, dir, objEdge, out){
   g+=schDimLine(ch.ticks[0]-100,y,ch.ticks[ch.ticks.length-1]+100,y);
   ch.segs.forEach(function(len,i){
     const c=(ch.ticks[i]+ch.ticks[i+1])/2;
+    if(num&&!num(len))return;              // толщину уже назвали выше
     if(len<SCH_NARROW){
       g+=schShelf(c, y, 0, out*-dir, (c<mid?1:-1), 0, len, lv[i]);
     } else {
@@ -11487,7 +11506,7 @@ function schChainH(ch, y, dir, objEdge, out){
 }
 // Вертикальная цепочка. Крупные размеры читаются снизу вверх (повёрнутая цифра —
 // это норма чертежа), узкие уходят на полочку и остаются горизонтальными.
-function schChainV(ch, x, dir, objEdge, out){
+function schChainV(ch, x, dir, objEdge, out, num){
   let g='';
   const lv=shelfLevels(ch);
   const mid=(ch.ticks[0]+ch.ticks[ch.ticks.length-1])/2;
@@ -11501,6 +11520,7 @@ function schChainV(ch, x, dir, objEdge, out){
   g+=schDimLine(x,ch.ticks[0]-100,x,ch.ticks[ch.ticks.length-1]+100);
   ch.segs.forEach(function(len,i){
     const c=(ch.ticks[i]+ch.ticks[i+1])/2;
+    if(num&&!num(len))return;              // толщину уже назвали выше
     if(len<SCH_NARROW){
       g+=schShelf(x, c, out*-dir, 0, 0, (c<mid?1:-1), len, lv[i]);
     } else {
@@ -11830,15 +11850,17 @@ function schemeParts(sc, view){
   // за самым дальним размахом, одинаково для всей стороны: вразнобой хуже, чем чуть
   // дальше от стены.
   const edge=function(side, base, sign){ return base+sign*(reach[side]>0?Math.round(reach[side])+120:90); };
-  top.forEach(function(ch,i){ g+=schChainH(ch, -(first("top")+i*SCH_GAP), 1, edge("top",0,-1), outer(top,i)); });
+  // Толщины называем один раз на весь чертёж — реестр общий для всех цепочек.
+  const num=thickReg(sc);
+  top.forEach(function(ch,i){ g+=schChainH(ch, -(first("top")+i*SCH_GAP), 1, edge("top",0,-1), outer(top,i), num); });
   // Выносные линии цепочки внутренней стены тянутся ОТ САМОЙ СТЕНЫ: по ним видно,
   // что меряется дверь санузла, а не что-то на наружной стене.
   bottom.forEach(function(ch,i){
     g+=schChainH(ch, W+first("bottom")+i*SCH_GAP, -1,
-      (ch.side==="wallx")?ch.at:edge("bottom",W,1), outer(bottom,i));
+      (ch.side==="wallx")?ch.at:edge("bottom",W,1), outer(bottom,i), num);
   });
-  left.forEach(function(ch,i){ g+=schChainV(ch, -(first("left")+i*SCH_GAP), 1, edge("left",0,-1), outer(left,i)); });
-  right.forEach(function(ch,i){ g+=schChainV(ch, L+first("right")+i*SCH_GAP, -1, edge("right",L,1), outer(right,i)); });
+  left.forEach(function(ch,i){ g+=schChainV(ch, -(first("left")+i*SCH_GAP), 1, edge("left",0,-1), outer(left,i), num); });
+  right.forEach(function(ch,i){ g+=schChainV(ch, L+first("right")+i*SCH_GAP, -1, edge("right",L,1), outer(right,i), num); });
 
   return { g:g, vb:(-pL)+" "+(-pT)+" "+(L+pL+pR)+" "+(W+pT+pB), vbw:(L+pL+pR) };
 }
