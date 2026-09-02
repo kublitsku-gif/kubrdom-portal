@@ -1459,16 +1459,25 @@ export function modelScheme(model, winTypes) {
   ];
   const side = function (sd, dimSide, span) {
     const ops = along(sd);
+    if (!ops.length) return;      // стены без проёмов держит цепочка перегородок
     // Привязки нужны ВДОЛЬ дома: там проёмы и перегородки чередуются. Поперёк их
     // держит цепочка «Ширина» — второй такой же у торца была бы копией.
-    const faces = (sd === "s" || sd === "n") ? crossFaces : [];
-    // Грань стены в полуметре от реза даёт отрезок в десять миллиметров — это не
-    // размер, а мусор в цепочке: цифры налезают друг на друга и не читается ни
-    // одна. Такую грань пропускаем: рядом уже стоит рез, от него и размечают.
-    const keep = faces.filter(function (f) {
-      return ops.every(function (o) { return Math.abs(o - f) >= 50; });
-    });
-    if (!ops.length) return;      // стены без проёмов держит цепочка перегородок
+    const cross = (sd === "s" || sd === "n")
+      ? inner.filter(function (w) { return w.h > w.w; }) : [];
+    const near = function (v) {
+      return ops.reduce(function (a, o) { return Math.min(a, Math.abs(o - v)); }, Infinity);
+    };
+    // От стены берём ОДНУ грань — ту, что смотрит на ближайший проём. Толщина
+    // каждой стены уже стоит в цепочке перегородок, и повторять её у каждого окна
+    // значит засыпать чертёж одинаковыми «77» и «100»: их перестают читать все,
+    // включая нужные. Размечают от грани, к которой ведут рулетку.
+    //
+    // Грань в полуметре от реза не ставим вовсе: отрезок в десять миллиметров —
+    // не размер, а слипшиеся цифры. Рядом уже стоит рез, от него и размечают.
+    const keep = cross.map(function (w) {
+      const a = w.x, b = w.x + w.w;
+      return (near(a) <= near(b)) ? a : b;
+    }).filter(function (f) { return near(f) >= 50; });
     dims.push(chain(dimSide, span, ops.concat(keep), "Проёмы (вырез) и привязки"));
   };
   side("s", "bottom", L);
