@@ -256,6 +256,12 @@ const sum = (a) => a.reduce((x, y) => x + y, 0)
     JSON.stringify(sc.labels.map((x) => x.name)))
   ok('подпись стоит внутри своей комнаты',
     sc.labels.every((x) => x.x > 0 && x.x < sc.l && x.y > 0 && x.y < sc.w))
+  // Границы комнаты по ширине едут вместе с подписью: имя ставится на доле высоты
+  // СВОЕЙ комнаты, а санузел у верхней стены занимает не всю ширину дома — «треть
+  // высоты дома» увела бы его имя в коридор под ним, к чужому полу.
+  ok('у подписи есть и границы по ширине',
+    sc.labels.every((x) => x.y0 != null && x.y1 != null && x.y >= x.y0 && x.y <= x.y1),
+    JSON.stringify(sc.labels.map((x) => [x.name, x.y0, x.y, x.y1])))
   ok('в схеме только стены, их контур, проёмы, подписи и размеры',
     Object.keys(sc).sort().join(' ') === 'dims finish l labels openings outline w wallThick walls',
     Object.keys(sc).sort().join(' '))

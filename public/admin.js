@@ -11684,9 +11684,13 @@ function schemeParts(sc, view){
   sc.labels.forEach(function(r){
     // Прямоугольная комната подписывается на привычной трети высоты, непрямоугольная —
     // в своей точке: только там гарантированно её собственный пол.
-    const inner=sc.w-sc.finish*2;
+
     const name=String(r.name||"").toUpperCase();
-    const at=function(k){ return sc.finish+inner*k; };
+    // Доля высоты СВОЕЙ комнаты, а не всего дома: санузел стоит только у верхней
+    // стены, и «треть высоты дома» уводит его имя в коридор под ним. У комнаты во
+    // всю ширину это ровно прежнее место — там её границы и есть границы дома.
+    const y0=(r.y0==null)?sc.finish:r.y0, y1=(r.y1==null)?(sc.w-sc.finish):r.y1;
+    const at=function(k){ return y0+(y1-y0)*k; };
     const size=plain?210:190;
     let lx=r.x, ly=r.rect?(plain?at(0.46):at(0.34)):r.y;
     // В клиентском виде подписи спорить не с кем: ни марок, ни цепочек на плане нет.
