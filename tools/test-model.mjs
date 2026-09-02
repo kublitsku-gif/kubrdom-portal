@@ -214,10 +214,39 @@ function house() {
   const t2 = winTypes.concat([wide])
   const sc2 = modelScheme(m2, t2)
   const door = sc2.openings.find((o) => o.side === 'wall')
-  ok('в узком коридоре угол меньше', door.swing.open < 90 && door.swing.open >= 20, String(door.swing.open))
-  // Главное: кончик полотна не внутри стены. Проверяем прямо по геометрии.
   const inWall = (pt) => sc2.walls.some((w) =>
     pt.x > w.x + 1 && pt.x < w.x + w.w - 1 && pt.y > w.y + 1 && pt.y < w.y + w.h - 1)
+  ok('в узком коридоре угол меньше', door.swing.open < 90 && door.swing.open >= 20, String(door.swing.open))
+  // Створка ездит от закрытого до открытого, и считать надо ВЕСЬ путь. Стена,
+  // примыкающая у самого проёма, ловит полотно на первых градусах — а распахнутое
+  // настежь при этом стоит в чистом месте. Проверка «на 90° всё хорошо» такую
+  // дверь пропускала, и она не закрывалась.
+  const swept = (o, deg) => {
+    const H = o.swing.hinge, J = o.swing.jamb, len = o.width
+    const u = { x: (J.x - H.x) / len, y: (J.y - H.y) / len }
+    const T = o.swing.tip
+    const vx = (T.x - H.x) / len, vy = (T.y - H.y) / len
+    const dot = u.x * vx + u.y * vy
+    const ox = vx - u.x * dot, oy = vy - u.y * dot
+    const n = Math.hypot(ox, oy) || 1
+    const c = Math.cos(deg * Math.PI / 180), sn = Math.sin(deg * Math.PI / 180)
+    const dx = u.x * c + (ox / n) * sn, dy = u.y * c + (oy / n) * sn
+    return { x: H.x + dx * len * 0.7, y: H.y + dy * len * 0.7 }
+  }
+  ok('и весь путь створки свободен',
+    [10, 20, 30, 40].every((a) => a > door.swing.open || !inWall(swept(door, a))),
+    JSON.stringify([10, 20, 30, 40].map((a) => [a, inWall(swept(door, a))])))
+
+  // Дверь, которую стена ловит у самого проёма, ставить туда нельзя: она не
+  // откроется и не закроется. Это не «тесно», а ошибка планировки.
+  const blocked = Object.assign({}, model, {
+    openings: model.openings.map((o) => (o.side === 'part'
+      ? Object.assign({}, o, { pos: 1400, into: 1, hinge: 'end' }) : o)),
+  })
+  ok('запертую дверь модель называет',
+    modelIssues(blocked, winTypes).some((x) => /не открывается/.test(x)),
+    JSON.stringify(modelIssues(blocked, winTypes)))
+  // Главное: кончик полотна не внутри стены. Проверяем прямо по геометрии.
   ok('кончик створки не в стене', !inWall(door.swing.tip), JSON.stringify(door.swing.tip))
   // И само полотно тоже: точка на середине.
   const mid = { x: (door.swing.hinge.x + door.swing.tip.x) / 2, y: (door.swing.hinge.y + door.swing.tip.y) / 2 }
