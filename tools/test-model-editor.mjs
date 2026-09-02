@@ -1133,6 +1133,21 @@ const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return
   // полотна, и прятать его было бы враньём.
   t.ok('перегородка не повторяется в цепочках', cnt(m[1]) <= 2, m[1] + ' × ' + cnt(m[1]))
   t.ok('и сама толщина на чертеже есть', cnt(m[1]) >= 1, m[1] + ' × ' + cnt(m[1]))
+
+  // Засечка без числа — мусор: две риски в ста миллиметрах друг от друга читаются
+  // как одна жирная и не говорят ничего. Спрятали толщину — снимаем и её засечку.
+  const drawn = JSON.parse(p.run('(function(){' +
+    'var seen={};' +
+    'var num=function(v){ if(v!==85&&v!==77)return true; if(seen[v])return false; seen[v]=1; return true; };' +
+    'return JSON.stringify(chainDrawn({ticks:[0,85,920,997,1267,1344,2169,2254],' +
+    'segs:[85,835,77,270,77,825,85]}, num));})()'))
+  t.ok('повторные толщины без засечек', drawn.segs.join(' ') === '85 835 77 270 825',
+    drawn.segs.join(' '))
+  t.ok('и засечек ровно по числам', drawn.ticks.length === drawn.segs.length + 1,
+    drawn.ticks.join(' '))
+  // Числа не поехали: цепочка по-прежнему меряет то же самое, просто молчаливые
+  // риски убраны — размеры остались настоящими.
+  t.ok('размеры остались прежними', drawn.segs.every((v, i) => [85, 835, 77, 270, 825][i] === v))
 }
 
 t.done()

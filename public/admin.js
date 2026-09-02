@@ -11482,19 +11482,30 @@ function schShelf(ax, ay, ux, uy, sx, sy, len, lvl){
 // Горизонтальная цепочка. `objEdge` — от какой линии идут выносные: они начинаются
 // у самого чертежа и переходят размерную линию, как на бумаге; без этого цифры
 // висят в воздухе и непонятно, что именно измерено.
+// Засечка без числа — мусор. Две риски в ста миллиметрах друг от друга читаются
+// как одна жирная и не говорят ничего: спрятав толщину, надо снять и её засечку.
+// Положение стены отмечает одна риска, а сама толщина названа один раз на чертёж.
+function chainDrawn(ch, num){
+  const ticks=[ch.ticks[0]], segs=[];
+  ch.segs.forEach(function(len,i){
+    if(num&&!num(len))return;              // толщину уже назвали выше — и риску не ставим
+    ticks.push(ch.ticks[i+1]); segs.push(len);
+  });
+  return { ticks:ticks, segs:segs };
+}
 function schChainH(ch, y, dir, objEdge, out, num){
   let g='';
-  const lv=shelfLevels(ch);
-  const mid=(ch.ticks[0]+ch.ticks[ch.ticks.length-1])/2;
-  ch.ticks.forEach(function(t){
+  const d=chainDrawn(ch, num);
+  const lv=shelfLevels(d);
+  const mid=(d.ticks[0]+d.ticks[d.ticks.length-1])/2;
+  d.ticks.forEach(function(t){
     const from=(objEdge==null)?(y-dir*(SCH_FIRST-140)):objEdge;
     g+='<line x1="'+t+'" y1="'+from+'" x2="'+t+'" y2="'+(y-dir*SCH_OVER)+'" stroke="'+SCH_DIM+'" stroke-width="12" opacity="0.5"/>';
     g+=schTick(t,y);
   });
-  g+=schDimLine(ch.ticks[0]-100,y,ch.ticks[ch.ticks.length-1]+100,y);
-  ch.segs.forEach(function(len,i){
-    const c=(ch.ticks[i]+ch.ticks[i+1])/2;
-    if(num&&!num(len))return;              // толщину уже назвали выше
+  g+=schDimLine(d.ticks[0]-100,y,d.ticks[d.ticks.length-1]+100,y);
+  d.segs.forEach(function(len,i){
+    const c=(d.ticks[i]+d.ticks[i+1])/2;
     if(len<SCH_NARROW){
       g+=schShelf(c, y, 0, out*-dir, (c<mid?1:-1), 0, len, lv[i]);
     } else {
@@ -11508,19 +11519,19 @@ function schChainH(ch, y, dir, objEdge, out, num){
 // это норма чертежа), узкие уходят на полочку и остаются горизонтальными.
 function schChainV(ch, x, dir, objEdge, out, num){
   let g='';
-  const lv=shelfLevels(ch);
-  const mid=(ch.ticks[0]+ch.ticks[ch.ticks.length-1])/2;
+  const d=chainDrawn(ch, num);
+  const lv=shelfLevels(d);
+  const mid=(d.ticks[0]+d.ticks[d.ticks.length-1])/2;
   // Внутренняя цепочка стоит вплотную к своей перегородке: длинная выноска
   // перечёркивала бы план поперёк комнаты.
-  ch.ticks.forEach(function(t){
+  d.ticks.forEach(function(t){
     const from=(ch.inner||objEdge==null)?(x-dir*(ch.inner?260:(SCH_FIRST-140))):objEdge;
     g+='<line x1="'+from+'" y1="'+t+'" x2="'+(x-dir*SCH_OVER)+'" y2="'+t+'" stroke="'+SCH_DIM+'" stroke-width="12" opacity="0.5"/>';
     g+=schTick(x,t);
   });
-  g+=schDimLine(x,ch.ticks[0]-100,x,ch.ticks[ch.ticks.length-1]+100);
-  ch.segs.forEach(function(len,i){
-    const c=(ch.ticks[i]+ch.ticks[i+1])/2;
-    if(num&&!num(len))return;              // толщину уже назвали выше
+  g+=schDimLine(x,d.ticks[0]-100,x,d.ticks[d.ticks.length-1]+100);
+  d.segs.forEach(function(len,i){
+    const c=(d.ticks[i]+d.ticks[i+1])/2;
     if(len<SCH_NARROW){
       g+=schShelf(x, c, out*-dir, 0, 0, (c<mid?1:-1), len, lv[i]);
     } else {
