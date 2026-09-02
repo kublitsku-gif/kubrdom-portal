@@ -296,7 +296,7 @@ export function pieCost(model, key, products, winTypes) {
 }
 
 
-// ─── ЗАМЕНА МАТЕРИАЛА В СТРОКЕ СМЕТЫ ─────────────────────────────────────────
+// ─── ЗАМЕНА МАТЕРИАЛА И РУЧНОЕ КОЛИЧЕСТВО ────────────────────────────────────
 // Состав строки приезжает из справочника (или из пирога), но дом живёт своей
 // сметой: «эту гофру берём другую». Замена лежит НА ЛИСТЕ (`sheet.mats`), а не
 // правит справочник: справочник общий, и правка в нём меняла бы состав всех
@@ -326,21 +326,40 @@ export function swapMat(mat, product, area) {
   return next;
 }
 
-export function applyMatSwaps(positions, sheet, products) {
+// Количество, поставленное руками (`sheet.matQty[posKey][pid]`). Чертёж считает
+// честно, но на площадке бывает иначе — подрезка, запас, вторая точка ввода, — и
+// спорить с человеком, который эту стройку ведёт, портал не должен. Ручное число
+// живёт рядом с заменой, на том же листе: справочник от этого не меняется.
+export function matQtyOf(sheet, key) {
+  return (((sheet && sheet.matQty) || {})[key]) || {};
+}
+
+export function applyMatEdits(positions, sheet, products) {
   const swaps = (sheet && sheet.mats) || {};
-  if (!Object.keys(swaps).length) return positions;
+  const qtys = (sheet && sheet.matQty) || {};
+  if (!Object.keys(swaps).length && !Object.keys(qtys).length) return positions;
   const prodById = {};
   (products || []).forEach(function (p) { if (p && p.id) prodById[p.id] = p; });
   return (positions || []).map(function (pos) {
-    const sw = swaps[pos.key];
-    if (!sw || !Object.keys(sw).length) return pos;
+    const sw = swaps[pos.key] || {};
+    const q = qtys[pos.key] || {};
+    if (!Object.keys(sw).length && !Object.keys(q).length) return pos;
     let hit = false;
     const mats = (pos.mats || []).map(function (m) {
+      let out = m;
       const nid = sw[m.pid || ""];
       const prod = nid && prodById[nid];
-      if (!prod) return m;
-      hit = true;
-      return swapMat(m, prod, pos.area);
+      if (prod) { out = swapMat(m, prod, pos.area); hit = true; }
+      // Ручное количество ставится ПОСЛЕ замены: человек правит то число, которое
+      // видит на экране, а видит он уже новый товар.
+      const own = Number(q[out.pid || ""]);
+      if (isFinite(own) && own > 0 && own !== Number(out.qty)) {
+        out = Object.assign({}, out, { qty: own, qtySet: true });
+        hit = true;
+      } else if (isFinite(own) && own > 0) {
+        out = Object.assign({}, out, { qtySet: true });
+      }
+      return out;
     });
     if (!hit) return pos;
     const sum = mats.reduce(function (a, m) { return a + (Number(m.cost) || 0) * (Number(m.qty) || 0); }, 0);
@@ -378,7 +397,7 @@ export function allPositions(sheet, ctx) {
   // Пироги считают себя сами там же, где работают правила: боевые спецификации
   // ни того, ни другого не видят — по ним заведены договора, объекты и транши.
   const all = c.pies ? out.concat(layerPositions(sheet, c.estimates, c.products, c.winTypes)) : out;
-  return applyMatSwaps(all, sheet, c.products);
+  return applyMatEdits(all, sheet, c.products);
 }
 
 // Позиция → работа объекта. ОДНА машинка на сборку объекта и на подпись состава:

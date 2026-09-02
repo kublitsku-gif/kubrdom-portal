@@ -55,7 +55,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2, works2 } from "../src/spec2.js";
 import { allPositions, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
-  pieCost, pieMeta, layerMat, matSwapsOf } from "../src/recipe.js";
+  pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf } from "../src/recipe.js";
 import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
 import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
@@ -12376,10 +12376,18 @@ function specMatsListHtml(pos, sh, live){
         '<div style="display:flex;align-items:baseline;gap:7px">'+
           '<span style="flex:1;min-width:0;font-size:11.5px;color:#0d1b2e;line-height:1.35">'+esc(m.n||"")+
             (was?' <span style="font-size:9.5px;font-weight:700;color:#8e44ad;background:#f3ecf9;border-radius:5px;padding:1px 5px">заменён</span>':'')+
-            '<span style="display:block;font-size:10px;color:#9aabbf;margin-top:1px">'+
-              (m.store?esc(m.store)+' · ':'')+
-              ((Number(m.cost)||0)>0?Math.round(Number(m.cost)).toLocaleString("ru-RU")+' ₽/'+esc(unit)+' × ':'')+
-              numRu(qty)+' '+esc(unit)+
+            '<span style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;font-size:10px;color:#9aabbf;margin-top:2px">'+
+              (m.store?'<span>'+esc(m.store)+' ·</span>':'')+
+              ((Number(m.cost)||0)>0?'<span>'+Math.round(Number(m.cost)).toLocaleString("ru-RU")+' ₽/'+esc(unit)+' ×</span>':'')+
+              // Количество правится руками: чертёж считает честно, но на площадке
+              // бывает иначе — подрезка, запас, — и спорить с человеком незачем.
+              (can
+                ? '<input data-a="est-mat-qty" data-k="'+esc(matSwapKey(pos,m))+'" value="'+numRu(qty)+'" inputmode="decimal" title="Количество — можно поправить руками" style="width:56px;padding:2px 5px;border:1px solid '+(m.qtySet?"#8e44ad":"#dde6f0")+';border-radius:6px;font-size:10.5px;text-align:center;outline:none;color:#0d1b2e;background:#fff">'
+                : '<span>'+numRu(qty)+'</span>')+
+              '<span>'+esc(unit)+'</span>'+
+              (m.qtySet
+                ? '<button data-a="est-mat-qty-reset" data-k="'+esc(matSwapKey(pos,m))+'" title="Вернуть расчётное количество" style="border:none;background:transparent;color:#8e44ad;font-size:10px;font-weight:700;cursor:pointer;padding:0 2px">вручную ⟲</button>'
+                : '')+
             '</span>'+
           '</span>'+
           '<span style="font-size:11.5px;font-weight:700;color:#5a7a9a;white-space:nowrap">'+cost.toLocaleString("ru-RU")+' ₽</span>'+
@@ -21445,8 +21453,41 @@ function bind(){
         row[oldPid]=prod.id;
         mats[posKey]=row;
         sh.mats=mats;
+        // Ручное количество переезжает на новый товар: человек правил ЭТУ строку,
+        // а не карточку каталога.
+        const q=(sh.matQty||{})[posKey];
+        if(q&&q[oldPid]!=null){
+          const map=Object.assign({}, sh.matQty);
+          const qrow=Object.assign({}, map[posKey]);
+          qrow[prod.id]=qrow[oldPid]; delete qrow[oldPid];
+          map[posKey]=qrow; sh.matQty=map;
+        }
       }
       matSwapOpen=""; fl();
+    };}
+    else if(a==="est-mat-qty"){el.onchange=()=>{
+      const k=el.dataset.k||"";
+      const cut=k.lastIndexOf("|");
+      const posKey=k.slice(0,cut), pid=k.slice(cut+1);
+      const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
+      const v=parseFloat(String(el.value).replace(",","."));
+      const map=Object.assign({}, sh.matQty||{});
+      const row=Object.assign({}, map[posKey]||{});
+      if(isFinite(v)&&v>0)row[pid]=v; else delete row[pid];
+      if(Object.keys(row).length)map[posKey]=row; else delete map[posKey];
+      sh.matQty=map; fl();
+    };}
+    else if(a==="est-mat-qty-reset"){el.onclick=()=>{
+      const k=el.dataset.k||"";
+      const cut=k.lastIndexOf("|");
+      const posKey=k.slice(0,cut), pid=k.slice(cut+1);
+      const sh=schemeSheet()||spec2Sheet();
+      if(!sh||!sh.matQty||!sh.matQty[posKey])return;
+      const map=Object.assign({}, sh.matQty);
+      const row=Object.assign({}, map[posKey]);
+      delete row[pid];
+      if(Object.keys(row).length)map[posKey]=row; else delete map[posKey];
+      sh.matQty=map; fl();
     };}
     else if(a==="est-mat-reset"){el.onclick=()=>{
       const k=el.dataset.k||"";

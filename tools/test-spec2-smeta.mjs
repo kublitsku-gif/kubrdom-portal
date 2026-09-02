@@ -338,8 +338,9 @@ const SHEET = {
   const est = p.run('modelFull=false;spec2Tab="est";tSpec2()')
 
   t.ok('материалы идут перечнем, а не строкой', (est.match(/data-a="est-mat-open"/g) || []).length >= 2)
-  t.ok('у каждого своя цена и количество', /₽\/шт × /.test(est))
-  t.ok('и сумма по материалу', /50 шт/.test(est))
+  t.ok('у каждого своя цена', /₽\/шт ×/.test(est))
+  t.ok('количество правится руками',
+    est.indexOf('data-a="est-mat-qty"') >= 0 && /value="50"/.test(est))
 
   // Тап по ⇄ раскрывает выбор из базы.
   const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0].key') + '|p_dr'
@@ -373,6 +374,30 @@ const SHEET = {
   t.ok('вернулся товар из справочника', after.mats.some((m) => m.pid === 'p_dr'))
   t.ok('и цена прежняя', after.cost === before)
   t.ok('замена с листа убрана', p.q('Object.keys(spec2Sheet().mats).length') === 0)
+
+  // Количество правится руками — и это тоже правка дома, а не справочника.
+  const qk = after.key + '|p_dr'
+  const qi = p.dom.node({ a: 'est-mat-qty', k: qk })
+  qi.value = '80'
+  p.run('bind();'); qi.onchange()
+  const q1 = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0]')
+  t.ok('количество поставлено руками', q1.mats.find((m) => m.pid === 'p_dr').qty === 80)
+  t.ok('и помечено как ручное', q1.mats.find((m) => m.pid === 'p_dr').qtySet === true)
+  t.ok('цена пересчиталась по нему', q1.cost === 1500 + 800 * 80, 'строка ' + q1.cost)
+  t.ok('справочник по-прежнему не тронут', p.q('estimates.find(function(e){return e.id==="e_el";}).lines[1].qty') === 50)
+  t.ok('в объект уехало ручное число',
+    p.q('specBuildStages(spec2Sheet()).reduce(function(a,s){return a.concat(s.works);},[])')
+      .some((w) => (w.mats || []).some((m) => m.pid === 'p_dr' && m.qty === 80)))
+  // Запятая — тоже число: браузер и человек пишут по-разному.
+  qi.value = '12,5'
+  p.run('bind();'); qi.onchange()
+  t.ok('запятая понимается', p.q('spec2Sheet().matQty[' + JSON.stringify(after.key) + '].p_dr') === 12.5)
+
+  const qr = p.dom.node({ a: 'est-mat-qty-reset', k: qk })
+  p.run('tSpec2();bind();'); qr.onclick()
+  const q2 = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0]')
+  t.ok('расчётное количество вернулось', q2.mats.find((m) => m.pid === 'p_dr').qty === 50)
+  t.ok('и лист чист', p.q('Object.keys(spec2Sheet().matQty||{}).length') === 0)
 }
 
 t.done()
