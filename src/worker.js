@@ -745,7 +745,11 @@ async function planRead(env, request) {
   }
   if (!out.res.ok || !out.res.j) {
     const msg = (out.res.j && out.res.j.error && out.res.j.error.message) || ("HTTP " + out.res.status);
-    return json({ success: false, error: out.who + ": " + String(msg).slice(0, 300) }, 502);
+    // К ошибке добавляем, ЧТО настроено: «не удалось прочитать» и «ключ не тот»
+    // чинятся по-разному, а по тексту модели их не различить. Значения ключей
+    // здесь не появляются никогда — только факт, что ключ задан.
+    return json({ success: false, error: out.who + ": " + String(msg).slice(0, 300),
+      providers: { claude: hasClaude, kimi: hasKimi }, tried: out.who }, 502);
   }
   // Отказ модели — не сбой: она отвечает 200 и рассказывает, что увидела.
   let read;

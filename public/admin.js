@@ -736,7 +736,13 @@ async function modelPlanRecognize(sh){
       body:JSON.stringify({ keys:files.map(function(f){return f.url;}), names:names })
     });
     const j=await r.json().catch(function(){ return null; });
-    if(!j||!j.success)throw new Error((j&&j.error)||("HTTP "+r.status));
+    if(!j||!j.success){
+      // К ошибке дописываем, что вообще настроено: «чертёж не читается» и «ключ
+      // не тот» чинятся по-разному, а по тексту модели их не различить.
+      const pv=j&&j.providers;
+      const setup=pv?("\n\nНастроено на воркере: Claude "+(pv.claude?"✓":"—")+" · Kimi "+(pv.kimi?"✓":"—")):"";
+      throw new Error(((j&&j.error)||("HTTP "+r.status))+setup);
+    }
     // Нормализуем ещё раз на своей стороне: сервер отдаёт то же самое, но панель
     // не обязана верить сети на слово — она рисует по этим числам.
     const norm=planNormalize({

@@ -95,6 +95,10 @@ console.log("Ключ не тот");
   const b = await read({ CLAUDE_API_KEY: "bad" }, { claude: BAD_KEY });
   ok("без второго ключа — честная ошибка", !b.j.success && /invalid x-api-key/.test(b.j.error));
   ok("и сказано, чей это ответ", /^Claude:/.test(b.j.error));
+  // «Чертёж не читается» и «ключ не тот» чинятся по-разному, а по тексту модели
+  // их не различить: к ошибке идёт список того, что вообще настроено.
+  ok("к ошибке приложено, что настроено", b.j.providers.claude === true && b.j.providers.kimi === false);
+  ok("значений ключей в ответе нет", JSON.stringify(b.j).indexOf("bad") < 0);
 
   // Явный выбор — без самодеятельности: сказано «Kimi», значит Kimi.
   const c = await read({ PLAN_PROVIDER: "kimi", CLAUDE_API_KEY: "k", KIMI_API_KEY: "k" }, { kimi: KIMI_OK });
