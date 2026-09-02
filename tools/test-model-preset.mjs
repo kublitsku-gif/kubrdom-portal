@@ -88,6 +88,28 @@ const ids = () => { let i = 0; return () => 'id' + (++i) }
   ok('витраж не затёр раскладку спальни', specs.rooms[2].pts.win === 1, JSON.stringify(specs.rooms[2].pts))
 }
 
+// ── 2б. Заготовка «Дом для СВО» ──────────────────────────────────────────────
+// Тот же двенадцатиметровый корпус, но порядок комнат обратный: санузел слева,
+// зал посередине, спальня в торце. Сверяем по подписанным на чертеже площадям —
+// 4,39 + 14,08 + 7,04: сойдутся они, значит длины отсеков сняты верно.
+{
+  console.log('Дом для СВО')
+  const { model, winTypes } = presetModel('svo', [], ids())
+  const rooms = modelRooms(model)
+  ok('комнаты по порядку чертежа',
+    rooms.map((r) => r.name).join(' · ') === 'Санузел · Зал · Спальня', rooms.map((r) => r.name).join(' · '))
+  ok('санузел 4,4 м²', Math.abs(rooms[0].area - 4.39) <= 0.02, String(rooms[0].area))
+  ok('зал 14,08 м²', rooms[1].area === 14.08, String(rooms[1].area))
+  ok('спальня 7,04 м²', rooms[2].area === 7.04, String(rooms[2].area))
+  ok('модель без замечаний', modelIssues(model, winTypes).length === 0,
+    JSON.stringify(modelIssues(model, winTypes)))
+  ok('все изделия каталожные', winTypes.every((t) => !!t.cat), JSON.stringify(winTypes.map((t) => t.cat)))
+  // Окно зала — новое каталожное 1550×2100: на чертеже 1500, ближе в каталоге нет.
+  ok('окно зала — ближайшее каталожное',
+    winTypes.some((t) => t.cat === 'os-1550x2100'), JSON.stringify(winTypes.map((t) => t.cat)))
+  ok('в торце спальни окно 1850×2100', winTypes.some((t) => t.cat === 'os-1850x2100'))
+}
+
 // ── 3. Справочник изделий ────────────────────────────────────────────────────
 {
   console.log('Типовые изделия')

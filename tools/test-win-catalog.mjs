@@ -66,6 +66,24 @@ const t = reporter()
   t.ok('межкомнатное полотно без цены', inner.cost === 0)
   t.ok('и того же размера, что в заготовках', inner.w === INNER_DOOR.w && inner.h === INNER_DOOR.h)
 
+  // Новые изделия из спецификации: цена в каталоге за ОДНО, как и у остальных.
+  // В спецификации строка №6 идёт на две штуки — 57 330,12 ₽.
+  const big = by('os-1850x2100')
+  t.ok('окно 1850×2100 заведено', big.w === 1850 && big.h === 2100, big.n)
+  t.ok('и цена за одну штуку', big.cost === 28665, String(big.cost))
+  t.ok('створка 900 слева, глухое 950 справа',
+    winFace(big).rows[0].cells.map((c) => c.w + (c.o || '-')).join(' ') === '900p 950-',
+    JSON.stringify(winFace(big).rows[0].cells.map((c) => [c.w, c.o, c.hg])))
+  t.ok('петли справа — ручка слева, как на спецификации',
+    winFace(big).rows[0].cells[0].hg === 'r')
+  const flat = by('os-1550x2100')
+  t.ok('витраж 1550×2100 заведён', flat.w === 1550 && flat.h === 2100, flat.n)
+  t.ok('он глухой', winFace(flat).rows[0].cells.every((c) => !c.o))
+  t.ok('и делится на два поля по 775',
+    winFace(flat).rows[0].cells.map((c) => c.w).join('+') === '775+775',
+    winFace(flat).rows[0].cells.map((c) => c.w).join('+'))
+  t.ok('цена как в спецификации', flat.cost === 17613, String(flat.cost))
+
   t.ok('ключи уникальны',
     new Set(WIN_CATALOG.map(function (x) { return x.k })).size === WIN_CATALOG.length)
   t.ok('вид у каждого известен',
