@@ -8,7 +8,7 @@
 import { presetModel, MODEL_PRESETS } from '../src/model.js'
 import { sheetPositions } from '../src/spec.js'
 import { rulePositions, allPositions, allPositionsRaw, ruleText, ruleReady, probeSheet,
-  layerPositions, pieArea, pieCost, applyPicks, optLabelOf, optPrefixOf } from '../src/recipe.js'
+  layerPositions, pieArea, pieCost, applyPicks, optLabelOf, optPrefixOf, applyRooms, roomKeyOf } from '../src/recipe.js'
 import { modelAreas, modelTotals, applyLayers } from '../src/model.js'
 import { gaps2 } from '../src/spec2.js'
 
@@ -278,6 +278,53 @@ const R = (o) => Object.assign({ id: 'r1', kind: 'house', what: 'surface', k: 'w
 
   // Без разметки ничего не меняется: механизм включает человек.
   t.ok('без групп список прежний', applyPicks(list, {}).positions.length === 4)
+}
+
+// ── 8. Работы этапа идут блоками по помещениям ──────────────────────────────
+// Правило по помещениям даёт строку на каждую комнату, и этап без группировки
+// читается перечислением поверхностей: «стены санузел, стены зал, стены спальня,
+// пол санузел…». Бригада работает комнатой — в санузел заходят один раз.
+{
+  t.section('Блоки по помещениям')
+  const list = allPositions(SHEET, {
+    estimates: EST, products: PRODUCTS, winTypes: TYPES,
+    rules: [R({ id: 'r_w', estId: 'e_osb', k: 'wall', stage: 3 }),
+      R({ id: 'r_f', estId: 'e_tile', k: 'floor', stage: 3 })],
+  })
+  const st3 = list.filter((p) => Number(p.stage) === 3)
+  t.ok('строк в этапе больше одной комнаты', st3.length >= 4, 'строк: ' + st3.length)
+  // Соседние строки одной комнаты идут подряд: комната не может встретиться дважды.
+  const seen = {}
+  let broken = ''
+  let prev = null
+  st3.forEach((p) => {
+    const k = roomKeyOf(p)
+    if (k !== prev && seen[k]) broken = p.room
+    seen[k] = 1; prev = k
+  })
+  t.ok('комната идёт одним куском', !broken, 'разорвана: ' + broken)
+  t.ok('и в куске разные работы',
+    st3.filter((p) => p.room === 'Санузел').map((x) => x.estId).join(',') === 'e_osb,e_tile',
+    st3.filter((p) => p.room === 'Санузел').map((x) => x.estId).join(','))
+
+  // Группировка НЕ переносит работы между этапами: этап — это сроки и приёмка.
+  const stages = list.map((p) => Number(p.stage) || 0)
+  t.ok('этапы остались при своих строках',
+    stages.join(',') === applyRooms({ positions: list }).positions.map((p) => Number(p.stage) || 0).join(','))
+
+  // Порядок внутри комнаты — тот, что назначил человек: группировка стабильна.
+  const keys = st3.filter((p) => p.room === 'Санузел').map((p) => p.key)
+  const withOrder = allPositions(Object.assign({}, SHEET, { posOrder: { [keys[1]]: 0, [keys[0]]: 1 } }), {
+    estimates: EST, products: PRODUCTS, winTypes: TYPES,
+    rules: [R({ id: 'r_w', estId: 'e_osb', k: 'wall', stage: 3 }),
+      R({ id: 'r_f', estId: 'e_tile', k: 'floor', stage: 3 })],
+  })
+  const san = withOrder.filter((p) => p.room === 'Санузел').map((p) => p.key)
+  t.ok('ручная перестановка внутри комнаты сохраняется', san.join(',') === [keys[1], keys[0]].join(','), san.join(','))
+
+  // Дом без комнат в позициях остаётся одним куском — блоков там нет вовсе.
+  const plain = allPositions(SHEET, { estimates: EST, products: PRODUCTS, winTypes: TYPES, rules: [] })
+  t.ok('обязательные строки не разъехались', plain.every((p) => roomKeyOf(p) === ''))
 }
 
 t.done()

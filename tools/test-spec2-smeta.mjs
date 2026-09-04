@@ -580,4 +580,38 @@ const SHEET = {
     p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return /ППУ/.test(x.name);}).length') === 3)
 }
 
+// ── 12. Этап читается блоками по помещениям ─────────────────────────────────
+// Экран сметы у опытного раздела и у проекта ОДИН, и правка делается сразу в
+// обоих: здесь сторожим ту же группировку со стороны «Спецификации 2».
+{
+  t.section('Блоки по помещениям')
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS, estimates: EST, dbPlans: [], crmClients: [],
+    specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [],
+    contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+    buildRules: [
+      { id: 'r_w', kind: 'house', estId: 'e_wall', what: 'surface', k: 'wall', scope: 'room', qty: 1, stage: 3 },
+      { id: 'r_f', kind: 'house', estId: 'e_dr', what: 'surface', k: 'floor', scope: 'room', qty: 1, stage: 3 },
+    ],
+  })
+  p.run('spec2Tab="scheme";tSpec2();')
+  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+  const est = p.run('modelFull=false;spec2Tab="est";tSpec2()')
+  const st = () => p.q('works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes})).stages.filter(function(s){return s.n===3;})[0]')
+  const blocks = st().blocks
+  t.ok('этап разложен по комнатам', blocks.length >= 2, 'блоков: ' + blocks.length)
+  t.ok('в блоке работы одной комнаты',
+    blocks[0].positions.every((x) => x.room === blocks[0].room), JSON.stringify(blocks[0].room))
+  t.ok('сумма блоков равна сумме этапа',
+    blocks.reduce((a, b) => a + b.cost, 0) === Math.round(st().cost))
+  t.ok('заголовки блоков на экране', (est.match(/data-a="est-block-open"/g) || []).length === blocks.length)
+
+  const head = p.dom.node({ a: 'est-block-open', b: '3|' + blocks[0].key })
+  p.run('bind();'); head.onclick()
+  t.ok('блок сворачивается',
+    (p.run('tSpec2()').match(/data-a="est-block-open"/g) || []).length === blocks.length)
+  t.ok('и в листе от этого ничего не записалось', !p.q('spec2Sheet().blockShut'))
+}
+
 t.done()

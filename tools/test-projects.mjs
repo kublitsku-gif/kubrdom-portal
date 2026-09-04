@@ -662,4 +662,48 @@ function create(p, name) {
   t.ok('лист чист', !p.q('projects[0].matOff'))
 }
 
+// ── Работы этапа блоками по помещениям ───────────────────────────────────────
+// «Стены санузел, стены зал, стены спальня, пол санузел…» — это перечисление
+// поверхностей. Бригада работает комнатой, и этап обязан читаться комнатами.
+{
+  t.section('Блоки по помещениям')
+  const p = panel([
+    { id: 'r_wall', kind: 'house', estId: 'e_osb', what: 'surface', k: 'wall', scope: 'room', qty: 1, stage: 3 },
+    { id: 'r_flr', kind: 'house', estId: 'e_win', what: 'surface', k: 'floor', scope: 'room', qty: 1, stage: 3 },
+  ])
+  create(p, 'Дом комнатами')
+  p.run('projBand="parts";')
+  const st = () => p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).stages.filter(function(s){return s.n===3;})[0]')
+  const blocks = st().blocks
+  t.ok('блоков столько же, сколько комнат', blocks.length >= 2, 'блоков: ' + blocks.length)
+  t.ok('у блока есть имя комнаты', !!blocks[0].room, JSON.stringify(blocks[0].room))
+  t.ok('и в нём разные работы', blocks[0].positions.length === 2, String(blocks[0].positions.length))
+  t.ok('сумма блоков равна сумме этапа',
+    blocks.reduce((a, b) => a + b.cost, 0) === Math.round(st().cost))
+
+  const html = p.run('tProjects()')
+  t.ok('заголовки блоков нарисованы', (html.match(/data-a="est-block-open"/g) || []).length === blocks.length)
+  t.ok('комната названа', html.indexOf(blocks[0].room.toUpperCase()) >= 0 || html.indexOf(blocks[0].room) >= 0)
+
+  // Блок сворачивается: смотришь спальню — санузел не мешает.
+  const head = p.dom.node({ a: 'est-block-open', b: '3|' + blocks[0].key })
+  p.run('bind();'); head.onclick()
+  const shut = p.run('tProjects()')
+  t.ok('работы блока спрятались',
+    (shut.match(/data-a="est-pos-del"/g) || []).length === (html.match(/data-a="est-pos-del"/g) || []).length - 2)
+  t.ok('а итог блока остался', shut.indexOf(Math.round(blocks[0].cost).toLocaleString('ru-RU')) >= 0)
+  t.ok('деньги не изменились', Math.round(st().cost) === blocks.reduce((a, b) => a + b.cost, 0))
+  p.run('bind();'); head.onclick()
+
+  // Объект собирается ТЕМ ЖЕ порядком: показали комнатами — строят комнатами.
+  p.run('projBand="money";tProjects();')
+  const toObj = p.dom.node({ a: 'spec-to-object', id: p.q('projects[0].id') }); p.run('bind();'); toObj.onclick()
+  const built = p.q('objects[0].stages.reduce(function(a,s){return a.concat(s.works||[]);},[])')
+    .filter((w) => (w.posKey || '').indexOf('rule:') === 0)
+  const order = st().positions.map((x) => x.key).filter((k) => k.indexOf('rule:') === 0)
+  t.ok('на стройке тот же порядок',
+    built.map((w) => w.posKey).join(',') === order.join(','),
+    built.map((w) => w.n).join(' | '))
+}
+
 t.done()

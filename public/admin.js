@@ -2270,6 +2270,7 @@ let matsOpen={};           // у каких строк сметы раскрыт
 let stageShut={};          // какие этапы свёрнуты целиком
 let estMoveKey="";         // какую строку сметы сейчас переносят внутри этапа
 let estMoveSheet="";       // и в каком листе: ключ позиции у листов общий
+let blockShut={};          // какие блоки помещений свёрнуты: "<этап>|<ключ комнаты>"
 let modelStageTab=0;       // 0 = все этапы
 let specSheets=[];
 // «Спецификация 2» — опытный раздел (см. src/spec2.js). Листы держим ОТДЕЛЬНО: по
@@ -12887,6 +12888,39 @@ function estRowsHtml(moving, mi, rows){
   rows.forEach(function(r, i){ out+=r+estDropSlot(moving, i+1, mi); });
   return out;
 }
+// Этап читается ПОМЕЩЕНИЯМИ: «Санузел — стены, пол, потолок», следом «Зал».
+// Правило по помещениям даёт строку на каждую комнату, и без блоков этап выглядит
+// перечислением поверхностей («стены санузел, стены зал, стены спальня, пол
+// санузел…»), хотя бригада работает комнатой: в санузел заходят один раз.
+// Порядок строк для блоков считает общий модуль (`applyRooms`) — здесь только
+// заголовки, иначе экран читался бы комнатами, а объект собирался россыпью.
+function estStageBody(st, moving, mi, rows){
+  const blocks=st.blocks||[];
+  if(blocks.length<2)return estRowsHtml(moving, mi, rows);
+  let base=0, h='';
+  blocks.forEach(function(b){
+    const from=base, to=base+b.positions.length; base=to;
+    const id=st.n+"|"+b.key;
+    const shut=!!blockShut[id];
+    h+='<div data-a="est-block-open" data-b="'+esc(id)+'" style="display:flex;align-items:baseline;gap:7px;margin:8px 0 2px;padding:5px 8px;background:#f6f8fb;border-radius:8px;cursor:pointer">'+
+        '<span style="flex:1;min-width:0;font-size:10.5px;font-weight:800;color:#5a7a9a;letter-spacing:0.4px;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+
+          (shut?"▸ ":"▾ ")+esc(b.room||"Общее по дому")+
+          '<span style="font-weight:700;color:#9aabbf;text-transform:none;letter-spacing:0"> · '+b.positions.length+' '+pluralRu(b.positions.length,"работа","работы","работ")+'</span>'+
+        '</span>'+
+        '<span style="font-size:11.5px;font-weight:800;color:#5a7a9a;white-space:nowrap">'+Math.round(b.cost).toLocaleString("ru-RU")+' ₽</span>'+
+      '</div>';
+    if(shut)return;
+    // Места «сюда» — только в блоке взятой строки: работа принадлежит своему
+    // помещению по расчёту, и перенос в чужую комнату группировка тут же вернёт.
+    const inside=mi>=from&&mi<to;
+    for(let i=from;i<to;i++){
+      if(inside)h+=estDropSlot(moving, i, mi);
+      h+=rows[i];
+    }
+    if(inside)h+=estDropSlot(moving, to, mi);
+  });
+  return h;
+}
 function estBodyHtml(sh, types, live, actions){
   const w=works2(sh, Object.assign(specCtx(sh), { winTypes:types }));
   const canRule=canRuleSheet(sh);
@@ -12935,7 +12969,7 @@ function estBodyHtml(sh, types, live, actions){
             (shut?' <span style="font-weight:700;color:#9aabbf;text-transform:none;letter-spacing:0">· '+st.positions.length+' '+pluralRu(st.positions.length,"работа","работы","работ")+'</span>':'')+'</span>'+
           '<span style="font-size:12.5px;font-weight:800;color:#0d1b2e;white-space:nowrap">'+Math.round(st.cost).toLocaleString("ru-RU")+' ₽</span>'+
         '</div>'+
-        (shut?'':estRowsHtml(moving, mi, st.positions.map(function(p, pi, arr){
+        (shut?'':estStageBody(st, moving, mi, st.positions.map(function(p, pi, arr){
           // Редактор раскрываем у ПЕРВОЙ строки этой сметы: правило по помещениям
           // даёт их несколько, и три одинаковых редактора подряд — это не выбор.
           const first=seen[p.estId]!==true; if(p.estId)seen[p.estId]=true;
@@ -21933,6 +21967,12 @@ function bind(){
       const mm=Object.assign({}, sh.posCostMode||{}); delete mm[key];
       if(Object.keys(mm).length)sh.posCostMode=mm; else delete sh.posCostMode;
       scheduleSave(); fl();
+    };}
+    else if(a==="est-block-open"){el.onclick=()=>{
+      const b=String(el.dataset.b||"");
+      const map=Object.assign({}, blockShut);
+      if(map[b])delete map[b]; else map[b]=1;
+      blockShut=map; fl();
     };}
     else if(a==="est-stage-open"){el.onclick=()=>{
       const n=String(el.dataset.n||"");

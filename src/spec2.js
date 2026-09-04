@@ -17,7 +17,7 @@
 
 import { sheetTotals, pointTotals, pointMeta } from "./spec.js";
 import { modelIssues, modelAreas, modelTotals } from "./model.js";
-import { allPositions, allPositionsRaw, probeSheet, positionWhy, PIE_SOURCES, pieCost } from "./recipe.js";
+import { allPositions, allPositionsRaw, probeSheet, positionWhy, roomKeyOf, PIE_SOURCES, pieCost } from "./recipe.js";
 
 // Пробный лист и объяснение количества живут в src/recipe.js — там же, где
 // правила, которые ими пользуются. Здесь они переэкспортированы, потому что
@@ -118,6 +118,20 @@ export function modelFacts(sheet, winTypes) {
 // ctx = {estimates, products, winTypes, stages, rules} — одним объектом, потому
 // что тот же контекст уходит в сборку объекта: список аргументов, который надо
 // повторить в двух местах в одном порядке, рано или поздно повторят неправильно.
+// Блок этапа — работы ОДНОГО помещения подряд: «Санузел — стены, пол, потолок».
+// Позиции уже разложены по комнатам, здесь мы только режем список на куски и
+// считаем сумму каждого: этап на сорок строк читается комнатами, а не сплошняком.
+function blocksOf(positions) {
+  const out = [];
+  (positions || []).forEach(function (p) {
+    const k = roomKeyOf(p);
+    const last = out[out.length - 1];
+    if (last && last.key === k) { last.positions.push(p); last.cost += Number(p.cost) || 0; return; }
+    out.push({ key: k, room: String(p.room || ""), positions: [p], cost: Number(p.cost) || 0 });
+  });
+  return out.map(function (b) { return Object.assign(b, { cost: Math.round(b.cost) }); });
+}
+
 export function works2(sheet, ctx) {
   const c = ctx || {};
   const raw = allPositionsRaw(sheet, c);
@@ -142,6 +156,10 @@ export function works2(sheet, ctx) {
     return Object.assign(byStage[n], {
       label: st ? (st.short + " — " + st.label) : "Без этапа",
       color: st ? st.color : "#7a9aaa",
+      // Блоки по помещениям. Позиции ПРИХОДЯТ уже сгруппированными (`applyRooms`),
+      // поэтому здесь только сплошные куски — иначе экран и объект разошлись бы
+      // порядком, а сумма блока перестала бы сходиться с суммой его строк.
+      blocks: blocksOf(byStage[n].positions),
     });
   });
   return {

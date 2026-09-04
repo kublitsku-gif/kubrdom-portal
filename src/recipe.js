@@ -522,7 +522,7 @@ export function allPositionsRaw(sheet, ctx) {
   // коробка. Править справочник ради одного дома нельзя, он общий.
   const all = (c.pies ? out.concat(layerPositions(sheet, c.estimates, c.products, c.winTypes)) : out)
     .concat(addedPositions(sheet, c.estimates, c.products));
-  return applyOrder(applyStage(applyCost(dropOff(applyPicks(applyMatEdits(all, sheet, c.products), sheet), sheet), sheet), sheet), sheet);
+  return applyRooms(applyOrder(applyStage(applyCost(dropOff(applyPicks(applyMatEdits(all, sheet, c.products), sheet), sheet), sheet), sheet), sheet), sheet);
 }
 
 // Работы, убранные руками из ЭТОГО дома. Смета справочника описывает типовой дом,
@@ -601,6 +601,50 @@ export function applyOrder(raw, sheet) {
   // строкой этапа, иначе этапы поменялись бы местами на экране.
   const queue = {};
   Object.keys(byStage).forEach(function (n) { queue[n] = byStage[n].slice(); });
+  return Object.assign({}, raw, {
+    positions: rows.map(function (r) { return queue[Number(r.p.stage) || 0].shift().p; }),
+  });
+}
+
+// ─── БЛОКИ ПО ПОМЕЩЕНИЯМ ─────────────────────────────────────────────────────
+// Внутри этапа работы идут БЛОКАМИ ПО ПОМЕЩЕНИЯМ: «Санузел — стены, пол,
+// потолок», следом «Зал». Правило по помещениям даёт строку на каждую комнату, и
+// без блоков этап выглядит как «стены санузел, стены зал, стены спальня, пол
+// санузел, пол зал…» — то есть перечислением поверхностей, а не комнат. Бригада
+// же работает комнатой: в санузел заходят один раз и делают там всё.
+//
+// Это ПОРЯДОК, а не новая сущность: тот же список уходит и на экран, и в объект,
+// поэтому группировка живёт здесь, а не в панели. Своя группировка на экране
+// означала бы, что на «Составе» дом читается комнатами, а на стройке — россыпью.
+export function roomKeyOf(p) {
+  const id = String((p && p.roomId) || "");
+  if (id) return id;
+  const n = String((p && p.room) || "").trim();
+  return n ? "n:" + n : "";
+}
+
+// Порядок блоков — по ПЕРВОМУ появлению: он и так осмысленный (в каком порядке
+// правила прошли по дому), и его же двигает ручная перестановка строк. Отдельный
+// список комнат пришлось бы вести руками, и он разошёлся бы с чертежом.
+export function applyRooms(raw) {
+  const rows = (raw.positions || []).map(function (p, i) { return { p: p, i: i }; });
+  const byStage = {};
+  rows.forEach(function (r) {
+    const n = Number(r.p.stage) || 0;
+    (byStage[n] = byStage[n] || []).push(r);
+  });
+  const queue = {};
+  Object.keys(byStage).forEach(function (n) {
+    const seen = {}, ord = [];
+    byStage[n].forEach(function (r) {
+      const k = roomKeyOf(r.p);
+      if (!seen[k]) { seen[k] = []; ord.push(k); }
+      seen[k].push(r);
+    });
+    const out = [];
+    ord.forEach(function (k) { seen[k].forEach(function (r) { out.push(r); }); });
+    queue[n] = out;
+  });
   return Object.assign({}, raw, {
     positions: rows.map(function (r) { return queue[Number(r.p.stage) || 0].shift().p; }),
   });
