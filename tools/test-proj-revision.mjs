@@ -153,4 +153,80 @@ const objOf = (positions, base) => ({
   t.ok('у боевой спецификации баннера нет', p.q('objProjDiff(objects.find(function(o){return o.id==="o2";}))') === null)
 }
 
+// ── 5. Цена бригаде переезжает на стройку вместе с планом ────────────────────
+// Оплата работы — это договорённость с бригадой, а не следствие сметы. Принятая
+// правка чертежа обязана перенести её вместе с ценой: `cost` без своей половины
+// при следующей загрузке пересчитается по материалам и сотрёт согласованную цифру.
+{
+  t.section('Цена бригаде и правка чертежа')
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS, estimates: EST, dbPlans: [], crmClients: [],
+    specSheets: [], specSheets2: [], projects: [], buildRules: RULES,
+    winTypes: [], objects: [], templates: [], contractDocs: [], purchases: [], issues: [],
+    users: [], stock: [], settings: { specMarkup: 30 },
+  })
+  p.run('tab="projects";tProjects();')
+  const nb = p.dom.node({ a: 'proj-new' }); p.run('bind();'); nb.onclick()
+  p.dom.field('proj-n-name', 'Дом с бригадой'); p.dom.field('proj-n-client', '')
+  p.run('tProjects();')
+  const cb = p.dom.node({ a: 'proj-create' }); p.run('bind();'); cb.onclick()
+  const pid = p.q('projects[0].id')
+
+  // Цена назначается там же, где смета, — в полосе «Состав».
+  p.run('projBand="parts";tProjects();')
+  const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
+  const inp = p.dom.node({ a: 'est-pos-cost', k: key })
+  p.run('bind();'); inp.value = '25000'; inp.onchange()
+  t.ok('цена записана как оплата работы', p.q('projects[0].posCostMode[' + JSON.stringify(key) + ']') === 'labor')
+
+  p.run('projBand="money";tProjects();')
+  const ob = p.dom.node({ a: 'spec-to-object', id: pid }); p.run('bind();'); ob.onclick()
+  const work = () => p.q('objects[0].stages.reduce(function(a,s){return a.concat(s.works||[]);},[]).filter(function(w){return w.posKey===' + JSON.stringify(key) + ';})[0]')
+  const w0 = work()
+  t.ok('на стройку уехала и оплата работы', w0 && Number(w0.labor) === 25000, JSON.stringify(w0 && w0.labor))
+  const mats0 = (w0.mats || []).reduce((a, m) => a + (Number(m.cost) || 0) * (Number(m.qty) || 0), 0)
+  t.ok('а цена работы — материалы плюс она', Math.round(w0.cost) === Math.round(mats0) + 25000, String(w0.cost))
+
+  // Чертёж поехал — принимаем правку.
+  p.run('var pr=projects[0]; pr.model=moveBoundary(pr.model,0,600,winTypes); modelSync(pr);')
+  t.ok('стройка увидела расхождение', p.q('objProjDiff(objects[0]).items.length') > 0)
+  const btn = p.dom.node({ a: 'obj-proj-apply-safe', oid: p.q('objects[0].id') })
+  p.run('bind();'); btn.onclick()
+  const w1 = work()
+  t.ok('оплата работы пережила принятие', Number(w1.labor) === 25000, String(w1 && w1.labor))
+  const mats1 = (w1.mats || []).reduce((a, m) => a + (Number(m.cost) || 0) * (Number(m.qty) || 0), 0)
+  t.ok('и цена по-прежнему «материалы + работа»', Math.round(w1.cost) === Math.round(mats1) + 25000, String(w1.cost))
+
+  // Загрузка пересчитывает цены — и обязана оставить договорённость в покое.
+  const was = Math.round(w1.cost)
+  p.run('normalizeWorkCosts();')
+  t.ok('загрузка ничего не сбросила', Math.round(work().cost) === was, String(work().cost))
+  t.ok('расхождений не осталось', p.q('objProjDiff(objects[0]).items.length') === 0)
+
+  // Переторговались с бригадой — новая цена обязана доехать целиком. Возьми
+  // объект только `cost`, и пересчёт при загрузке вернул бы старую цифру.
+  p.run('projBand="parts";tProjects();')
+  const inp2 = p.dom.node({ a: 'est-pos-cost', k: key })
+  p.run('bind();'); inp2.value = '40000'; inp2.onchange()
+  t.ok('стройка увидела новую цену', p.q('objProjDiff(objects[0]).items.length') > 0)
+  const btn2 = p.dom.node({ a: 'obj-proj-apply-safe', oid: p.q('objects[0].id') })
+  p.run('bind();'); btn2.onclick()
+  t.ok('новая оплата работы на стройке', Number(work().labor) === 40000, String(work().labor))
+  const mats2 = (work().mats || []).reduce((a, m) => a + (Number(m.cost) || 0) * (Number(m.qty) || 0), 0)
+  p.run('normalizeWorkCosts();')
+  t.ok('и загрузка её не откатила', Math.round(work().cost) === Math.round(mats2) + 40000, String(work().cost))
+
+  // Подряд под ключ — второй смысл того же числа, и он тоже должен доехать.
+  p.run('projBand="parts";tProjects();')
+  const chip = p.dom.node({ a: 'est-pos-cost-mode', k: key })
+  p.run('bind();'); chip.onclick()
+  const btn3 = p.dom.node({ a: 'obj-proj-apply-safe', oid: p.q('objects[0].id') })
+  p.run('bind();'); btn3.onclick()
+  t.ok('на стройке работа под ключ', work().costAll === true)
+  p.run('normalizeWorkCosts();')
+  t.ok('и цена под ключ — ровно та, что назвали', Math.round(work().cost) === 40000, String(work().cost))
+  t.ok('материалы при этом на месте', (work().mats || []).length > 0)
+}
+
 t.done()

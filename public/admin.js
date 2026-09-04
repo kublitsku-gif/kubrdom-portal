@@ -7713,7 +7713,7 @@ function objTplApply(obj, item){
         return Object.assign({},s,{works:s.works.map(function(w){
           if(workKey(w)!==key)return w;
           return Object.assign({},w,{
-            n:src.n, cost:Number(src.cost)||0, room:src.room||w.room,
+            n:src.n, cost:Number(src.cost)||0, labor:Number(src.labor)||0, costAll:!!src.costAll, room:src.room||w.room,
             mats:deepCopy(src.mats||[]).map(function(m){ return Object.assign({},m,{id:gid()}); }),
           });
         })});
@@ -7803,7 +7803,9 @@ function objProjApply(obj, item){
         if(!(st.works||[]).some(function(w){return (w.posKey||"")===key;}))return st;
         return Object.assign({},st,{works:st.works.map(function(w){
           if((w.posKey||"")!==key)return w;
-          return Object.assign({},w,{ n:src.n, cost:Number(src.cost)||0, mats:withIds() });
+          // Цена переносится ВМЕСТЕ со своей половиной: `cost` без `labor` при
+          // следующей загрузке пересчитается по материалам и сотрёт принятую цифру.
+          return Object.assign({},w,{ n:src.n, cost:Number(src.cost)||0, labor:Number(src.labor)||0, costAll:!!src.costAll, mats:withIds() });
         })});
       })});
     });
@@ -20945,8 +20947,7 @@ function bind(){
       m.qty=parseFloat(String(el.value).replace(",","."))||0; // принимаем и запятую (0,5)
       const lt=Math.round((Number(m.cost)||0)*(m.qty||0));
       const lts=document.getElementById("tplm-lt-"+eid+"-"+mid);if(lts)lts.textContent=lt.toLocaleString("ru-RU")+" ₽";
-      const sum=(w.mats||[]).reduce((a,mm)=>a+(Number(mm.cost)||0)*(mm.qty||0),0);
-      w.cost=sum;
+      w.cost=workTotal(w);
       const wt=document.getElementById("tplw-t-"+eid);if(wt)wt.textContent=fmt(w.cost);
       const grand=(t.stages||[]).flatMap(s=>s.works||[]).reduce((a,ww)=>a+(ww.cost||0),0);
       const gt=document.getElementById("tpl-grand");if(gt)gt.textContent=fmt(grand);
@@ -20959,7 +20960,7 @@ function bind(){
         return {w:w,m:m};
       };
       // Разбивка управляет количеством материала: qty = сумма метража хлыстов.
-      const _sync=function(c){ c.m.breakdown=Array.isArray(c.m.breakdown)?c.m.breakdown:[]; c.m.qty=breakdownTotal(c.m.breakdown); c.m.note=breakdownNote(c.m.breakdown); c.w.cost=(c.w.mats||[]).reduce((a,mm)=>a+(Number(mm.cost)||0)*(mm.qty||0),0); scheduleSave(); render(); };
+      const _sync=function(c){ c.m.breakdown=Array.isArray(c.m.breakdown)?c.m.breakdown:[]; c.m.qty=breakdownTotal(c.m.breakdown); c.m.note=breakdownNote(c.m.breakdown); c.w.cost=workTotal(c.w); scheduleSave(); render(); };
       if(a==="bd-add"){el.onclick=()=>{ const c=_bdCtx();if(!c)return; c.m.breakdown=(Array.isArray(c.m.breakdown)?c.m.breakdown:[]).concat([{len:2,n:1}]); _sync(c); };}
       else if(a==="bd-del"){el.onclick=()=>{ const c=_bdCtx();if(!c)return; const ri=Number(el.dataset.ri); c.m.breakdown=(Array.isArray(c.m.breakdown)?c.m.breakdown:[]).filter((_,i)=>i!==ri); _sync(c); };}
       else if(a==="bd-len"){el.onchange=()=>{ const c=_bdCtx();if(!c||!Array.isArray(c.m.breakdown))return; const ri=Number(el.dataset.ri); if(c.m.breakdown[ri])c.m.breakdown[ri]=Object.assign({},c.m.breakdown[ri],{len:Number(el.value)||0}); _sync(c); };}
@@ -20970,8 +20971,7 @@ function bind(){
       const eid=el.dataset.eid,mid=el.dataset.mid;
       const w=(t.stages||[]).flatMap(s=>s.works||[]).find(x=>x.estId===eid);if(!w)return;
       w.mats=(w.mats||[]).filter(x=>x.id!==mid);
-      const sum=(w.mats||[]).reduce((a,mm)=>a+(Number(mm.cost)||0)*(mm.qty||0),0);
-      w.cost=sum;   // стоимость работы = сумма материалов
+      w.cost=workTotal(w);   // цена строки = материалы + оплата работы
       fl();
     };}
     else if(a==="tpl-add-mat-open"){el.onclick=()=>{tplPickFor={eid:el.dataset.eid};tplPickSearch="";render();};}
@@ -23934,12 +23934,14 @@ function bind(){
         const dbw=dbWorks.find(w=>w.id===sel.value);
         if(!dbw)return;
         const work={id:gid(),n:dbw.n,cost:dbw.cost,unit:dbw.unit||"",qty:(dbw.qty!=null?dbw.qty:1),unitCost:(dbw.unitCost!=null?dbw.unitCost:dbw.cost),mats:JSON.parse(JSON.stringify(dbw.mats||[]))};
+        // Что в цене не покрыто материалами — оплата работы, иначе пересчёт срежет её до материалов.
+        work.labor=Math.max(0, Math.round((Number(work.cost)||0)-wMatTotal(work)));
         templates=templates.map(t=>t.id===tid?{...t,stages:t.stages.map(s=>s.id===sid?{...s,works:[...s.works,work]}:s)}:t);
       } else {
         const n=document.getElementById("tnw-n")?.value?.trim();
         const cost=parseInt(document.getElementById("tnw-cost")?.value)||0;
         if(!n)return;
-        templates=templates.map(t=>t.id===tid?{...t,stages:t.stages.map(s=>s.id===sid?{...s,works:[...s.works,{id:gid(),n,cost,mats:[]}]}:s)}:t);
+        templates=templates.map(t=>t.id===tid?{...t,stages:t.stages.map(s=>s.id===sid?{...s,works:[...s.works,{id:gid(),n,cost,labor:cost,mats:[]}]}:s)}:t);
       }
       showNWorkSid="";fl();
     };}
@@ -24382,7 +24384,9 @@ function bind(){
       const n=document.getElementById("onw-n")?.value?.trim();
       const cost=parseInt(document.getElementById("onw-cost")?.value)||0;
       if(!n)return;
-      objects=objects.map(o=>o.id===oid?{...o,stages:o.stages.map(s=>s.id===sid?{...s,works:[...s.works,{id:gid(),n,cost,mats:[]}]}:s)}:o);
+      // Цена работы без материалов — это оплата бригаде: не записать её в `labor`
+      // значит отдать её на съедение пересчёту при следующей загрузке.
+      objects=objects.map(o=>o.id===oid?{...o,stages:o.stages.map(s=>s.id===sid?{...s,works:[...s.works,{id:gid(),n,cost,labor:cost,mats:[]}]}:s)}:o);
       showNObjWorkSid="";fl();
     };}
     else if(a==="dl-save"){
