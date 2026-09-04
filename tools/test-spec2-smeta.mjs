@@ -464,6 +464,41 @@ const SHEET = {
   const q2 = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0]')
   t.ok('расчётное количество вернулось', q2.mats.find((m) => m.pid === 'p_dr').qty === 50)
   t.ok('и лист чист', p.q('Object.keys(spec2Sheet().matQty||{}).length') === 0)
+
+  // Материал можно и убрать: смета описывает типовой дом, а на этом гофру ведут
+  // в готовом кабель-канале. Справочник при этом общий — правка живёт на листе.
+  const wasCost = q2.cost
+  const okey = q2.key + '|p_dr'
+  t.ok('крестик есть у каждого материала', p.run('tSpec2()').indexOf('data-a="est-mat-off"') >= 0)
+  const drop = p.dom.node({ a: 'est-mat-off', k: okey }); p.run('bind();'); drop.onclick()
+  const d1 = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0]')
+  t.ok('материала в строке нет', !d1.mats.some((m) => m.pid === 'p_dr'))
+  t.ok('и цена строки упала на него', d1.cost === wasCost - 800 * 50, 'строка ' + d1.cost)
+  t.ok('убранное лежит на листе', p.q('spec2Sheet().matOff[' + JSON.stringify(q2.key) + '].join(",")') === 'p_dr')
+  t.ok('справочник не тронут', p.q('estimates.find(function(e){return e.id==="e_el";}).lines.length') === 2)
+  const shownOff = p.run('tSpec2()')
+  t.ok('в строке видно, что убрано', /УБРАНО ИЗ ЭТОГО ДОМА/.test(shownOff))
+  t.ok('и названо по имени', /Наличник ⟲/.test(shownOff))
+  // Смотрим ИМЕННО эту работу: тот же товар честно стоит и в монтаже двери.
+  const built2 = p.q('specBuildStages(spec2Sheet()).reduce(function(a,s){return a.concat(s.works);},[])')
+    .filter((w) => w.estId === 'e_el')
+  t.ok('работа на стройке есть', built2.length === 1, 'работ: ' + built2.length)
+  t.ok('на стройку убранное не уезжает', !(built2[0].mats || []).some((m) => m.pid === 'p_dr'))
+
+  // Возвращается тем же тапом: «нет в этом доме» — решение, а не удаление.
+  const back2 = p.dom.node({ a: 'est-mat-on', k: okey }); p.run('bind();'); back2.onclick()
+  const d2 = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0]')
+  t.ok('материал вернулся', d2.mats.some((m) => m.pid === 'p_dr'))
+  t.ok('и цена прежняя', d2.cost === wasCost, 'строка ' + d2.cost)
+  t.ok('лист чист', !p.q('spec2Sheet().matOff'))
+
+  // Убрали всё — список всё равно показан: иначе вернуть было бы нечем.
+  const o1 = p.dom.node({ a: 'est-mat-off', k: okey }); p.run('bind();'); o1.onclick()
+  const o2 = p.dom.node({ a: 'est-mat-off', k: q2.key + '|p_win' }); p.run('bind();'); o2.onclick()
+  const empty = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0]')
+  t.ok('в строке не осталось материалов', empty.mats.length === 0)
+  t.ok('и она ничего не стоит', empty.cost === 0)
+  t.ok('но вернуть можно оба', (p.run('tSpec2()').match(/data-a="est-mat-on"/g) || []).length === 2)
 }
 
 // ── 11. Варианты выбираются переключателем ──────────────────────────────────

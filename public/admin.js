@@ -56,7 +56,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
 import { totals2, issues2, works2 } from "../src/spec2.js";
 import { allPositions, allPositionsRaw, addedPositions, matKeyOf, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
   pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
-  optGroupOf, optLabelOf, optPrefixOf, matAddOf, costModeOf } from "../src/recipe.js";
+  optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf } from "../src/recipe.js";
 import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
 import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
@@ -12597,8 +12597,11 @@ function optChipsHtml(pos, sh, w){
 function matSwapKey(pos, m){ return pos.key+"|"+matKeyOf(m); }
 function specMatsListHtml(pos, sh, live){
   const mats=(pos.mats||[]).filter(function(m){ return (Number(m.qty)||0)>0 && String(m.n||"").trim(); });
-  if(!mats.length)return "";
   const can=!!live&&canRuleSheet(sh);
+  // Убранные материалы держат список открытым для себя: убери человек последний
+  // материал строки, и без этой строки вернуть его было бы нечем.
+  const off=can?matOffOf(sh, pos.key):[];
+  if(!mats.length&&!off.length)return "";
   const sw=matSwapsOf(sh, pos.key);
   // Список работ читают работами: на экране двадцать строк сметы, и если каждая
   // разворачивает по шесть материалов, увидеть сам состав дома нельзя. Материалы
@@ -12607,7 +12610,9 @@ function specMatsListHtml(pos, sh, live){
   // Открытый редактор замены или форма «+ материал» держат список раскрытым сами:
   // свернуть то, в чём человек сейчас правит, значит потерять его правку из виду.
   const busyHere=(matSwapOpen||"").indexOf(pos.key+"|")===0||matAddOpen===pos.key;
-  const open=!!matsOpen[pos.key]||busyHere;
+  // Строка, из которой убрали ВСЁ, раскрыта сама: «материалы · 0» без списка
+  // выглядит как потеря, а вернуть убранное можно только в самом списке.
+  const open=!!matsOpen[pos.key]||busyHere||(!mats.length&&off.length>0);
   const sum=mats.reduce(function(a,m){ return a+(Number(m.cost)||0)*(Number(m.qty)||0); },0);
   const head='<div style="margin-top:5px">'+
     '<button data-a="est-mats-open" data-k="'+esc(pos.key)+'" style="border:none;background:transparent;padding:2px 0;font-size:10.5px;font-weight:700;color:#7a9aaa;cursor:pointer">'+
@@ -12658,14 +12663,34 @@ function specMatsListHtml(pos, sh, live){
           // а есть крестик — удалить и вписать заново.
           (can&&!added?'<button data-a="est-mat-open" data-k="'+esc(matSwapKey(pos,m))+'" title="Заменить материал из базы" style="width:24px;height:24px;background:'+(open?"#2980b9":"transparent")+';border:1px solid #2980b955;border-radius:6px;cursor:pointer;color:'+(open?"#fff":"#2980b9")+';font-size:11px;flex-shrink:0">⇄</button>':'')+
           (can&&added?'<button data-a="est-mat-add-del" data-k="'+esc(pos.key)+'" data-m="'+esc(m.id||"")+'" title="Убрать дописанный материал" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>':'')+
+          // Убрать материал из ЭТОГО дома: справочник общий, и удалять из него
+          // ради одного дома значит менять состав всех будущих. Материал
+          // выключается в листе и возвращается тем же тапом.
+          (can&&!added?'<button data-a="est-mat-off" data-k="'+esc(matSwapKey(pos,m))+'" title="Убрать материал из этой строки" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>':'')+
         '</div>'+
         (open?matSwapEditor(pos, m, sh, was):'')+
       '</div>';
     }).join("")+
+    matOffHtml(pos, off)+
     // Смета из справочника описывает типовой дом, а на этом бывает лишний уголок
     // или вторая коробка: дописать его в строке честнее, чем править справочник
     // ради одного дома.
     (can?matAddHtml(pos):'')+
+  '</div>';
+}
+// Убранное остаётся на виду: «нет в этом доме» — это решение, и по строке должно
+// быть видно, что оно принято, иначе материал выглядит потерянным, а вернуть его
+// нечем. Имя берём из каталога — в листе лежит только адрес товара.
+function matOffHtml(pos, off){
+  if(!off||!off.length)return '';
+  return '<div style="padding:6px 0 2px;display:flex;flex-wrap:wrap;align-items:center;gap:5px">'+
+    '<span style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.3px">УБРАНО ИЗ ЭТОГО ДОМА:</span>'+
+    off.map(function(pid){
+      const prod=(expProducts||[]).find(function(x){return x.id===pid;});
+      return '<button data-a="est-mat-on" data-k="'+esc(pos.key+"|"+pid)+'" title="Вернуть материал в строку" '+
+        'style="border:1px solid #dde6f0;background:#fff;border-radius:7px;padding:3px 8px;font-size:10.5px;color:#7a9aaa;cursor:pointer">'+
+        esc((prod&&prod.name)||"материал")+' ⟲</button>';
+    }).join("")+
   '</div>';
 }
 function matAddHtml(pos){
@@ -22119,6 +22144,29 @@ function bind(){
       if(isFinite(v)&&v>0)row[pid]=v; else delete row[pid];
       if(Object.keys(row).length)map[posKey]=row; else delete map[posKey];
       sh.matQty=map; fl();
+    };}
+    // Убрать материал из строки НА ЭТОМ ДОМЕ. Справочник смет общий: удалить из
+    // него позицию ради одного дома значит изменить состав всех будущих.
+    else if(a==="est-mat-off"){el.onclick=()=>{
+      const k=el.dataset.k||"";
+      const cut=k.lastIndexOf("|");
+      const posKey=k.slice(0,cut), pid=k.slice(cut+1);
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!posKey||!pid)return;
+      const map=Object.assign({}, sh.matOff||{});
+      const row=(map[posKey]||[]).filter(function(x){ return String(x)!==pid; });
+      map[posKey]=row.concat([pid]);
+      sh.matOff=map; matSwapOpen=""; scheduleSave(); fl();
+    };}
+    else if(a==="est-mat-on"){el.onclick=()=>{
+      const k=el.dataset.k||"";
+      const cut=k.lastIndexOf("|");
+      const posKey=k.slice(0,cut), pid=k.slice(cut+1);
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!sh.matOff)return;
+      const map=Object.assign({}, sh.matOff);
+      const row=(map[posKey]||[]).filter(function(x){ return String(x)!==pid; });
+      if(row.length)map[posKey]=row; else delete map[posKey];
+      if(Object.keys(map).length)sh.matOff=map; else delete sh.matOff;
+      scheduleSave(); fl();
     };}
     else if(a==="est-mat-qty-reset"){el.onclick=()=>{
       const k=el.dataset.k||"";

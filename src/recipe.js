@@ -348,19 +348,32 @@ export function matAddOf(sheet, key) {
   return (((sheet && sheet.matAdd) || {})[key]) || [];
 }
 
+// Материал, убранный из строки на ЭТОМ доме (`sheet.matOff[posKey]` — адреса
+// материалов). Справочник смет общий на все дома: удалить из него позицию ради
+// одного дома значит изменить состав всех будущих. Строка выключает материал у
+// себя — и возвращает тем же тапом, поэтому убранное остаётся видно.
+export function matOffOf(sheet, key) {
+  const v = ((sheet && sheet.matOff) || {})[key];
+  return Array.isArray(v) ? v.map(String) : [];
+}
+
 export function applyMatEdits(positions, sheet, products) {
   const swaps = (sheet && sheet.mats) || {};
   const qtys = (sheet && sheet.matQty) || {};
   const adds = (sheet && sheet.matAdd) || {};
-  if (!Object.keys(swaps).length && !Object.keys(qtys).length && !Object.keys(adds).length) return positions;
+  const offs = (sheet && sheet.matOff) || {};
+  if (!Object.keys(swaps).length && !Object.keys(qtys).length && !Object.keys(adds).length
+    && !Object.keys(offs).length) return positions;
   const prodById = {};
   (products || []).forEach(function (p) { if (p && p.id) prodById[p.id] = p; });
   return (positions || []).map(function (pos) {
     const sw = swaps[pos.key] || {};
     const q = qtys[pos.key] || {};
     const add = adds[pos.key] || [];
-    if (!Object.keys(sw).length && !Object.keys(q).length && !add.length) return pos;
-    let hit = !!add.length;
+    const off = matOffOf(sheet, pos.key);
+    if (!Object.keys(sw).length && !Object.keys(q).length && !add.length && !off.length) return pos;
+    // Убранный материал — тоже правка: без него строка возвращалась бы как есть.
+    let hit = !!add.length || !!off.length;
     const mats = (pos.mats || []).map(function (m) {
       let out = m;
       const nid = sw[m.pid || ""];
@@ -389,8 +402,11 @@ export function applyMatEdits(positions, sheet, products) {
         ? Object.assign(row, { qty: own, qtySet: true })
         : row;
     }));
-    const sum = full.reduce(function (a, m) { return a + (Number(m.cost) || 0) * (Number(m.qty) || 0); }, 0);
-    return Object.assign({}, pos, { mats: full, cost: Math.round(sum * (Number(pos.factor) || 1)) });
+    // Убранный материал вычитается ПОСЛЕДНИМ — после замены: человек убирает то,
+    // что видит на экране, а видит он уже новый товар.
+    const kept = off.length ? full.filter(function (m) { return off.indexOf(matKeyOf(m)) < 0; }) : full;
+    const sum = kept.reduce(function (a, m) { return a + (Number(m.cost) || 0) * (Number(m.qty) || 0); }, 0);
+    return Object.assign({}, pos, { mats: kept, cost: Math.round(sum * (Number(pos.factor) || 1)) });
   });
 }
 
