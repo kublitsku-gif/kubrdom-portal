@@ -2268,6 +2268,8 @@ let matAddOpen="";         // у какой строки сметы открыт
 let posAddOpen="";         // у какого листа открыта форма «+ работа»
 let matsOpen={};           // у каких строк сметы раскрыт список материалов
 let stageShut={};          // какие этапы свёрнуты целиком
+let estMoveKey="";         // какую строку сметы сейчас переносят внутри этапа
+let estMoveSheet="";       // и в каком листе: ключ позиции у листов общий
 let modelStageTab=0;       // 0 = все этапы
 let specSheets=[];
 // «Спецификация 2» — опытный раздел (см. src/spec2.js). Листы держим ОТДЕЛЬНО: по
@@ -12843,11 +12845,31 @@ function estDroppedHtml(sh, canRule){
   '</div>';
 }
 
+// Перенос строки внутри этапа: взял — указал место. Стрелки «выше/ниже» просят
+// по тапу на каждый шаг (восемь тапов, чтобы поднять работу из конца этапа) и
+// умещаются в двадцать пикселей, в которые на телефоне не попасть. Взятая
+// строка раскрывает между соседями места «сюда» — они во всю ширину и ставят
+// работу куда надо одним тапом.
+function estDropSlot(key, j, mi){
+  if(mi<0||j===mi||j===mi+1)return '';
+  return '<div data-a="est-pos-drop" data-k="'+esc(key)+'" data-i="'+j+'" title="Поставить работу сюда" '+
+    'style="margin:3px 0;padding:5px 0;border:1px dashed '+RULE_COL+'88;border-radius:8px;background:'+RULE_COL+'0d;'+
+    'text-align:center;font-size:10.5px;font-weight:700;color:'+RULE_COL+';cursor:pointer;line-height:1.2">сюда</div>';
+}
+function estRowsHtml(moving, mi, rows){
+  if(mi<0)return rows.join("");
+  let out=estDropSlot(moving, 0, mi);
+  rows.forEach(function(r, i){ out+=r+estDropSlot(moving, i+1, mi); });
+  return out;
+}
 function estBodyHtml(sh, types, live, actions){
   const w=works2(sh, Object.assign(specCtx(sh), { winTypes:types }));
   const canRule=canRuleSheet(sh);
   const seen={}, seenPref={};
   const suggest=canRule?optSuggest(w, sh):{};
+  // Ключ позиции у листов общий («base:e_osb»), поэтому взятая строка помнит и
+  // свой лист: иначе в соседнем проекте подсвечивалась бы его тёзка.
+  const moving=(canRule&&estMoveSheet===String((live&&live.id)||sh.id||""))?String(estMoveKey||""):"";
   let h='';
   // Деньги сверху: с них начинается любой разговор про смету, и лезть за итогом
   // в конец списка из сорока строк никто не будет.
@@ -12877,6 +12899,7 @@ function estBodyHtml(sh, types, live, actions){
       // прокручивая чужие работы, — то же самое, что искать его в простыне. Шапка
       // с итогом остаётся всегда: по этим суммам идут транши и приёмка.
       const shut=!!stageShut[st.n];
+      const mi=moving?st.positions.findIndex(function(x){ return x.key===moving; }):-1;
       return '<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
         '<div data-a="est-stage-open" data-n="'+st.n+'" style="display:flex;align-items:baseline;gap:8px;margin-bottom:'+(shut?'0':'7px')+';cursor:pointer">'+
           '<span style="width:8px;height:8px;border-radius:3px;background:'+st.color+';flex-shrink:0"></span>'+
@@ -12884,7 +12907,7 @@ function estBodyHtml(sh, types, live, actions){
             (shut?' <span style="font-weight:700;color:#9aabbf;text-transform:none;letter-spacing:0">· '+st.positions.length+' '+pluralRu(st.positions.length,"работа","работы","работ")+'</span>':'')+'</span>'+
           '<span style="font-size:12.5px;font-weight:800;color:#0d1b2e;white-space:nowrap">'+Math.round(st.cost).toLocaleString("ru-RU")+' ₽</span>'+
         '</div>'+
-        (shut?'':st.positions.map(function(p, pi, arr){
+        (shut?'':estRowsHtml(moving, mi, st.positions.map(function(p, pi, arr){
           // Редактор раскрываем у ПЕРВОЙ строки этой сметы: правило по помещениям
           // даёт их несколько, и три одинаковых редактора подряд — это не выбор.
           const first=seen[p.estId]!==true; if(p.estId)seen[p.estId]=true;
@@ -12893,8 +12916,10 @@ function estBodyHtml(sh, types, live, actions){
           const pref=optPrefixOf(p.name||"");
           const tip=(suggest[pref]&&!seenPref[pref])?suggest[pref]:null;
           if(pref)seenPref[pref]=true;
+          const held=p.key===moving;
           return (tip?optSuggestHtml(tip):'')+
-            '<div style="padding:7px 0;border-top:1px solid #f4f7fb">'+
+            '<div style="padding:7px '+(held?'8px':'0')+';border-top:1px solid #f4f7fb'+(held?';background:'+RULE_COL+'0d;border:1px solid '+RULE_COL+'55;border-radius:9px':'')+'">'+
+            (held?'<div style="font-size:10px;font-weight:700;color:'+RULE_COL+';letter-spacing:0.4px;margin-bottom:4px">ПЕРЕНОШУ — УКАЖИТЕ МЕСТО «СЮДА»</div>':'')+
             '<div style="display:flex;align-items:baseline;gap:8px">'+
               '<span style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#0d1b2e">'+esc(p.name)+
                 (p.added?' <span style="font-size:9.5px;font-weight:700;color:#16a085;background:#e8f6f3;border-radius:5px;padding:1px 5px">дописана</span>':'')+'</span>'+
@@ -12917,8 +12942,7 @@ function estBodyHtml(sh, types, live, actions){
               // Порядок внутри этапа: смета считается сама, но читают её глазами
               // сверху вниз, и бригаде важно, что сначала обрешётка, потом обшивка.
               (canRule&&arr.length>1
-                ? ['<button data-a="est-pos-move" data-k="'+esc(p.key)+'" data-d="-1"'+(pi===0?' disabled':'')+' title="Выше в этапе" style="width:20px;height:22px;background:transparent;border:1px solid #dde6f0;border-radius:6px 6px 0 0;cursor:'+(pi===0?'default':'pointer')+';color:'+(pi===0?'#dde6f0':'#7a9aaa')+';font-size:9px;flex-shrink:0;line-height:1;padding:0">▲</button>',
-                   '<button data-a="est-pos-move" data-k="'+esc(p.key)+'" data-d="1"'+(pi===arr.length-1?' disabled':'')+' title="Ниже в этапе" style="width:20px;height:22px;margin-left:-21px;margin-top:22px;background:transparent;border:1px solid #dde6f0;border-radius:0 0 6px 6px;cursor:'+(pi===arr.length-1?'default':'pointer')+';color:'+(pi===arr.length-1?'#dde6f0':'#7a9aaa')+';font-size:9px;flex-shrink:0;line-height:1;padding:0">▼</button>'].join("")
+                ? '<button data-a="est-pos-grab" data-k="'+esc(p.key)+'" title="'+(p.key===moving?"Отменить перенос":"Переставить в этапе: возьмите строку и укажите место")+'" style="height:24px;padding:0 7px;background:'+(p.key===moving?RULE_COL:"transparent")+';border:1px solid '+(p.key===moving?RULE_COL:"#dde6f0")+';border-radius:7px;cursor:pointer;color:'+(p.key===moving?"#fff":"#7a9aaa")+';font-size:11px;font-weight:700;flex-shrink:0;line-height:1">'+(p.key===moving?"✕":"↕")+'</button>'
                 : '')+
               // Этап работы правится тут же: по этапам идут сроки, приёмка и
               // транши, и уводить человека за этим в правило — значит менять
@@ -12944,7 +12968,7 @@ function estBodyHtml(sh, types, live, actions){
             specMatsListHtml(p, sh, live)+
             (open?estWhyEditor(p, sh):'')+
           '</div>';
-        }).join(""))+
+        })))+
       '</div>';
     }).join("");
   } else {
@@ -21894,21 +21918,33 @@ function bind(){
       if(map[k])delete map[k]; else map[k]=1;
       matsOpen=map; fl();
     };}
-    else if(a==="est-pos-move"){el.onclick=()=>{
-      const key=el.dataset.k||"", dir=Number(el.dataset.d)||0;
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!key||!dir)return;
+    // Взять строку. Повторный тап — положить обратно: взятая и никуда не
+    // поставленная работа не должна держать экран в режиме переноса.
+    else if(a==="est-pos-grab"){el.onclick=()=>{
+      const key=el.dataset.k||"";
+      const sh=schemeSheet()||spec2Sheet();
+      estMoveKey=(estMoveKey===key)?"":key;
+      estMoveSheet=estMoveKey?String((sh&&sh.id)||""):"";
+      fl();
+    };}
+    else if(a==="est-pos-drop"){el.onclick=()=>{
+      const key=el.dataset.k||"", j=Number(el.dataset.i);
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!key||!isFinite(j)){ estMoveKey=""; estMoveSheet=""; fl(); return; }
       // Порядок берём ТОТ, что на экране: он уже с учётом прежних перестановок,
       // и считать его заново другим кодом значит получить второй порядок.
       const w=works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes }));
       const st=(w.stages||[]).find(function(s){ return s.positions.some(function(x){ return x.key===key; }); });
-      if(!st)return;
+      if(!st){ estMoveKey=""; estMoveSheet=""; fl(); return; }
       const keys=st.positions.map(function(x){ return x.key; });
-      const i=keys.indexOf(key), j=i+dir;
-      if(i<0||j<0||j>=keys.length)return;
-      keys.splice(j, 0, keys.splice(i, 1)[0]);
+      const i=keys.indexOf(key);
+      if(i<0){ estMoveKey=""; estMoveSheet=""; fl(); return; }
+      // Место указано МЕЖДУ строками, которые человек видит, — то есть вместе с
+      // самой переносимой. Убрали её — всё, что стояло ниже, поднялось на одну.
+      keys.splice(i, 1);
+      keys.splice(j>i?j-1:j, 0, key);
       const map=Object.assign({}, sh.posOrder||{});
       keys.forEach(function(k,n){ map[k]=n; });
-      sh.posOrder=map; scheduleSave(); fl();
+      sh.posOrder=map; estMoveKey=""; estMoveSheet=""; scheduleSave(); fl();
     };}
     else if(a==="est-pos-stage"){el.onchange=()=>{
       const key=el.dataset.k||"";

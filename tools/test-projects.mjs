@@ -399,20 +399,52 @@ function create(p, name) {
   const stageKeys = () => p.q('(works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).stages.filter(function(s){return s.n===2;})[0]||{positions:[]}).positions.map(function(x){return x.key;})')
   const before = stageKeys()
   t.ok('в этапе две работы', before.length === 2, JSON.stringify(before))
-  t.ok('стрелки показаны', p.run('tProjects()').indexOf('data-a="est-pos-move"') >= 0)
+  const idle = p.run('tProjects()')
+  t.ok('работу можно взять', idle.indexOf('data-a="est-pos-grab"') >= 0)
+  t.ok('пока не взяли — мест «сюда» нет', idle.indexOf('data-a="est-pos-drop"') < 0)
 
-  const down = p.dom.node({ a: 'est-pos-move', k: before[0], d: '1' })
-  p.run('bind();'); down.onclick()
+  // Взял — указал место: место во всю ширину строки, а не стрелка в 20 пикселей.
+  const grab = p.dom.node({ a: 'est-pos-grab', k: before[0] })
+  p.run('bind();'); grab.onclick()
+  const held = p.run('tProjects()')
+  t.ok('места появились', held.indexOf('data-a="est-pos-drop"') >= 0)
+  t.ok('и видно, какую строку несём', /ПЕРЕНОШУ/.test(held))
+  t.ok('взятая строка мест вокруг себя не показывает',
+    (held.match(/data-a="est-pos-drop"/g) || []).length === 1, String((held.match(/data-a="est-pos-drop"/g) || []).length))
+  t.ok('пока ничего не переставилось', stageKeys().join(',') === before.join(','))
+
+  const slot = p.dom.node({ a: 'est-pos-drop', k: before[0], i: '2' })
+  p.run('bind();'); slot.onclick()
   const after = stageKeys()
-  t.ok('работа опустилась', after.join(',') === before.slice().reverse().join(','),
+  t.ok('работа встала на указанное место', after.join(',') === before.slice().reverse().join(','),
     before.join(',') + ' → ' + after.join(','))
+  t.ok('и строку отпустили', p.q('estMoveKey') === '')
   // Порядок хранится в листе — справочник общий на все дома.
   t.ok('порядок записан в лист', !!p.q('projects[0].posOrder'))
   t.ok('справочник не тронут', p.q('estimates.length') === 2)
 
-  const up = p.dom.node({ a: 'est-pos-move', k: before[0], d: '-1' })
-  p.run('bind();'); up.onclick()
-  t.ok('и поднимается обратно', stageKeys().join(',') === before.join(','), stageKeys().join(','))
+  const grab2 = p.dom.node({ a: 'est-pos-grab', k: before[0] })
+  p.run('bind();'); grab2.onclick()
+  const slot2 = p.dom.node({ a: 'est-pos-drop', k: before[0], i: '0' })
+  p.run('bind();'); slot2.onclick()
+  t.ok('и возвращается обратно', stageKeys().join(',') === before.join(','), stageKeys().join(','))
+
+  // Передумал — тот же тап кладёт строку обратно, а не оставляет экран в режиме переноса.
+  const grab3 = p.dom.node({ a: 'est-pos-grab', k: before[0] })
+  p.run('bind();'); grab3.onclick()
+  t.ok('строка взята', p.q('estMoveKey') === before[0])
+  p.run('bind();'); grab3.onclick()
+  t.ok('повторный тап отменяет перенос', p.q('estMoveKey') === '')
+  t.ok('и порядок не поехал', stageKeys().join(',') === before.join(','))
+
+  // Ключ позиции у листов общий, поэтому взятая строка помнит и свой лист:
+  // иначе в соседнем проекте подсвечивалась бы его тёзка.
+  const grab4 = p.dom.node({ a: 'est-pos-grab', k: before[0] })
+  p.run('bind();'); grab4.onclick()
+  t.ok('строка помнит свой лист', p.q('estMoveSheet') === p.q('projects[0].id'))
+  create(p, 'Соседний дом')
+  p.run('projBand="parts";')
+  t.ok('в соседнем проекте ничего не взято', !/ПЕРЕНОШУ/.test(p.run('tProjects()')))
 
   // Этапы местами не меняются: по ним идут сроки и приёмка, а перестановка —
   // только внутри своего этапа.
