@@ -8,7 +8,7 @@
 import { presetModel, MODEL_PRESETS } from '../src/model.js'
 import { sheetPositions } from '../src/spec.js'
 import { rulePositions, allPositions, allPositionsRaw, ruleText, ruleReady, probeSheet,
-  layerPositions, pieArea, pieCost, applyPicks, optLabelOf, optPrefixOf, applyRooms, roomKeyOf } from '../src/recipe.js'
+  layerPositions, pieArea, pieCost, applyPicks, optLabelOf, optPrefixOf, applyRooms, roomKeyOf, posRoomOf, ROOM_HOUSE } from '../src/recipe.js'
 import { modelAreas, modelTotals, applyLayers } from '../src/model.js'
 import { gaps2 } from '../src/spec2.js'
 
@@ -325,6 +325,35 @@ const R = (o) => Object.assign({ id: 'r1', kind: 'house', what: 'surface', k: 'w
   // Дом без комнат в позициях остаётся одним куском — блоков там нет вовсе.
   const plain = allPositions(SHEET, { estimates: EST, products: PRODUCTS, winTypes: TYPES, rules: [] })
   t.ok('обязательные строки не разъехались', plain.every((p) => roomKeyOf(p) === ''))
+
+  // Работу приписывают к комнате руками: расчёт знает помещение только там, где
+  // по нему считал, а обязательную «уборку» делают всё равно в санузле.
+  const bath = rooms[0]
+  const houseKey = plain[0].key
+  const moved = allPositions(Object.assign({}, SHEET, { posRoom: { [houseKey]: bath.id } }), {
+    estimates: EST, products: PRODUCTS, winTypes: TYPES, rules: [],
+  })
+  const got = moved.find((p) => p.key === houseKey)
+  t.ok('работа уехала в комнату', roomKeyOf(got) === bath.id, roomKeyOf(got))
+  t.ok('и подписана её именем', got.room === bath.name, got.room)
+  t.ok('помечена как приписанная руками', got.roomSet === true)
+  // «Откуда число» не врёт: считали её на весь дом, комнату выбрал человек.
+  t.ok('объяснение количества не изменилось',
+    got.why === plain.find((p) => p.key === houseKey).why, got.why)
+  t.ok('цена не поехала', got.cost === plain.find((p) => p.key === houseKey).cost)
+
+  // «Общее по дому» — тоже выбор, и у него свой ключ: пустая строка означала бы
+  // «человек ничего не решал», и расчёт утащил бы работу обратно в свою комнату.
+  const ruled = allPositions(SHEET, {
+    estimates: EST, products: PRODUCTS, winTypes: TYPES,
+    rules: [R({ id: 'r_w', estId: 'e_osb', k: 'wall', stage: 3 })],
+  }).filter((p) => p.room === bath.name)
+  const back = allPositions(Object.assign({}, SHEET, { posRoom: { [ruled[0].key]: ROOM_HOUSE } }), {
+    estimates: EST, products: PRODUCTS, winTypes: TYPES,
+    rules: [R({ id: 'r_w', estId: 'e_osb', k: 'wall', stage: 3 })],
+  }).find((p) => p.key === ruled[0].key)
+  t.ok('комнатную работу можно отдать дому', roomKeyOf(back) === '' && back.roomSet === true)
+  t.ok('адрес приписки читается', posRoomOf({ posRoom: { a: 'x' } }, 'a') === 'x')
 }
 
 t.done()

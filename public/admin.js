@@ -56,7 +56,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
 import { totals2, issues2, works2 } from "../src/spec2.js";
 import { allPositions, allPositionsRaw, addedPositions, matKeyOf, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
   pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
-  optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf } from "../src/recipe.js";
+  optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf, ROOM_HOUSE } from "../src/recipe.js";
 import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
 import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
@@ -10064,6 +10064,26 @@ function modelHistTrack(sh){
 }
 function modelCanUndo(sh){ return !!(sh&&modelHistId===sh.id&&modelHist.length); }
 
+// Имя помещения живёт в МОДЕЛИ: одно и то же имя стоит на чертеже, в площадях и
+// над блоком работ. Комната бывает трёх видов — отсек, второе помещение отсека
+// (санузел в углу) и комната, вырезанная свободной стеной (её имя лежит своей
+// записью с якорем внутри комнаты), — и переименовывать надо любую.
+function modelRoomRename(sh, id, name){
+  if(!sh||!sh.model||!id)return false;
+  let r=(sh.model.rooms||[]).find(function(x){return x.id===id;});
+  if(!r)(sh.model.rooms||[]).forEach(function(b){ if(b.sub&&b.sub.id===id)r=b.sub; });
+  if(r){ r.name=name; modelSync(sh); return true; }
+  const reg=modelRooms(sh.model).find(function(x){return x.id===id;});
+  if(!reg)return false;
+  const spots=(sh.model.spots||[]).slice();
+  const at=spots.findIndex(function(x){return x.id===id;});
+  if(at>=0)spots[at]=Object.assign({},spots[at],{name:name});
+  else spots.push({ id:id, name:name, pts:reg.pts||{},
+    x:Math.round(reg.label.x), y:Math.round(reg.label.y) });
+  sh.model.spots=spots;
+  modelSync(sh);
+  return true;
+}
 function modelSync(sh){
   if(!sh||!sh.model)return;
   modelHistTrack(sh);
@@ -12595,6 +12615,17 @@ function optChipsHtml(pos, sh, w){
 // «⇄» — заменить на товар из базы. Замена лежит на листе, справочник не трогает.
 // Адрес материала на экране — тот же, что в расчёте (`matKeyOf`): по нему хранится
 // и замена, и ручное количество, и разойтись эти два адреса не могут.
+// Работы больше нет — забываем всё, что лист про неё помнил. Иначе приписка к
+// комнате, этап и цена удалённой строки лежат в снимке вечно и всплывают на
+// следующей работе с тем же адресом.
+function estForgetKey(sh, key){
+  if(!sh||!key)return;
+  ["posRoom","posStage","posCost","posCostMode","posOrder","matQty","mats","matAdd","matOff"].forEach(function(f){
+    const map=sh[f]; if(!map||!Object.prototype.hasOwnProperty.call(map,key))return;
+    const next=Object.assign({}, map); delete next[key];
+    if(Object.keys(next).length)sh[f]=next; else delete sh[f];
+  });
+}
 function matSwapKey(pos, m){ return pos.key+"|"+matKeyOf(m); }
 function specMatsListHtml(pos, sh, live){
   const mats=(pos.mats||[]).filter(function(m){ return (Number(m.qty)||0)>0 && String(m.n||"").trim(); });
@@ -12822,23 +12853,30 @@ function estPosAddHtml(sh, canRule){
   if(posAddOpen!==(sh&&sh.id)){
     return '<div style="margin-bottom:9px"><button data-a="est-pos-add-open" data-k="'+esc((sh&&sh.id)||"")+'" style="width:100%;padding:9px;background:#eef6f4;border:1px dashed #16a085;border-radius:10px;cursor:pointer;color:#16a085;font-size:12.5px;font-weight:700">+ работа</button></div>';
   }
+  return estAddFormHtml(sh, (sh&&sh.id)||"", "");
+}
+// Одна форма на две кнопки: общую «+ работа» и «+» в шапке помещения. Вторая
+// приходит с адресом «<лист>@<этап>|<комната>» — работа сразу встаёт туда, куда
+// её добавляли, а не в конец дома и не в этап из справочника.
+function estAddFormHtml(sh, tag, where){
   const kind=(sh&&sh.kind)||"banya";
   const list=(estimates||[]).filter(function(e){ return e&&(e.kind||"banya")===kind; });
+  const fixed=String(tag||"").indexOf("@")>0;
   return '<div style="background:#eefaf6;border:1px solid #16a08544;border-radius:12px;padding:11px 12px;margin-bottom:9px">'+
-    '<div style="font-size:9.5px;font-weight:800;color:#16a085;letter-spacing:0.3px;margin-bottom:6px">+ ДОБАВИТЬ РАБОТУ В ЭТОТ ДОМ</div>'+
+    '<div style="font-size:9.5px;font-weight:800;color:#16a085;letter-spacing:0.3px;margin-bottom:6px">+ ДОБАВИТЬ РАБОТУ'+(where?(' — '+esc(String(where).toUpperCase())):' В ЭТОТ ДОМ')+'</div>'+
     '<input id="pad-n" list="pad-catalog" autocomplete="off" placeholder="Название — можно выбрать из справочника работ" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12.5px;margin-bottom:6px;outline:none;box-sizing:border-box">'+
     '<datalist id="pad-catalog">'+list.map(function(e){return '<option value="'+esc(e.name||"").replace(/"/g,"&quot;")+'"></option>';}).join("")+'</datalist>'+
     '<div style="display:flex;gap:6px;margin-bottom:7px">'+
       '<input id="pad-cost" placeholder="Сумма ₽ — для своей строки" inputmode="decimal" style="flex:2;min-width:0;padding:8px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12.5px;outline:none">'+
-      '<select id="pad-stage" style="flex:1;min-width:0;padding:8px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12.5px;outline:none;background:#fff">'+
+      (fixed?'':'<select id="pad-stage" style="flex:1;min-width:0;padding:8px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12.5px;outline:none;background:#fff">'+
         EST_STAGES.map(function(st){return '<option value="'+st.n+'">'+esc(st.short)+'</option>';}).join("")+
-      '</select>'+
+      '</select>')+
     '</div>'+
     '<div style="display:flex;gap:6px">'+
-      '<button data-a="est-pos-add-do" data-k="'+esc((sh&&sh.id)||"")+'" style="flex:1;padding:9px;background:#16a085;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700">Добавить</button>'+
+      '<button data-a="est-pos-add-do" data-k="'+esc(tag)+'" style="flex:1;padding:9px;background:#16a085;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700">Добавить</button>'+
       '<button data-a="est-pos-add-open" data-k="" style="padding:9px 13px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:12.5px">Отмена</button>'+
     '</div>'+
-    '<div style="font-size:10px;color:#7a9aaa;line-height:1.45;margin-top:7px">Имя из справочника подтянет материалы, цену и этап — сумма и этап тогда не нужны. Работа живёт в этом доме, справочник не меняется.</div>'+
+    '<div style="font-size:10px;color:#7a9aaa;line-height:1.45;margin-top:7px">Имя из справочника подтянет материалы, цену и этап — сумма'+(fixed?'':' и этап')+' тогда не нужны. Работа живёт в этом доме, справочник не меняется.</div>'+
   '</div>';
 }
 
@@ -12894,25 +12932,32 @@ function estRowsHtml(moving, mi, rows){
 // санузел…»), хотя бригада работает комнатой: в санузел заходят один раз.
 // Порядок строк для блоков считает общий модуль (`applyRooms`) — здесь только
 // заголовки, иначе экран читался бы комнатами, а объект собирался россыпью.
-function estStageBody(st, moving, mi, rows){
+function estStageBody(st, moving, mi, rows, sh, w, canRule){
   const blocks=st.blocks||[];
-  if(blocks.length<2)return estRowsHtml(moving, mi, rows);
+  if(blocks.length<2&&!moving)return estRowsHtml(moving, mi, rows);
   let base=0, h='';
   blocks.forEach(function(b){
     const from=base, to=base+b.positions.length; base=to;
     const id=st.n+"|"+b.key;
     const shut=!!blockShut[id];
-    h+='<div data-a="est-block-open" data-b="'+esc(id)+'" style="display:flex;align-items:baseline;gap:7px;margin:8px 0 2px;padding:5px 8px;background:#f6f8fb;border-radius:8px;cursor:pointer">'+
-        '<span style="flex:1;min-width:0;font-size:10.5px;font-weight:800;color:#5a7a9a;letter-spacing:0.4px;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+
+    h+='<div style="display:flex;align-items:center;gap:5px;margin:8px 0 2px;padding:4px 8px;background:#f6f8fb;border-radius:8px">'+
+        '<span data-a="est-block-open" data-b="'+esc(id)+'" style="flex:1;min-width:0;font-size:10.5px;font-weight:800;color:#5a7a9a;letter-spacing:0.4px;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;padding:3px 0">'+
           (shut?"▸ ":"▾ ")+esc(b.room||"Общее по дому")+
           '<span style="font-weight:700;color:#9aabbf;text-transform:none;letter-spacing:0"> · '+b.positions.length+' '+pluralRu(b.positions.length,"работа","работы","работ")+'</span>'+
         '</span>'+
         '<span style="font-size:11.5px;font-weight:800;color:#5a7a9a;white-space:nowrap">'+Math.round(b.cost).toLocaleString("ru-RU")+' ₽</span>'+
+        // Имя комнаты правится ЗДЕСЬ же: смотрят на него в смете, а живёт оно в
+        // модели — то же имя стоит на чертеже и в площадях.
+        (canRule&&b.key?'<button data-a="est-room-name" data-r="'+esc(b.key)+'" title="Переименовать помещение" style="width:24px;height:24px;background:transparent;border:1px solid #dde6f0;border-radius:7px;cursor:pointer;color:#7a9aaa;font-size:11px;flex-shrink:0">✎</button>':'')+
+        (canRule?'<button data-a="est-pos-add-open" data-k="'+esc((sh&&sh.id)||"")+'@'+st.n+'|'+esc(b.key)+'" title="Добавить работу в это помещение" style="width:24px;height:24px;background:transparent;border:1px solid #16a08555;border-radius:7px;cursor:pointer;color:#16a085;font-size:13px;flex-shrink:0;line-height:1">+</button>':'')+
       '</div>';
+    if(posAddOpen===((sh&&sh.id)||"")+"@"+st.n+"|"+b.key)h+=estAddFormHtml(sh, ((sh&&sh.id)||"")+"@"+st.n+"|"+b.key, b.room||"Общее по дому");
     if(shut)return;
-    // Места «сюда» — только в блоке взятой строки: работа принадлежит своему
-    // помещению по расчёту, и перенос в чужую комнату группировка тут же вернёт.
     const inside=mi>=from&&mi<to;
+    // Взятую строку можно не только переставить, но и отдать другой комнате:
+    // расчёт знает комнату лишь там, где по ней считал, а делают работу всё равно
+    // в санузле. Комнаты перечисляем ВСЕ, включая пустые: блока у них ещё нет.
+    if(inside)h+=estRoomPickHtml(moving, b.key, w);
     for(let i=from;i<to;i++){
       if(inside)h+=estDropSlot(moving, i, mi);
       h+=rows[i];
@@ -12920,6 +12965,21 @@ function estStageBody(st, moving, mi, rows){
     if(inside)h+=estDropSlot(moving, to, mi);
   });
   return h;
+}
+// «Перенести в» — ряд комнат дома. Показываем только у взятой строки: постоянный
+// ряд из пяти кнопок в каждой строке читался бы как часть сметы.
+function estRoomPickHtml(key, cur, w){
+  const rooms=(w&&w.rooms)||[];
+  const chip=function(rk, name){
+    if(rk===cur)return '';
+    return '<button data-a="est-pos-room" data-k="'+esc(key)+'" data-r="'+esc(rk)+'" style="border:1px solid '+RULE_COL+'55;background:#fff;color:'+RULE_COL+';border-radius:8px;padding:4px 9px;font-size:10.5px;font-weight:700;cursor:pointer">→ '+esc(name)+'</button>';
+  };
+  return '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin:4px 0 2px">'+
+    '<span style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.3px">ПЕРЕНЕСТИ В:</span>'+
+    rooms.map(function(r){ return chip(r.id, r.name||"Помещение"); }).join("")+
+    chip("", "Общее по дому")+
+    '<button data-a="est-pos-room" data-k="'+esc(key)+'" data-r="~" title="Вернуть комнату, которую дал расчёт" style="border:1px solid #dde6f0;background:#fff;color:#7a9aaa;border-radius:8px;padding:4px 9px;font-size:10.5px;font-weight:700;cursor:pointer">⟲ по расчёту</button>'+
+  '</div>';
 }
 function estBodyHtml(sh, types, live, actions){
   const w=works2(sh, Object.assign(specCtx(sh), { winTypes:types }));
@@ -13030,7 +13090,7 @@ function estBodyHtml(sh, types, live, actions){
             specMatsListHtml(p, sh, live)+
             (open?estWhyEditor(p, sh):'')+
           '</div>';
-        })))+
+        }), sh, w, canRule))+
       '</div>';
     }).join("");
   } else {
@@ -21679,26 +21739,7 @@ function bind(){
     };}
     else if(a==="model-room-name"){el.oninput=()=>{
       const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
-      // Комната может быть и вторым помещением отсека (санузел в углу) — искать надо
-      // в обоих местах, иначе половина имён не правится вовсе.
-      let r=(sh.model.rooms||[]).find(function(x){return x.id===el.dataset.id;});
-      if(!r)(sh.model.rooms||[]).forEach(function(b){ if(b.sub&&b.sub.id===el.dataset.id)r=b.sub; });
-      // Комната, вырезанная свободной стеной, ни в одном отсеке не лежит: её имя,
-      // раскладка и отделка живут в собственной записи с якорем — точкой ВНУТРИ
-      // комнаты. Номер области для этого не годится: он меняется от любой правки.
-      if(!r){
-        const reg=modelRooms(sh.model).find(function(x){return x.id===el.dataset.id;});
-        if(!reg)return;
-        const spots=(sh.model.spots||[]).slice();
-        const at=spots.findIndex(function(x){return x.id===el.dataset.id;});
-        if(at>=0)spots[at]=Object.assign({},spots[at],{name:el.value});
-        else spots.push({ id:el.dataset.id, name:el.value, pts:reg.pts||{},
-          x:Math.round(reg.label.x), y:Math.round(reg.label.y) });
-        sh.model.spots=spots;
-        modelSync(sh); scheduleSave();
-        return;
-      }
-      r.name=el.value; modelSync(sh); scheduleSave();
+      if(modelRoomRename(sh, el.dataset.id, el.value))scheduleSave();
     };}
     else if(a==="model-room-len"){el.onchange=()=>{
       const sh=specSheet(specOpenId); if(!sh||!sh.model)return;
@@ -22030,6 +22071,14 @@ function bind(){
     else if(a==="est-pos-add-open"){el.onclick=()=>{ posAddOpen=el.dataset.k||""; fl(); };}
     else if(a==="est-pos-add-do"){el.onclick=()=>{
       const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
+      // Адрес «<лист>@<этап>|<комната>»: кнопка «+» в шапке помещения знает, куда
+      // кладут работу, и спрашивать этап второй раз незачем.
+      const tag=String(el.dataset.k||"");
+      const at=tag.indexOf("@");
+      const cut=at>0?tag.slice(at+1):"";
+      const bar=cut.indexOf("|");
+      const toStage=cut?(Number(cut.slice(0,bar))||0):0;
+      const toRoom=cut?cut.slice(bar+1):"";
       const name=((document.getElementById("pad-n")||{}).value||"").trim();
       if(!name){ alert("Впишите название работы."); return; }
       const kind=sh.kind||"banya";
@@ -22043,7 +22092,36 @@ function bind(){
         : { id:gid(), name:name, cost:Math.round(cost),
             stage:Number((document.getElementById("pad-stage")||{}).value)||0 };
       sh.posAdd=(sh.posAdd||[]).concat([row]);
+      if(cut){
+        const key="add:"+row.id;
+        // Этап и комната — там же, куда добавляли. Этап пишем отдельной отметкой:
+        // у строки из справочника он свой, а человек указал этот.
+        sh.posStage=Object.assign({}, sh.posStage||{}, { [key]: toStage });
+        sh.posRoom=Object.assign({}, sh.posRoom||{}, { [key]: toRoom||ROOM_HOUSE });
+      }
       posAddOpen=""; scheduleSave(); fl();
+    };}
+    // Работу приписывают к комнате руками: расчёт знает помещение только там, где
+    // по нему считал, а делают её всё равно в санузле.
+    else if(a==="est-pos-room"){el.onclick=()=>{
+      const key=el.dataset.k||"", to=String(el.dataset.r||"");
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
+      const map=Object.assign({}, sh.posRoom||{});
+      if(to==="~")delete map[key]; else map[key]=to||ROOM_HOUSE;
+      if(Object.keys(map).length)sh.posRoom=map; else delete sh.posRoom;
+      estMoveKey=""; estMoveSheet=""; scheduleSave(); fl();
+    };}
+    // Имя помещения правится прямо над его работами — а живёт в модели: то же имя
+    // стоит на чертеже и в площадях, и второй копии у него быть не должно.
+    else if(a==="est-room-name"){el.onclick=()=>{
+      const id=String(el.dataset.r||"");
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!id)return;
+      const w=works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes }));
+      const cur=((w.rooms||[]).find(function(r){ return r.id===id; })||{}).name||"";
+      const next=prompt("Название помещения", cur);
+      if(next==null)return;
+      if(!modelRoomRename(sh, id, String(next).trim())){ alert("Это не помещение чертежа — имя ему даёт расчёт."); return; }
+      scheduleSave(); fl();
     };}
     else if(a==="est-pos-del"){el.onclick=()=>{
       const key=el.dataset.k||"";
@@ -22055,6 +22133,7 @@ function bind(){
         const id=key.slice(4);
         const rest=(sh.posAdd||[]).filter(function(x){ return String(x.id)!==id; });
         if(rest.length)sh.posAdd=rest; else delete sh.posAdd;
+        estForgetKey(sh, key);
         scheduleSave(); fl(); return;
       }
       // Выключаем строку в ЭТОМ листе, не трогая правило и справочник: они общие

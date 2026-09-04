@@ -522,7 +522,11 @@ export function allPositionsRaw(sheet, ctx) {
   // коробка. Править справочник ради одного дома нельзя, он общий.
   const all = (c.pies ? out.concat(layerPositions(sheet, c.estimates, c.products, c.winTypes)) : out)
     .concat(addedPositions(sheet, c.estimates, c.products));
-  return applyRooms(applyOrder(applyStage(applyCost(dropOff(applyPicks(applyMatEdits(all, sheet, c.products), sheet), sheet), sheet), sheet), sheet), sheet);
+  // Комнаты дома нужны для ПОДПИСИ приписанной руками работы: сама приписка
+  // хранит только адрес комнаты, а имя живёт в модели — второй его копии в
+  // листе быть не должно, она разошлась бы с чертежом.
+  const rooms = ((probeSheet(sheet, c.winTypes).specs || {}).rooms) || [];
+  return applyRooms(applyOrder(applyStage(applyCost(dropOff(applyPicks(applyMatEdits(all, sheet, c.products), sheet), sheet), sheet), sheet), sheet), sheet, rooms);
 }
 
 // Работы, убранные руками из ЭТОГО дома. Смета справочника описывает типовой дом,
@@ -623,11 +627,34 @@ export function roomKeyOf(p) {
   return n ? "n:" + n : "";
 }
 
+// Работу можно приписать к комнате РУКАМИ (`sheet.posRoom[posKey]`). Расчёт знает
+// комнату только там, где считал по ней (правило по помещениям); обязательная
+// строка справочника посчитана на весь дом, а делают её всё равно в санузле — и
+// бригаде нужен список по комнатам, а не «общее по дому» на восемнадцать работ.
+//
+// «Общее по дому» — тоже осознанный выбор, поэтому у него свой ключ: пустая
+// строка означала бы «человек ничего не решал», и такую работу расчёт утащил бы
+// обратно в свою комнату.
+export const ROOM_HOUSE = "-";
+export function posRoomOf(sheet, key) {
+  return String((((sheet && sheet.posRoom) || {})[key]) || "");
+}
+
 // Порядок блоков — по ПЕРВОМУ появлению: он и так осмысленный (в каком порядке
 // правила прошли по дому), и его же двигает ручная перестановка строк. Отдельный
 // список комнат пришлось бы вести руками, и он разошёлся бы с чертежом.
-export function applyRooms(raw) {
-  const rows = (raw.positions || []).map(function (p, i) { return { p: p, i: i }; });
+export function applyRooms(raw, sheet, rooms) {
+  const named = {};
+  (rooms || []).forEach(function (r) { if (r && r.id) named[r.id] = String(r.name || ""); });
+  // Ручная приписка меняет ТОЛЬКО комнату: количество и `why` остаются как
+  // посчитано — «на весь дом» и есть правда о том, откуда взялось число.
+  const moved = (raw.positions || []).map(function (p) {
+    const ov = posRoomOf(sheet, p.key);
+    if (!ov) return p;
+    if (ov === ROOM_HOUSE) return Object.assign({}, p, { room: "", roomId: "", roomSet: true });
+    return Object.assign({}, p, { room: named[ov] || p.room || "", roomId: ov, roomSet: true });
+  });
+  const rows = moved.map(function (p, i) { return { p: p, i: i }; });
   const byStage = {};
   rows.forEach(function (r) {
     const n = Number(r.p.stage) || 0;

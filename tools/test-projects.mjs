@@ -706,4 +706,75 @@ function create(p, name) {
     built.map((w) => w.n).join(' | '))
 }
 
+// ── Блоки правятся руками ────────────────────────────────────────────────────
+// Расчёт знает комнату только там, где по ней считал: восемнадцать обязательных
+// работ висят в «общем по дому», а делают их в санузле и в зале. Значит имя
+// помещения, состав блока и переносы между блоками должны править руками.
+{
+  t.section('Правка блоков помещений')
+  const p = panel([
+    { id: 'r_wall', kind: 'house', estId: 'e_osb', what: 'surface', k: 'wall', scope: 'room', qty: 1, stage: 3 },
+  ])
+  create(p, 'Дом с блоками')
+  // Обязательная работа «на весь дом» в том же этапе: именно такие и висят
+  // общим списком, пока их не разложат по комнатам.
+  p.run('estimates=estimates.concat([{id:"e_clean",kind:"house",name:"Уборка",stage:3,lines:[{pid:"p_sock",qty:1}]}]);')
+  p.run('projBand="parts";')
+  const W = () => p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes}))')
+  const st = () => W().stages.filter((s) => s.n === 3)[0]
+  const layout = () => st().blocks.map((b) => (b.room || 'ДОМ') + ':' + b.positions.length).join(' | ')
+  t.ok('комнаты дома известны экрану', (W().rooms || []).length >= 2, JSON.stringify((W().rooms || []).length))
+  const house = st().blocks.filter((b) => !b.key)[0]
+  t.ok('обязательная работа висит в общем по дому', !!house && house.positions.length >= 1, layout())
+
+  // Взял строку — появились не только места «сюда», но и комнаты.
+  const key = house.positions[0].key
+  const grab = p.dom.node({ a: 'est-pos-grab', k: key }); p.run('bind();'); grab.onclick()
+  const held = p.run('tProjects()')
+  t.ok('предложено перенести в комнату', /ПЕРЕНЕСТИ В/.test(held))
+  t.ok('и комнаты перечислены', (held.match(/data-a="est-pos-room"/g) || []).length >= 3)
+
+  const room = W().rooms[0]
+  const chip = p.dom.node({ a: 'est-pos-room', k: key, r: room.id }); p.run('bind();'); chip.onclick()
+  t.ok('работа переехала в комнату',
+    st().blocks.filter((b) => b.key === room.id)[0].positions.some((x) => x.key === key), layout())
+  t.ok('приписка лежит в листе', p.q('projects[0].posRoom[' + JSON.stringify(key) + ']') === room.id)
+  t.ok('справочник не тронут', p.q('estimates.length') === 3)
+  t.ok('строку отпустили', p.q('estMoveKey') === '')
+  t.ok('деньги дома не изменились',
+    W().cost === p.q('allPositions(projects[0], specCtx(projects[0])).reduce(function(a,x){return a+x.cost;},0)'))
+
+  // Имя помещения правится тут же — и живёт в модели, то есть и на чертеже.
+  p.run('window.prompt=function(){return "Ванная комната"};')
+  const ren = p.dom.node({ a: 'est-room-name', r: room.id }); p.run('bind();'); ren.onclick()
+  t.ok('блок переименован', st().blocks.some((b) => b.room === 'Ванная комната'), layout())
+  t.ok('и это имя из модели', p.q('modelRooms(projects[0].model).filter(function(r){return r.id===' + JSON.stringify(room.id) + ';})[0].name') === 'Ванная комната')
+
+  // «+» в шапке помещения кладёт работу сразу туда, куда её добавляли.
+  const tag = p.q('projects[0].id') + '@3|' + room.id
+  const open = p.dom.node({ a: 'est-pos-add-open', k: tag }); p.run('bind();'); open.onclick()
+  t.ok('форма открылась в помещении', /ДОБАВИТЬ РАБОТУ — ВАННАЯ КОМНАТА/.test(p.run('tProjects()')))
+  p.dom.field('pad-n', 'Затирка швов'); p.dom.field('pad-cost', '5000')
+  const add = p.dom.node({ a: 'est-pos-add-do', k: tag }); p.run('bind();'); add.onclick()
+  const inRoom = st().blocks.filter((b) => b.key === room.id)[0]
+  t.ok('работа добавлена в это помещение', inRoom.positions.some((x) => x.name === 'Затирка швов'), layout())
+  t.ok('и в этот этап', st().positions.some((x) => x.name === 'Затирка швов'))
+
+  // Добавленную работу удаляют насовсем — она и появилась руками.
+  const own = inRoom.positions.filter((x) => x.name === 'Затирка швов')[0]
+  const del = p.dom.node({ a: 'est-pos-del', k: own.key }); p.run('bind();'); del.onclick()
+  t.ok('работа удалена', !st().positions.some((x) => x.name === 'Затирка швов'))
+
+  // «По расчёту» возвращает работу туда, где её посчитали.
+  const grab2 = p.dom.node({ a: 'est-pos-grab', k: key }); p.run('bind();'); grab2.onclick()
+  const undo = p.dom.node({ a: 'est-pos-room', k: key, r: '~' }); p.run('bind();'); undo.onclick()
+  t.ok('работа вернулась в общее по дому',
+    st().blocks.filter((b) => !b.key)[0].positions.some((x) => x.key === key), layout())
+  t.ok('и лист чист', !p.q('projects[0].posRoom'), JSON.stringify(p.q('projects[0].posRoom')))
+  // Удалённая руками работа не оставляет за собой ни этапа, ни комнаты: иначе они
+  // лежат в снимке вечно и всплывут на следующей строке с тем же адресом.
+  t.ok('от удалённой работы не осталось отметок',
+    !p.q('Object.keys(projects[0].posStage||{}).filter(function(k){return k.indexOf("add:")===0;}).length'))
+}
+
 t.done()

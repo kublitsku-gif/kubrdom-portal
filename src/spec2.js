@@ -18,6 +18,7 @@
 import { sheetTotals, pointTotals, pointMeta } from "./spec.js";
 import { modelIssues, modelAreas, modelTotals } from "./model.js";
 import { allPositions, allPositionsRaw, probeSheet, positionWhy, roomKeyOf, PIE_SOURCES, pieCost } from "./recipe.js";
+export { ROOM_HOUSE, posRoomOf } from "./recipe.js";
 
 // Пробный лист и объяснение количества живут в src/recipe.js — там же, где
 // правила, которые ими пользуются. Здесь они переэкспортированы, потому что
@@ -164,6 +165,10 @@ export function works2(sheet, ctx) {
   });
   return {
     facts: modelFacts(sheet, c.winTypes),
+    // Комнаты дома — ВСЕ, а не только те, где что-то посчиталось: работу
+    // переносят и в пустую комнату, а блока у неё ещё нет.
+    rooms: (((probeSheet(sheet, c.winTypes).specs) || {}).rooms || [])
+      .map(function (r) { return { id: r.id, name: String(r.name || "") }; }),
     positions: positions, stages: stages, groups: raw.groups,
     cost: Math.round(cost), markup: mk, price: Math.round(cost * (1 + mk / 100)),
     gaps: gaps2(sheet, c),

@@ -612,6 +612,28 @@ const SHEET = {
   t.ok('блок сворачивается',
     (p.run('tSpec2()').match(/data-a="est-block-open"/g) || []).length === blocks.length)
   t.ok('и в листе от этого ничего не записалось', !p.q('spec2Sheet().blockShut'))
+  p.run('bind();'); head.onclick()
+
+  // Блоки правятся и здесь: экран сметы у двух разделов один.
+  const st2 = () => p.q('works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes})).stages.filter(function(s){return s.n===3;})[0]')
+  const key = blocks[0].positions[0].key
+  const to = p.q('works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes})).rooms')
+    .filter((r) => r.id !== blocks[0].key)[0]
+  const grab = p.dom.node({ a: 'est-pos-grab', k: key }); p.run('bind();'); grab.onclick()
+  t.ok('комнаты предложены', /ПЕРЕНЕСТИ В/.test(p.run('tSpec2()')))
+  const chip = p.dom.node({ a: 'est-pos-room', k: key, r: to.id }); p.run('bind();'); chip.onclick()
+  t.ok('работа переехала в другую комнату',
+    st2().blocks.filter((b) => b.key === to.id)[0].positions.some((x) => x.key === key),
+    st2().blocks.map((b) => (b.room || 'ДОМ') + ':' + b.positions.length).join(' | '))
+  t.ok('приписка лежит в опытном листе', p.q('spec2Sheet().posRoom[' + JSON.stringify(key) + ']') === to.id)
+
+  // Имя помещения правится над его работами и живёт в модели.
+  p.run('window.prompt=function(){return "Мойка"};')
+  const ren = p.dom.node({ a: 'est-room-name', r: to.id }); p.run('bind();'); ren.onclick()
+  t.ok('помещение переименовано', st2().blocks.some((b) => b.room === 'Мойка'),
+    st2().blocks.map((b) => b.room).join(','))
+  t.ok('и имя взято из модели',
+    p.q('modelRooms(spec2Sheet().model).filter(function(r){return r.id===' + JSON.stringify(to.id) + ';})[0].name') === 'Мойка')
 }
 
 t.done()
