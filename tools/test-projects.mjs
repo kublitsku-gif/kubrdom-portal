@@ -619,4 +619,47 @@ function create(p, name) {
   t.ok('зато есть «убрать»', html.indexOf('data-a="est-mat-add-del"') >= 0)
 }
 
+// ── Материал убирается из строки ─────────────────────────────────────────────
+// Экран сметы у проекта и у опытного раздела ОДИН, и правится он сразу в обоих:
+// здесь сторожим, что правка доехала до проекта — по нему собирают объект и
+// договор, и цена, показанная на «Составе», обязана быть той же.
+{
+  t.section('Убрать материал из строки')
+  const p = panel()
+  create(p, 'Дом без гофры')
+  p.run('projBand="parts";')
+  const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
+  const openMats = p.dom.node({ a: 'est-mats-open', k: key }); p.run('bind();'); openMats.onclick()
+  const pos0 = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0]')
+  const mat = (pos0.mats || [])[0]
+  t.ok('в строке есть материал', !!mat && !!mat.pid, JSON.stringify(mat && mat.n))
+  t.ok('и у него крестик', p.run('tProjects()').indexOf('data-a="est-mat-off"') >= 0)
+
+  const drop = p.dom.node({ a: 'est-mat-off', k: key + '|' + mat.pid }); p.run('bind();'); drop.onclick()
+  const pos1 = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0]')
+  t.ok('материала в строке нет', !(pos1.mats || []).some((m) => m.pid === mat.pid))
+  t.ok('и цена упала на него',
+    pos1.cost === pos0.cost - Math.round((Number(mat.cost) || 0) * (Number(mat.qty) || 0)),
+    pos0.cost + ' → ' + pos1.cost)
+  t.ok('правка лежит в проекте', p.q('projects[0].matOff[' + JSON.stringify(key) + '].join(",")') === mat.pid)
+  t.ok('справочник не тронут', p.q('estimates.length') === 2)
+  t.ok('в строке видно, что убрано', /УБРАНО ИЗ ЭТОГО ДОМА/.test(p.run('tProjects()')))
+
+  // Объект собирается тем же составом, что показан: продали одно — строят то же.
+  p.run('projBand="money";tProjects();')
+  const toObj = p.dom.node({ a: 'spec-to-object', id: p.q('projects[0].id') }); p.run('bind();'); toObj.onclick()
+  const works = p.q('objects[0].stages.reduce(function(a,s){return a.concat(s.works||[]);},[])')
+    .filter((w) => w.posKey === key)
+  t.ok('работа на стройке есть', works.length === 1, 'работ: ' + works.length)
+  t.ok('на стройку убранное не уехало', !(works[0].mats || []).some((m) => m.pid === mat.pid))
+
+  // Возвращается тем же тапом.
+  p.run('projBand="parts";tProjects();')
+  const back = p.dom.node({ a: 'est-mat-on', k: key + '|' + mat.pid }); p.run('bind();'); back.onclick()
+  const pos2 = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0]')
+  t.ok('материал вернулся', (pos2.mats || []).some((m) => m.pid === mat.pid))
+  t.ok('и цена прежняя', pos2.cost === pos0.cost, String(pos2.cost))
+  t.ok('лист чист', !p.q('projects[0].matOff'))
+}
+
 t.done()
