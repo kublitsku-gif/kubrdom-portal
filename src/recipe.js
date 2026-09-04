@@ -492,7 +492,7 @@ export function allPositionsRaw(sheet, ctx) {
   // коробка. Править справочник ради одного дома нельзя, он общий.
   const all = (c.pies ? out.concat(layerPositions(sheet, c.estimates, c.products, c.winTypes)) : out)
     .concat(addedPositions(sheet, c.estimates, c.products));
-  return applyStage(dropOff(applyPicks(applyMatEdits(all, sheet, c.products), sheet), sheet), sheet);
+  return applyOrder(applyStage(dropOff(applyPicks(applyMatEdits(all, sheet, c.products), sheet), sheet), sheet), sheet);
 }
 
 // Работы, убранные руками из ЭТОГО дома. Смета справочника описывает типовой дом,
@@ -543,6 +543,39 @@ export function addedPositions(sheet, estimates, products) {
 //
 // По этапам идут сроки, приёмка и транши, поэтому переставленная работа обязана
 // уехать в новый этап целиком: и в смете, и в стройке. Обе читают этот список.
+// Порядок работ ВНУТРИ этапа. Считается смета сама, порядок в ней — порядок
+// расчёта, а не стройки: бригаде важно, что сначала обрешётка, потом обшивка, и
+// читать смету, перепрыгивая глазами, — верный способ что-то пропустить.
+//
+// Между этапами порядок задают сами этапы, и трогать его нельзя: смета читается
+// этапами, и перемешать их значит стереть то, по чему идут сроки и приёмка.
+export function applyOrder(raw, sheet) {
+  const map = (sheet && sheet.posOrder) || {};
+  if (!Object.keys(map).length) return raw;
+  const rows = (raw.positions || []).map(function (p, i) { return { p: p, i: i }; });
+  const byStage = {};
+  rows.forEach(function (r) {
+    const n = Number(r.p.stage) || 0;
+    (byStage[n] = byStage[n] || []).push(r);
+  });
+  Object.keys(byStage).forEach(function (n) {
+    byStage[n].sort(function (a, b) {
+      const av = map[a.p.key], bv = map[b.p.key];
+      if (av != null && bv != null) return av - bv;
+      if (av != null) return -1;          // расставленные руками идут первыми
+      if (bv != null) return 1;
+      return a.i - b.i;                   // остальные — в порядке расчёта
+    });
+  });
+  // Раскладываем обратно по тем же местам: первая строка этапа остаётся первой
+  // строкой этапа, иначе этапы поменялись бы местами на экране.
+  const queue = {};
+  Object.keys(byStage).forEach(function (n) { queue[n] = byStage[n].slice(); });
+  return Object.assign({}, raw, {
+    positions: rows.map(function (r) { return queue[Number(r.p.stage) || 0].shift().p; }),
+  });
+}
+
 export function applyStage(raw, sheet) {
   const map = (sheet && sheet.posStage) || {};
   if (!Object.keys(map).length) return raw;

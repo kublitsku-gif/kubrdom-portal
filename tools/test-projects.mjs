@@ -183,8 +183,16 @@ function create(p, name) {
   })
   create(p)
   const parts = p.run('projBand="parts";tProjects()')
-  t.ok('материалы перечнем', parts.indexOf('data-a="est-mat-open"') >= 0)
-  t.ok('количество правится руками', parts.indexOf('data-a="est-mat-qty"') >= 0)
+  // Список читают РАБОТАМИ: двадцать строк сметы, развернувших по шесть
+  // материалов, не дают увидеть сам состав дома. Материалы — за одну строку.
+  t.ok('материалы свёрнуты', parts.indexOf('data-a="est-mats-open"') >= 0 &&
+    parts.indexOf('data-a="est-mat-open"') < 0)
+  t.ok('и видно, сколько их и на сколько', /материалы · \d+ · /.test(parts), 'нет сводки')
+  const matsKey = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
+  const openMats = p.dom.node({ a: 'est-mats-open', k: matsKey }); p.run('bind();'); openMats.onclick()
+  const parts2 = p.run('tProjects()')
+  t.ok('разворачиваются по тапу', parts2.indexOf('data-a="est-mat-open"') >= 0)
+  t.ok('количество правится руками', parts2.indexOf('data-a="est-mat-qty"') >= 0)
   t.ok('чип «откуда число» тапается', parts.indexOf('data-a="est-why"') >= 0)
   t.ok('правила раскрываются тут же', parts.indexOf('data-a="proj-rules"') >= 0)
   t.ok('но по умолчанию свёрнуты', parts.indexOf('data-a="rule-add"') < 0)
@@ -376,6 +384,44 @@ function create(p, name) {
   t.ok('этап возвращается к справочному',
     p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0].stage') === was)
   t.ok('и отметка из листа стёрта', !p.q('projects[0].posStage'))
+}
+
+// ── Порядок работ внутри этапа ───────────────────────────────────────────────
+// Смета считается сама, и порядок в ней — порядок расчёта, а не стройки. Бригаде
+// важно, что сначала обрешётка, потом обшивка; читать смету, перепрыгивая
+// глазами, — верный способ пропустить работу.
+{
+  t.section('Порядок внутри этапа')
+  const p = panel()
+  create(p, 'Дом с порядком')
+  p.run('projBand="parts";')
+  // Две работы в одном этапе: обе из справочника, обе на втором.
+  const stageKeys = () => p.q('(works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).stages.filter(function(s){return s.n===2;})[0]||{positions:[]}).positions.map(function(x){return x.key;})')
+  const before = stageKeys()
+  t.ok('в этапе две работы', before.length === 2, JSON.stringify(before))
+  t.ok('стрелки показаны', p.run('tProjects()').indexOf('data-a="est-pos-move"') >= 0)
+
+  const down = p.dom.node({ a: 'est-pos-move', k: before[0], d: '1' })
+  p.run('bind();'); down.onclick()
+  const after = stageKeys()
+  t.ok('работа опустилась', after.join(',') === before.slice().reverse().join(','),
+    before.join(',') + ' → ' + after.join(','))
+  // Порядок хранится в листе — справочник общий на все дома.
+  t.ok('порядок записан в лист', !!p.q('projects[0].posOrder'))
+  t.ok('справочник не тронут', p.q('estimates.length') === 2)
+
+  const up = p.dom.node({ a: 'est-pos-move', k: before[0], d: '-1' })
+  p.run('bind();'); up.onclick()
+  t.ok('и поднимается обратно', stageKeys().join(',') === before.join(','), stageKeys().join(','))
+
+  // Этапы местами не меняются: по ним идут сроки и приёмка, а перестановка —
+  // только внутри своего этапа.
+  const stages = p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).stages.map(function(s){return s.n;})')
+  t.ok('этапы на своих местах', stages.join(',') === stages.slice().sort(function(a,b){return a-b;}).join(','),
+    stages.join(','))
+  t.ok('деньги не изменились',
+    p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost') ===
+    p.q('allPositions(projects[0], specCtx(projects[0])).reduce(function(a,x){return a+x.cost;},0)'))
 }
 
 t.done()

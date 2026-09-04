@@ -2266,6 +2266,7 @@ let estWhyOpen="";         // у какой сметы раскрыт редак
 let matSwapOpen="";        // какой материал сметы сейчас меняют: "<ключ позиции>|<pid>"
 let matAddOpen="";         // у какой строки сметы открыта форма «+ материал»
 let posAddOpen="";         // у какого листа открыта форма «+ работа»
+let matsOpen={};           // у каких строк сметы раскрыт список материалов
 let modelStageTab=0;       // 0 = все этапы
 let specSheets=[];
 // «Спецификация 2» — опытный раздел (см. src/spec2.js). Листы держим ОТДЕЛЬНО: по
@@ -12579,7 +12580,22 @@ function specMatsListHtml(pos, sh, live){
   if(!mats.length)return "";
   const can=!!live&&canRuleSheet(sh);
   const sw=matSwapsOf(sh, pos.key);
-  return '<div style="margin-top:6px;border-top:1px dashed #eef2f7">'+
+  // Список работ читают работами: на экране двадцать строк сметы, и если каждая
+  // разворачивает по шесть материалов, увидеть сам состав дома нельзя. Материалы
+  // прячем за одну строку — они нужны, когда в них лезут, а не всегда.
+  //
+  // Открытый редактор замены или форма «+ материал» держат список раскрытым сами:
+  // свернуть то, в чём человек сейчас правит, значит потерять его правку из виду.
+  const busyHere=(matSwapOpen||"").indexOf(pos.key+"|")===0||matAddOpen===pos.key;
+  const open=!!matsOpen[pos.key]||busyHere;
+  const sum=mats.reduce(function(a,m){ return a+(Number(m.cost)||0)*(Number(m.qty)||0); },0);
+  const head='<div style="margin-top:5px">'+
+    '<button data-a="est-mats-open" data-k="'+esc(pos.key)+'" style="border:none;background:transparent;padding:2px 0;font-size:10.5px;font-weight:700;color:#7a9aaa;cursor:pointer">'+
+      (open?"▾":"▸")+' материалы · '+mats.length+' · '+Math.round(sum).toLocaleString("ru-RU")+' ₽'+
+    '</button>'+
+  '</div>';
+  if(!open)return head;
+  return head+'<div style="margin-top:2px;border-top:1px dashed #eef2f7">'+
     mats.map(function(m){
       const unit=specMatUnit(m);
       const qty=Math.round((Number(m.qty)||0)*100)/100;
@@ -12832,7 +12848,7 @@ function estBodyHtml(sh, types, live, actions){
           '<span style="flex:1;min-width:0;font-size:11px;font-weight:700;color:#0d1b2e;letter-spacing:0.4px;text-transform:uppercase">'+esc(st.label)+'</span>'+
           '<span style="font-size:12.5px;font-weight:800;color:#0d1b2e;white-space:nowrap">'+Math.round(st.cost).toLocaleString("ru-RU")+' ₽</span>'+
         '</div>'+
-        st.positions.map(function(p){
+        st.positions.map(function(p, pi, arr){
           // Редактор раскрываем у ПЕРВОЙ строки этой сметы: правило по помещениям
           // даёт их несколько, и три одинаковых редактора подряд — это не выбор.
           const first=seen[p.estId]!==true; if(p.estId)seen[p.estId]=true;
@@ -12850,6 +12866,12 @@ function estBodyHtml(sh, types, live, actions){
               // Убрать работу из ЭТОГО дома: контейнер уже стоит на участке,
               // электрику ведёт заказчик. Правило и справочник не трогаем — они
               // общие; строка выключается в листе и возвращается тем же тапом.
+              // Порядок внутри этапа: смета считается сама, но читают её глазами
+              // сверху вниз, и бригаде важно, что сначала обрешётка, потом обшивка.
+              (canRule&&arr.length>1
+                ? ['<button data-a="est-pos-move" data-k="'+esc(p.key)+'" data-d="-1"'+(pi===0?' disabled':'')+' title="Выше в этапе" style="width:20px;height:22px;background:transparent;border:1px solid #dde6f0;border-radius:6px 6px 0 0;cursor:'+(pi===0?'default':'pointer')+';color:'+(pi===0?'#dde6f0':'#7a9aaa')+';font-size:9px;flex-shrink:0;line-height:1;padding:0">▲</button>',
+                   '<button data-a="est-pos-move" data-k="'+esc(p.key)+'" data-d="1"'+(pi===arr.length-1?' disabled':'')+' title="Ниже в этапе" style="width:20px;height:22px;margin-left:-21px;margin-top:22px;background:transparent;border:1px solid #dde6f0;border-radius:0 0 6px 6px;cursor:'+(pi===arr.length-1?'default':'pointer')+';color:'+(pi===arr.length-1?'#dde6f0':'#7a9aaa')+';font-size:9px;flex-shrink:0;line-height:1;padding:0">▼</button>'].join("")
+                : '')+
               // Этап работы правится тут же: по этапам идут сроки, приёмка и
               // транши, и уводить человека за этим в правило — значит менять
               // порядок стройки во ВСЕХ домах ради одного.
@@ -21786,6 +21808,28 @@ function bind(){
       const map=Object.assign({}, sh.matAdd||{});
       map[posKey]=(map[posKey]||[]).concat([m]);
       sh.matAdd=map; matAddOpen=""; fl();
+    };}
+    else if(a==="est-mats-open"){el.onclick=()=>{
+      const k=el.dataset.k||""; if(!k)return;
+      const map=Object.assign({}, matsOpen);
+      if(map[k])delete map[k]; else map[k]=1;
+      matsOpen=map; fl();
+    };}
+    else if(a==="est-pos-move"){el.onclick=()=>{
+      const key=el.dataset.k||"", dir=Number(el.dataset.d)||0;
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!key||!dir)return;
+      // Порядок берём ТОТ, что на экране: он уже с учётом прежних перестановок,
+      // и считать его заново другим кодом значит получить второй порядок.
+      const w=works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes }));
+      const st=(w.stages||[]).find(function(s){ return s.positions.some(function(x){ return x.key===key; }); });
+      if(!st)return;
+      const keys=st.positions.map(function(x){ return x.key; });
+      const i=keys.indexOf(key), j=i+dir;
+      if(i<0||j<0||j>=keys.length)return;
+      keys.splice(j, 0, keys.splice(i, 1)[0]);
+      const map=Object.assign({}, sh.posOrder||{});
+      keys.forEach(function(k,n){ map[k]=n; });
+      sh.posOrder=map; scheduleSave(); fl();
     };}
     else if(a==="est-pos-stage"){el.onchange=()=>{
       const key=el.dataset.k||"";

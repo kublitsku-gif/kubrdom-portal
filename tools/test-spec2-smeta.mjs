@@ -335,7 +335,12 @@ const SHEET = {
   })
   p.run('spec2Tab="scheme";tSpec2();')
   const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  const est = p.run('modelFull=false;spec2Tab="est";tSpec2()')
+  const est0 = p.run('modelFull=false;spec2Tab="est";tSpec2()')
+  // Список читают РАБОТАМИ: материалы свёрнуты за одну строку, пока в них не лезут.
+  t.ok('материалы по умолчанию свёрнуты',
+    est0.indexOf('data-a="est-mats-open"') >= 0 && est0.indexOf('data-a="est-mat-open"') < 0)
+  p.run('(works2(spec2Sheet(), specCtx(spec2Sheet())).positions||[]).forEach(function(x){ matsOpen[x.key]=1; });')
+  const est = p.run('tSpec2()')
 
   t.ok('материалы идут перечнем, а не строкой', (est.match(/data-a="est-mat-open"/g) || []).length >= 2)
   t.ok('у каждого своя цена', /₽\/шт ×/.test(est))
