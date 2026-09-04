@@ -547,4 +547,44 @@ function create(p, name) {
     String((html.match(/↗/g) || []).length))
 }
 
+// ── Количество дописанного материала правится ────────────────────────────────
+// Дописанные материалы прибавляются к строке последними, и ручное количество их
+// не догоняло: число на экране менялось, а в смете оставалось прежним. Хуже
+// того — правка уходила в пустой ключ и доставалась чужому материалу без товара.
+{
+  t.section('Количество дописанного материала')
+  const p = panel()
+  create(p, 'Дом с дописанным материалом')
+  p.run('projBand="parts";')
+  const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
+  const openMats = p.dom.node({ a: 'est-mats-open', k: key }); p.run('bind();'); openMats.onclick()
+
+  // Дописываем материал, которого нет в базе: 1 штука по 500 ₽.
+  const addOpen = p.dom.node({ a: 'est-mat-add-open', k: key }); p.run('bind();'); addOpen.onclick()
+  p.dom.field('mad-n', 'Уголок усиленный'); p.dom.field('mad-qty', '1'); p.dom.field('mad-cost', '500')
+  const addDo = p.dom.node({ a: 'est-mat-add-do', k: key }); p.run('bind();'); addDo.onclick()
+  const mid = p.q('projects[0].matAdd[' + JSON.stringify(key) + '][0].id')
+  const cost1 = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0].cost')
+
+  // И правим количество: было 1, стало 4.
+  const qty = p.dom.node({ a: 'est-mat-qty', k: key + '|' + mid })
+  qty.value = '4'
+  p.run('bind();'); qty.onchange()
+  const pos = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0]')
+  const own = (pos.mats || []).filter((m) => m.n === 'Уголок усиленный')[0]
+  t.ok('количество применилось', own && own.qty === 4, JSON.stringify(own && own.qty))
+  t.ok('и помечено как ручное', own && own.qtySet === true)
+  t.ok('деньги строки выросли на три штуки', pos.cost === cost1 + 1500, cost1 + ' → ' + pos.cost)
+  // Правка адресуется своим ключом, а не пустым: чужие материалы её не видят.
+  t.ok('чужие материалы не тронуты',
+    (pos.mats || []).filter((m) => m.n !== 'Уголок усиленный').every((m) => !m.qtySet),
+    JSON.stringify((pos.mats || []).map((m) => [m.n, m.qty, !!m.qtySet])))
+
+  // Заменять дописанный нечем — у него нет товара в базе; есть крестик.
+  const html = p.run('tProjects()')
+  t.ok('у дописанного нет «заменить»',
+    html.indexOf('data-a="est-mat-open" data-k="' + key + '|' + mid + '"') < 0)
+  t.ok('зато есть «убрать»', html.indexOf('data-a="est-mat-add-del"') >= 0)
+}
+
 t.done()

@@ -338,6 +338,12 @@ export function matQtyOf(sheet, key) {
 // справочника описывает типовой дом, а на этом доме бывает лишний уголок или
 // вторая коробка — дописать его прямо в строке честнее, чем править справочник
 // ради одного дома.
+// Адрес материала внутри строки сметы. У каталожного это его товар (`pid`), у
+// дописанного руками товара может не быть вовсе — тогда собственный id. Без этого
+// ручное количество дописанного уходило в пустой ключ и молча доставалось чужому
+// материалу без товара, а сам дописанный оставался с прежним числом.
+export function matKeyOf(m) { return String((m && (m.pid || m.id)) || ""); }
+
 export function matAddOf(sheet, key) {
   return (((sheet && sheet.matAdd) || {})[key]) || [];
 }
@@ -362,7 +368,7 @@ export function applyMatEdits(positions, sheet, products) {
       if (prod) { out = swapMat(m, prod, pos.area); hit = true; }
       // Ручное количество ставится ПОСЛЕ замены: человек правит то число, которое
       // видит на экране, а видит он уже новый товар.
-      const own = Number(q[out.pid || ""]);
+      const own = Number(q[matKeyOf(out)]);
       if (isFinite(own) && own > 0 && own !== Number(out.qty)) {
         out = Object.assign({}, out, { qty: own, qtySet: true });
         hit = true;
@@ -374,7 +380,15 @@ export function applyMatEdits(positions, sheet, products) {
     if (!hit) return pos;
     // Дописанные идут в конце списка и помечены: по строке видно, что в ней от
     // справочника, а что добавил человек на этом доме.
-    const full = mats.concat(add.map(function (a) { return Object.assign({}, a, { added: true }); }));
+    // Ручное количество работает и на дописанных: их прибавляют последними, и
+    // раньше правка их просто не догоняла — число на экране менялось, а в смете нет.
+    const full = mats.concat(add.map(function (a) {
+      const own = Number(q[matKeyOf(a)]);
+      const row = Object.assign({}, a, { added: true });
+      return (isFinite(own) && own > 0)
+        ? Object.assign(row, { qty: own, qtySet: true })
+        : row;
+    }));
     const sum = full.reduce(function (a, m) { return a + (Number(m.cost) || 0) * (Number(m.qty) || 0); }, 0);
     return Object.assign({}, pos, { mats: full, cost: Math.round(sum * (Number(pos.factor) || 1)) });
   });

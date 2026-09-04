@@ -54,7 +54,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2, works2 } from "../src/spec2.js";
-import { allPositions, allPositionsRaw, addedPositions, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
+import { allPositions, allPositionsRaw, addedPositions, matKeyOf, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
   pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
   optGroupOf, optLabelOf, optPrefixOf, matAddOf, costModeOf } from "../src/recipe.js";
 import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
@@ -12588,7 +12588,9 @@ function optChipsHtml(pos, sh, w){
 // строкой в три ряда «Кабель — 1 шт · Гофра — 50 шт · …» не читается ничего.
 // Поэтому перечень, у каждого материала своя строка, цена и количество, а рядом
 // «⇄» — заменить на товар из базы. Замена лежит на листе, справочник не трогает.
-function matSwapKey(pos, m){ return pos.key+"|"+(m.pid||""); }
+// Адрес материала на экране — тот же, что в расчёте (`matKeyOf`): по нему хранится
+// и замена, и ручное количество, и разойтись эти два адреса не могут.
+function matSwapKey(pos, m){ return pos.key+"|"+matKeyOf(m); }
 function specMatsListHtml(pos, sh, live){
   const mats=(pos.mats||[]).filter(function(m){ return (Number(m.qty)||0)>0 && String(m.n||"").trim(); });
   if(!mats.length)return "";
@@ -12648,7 +12650,9 @@ function specMatsListHtml(pos, sh, live){
             '</span>'+
           '</span>'+
           '<span style="font-size:11.5px;font-weight:700;color:#5a7a9a;white-space:nowrap">'+cost.toLocaleString("ru-RU")+' ₽</span>'+
-          (can?'<button data-a="est-mat-open" data-k="'+esc(matSwapKey(pos,m))+'" title="Заменить материал из базы" style="width:24px;height:24px;background:'+(open?"#2980b9":"transparent")+';border:1px solid #2980b955;border-radius:6px;cursor:pointer;color:'+(open?"#fff":"#2980b9")+';font-size:11px;flex-shrink:0">⇄</button>':'')+
+          // Заменять дописанный руками материал нечем: у него нет товара в базе,
+          // а есть крестик — удалить и вписать заново.
+          (can&&!added?'<button data-a="est-mat-open" data-k="'+esc(matSwapKey(pos,m))+'" title="Заменить материал из базы" style="width:24px;height:24px;background:'+(open?"#2980b9":"transparent")+';border:1px solid #2980b955;border-radius:6px;cursor:pointer;color:'+(open?"#fff":"#2980b9")+';font-size:11px;flex-shrink:0">⇄</button>':'')+
           (can&&added?'<button data-a="est-mat-add-del" data-k="'+esc(pos.key)+'" data-m="'+esc(m.id||"")+'" title="Убрать дописанный материал" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>':'')+
         '</div>'+
         (open?matSwapEditor(pos, m, sh, was):'')+
