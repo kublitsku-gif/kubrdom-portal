@@ -12850,6 +12850,17 @@ function estBodyHtml(sh, types, live, actions){
               // Убрать работу из ЭТОГО дома: контейнер уже стоит на участке,
               // электрику ведёт заказчик. Правило и справочник не трогаем — они
               // общие; строка выключается в листе и возвращается тем же тапом.
+              // Этап работы правится тут же: по этапам идут сроки, приёмка и
+              // транши, и уводить человека за этим в правило — значит менять
+              // порядок стройки во ВСЕХ домах ради одного.
+              (canRule
+                ? '<select data-a="est-pos-stage" data-k="'+esc(p.key)+'" title="Этап, в котором эта работа делается в этом доме" style="border:1px solid '+(p.stageSet?"#8e44ad":"#dde6f0")+';background:#fff;border-radius:6px;padding:2px 4px;font-size:10.5px;color:'+(p.stageSet?"#8e44ad":"#7a9aaa")+';outline:none;flex-shrink:0">'+
+                    [[0,"без этапа"]].concat(EST_STAGES.map(function(st){ return [st.n, st.short]; })).map(function(o){
+                      return '<option value="'+o[0]+'"'+((Number(p.stage)||0)===Number(o[0])?" selected":"")+'>'+esc(o[1])+'</option>';
+                    }).join("")+
+                  '</select>'+
+                  (p.stageSet?'<button data-a="est-pos-stage-reset" data-k="'+esc(p.key)+'" title="Вернуть этап из справочника" style="border:none;background:transparent;color:#8e44ad;font-size:10.5px;font-weight:700;cursor:pointer;padding:0 2px;flex-shrink:0">⟲</button>':'')
+                : '')+
               (canRule
                 ? '<button data-a="est-pos-del" data-k="'+esc(p.key)+'" title="'+(p.added?"Удалить дописанную работу":"Убрать эту работу из дома")+'" style="width:22px;height:22px;background:transparent;border:1px solid #e74c3c33;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0;line-height:1">✕</button>'
                 : '')+
@@ -21775,6 +21786,19 @@ function bind(){
       const map=Object.assign({}, sh.matAdd||{});
       map[posKey]=(map[posKey]||[]).concat([m]);
       sh.matAdd=map; matAddOpen=""; fl();
+    };}
+    else if(a==="est-pos-stage"){el.onchange=()=>{
+      const key=el.dataset.k||"";
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
+      sh.posStage=Object.assign({}, sh.posStage||{}, { [key]:Number(el.value)||0 });
+      scheduleSave(); fl();
+    };}
+    else if(a==="est-pos-stage-reset"){el.onclick=()=>{
+      const key=el.dataset.k||"";
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!sh.posStage)return;
+      const map=Object.assign({}, sh.posStage); delete map[key];
+      if(Object.keys(map).length)sh.posStage=map; else delete sh.posStage;
+      scheduleSave(); fl();
     };}
     else if(a==="est-pos-add-open"){el.onclick=()=>{ posAddOpen=el.dataset.k||""; fl(); };}
     else if(a==="est-pos-add-do"){el.onclick=()=>{

@@ -492,7 +492,7 @@ export function allPositionsRaw(sheet, ctx) {
   // коробка. Править справочник ради одного дома нельзя, он общий.
   const all = (c.pies ? out.concat(layerPositions(sheet, c.estimates, c.products, c.winTypes)) : out)
     .concat(addedPositions(sheet, c.estimates, c.products));
-  return dropOff(applyPicks(applyMatEdits(all, sheet, c.products), sheet), sheet);
+  return applyStage(dropOff(applyPicks(applyMatEdits(all, sheet, c.products), sheet), sheet), sheet);
 }
 
 // Работы, убранные руками из ЭТОГО дома. Смета справочника описывает типовой дом,
@@ -533,6 +533,24 @@ export function addedPositions(sheet, estimates, products) {
         cost: cost, qty: 1 }] : [],
       cost: cost,
     };
+  });
+}
+
+// Работа, переставленная в другой этап ЭТОГО дома. Этап — свойство стройки, а не
+// справочника: контейнер обычно ставят на подготовительном, но на участок с
+// готовым фундаментом его привозят первым же днём. Правило и справочник общие на
+// все дома, поэтому перестановка живёт в листе — как и всё остальное про один дом.
+//
+// По этапам идут сроки, приёмка и транши, поэтому переставленная работа обязана
+// уехать в новый этап целиком: и в смете, и в стройке. Обе читают этот список.
+export function applyStage(raw, sheet) {
+  const map = (sheet && sheet.posStage) || {};
+  if (!Object.keys(map).length) return raw;
+  return Object.assign({}, raw, {
+    positions: (raw.positions || []).map(function (p) {
+      const n = map[p.key];
+      return (n == null) ? p : Object.assign({}, p, { stage: Number(n) || 0, stageSet: true });
+    }),
   });
 }
 

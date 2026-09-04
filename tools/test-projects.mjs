@@ -340,4 +340,42 @@ function create(p, name) {
     p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost') > cost0)
 }
 
+// ── Работу можно переставить в другой этап ───────────────────────────────────
+// По этапам идут сроки, приёмка и транши. Этап — свойство СТРОЙКИ, а не
+// справочника: контейнер обычно ставят на подготовительном, но на участок с
+// готовым фундаментом его привозят первым днём. Правило общее на все дома,
+// поэтому перестановка живёт в листе.
+{
+  t.section('Переставить этап')
+  const p = panel()
+  create(p, 'Дом с перестановкой')
+  p.run('projBand="parts";')
+  const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
+  const was = p.q('allPositions(projects[0], specCtx(projects[0]))[0].stage')
+  t.ok('у работы есть выбор этапа', p.run('tProjects()').indexOf('data-a="est-pos-stage"') >= 0)
+
+  const sel = p.dom.node({ a: 'est-pos-stage', k: key })
+  sel.value = '1'
+  p.run('bind();'); sel.onchange()
+  const now = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0]')
+  t.ok('этап сменился', now.stage === 1, was + ' → ' + now.stage)
+  t.ok('и помечен как заданный руками', now.stageSet === true)
+  // Работа уезжает в новый этап целиком: смета читается по этапам, и по ним же
+  // идут приёмка и транши.
+  const stages = p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).stages.map(function(s){return [s.n, s.positions.map(function(x){return x.key;})];})')
+  const inStage1 = (stages.find((s) => s[0] === 1) || [0, []])[1]
+  t.ok('в смете он в первом этапе', inStage1.indexOf(key) >= 0, JSON.stringify(stages))
+  t.ok('деньги этапов сошлись',
+    p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).stages.reduce(function(a,s){return a+s.cost;},0)') ===
+    p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost'))
+  // Справочник и правило общие на все дома — их перестановка не трогает.
+  t.ok('справочник не тронут', p.q('estimates.filter(function(e){return e.id==="e_osb";})[0].stage') === 2)
+
+  const back = p.dom.node({ a: 'est-pos-stage-reset', k: key })
+  p.run('bind();'); back.onclick()
+  t.ok('этап возвращается к справочному',
+    p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0].stage') === was)
+  t.ok('и отметка из листа стёрта', !p.q('projects[0].posStage'))
+}
+
 t.done()
