@@ -487,7 +487,11 @@ export function allPositionsRaw(sheet, ctx) {
   const out = base.concat(rulePositions(sheet, c.rules, c.estimates, c.products, c.winTypes));
   // Пироги считают себя сами там же, где работают правила: боевые спецификации
   // ни того, ни другого не видят — по ним заведены договора, объекты и транши.
-  const all = c.pies ? out.concat(layerPositions(sheet, c.estimates, c.products, c.winTypes)) : out;
+  // Дописанные руками работы: справочник описывает типовой дом, а в этом бывает
+  // то, чего в нём нет вовсе — вывоз мусора, сборка мебели заказчика, вторая
+  // коробка. Править справочник ради одного дома нельзя, он общий.
+  const all = (c.pies ? out.concat(layerPositions(sheet, c.estimates, c.products, c.winTypes)) : out)
+    .concat(addedPositions(sheet, c.estimates, c.products));
   return dropOff(applyPicks(applyMatEdits(all, sheet, c.products), sheet), sheet);
 }
 
@@ -498,6 +502,40 @@ export function allPositionsRaw(sheet, ctx) {
 //
 // Убранные возвращаются: список уходит на экран, и вернуть строку можно тем же
 // тапом. Молча выкинуть работу из сметы — это молча выкинуть её из стройки.
+// Работы, дописанные в ЭТОТ дом. Две породы: строка справочника, взятая целиком
+// (с её материалами, ценой и этапом), и своя — имя и сумма, которых в справочнике
+// нет и не должно быть. Обе живут в листе и считаются тем же кодом, что и всё
+// остальное: иначе на экране одна смета, а в стройке другая.
+export function addedPositions(sheet, estimates, products) {
+  const rows = (sheet && sheet.posAdd) || [];
+  if (!rows.length) return [];
+  const prodById = {};
+  (products || []).forEach(function (p) { if (p && p.id) prodById[p.id] = p; });
+  const byId = {};
+  (estimates || []).forEach(function (e) { if (e && e.id) byId[e.id] = e; });
+  return rows.map(function (row) {
+    const key = "add:" + (row.id || "");
+    const est = row.estId ? byId[row.estId] : null;
+    if (est) {
+      // Берём строку справочника как есть: «на весь дом», без площади и точек —
+      // количество материалов такое же, как в самой смете.
+      const p = positionFor(est, { key: key, area: 0, count: 0, point: "" }, prodById, row.qty);
+      return Object.assign(p, { added: true });
+    }
+    // Своя строка: цена — это и есть работа, материалов у неё нет. Показываем её
+    // одним «материалом» с той же ценой, чтобы деньги считались общим правилом.
+    const cost = Math.max(0, Math.round(Number(row.cost) || 0));
+    return {
+      key: key, estId: "", name: String(row.name || "Работа"), stage: Number(row.stage) || 0,
+      room: "", roomId: "", surface: "", group: "", label: "",
+      area: 0, point: "", count: 0, factor: 1, added: true, own: true,
+      mats: cost ? [{ pid: "", n: String(row.name || "Работа"), store: "", mode: "piece",
+        cost: cost, qty: 1 }] : [],
+      cost: cost,
+    };
+  });
+}
+
 export function dropOff(raw, sheet) {
   const off = (sheet && sheet.posOff) || {};
   if (!Object.keys(off).length) return Object.assign({ dropped: [] }, raw);

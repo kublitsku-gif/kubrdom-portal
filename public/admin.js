@@ -54,7 +54,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2, works2 } from "../src/spec2.js";
-import { allPositions, allPositionsRaw, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
+import { allPositions, allPositionsRaw, addedPositions, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
   pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
   optGroupOf, optLabelOf, optPrefixOf, matAddOf } from "../src/recipe.js";
 import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
@@ -2265,6 +2265,7 @@ let spec2Tab="scheme";     // что смотрим в разделе: черт�
 let estWhyOpen="";         // у какой сметы раскрыт редактор правила прямо в строке
 let matSwapOpen="";        // какой материал сметы сейчас меняют: "<ключ позиции>|<pid>"
 let matAddOpen="";         // у какой строки сметы открыта форма «+ материал»
+let posAddOpen="";         // у какого листа открыта форма «+ работа»
 let modelStageTab=0;       // 0 = все этапы
 let specSheets=[];
 // «Спецификация 2» — опытный раздел (см. src/spec2.js). Листы держим ОТДЕЛЬНО: по
@@ -12736,6 +12737,36 @@ function estWhyEditor(p, sh){
   return h;
 }
 
+// «+ работа»: справочник описывает типовой дом, а в этом бывает то, чего в нём
+// нет вовсе — вывоз мусора, сборка мебели заказчика, вторая коробка. Строку
+// справочника берём целиком, со своими материалами и этапом; чего в справочнике
+// нет — пишем своей строкой: имя и сумма. Справочник от этого не меняется, он
+// общий на все дома.
+function estPosAddHtml(sh, canRule){
+  if(!canRule)return "";
+  if(posAddOpen!==(sh&&sh.id)){
+    return '<div style="margin-bottom:9px"><button data-a="est-pos-add-open" data-k="'+esc((sh&&sh.id)||"")+'" style="width:100%;padding:9px;background:#eef6f4;border:1px dashed #16a085;border-radius:10px;cursor:pointer;color:#16a085;font-size:12.5px;font-weight:700">+ работа</button></div>';
+  }
+  const kind=(sh&&sh.kind)||"banya";
+  const list=(estimates||[]).filter(function(e){ return e&&(e.kind||"banya")===kind; });
+  return '<div style="background:#eefaf6;border:1px solid #16a08544;border-radius:12px;padding:11px 12px;margin-bottom:9px">'+
+    '<div style="font-size:9.5px;font-weight:800;color:#16a085;letter-spacing:0.3px;margin-bottom:6px">+ ДОБАВИТЬ РАБОТУ В ЭТОТ ДОМ</div>'+
+    '<input id="pad-n" list="pad-catalog" autocomplete="off" placeholder="Название — можно выбрать из справочника работ" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12.5px;margin-bottom:6px;outline:none;box-sizing:border-box">'+
+    '<datalist id="pad-catalog">'+list.map(function(e){return '<option value="'+esc(e.name||"").replace(/"/g,"&quot;")+'"></option>';}).join("")+'</datalist>'+
+    '<div style="display:flex;gap:6px;margin-bottom:7px">'+
+      '<input id="pad-cost" placeholder="Сумма ₽ — для своей строки" inputmode="decimal" style="flex:2;min-width:0;padding:8px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12.5px;outline:none">'+
+      '<select id="pad-stage" style="flex:1;min-width:0;padding:8px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12.5px;outline:none;background:#fff">'+
+        EST_STAGES.map(function(st){return '<option value="'+st.n+'">'+esc(st.short)+'</option>';}).join("")+
+      '</select>'+
+    '</div>'+
+    '<div style="display:flex;gap:6px">'+
+      '<button data-a="est-pos-add-do" data-k="'+esc((sh&&sh.id)||"")+'" style="flex:1;padding:9px;background:#16a085;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700">Добавить</button>'+
+      '<button data-a="est-pos-add-open" data-k="" style="padding:9px 13px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:12.5px">Отмена</button>'+
+    '</div>'+
+    '<div style="font-size:10px;color:#7a9aaa;line-height:1.45;margin-top:7px">Имя из справочника подтянет материалы, цену и этап — сумма и этап тогда не нужны. Работа живёт в этом доме, справочник не меняется.</div>'+
+  '</div>';
+}
+
 // Убранные работы: перечнем, с ценой и кнопкой «вернуть». Держим их на виду —
 // смета, из которой молча пропала строка, читается как смета без этой работы, и
 // вспоминают о ней на площадке.
@@ -12789,6 +12820,7 @@ function estBodyHtml(sh, types, live, actions){
     '</div>'+
   '</div>';
   h+=spec2FactsHtml(w.facts);
+  h+=estPosAddHtml(sh, canRule);
   h+=estDroppedHtml(sh, canRule);
   // Работы этапами: стройка меряется этапами, по ним же идут сроки, приёмка и
   // транши — смета обязана читаться в том же разрезе.
@@ -12812,13 +12844,14 @@ function estBodyHtml(sh, types, live, actions){
           return (tip?optSuggestHtml(tip):'')+
             '<div style="padding:7px 0;border-top:1px solid #f4f7fb">'+
             '<div style="display:flex;align-items:baseline;gap:8px">'+
-              '<span style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#0d1b2e">'+esc(p.name)+'</span>'+
+              '<span style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#0d1b2e">'+esc(p.name)+
+                (p.added?' <span style="font-size:9.5px;font-weight:700;color:#16a085;background:#e8f6f3;border-radius:5px;padding:1px 5px">дописана</span>':'')+'</span>'+
               '<span style="font-size:12px;font-weight:700;color:#0d1b2e;white-space:nowrap">'+Math.round(p.cost).toLocaleString("ru-RU")+' ₽</span>'+
               // Убрать работу из ЭТОГО дома: контейнер уже стоит на участке,
               // электрику ведёт заказчик. Правило и справочник не трогаем — они
               // общие; строка выключается в листе и возвращается тем же тапом.
               (canRule
-                ? '<button data-a="est-pos-del" data-k="'+esc(p.key)+'" title="Убрать эту работу из дома" style="width:22px;height:22px;background:transparent;border:1px solid #e74c3c33;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0;line-height:1">✕</button>'
+                ? '<button data-a="est-pos-del" data-k="'+esc(p.key)+'" title="'+(p.added?"Удалить дописанную работу":"Убрать эту работу из дома")+'" style="width:22px;height:22px;background:transparent;border:1px solid #e74c3c33;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0;line-height:1">✕</button>'
                 : '')+
             '</div>'+
             optChipsHtml(p, sh, w)+
@@ -21743,10 +21776,36 @@ function bind(){
       map[posKey]=(map[posKey]||[]).concat([m]);
       sh.matAdd=map; matAddOpen=""; fl();
     };}
+    else if(a==="est-pos-add-open"){el.onclick=()=>{ posAddOpen=el.dataset.k||""; fl(); };}
+    else if(a==="est-pos-add-do"){el.onclick=()=>{
+      const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
+      const name=((document.getElementById("pad-n")||{}).value||"").trim();
+      if(!name){ alert("Впишите название работы."); return; }
+      const kind=sh.kind||"banya";
+      // Имя из справочника — берём строку целиком: материалы, цена и этап уже
+      // решены там, и списывать их вручную значит заводить вторую правду.
+      const est=(estimates||[]).find(function(e){ return e&&(e.kind||"banya")===kind&&String(e.name||"").trim()===name; });
+      const cost=parseFloat(String((document.getElementById("pad-cost")||{}).value||"").replace(",","."))||0;
+      if(!est&&!cost){ alert("Такой работы в справочнике нет — впишите сумму, и она станет своей строкой."); return; }
+      const row=est
+        ? { id:gid(), estId:est.id }
+        : { id:gid(), name:name, cost:Math.round(cost),
+            stage:Number((document.getElementById("pad-stage")||{}).value)||0 };
+      sh.posAdd=(sh.posAdd||[]).concat([row]);
+      posAddOpen=""; scheduleSave(); fl();
+    };}
     else if(a==="est-pos-del"){el.onclick=()=>{
       const key=el.dataset.k||"";
       const sh=schemeSheet()||spec2Sheet();
       if(!sh||!key)return;
+      // Дописанную работу удаляем насовсем: возвращать её незачем — она и так
+      // появилась руками, а «убрано» про строки справочника.
+      if(key.indexOf("add:")===0){
+        const id=key.slice(4);
+        const rest=(sh.posAdd||[]).filter(function(x){ return String(x.id)!==id; });
+        if(rest.length)sh.posAdd=rest; else delete sh.posAdd;
+        scheduleSave(); fl(); return;
+      }
       // Выключаем строку в ЭТОМ листе, не трогая правило и справочник: они общие
       // на все дома, а решение «здесь этой работы нет» — про один дом.
       sh.posOff=Object.assign({}, sh.posOff||{}, { [key]:1 });

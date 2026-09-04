@@ -290,4 +290,54 @@ function create(p, name) {
   t.ok('в состав дома убранная работа не попадает', inObj.indexOf(key) < 0, JSON.stringify(inObj))
 }
 
+// ── Работу можно дописать в ЭТОТ дом ─────────────────────────────────────────
+// Справочник описывает типовой дом, а в этом бывает то, чего в нём нет вовсе:
+// вывоз мусора, сборка мебели заказчика. Править справочник ради одного дома
+// нельзя — он общий, — поэтому работа дописывается в лист.
+{
+  t.section('Дописать работу')
+  const p = panel()
+  create(p, 'Дом с дописанной работой')
+  p.run('projBand="parts";')
+  const cost0 = p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost')
+  t.ok('кнопка «+ работа» есть', p.run('tProjects()').indexOf('data-a="est-pos-add-open"') >= 0)
+
+  const open = p.dom.node({ a: 'est-pos-add-open', k: p.q('projects[0].id') })
+  p.run('bind();'); open.onclick()
+  t.ok('форма открылась', p.run('tProjects()').indexOf('data-a="est-pos-add-do"') >= 0)
+
+  // Своя строка: имени в справочнике нет, зато есть сумма.
+  p.dom.field('pad-n', 'Вывоз мусора'); p.dom.field('pad-cost', '9000'); p.dom.field('pad-stage', '1')
+  const go = p.dom.node({ a: 'est-pos-add-do', k: p.q('projects[0].id') })
+  p.run('bind();'); go.onclick()
+  const own = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.name==="Вывоз мусора";})')
+  t.ok('своя работа появилась', own.length === 1, JSON.stringify(own.map((x) => x.name)))
+  t.ok('с её суммой', own[0] && own[0].cost === 9000, own[0] && String(own[0].cost))
+  t.ok('и на своём этапе', own[0] && own[0].stage === 1, own[0] && String(own[0].stage))
+  t.ok('деньги выросли ровно на неё',
+    p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost') === cost0 + 9000)
+  t.ok('справочник не тронут', p.q('estimates.length') === 2)
+  t.ok('на экране помечена дописанной', /дописана/.test(p.run('tProjects()')))
+
+  // Имя из справочника — строка берётся целиком, со своими материалами и ценой.
+  const open2 = p.dom.node({ a: 'est-pos-add-open', k: p.q('projects[0].id') })
+  p.run('bind();'); open2.onclick()
+  p.dom.field('pad-n', 'Обшивка стен ОСП'); p.dom.field('pad-cost', '')
+  const go2 = p.dom.node({ a: 'est-pos-add-do', k: p.q('projects[0].id') })
+  p.run('bind();'); go2.onclick()
+  const fromCat = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key.indexOf("add:")===0&&x.estId==="e_osb";})')
+  t.ok('работа из справочника добавилась', fromCat.length === 1)
+  t.ok('и пришла со своими материалами', fromCat[0] && (fromCat[0].mats || []).length > 0,
+    JSON.stringify(fromCat[0] && fromCat[0].mats))
+
+  // Дописанную удаляем насовсем: «убрано» — это про строки справочника.
+  const key = 'add:' + p.q('projects[0].posAdd[0].id')
+  const del = p.dom.node({ a: 'est-pos-del', k: key })
+  p.run('bind();'); del.onclick()
+  t.ok('дописанная удаляется совсем', p.q('(projects[0].posAdd||[]).length') === 1)
+  t.ok('и в «убрано» не попадает', !p.q('projects[0].posOff'))
+  t.ok('деньги вернулись к прежним + каталожная',
+    p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost') > cost0)
+}
+
 t.done()
