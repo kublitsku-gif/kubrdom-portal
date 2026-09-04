@@ -2267,6 +2267,7 @@ let matSwapOpen="";        // какой материал сметы сейча�
 let matAddOpen="";         // у какой строки сметы открыта форма «+ материал»
 let posAddOpen="";         // у какого листа открыта форма «+ работа»
 let matsOpen={};           // у каких строк сметы раскрыт список материалов
+let stageShut={};          // какие этапы свёрнуты целиком
 let modelStageTab=0;       // 0 = все этапы
 let specSheets=[];
 // «Спецификация 2» — опытный раздел (см. src/spec2.js). Листы держим ОТДЕЛЬНО: по
@@ -12842,13 +12843,18 @@ function estBodyHtml(sh, types, live, actions){
   // транши — смета обязана читаться в том же разрезе.
   if(w.stages.length){
     h+=w.stages.map(function(st){
+      // Этап сворачивается целиком: в смете на сорок строк искать нужный этап,
+      // прокручивая чужие работы, — то же самое, что искать его в простыне. Шапка
+      // с итогом остаётся всегда: по этим суммам идут транши и приёмка.
+      const shut=!!stageShut[st.n];
       return '<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
-        '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:7px">'+
+        '<div data-a="est-stage-open" data-n="'+st.n+'" style="display:flex;align-items:baseline;gap:8px;margin-bottom:'+(shut?'0':'7px')+';cursor:pointer">'+
           '<span style="width:8px;height:8px;border-radius:3px;background:'+st.color+';flex-shrink:0"></span>'+
-          '<span style="flex:1;min-width:0;font-size:11px;font-weight:700;color:#0d1b2e;letter-spacing:0.4px;text-transform:uppercase">'+esc(st.label)+'</span>'+
+          '<span style="flex:1;min-width:0;font-size:11px;font-weight:700;color:#0d1b2e;letter-spacing:0.4px;text-transform:uppercase">'+(shut?"▸ ":"▾ ")+esc(st.label)+
+            (shut?' <span style="font-weight:700;color:#9aabbf;text-transform:none;letter-spacing:0">· '+st.positions.length+' '+pluralRu(st.positions.length,"работа","работы","работ")+'</span>':'')+'</span>'+
           '<span style="font-size:12.5px;font-weight:800;color:#0d1b2e;white-space:nowrap">'+Math.round(st.cost).toLocaleString("ru-RU")+' ₽</span>'+
         '</div>'+
-        st.positions.map(function(p, pi, arr){
+        (shut?'':st.positions.map(function(p, pi, arr){
           // Редактор раскрываем у ПЕРВОЙ строки этой сметы: правило по помещениям
           // даёт их несколько, и три одинаковых редактора подряд — это не выбор.
           const first=seen[p.estId]!==true; if(p.estId)seen[p.estId]=true;
@@ -12904,7 +12910,7 @@ function estBodyHtml(sh, types, live, actions){
             specMatsListHtml(p, sh, live)+
             (open?estWhyEditor(p, sh):'')+
           '</div>';
-        }).join("")+
+        }).join(""))+
       '</div>';
     }).join("");
   } else {
@@ -21831,6 +21837,12 @@ function bind(){
       const map=Object.assign({}, sh.posCost); delete map[key];
       if(Object.keys(map).length)sh.posCost=map; else delete sh.posCost;
       scheduleSave(); fl();
+    };}
+    else if(a==="est-stage-open"){el.onclick=()=>{
+      const n=String(el.dataset.n||"");
+      const map=Object.assign({}, stageShut);
+      if(map[n])delete map[n]; else map[n]=1;
+      stageShut=map; fl();
     };}
     else if(a==="est-mats-open"){el.onclick=()=>{
       const k=el.dataset.k||""; if(!k)return;

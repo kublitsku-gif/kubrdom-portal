@@ -461,4 +461,33 @@ function create(p, name) {
   t.ok('и отметка из листа стёрта', !p.q('projects[0].posCost'))
 }
 
+// ── Этап сворачивается целиком ───────────────────────────────────────────────
+// В смете на сорок строк искать нужный этап, прокручивая чужие работы, — то же
+// самое, что искать его в простыне. Шапка с итогом остаётся всегда: по этим
+// суммам идут транши и приёмка.
+{
+  t.section('Свернуть этап')
+  const p = panel()
+  create(p, 'Дом со свёрнутым этапом')
+  p.run('projBand="parts";')
+  const open = p.run('tProjects()')
+  t.ok('шапка этапа тапается', open.indexOf('data-a="est-stage-open"') >= 0)
+  t.ok('работы видны', /Монтаж окна/.test(open))
+
+  const head = p.dom.node({ a: 'est-stage-open', n: '2' })
+  p.run('bind();'); head.onclick()
+  const shut = p.run('tProjects()')
+  t.ok('работы спрятались', !/Монтаж окна/.test(shut))
+  t.ok('но итог этапа на месте', /Этап 2/.test(shut) && /600 ₽/.test(shut))
+  t.ok('и видно, сколько работ внутри', /· 2 работы|· 1 работа|· \d+ работ/.test(shut), 'нет счётчика')
+  // Свёрнутый этап — это про экран, а не про смету: деньги не меняются.
+  t.ok('деньги не изменились',
+    p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost') ===
+    p.q('allPositions(projects[0], specCtx(projects[0])).reduce(function(a,x){return a+x.cost;},0)'))
+  t.ok('в листе ничего не записалось', !p.q('projects[0].stageShut'))
+
+  p.run('bind();'); head.onclick()
+  t.ok('разворачивается обратно', /Монтаж окна/.test(p.run('tProjects()')))
+}
+
 t.done()
