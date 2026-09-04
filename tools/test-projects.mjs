@@ -426,8 +426,10 @@ function create(p, name) {
 
 // ── Цену работы можно назначить руками ───────────────────────────────────────
 // Смета считает цену материалами — это честно, пока работу делают своими руками
-// из своего материала. Но бригаду берут на подряд, и тогда цена — цифра из
-// договора с ней: «электрика под ключ 25 000» верна при любом метраже гофры.
+// из своего материала. Но бригаде платят ЗА РАБОТУ, и эта цифра к сумме кабелей
+// отношения не имеет: разводка стоит своё, кабель с гофрой — своё, и в строке
+// должно быть и то, и другое. Отдельный случай — подряд под ключ: там цена и
+// есть цифра из договора, а материалы в неё уже входят.
 {
   t.section('Цена работы')
   const p = panel()
@@ -442,23 +444,48 @@ function create(p, name) {
   inp.value = '25000'
   p.run('bind();'); inp.onchange()
   const now = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0]')
-  t.ok('цена стала подрядной', now.cost === 25000, was + ' → ' + now.cost)
+  // Новая цена — это оплата бригаде: материалы считаются сверху, а не вместо.
+  t.ok('цена — оплата работы', now.labor === 25000 && now.costMode === 'labor')
+  t.ok('материалы прибавились к ней', now.cost === was + 25000, was + ' → ' + now.cost)
   t.ok('и помечена как назначенная', now.costSet === true)
-  t.ok('итог дома пересчитался', 
-    p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost') === total0 - was + 25000)
-  // Материалы остаются: по ним закупаются, просто перестают быть ценой.
+  t.ok('итог дома пересчитался',
+    p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost') === total0 + 25000)
+  // Материалы остаются: по ним закупаются, и в цене строки они тоже есть.
   t.ok('материалы никуда не делись', (now.mats || []).length > 0)
   t.ok('справочник не тронут', p.q('estimates.length') === 2)
+  t.ok('в строке видно обе половины', /работа 25\s\u00a0?000|работа 25/.test(p.run('tProjects()')))
 
-  // В стройку уходит ТА ЖЕ цена: иначе на экране подряд, а в объекте сумма кабелей.
+  // В стройку уходит и цена, и её половина: объект пересчитывает себя по `labor`.
   const work = p.q('positionWork(allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0])')
-  t.ok('в объект уходит назначенная цена', work.cost === 25000, String(work.cost))
+  t.ok('в объект уходит назначенная цена', work.cost === was + 25000, String(work.cost))
+  t.ok('и оплата работы отдельно', work.labor === 25000)
+  // Объект пересчитывает свои цены при каждой загрузке — и обязан сохранить
+  // договорённость с бригадой, а не обнулить её до суммы кабелей.
+  p.run('objects=[{id:"o1",name:"Дом",stages:[{id:"s1",n:"ЭТАП",works:[' +
+    '{id:"w1",n:"Разводка",labor:25000,cost:0,mats:[{id:"m1",n:"Кабель",cost:800,qty:10}]},' +
+    '{id:"w2",n:"Электрика под ключ",costAll:true,cost:25000,mats:[{id:"m2",n:"Кабель",cost:800,qty:10}]}' +
+    ']}]}];normalizeWorkCosts();')
+  t.ok('оплата работы пережила загрузку', p.q('objects[0].stages[0].works[0].labor') === 25000)
+  t.ok('и цена стала «материалы + работа»', p.q('objects[0].stages[0].works[0].cost') === 8000 + 25000)
+  t.ok('цена под ключ не тронута', p.q('objects[0].stages[0].works[1].cost') === 25000)
+  p.run('objects=[];')
+
+  // Подряд под ключ — второй смысл того же числа, переключается чипом.
+  const chip = p.dom.node({ a: 'est-pos-cost-mode', k: key })
+  p.run('bind();'); chip.onclick()
+  const all = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0]')
+  t.ok('под ключ — цена как введена', all.cost === 25000 && all.costMode === 'all', String(all.cost))
+  t.ok('и оплаты работы в ней нет', !all.labor)
+  t.ok('материалы при этом остались', (all.mats || []).length > 0)
+  p.run('bind();'); chip.onclick()
+  t.ok('чип возвращает обратно',
+    p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0].cost') === was + 25000)
 
   const back = p.dom.node({ a: 'est-pos-cost-reset', k: key })
   p.run('bind();'); back.onclick()
   t.ok('цена возвращается к материалам',
     p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0].cost') === was)
-  t.ok('и отметка из листа стёрта', !p.q('projects[0].posCost'))
+  t.ok('и отметка из листа стёрта', !p.q('projects[0].posCost') && !p.q('projects[0].posCostMode'))
 }
 
 // ── Этап сворачивается целиком ───────────────────────────────────────────────

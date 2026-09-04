@@ -56,7 +56,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
 import { totals2, issues2, works2 } from "../src/spec2.js";
 import { allPositions, allPositionsRaw, addedPositions, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
   pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
-  optGroupOf, optLabelOf, optPrefixOf, matAddOf } from "../src/recipe.js";
+  optGroupOf, optLabelOf, optPrefixOf, matAddOf, costModeOf } from "../src/recipe.js";
 import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
 import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
@@ -5642,7 +5642,7 @@ function issueToSupply(t,name,cost){
         id:mid, n:name, store:"", url:"", note:"по вопросу с объекта",
         cost:Number(cost)||0, qty:1, mode:"piece", unitCost:Number(cost)||0,
       }])});
-      nextWork.cost=wMatTotal(nextWork);
+      nextWork.cost=workTotal(nextWork);
       return Object.assign({},s,{works:i>=0?works.map(function(w,k){return k===i?nextWork:w;}):works.concat([nextWork])});
     })});
   });
@@ -7598,6 +7598,14 @@ function estTotal(e){return (e.lines||[]).reduce(function(a,l){return a+estLineT
 // Стоимость работы = СУММА её материалов (без отдельного скрытого ФОТ). Если нужна оплата
 // работы — её добавляют отдельной строкой-«материалом» (как «Аренда», «Контейнер»).
 function wMatTotal(w){ return (w&&w.mats||[]).reduce(function(a,m){return a+(Number(m.cost)||0)*(m.qty||0);},0); }
+// Итог работы: материалы ПЛЮС оплата работы. Разводка кабелем стоит своё, кабель
+// с гофрой — своё, и в строке должно быть и то, и другое. Работа «под ключ»
+// (`costAll`) — исключение: там цена это цифра из договора с бригадой, и сумма
+// кабелей к ней ничего не прибавляет.
+function workTotal(w){
+  if(w&&w.costAll)return Number(w.cost)||0;
+  return wMatTotal(w)+(Number(w&&w.labor)||0);
+}
 function _tplEstWork(e){
   // pid из строки сметы едет дальше в шаблон и в объект: смета ссылалась на каталог,
   // а работа до этого получала только снимок по имени — связь рвалась ровно здесь.
@@ -7891,7 +7899,12 @@ function matUses(pid){
   return out;
 }
 function normalizeWorkCosts(){
-  function fix(list){ (list||[]).forEach(function(o){ (o.stages||[]).forEach(function(s){ (s.works||[]).forEach(function(w){ var t=wMatTotal(w); if((Number(w.cost)||0)!==t||w.labor){ w.cost=t; w.labor=0; } }); }); }); }
+  // Оплату работы и цену «под ключ» не сбрасываем: их назначил человек, и
+  // обнулять их при каждой загрузке значит стирать договорённость с бригадой.
+  function fix(list){ (list||[]).forEach(function(o){ (o.stages||[]).forEach(function(s){ (s.works||[]).forEach(function(w){
+    if(w.costAll)return;
+    var t=workTotal(w); if((Number(w.cost)||0)!==t)w.cost=t;
+  }); }); }); }
   fix(templates); fix(objects);
 }
 // Пересборка этапов шаблона из набора id выбранных смет
@@ -8459,7 +8472,7 @@ function matApplyCatalogPrice(pid, scope){
       m.cost=uc; m.unitCost=uc; if(!m.pid)m.pid=pid;
       n++; touched=true;
     });
-    if(touched)w.cost=wMatTotal(w);   // w.cost в портале всегда равен сумме материалов
+    if(touched)w.cost=workTotal(w);   // цена строки = материалы + оплата работы
   });});});
   return n;
 }
@@ -12593,6 +12606,9 @@ function specMatsListHtml(pos, sh, live){
   const head='<div style="margin-top:5px">'+
     '<button data-a="est-mats-open" data-k="'+esc(pos.key)+'" style="border:none;background:transparent;padding:2px 0;font-size:10.5px;font-weight:700;color:#7a9aaa;cursor:pointer">'+
       (open?"▾":"▸")+' материалы · '+mats.length+' · '+Math.round(sum).toLocaleString("ru-RU")+' ₽'+
+      // Цена «за работу» — только половина строки: рядом с ней должно стоять,
+      // во что обходится строка целиком, иначе итог сходится только в уме.
+      ((Number(pos.labor)||0)>0?' · <span style="color:#0d1b2e">работа '+Math.round(pos.labor).toLocaleString("ru-RU")+' ₽ · итого '+Math.round(pos.cost).toLocaleString("ru-RU")+' ₽</span>':'')+
     '</button>'+
   '</div>';
   if(!open)return head;
@@ -12880,8 +12896,12 @@ function estBodyHtml(sh, types, live, actions){
               // сумма кабелей к этой цифре отношения не имеет.
               (canRule
                 ? '<span style="display:flex;align-items:baseline;gap:3px;flex-shrink:0">'+
-                    '<input data-a="est-pos-cost" data-k="'+esc(p.key)+'" value="'+Math.round(p.cost)+'" inputmode="numeric" title="Цена работы в этом доме" style="width:74px;padding:2px 5px;border:1px solid '+(p.costSet?"#8e44ad":"#dde6f0")+';border-radius:6px;font-size:12px;font-weight:700;text-align:right;outline:none;color:'+(p.costSet?"#8e44ad":"#0d1b2e")+';background:#fff">'+
+                    '<input data-a="est-pos-cost" data-k="'+esc(p.key)+'" value="'+Math.round(p.costMode==="labor"?(Number(p.labor)||0):p.cost)+'" inputmode="numeric" title="'+(p.costMode==="labor"?"Сколько платим бригаде за эту работу — материалы считаются сверху":"Цена работы в этом доме")+'" style="width:74px;padding:2px 5px;border:1px solid '+(p.costSet?"#8e44ad":"#dde6f0")+';border-radius:6px;font-size:12px;font-weight:700;text-align:right;outline:none;color:'+(p.costSet?"#8e44ad":"#0d1b2e")+';background:#fff">'+
                     '<span style="font-size:12px;font-weight:700;color:#0d1b2e">₽</span>'+
+                    // Что означает эта цифра: оплату бригаде (материалы идут
+                    // сверху) или подряд под ключ (материалы уже в ней). Смыслы
+                    // разные, и по одному числу их не различить.
+                    (p.costSet?'<button data-a="est-pos-cost-mode" data-k="'+esc(p.key)+'" title="'+(p.costMode==="labor"?"Оплата работы — материалы считаются сверху":"Подряд под ключ — материалы уже в этой цене")+'" style="border:1px solid #8e44ad55;background:#f6f2fa;color:#8e44ad;border-radius:6px;padding:1px 6px;font-size:9.5px;font-weight:700;cursor:pointer;white-space:nowrap">'+(p.costMode==="labor"?"за работу":"под ключ")+'</button>':'')+
                     (p.costSet?'<button data-a="est-pos-cost-reset" data-k="'+esc(p.key)+'" title="Вернуть цену по материалам" style="border:none;background:transparent;color:#8e44ad;font-size:10.5px;font-weight:700;cursor:pointer;padding:0 1px">⟲</button>':'')+
                   '</span>'
                 : '<span style="font-size:12px;font-weight:700;color:#0d1b2e;white-space:nowrap">'+Math.round(p.cost).toLocaleString("ru-RU")+' ₽</span>')+
@@ -16335,7 +16355,7 @@ function supplyRemoveMat(mid){
       return Object.assign({},s,{works:(s.works||[]).map(function(w){
         if(!(w.mats||[]).some(function(m){return m.id===mid;}))return w;
         const nw=Object.assign({},w,{mats:(w.mats||[]).filter(function(m){return m.id!==mid;})});
-        nw.cost=wMatTotal(nw);
+        nw.cost=workTotal(nw);
         return nw;
       })});
     })});
@@ -16449,7 +16469,7 @@ function matChangeApply(chg){
         })});
         // w.cost в портале всегда равен сумме материалов (так их собирает _tplEstWork):
         // без пересчёта смета объекта разъедется с закупкой до перезагрузки панели.
-        nw.cost=wMatTotal(nw);
+        nw.cost=workTotal(nw);
         return nw;
       })});
     })});
@@ -16656,7 +16676,7 @@ function supplyAddFromCatalog(oid,sid,pid){
             lenPer:p.lenPer, sheetM2:p.sheetM2,
           }]);
       const nextWork=Object.assign({},work,{mats:nextMats});
-      nextWork.cost=wMatTotal(nextWork);
+      nextWork.cost=workTotal(nextWork);
       ok=true;
       return Object.assign({},s,{works:i>=0?works.map(function(w,k){return k===i?nextWork:w;}):works.concat([nextWork])});
     })});
@@ -20958,7 +20978,7 @@ function bind(){
       const p=expProducts.find(x=>x.id===el.dataset.pid);if(!p)return;
       const ex=(w.mats||[]).find(x=>x.n===p.name);
       if(ex){ex.qty=(Number(ex.qty)||0)+1;}else{(w.mats=w.mats||[]).push({id:gid(),n:p.name,store:p.store||"",url:p.url||"",note:"",cost:Number(p.unitCost)||0,qty:1,mode:p.mode||"piece",unitCost:Number(p.unitCost)||0,packBase:p.packBase,packPer:p.packPer,lenPer:p.lenPer,sheetM2:p.sheetM2});}
-      w.cost=wMatTotal(w);
+      w.cost=workTotal(w);
       tplPickFor=null;tplPickSearch="";render();
     };}
     else if(a==="tpl-est"){el.onclick=()=>{
@@ -20983,7 +21003,7 @@ function bind(){
         else if((m.mode==="pack"||m.mode==="sheet")&&m.packBase==="м²"&&Number(m.packPer)>0){ m.qty=Math.ceil(fa.value/Number(m.packPer)*100)/100; applied=true; }
       });
       if(!applied){ const m0=(w.mats||[]).find(function(m){return !isDeliveryMat(m);}); if(m0)m0.qty=fa.value; }  // фолбэк — первый не-доставочный
-      w.cost=wMatTotal(w);
+      w.cost=workTotal(w);
       tplMatExpand=Object.assign({},tplMatExpand,{[eid]:true});   // раскрыть, чтобы видеть результат
       fl();
     };}
@@ -21837,6 +21857,16 @@ function bind(){
       const v=parseFloat(String(el.value).replace(/\s/g,"").replace(",","."));
       if(!isFinite(v)||v<0){ fl(); return; }
       sh.posCost=Object.assign({}, sh.posCost||{}, { [key]:Math.round(v) });
+      // Новая цена по умолчанию — оплата бригаде: так её и назначают, а материалы
+      // остаются своей строкой. Уже введённые цифры смысла не меняют.
+      if(!((sh.posCostMode||{})[key]))sh.posCostMode=Object.assign({}, sh.posCostMode||{}, { [key]:"labor" });
+      scheduleSave(); fl();
+    };}
+    else if(a==="est-pos-cost-mode"){el.onclick=()=>{
+      const key=el.dataset.k||"";
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
+      const now=costModeOf(sh, key);
+      sh.posCostMode=Object.assign({}, sh.posCostMode||{}, { [key]: now==="labor"?"all":"labor" });
       scheduleSave(); fl();
     };}
     else if(a==="est-pos-cost-reset"){el.onclick=()=>{
@@ -21844,6 +21874,8 @@ function bind(){
       const sh=schemeSheet()||spec2Sheet(); if(!sh||!sh.posCost)return;
       const map=Object.assign({}, sh.posCost); delete map[key];
       if(Object.keys(map).length)sh.posCost=map; else delete sh.posCost;
+      const mm=Object.assign({}, sh.posCostMode||{}); delete mm[key];
+      if(Object.keys(mm).length)sh.posCostMode=mm; else delete sh.posCostMode;
       scheduleSave(); fl();
     };}
     else if(a==="est-stage-open"){el.onclick=()=>{

@@ -576,12 +576,24 @@ export function applyOrder(raw, sheet) {
   });
 }
 
-// Цена работы, назначенная руками. Смета считает её материалами — это честно,
-// пока работу делают своими руками из своего материала. Но бригаду берут на
-// подряд, и тогда цена — это цифра из договора с ней, а не сумма кабелей:
-// «электрика под ключ 25 000» одинаково верна при любом метраже гофры.
+// Цена работы, назначенная руками. У неё ДВА смысла, и путать их нельзя:
 //
-// Материалы при этом остаются: по ним закупаются. Просто перестают быть ценой.
+//   «за работу» — столько платят бригаде, и к материалам эта цифра отношения не
+//   имеет: разводка кабелем стоит своё, кабель с гофрой — своё, а в смете строка
+//   должна нести и то, и другое. Это обычный случай, поэтому он же и умолчание
+//   для всякой новой цены.
+//
+//   «под ключ» — бригаду взяли на подряд, и цена это цифра из договора с ней:
+//   «электрика под ключ 25 000» одинаково верна при любом метраже гофры.
+//   Материалы при этом остаются (по ним закупаются), но ценой быть перестают.
+//
+// Отсутствующий режим читаем как «под ключ»: так эта цифра понималась, когда её
+// вводили, и менять смысл уже сохранённого числа задним числом нельзя.
+export function costModeOf(sheet, key) {
+  const m = (((sheet && sheet.posCostMode) || {})[key]) || "";
+  return m === "labor" ? "labor" : "all";
+}
+
 export function applyCost(raw, sheet) {
   const map = (sheet && sheet.posCost) || {};
   if (!Object.keys(map).length) return raw;
@@ -589,7 +601,12 @@ export function applyCost(raw, sheet) {
     positions: (raw.positions || []).map(function (p) {
       const v = map[p.key];
       if (v == null) return p;
-      return Object.assign({}, p, { cost: Math.max(0, Math.round(Number(v) || 0)), costSet: true });
+      const n = Math.max(0, Math.round(Number(v) || 0));
+      if (costModeOf(sheet, p.key) === "labor") {
+        const mats = (p.mats || []).reduce(function (a, m) { return a + (Number(m.cost) || 0) * (Number(m.qty) || 0); }, 0);
+        return Object.assign({}, p, { labor: n, cost: Math.round(mats) + n, costSet: true, costMode: "labor" });
+      }
+      return Object.assign({}, p, { labor: 0, cost: n, costSet: true, costAll: true, costMode: "all" });
     }),
   });
 }
@@ -629,9 +646,12 @@ export function positionWork(pos) {
   return {
     posKey: p.key || "", estId: p.estId || "",
     n: (p.name || "") + (p.room ? " — " + p.room : ""),
-    room: "", labor: 0, note: "",
-    // Цена, назначенная руками, уходит в стройку как есть: иначе на экране
-    // подрядная цена, а в объекте сумма кабелей — и расходятся они молча.
+    room: "", note: "",
+    // Оплата работы и признак «под ключ» уезжают в стройку вместе с ценой: иначе
+    // на экране подрядная цена, а в объекте сумма кабелей — и расходятся они
+    // молча. По `labor` объект потом и пересчитывает себя (normalizeWorkCosts).
+    labor: Number(p.labor) || 0,
+    costAll: !!p.costAll,
     cost: p.costSet ? (Number(p.cost) || 0)
       : Math.round(mats.reduce(function (a, m) { return a + m.cost * m.qty; }, 0)),
     mats: mats,
