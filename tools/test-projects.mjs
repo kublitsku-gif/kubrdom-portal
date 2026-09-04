@@ -490,4 +490,34 @@ function create(p, name) {
   t.ok('разворачивается обратно', /Монтаж окна/.test(p.run('tProjects()')))
 }
 
+// ── Материал в смете — ссылка на товар ───────────────────────────────────────
+// По ней снабженец идёт покупать. «Озон» без ссылки означает, что тот же товар
+// он будет искать в магазине руками заново — при том, что ссылка у нас есть.
+{
+  t.section('Ссылка на товар')
+  const p = boot({})
+  p.set({
+    expProducts: [{ id: 'p_osb', name: 'ОСП 9 мм', unitCost: 1000, store: 'Лемана', mode: 'm2',
+      url: 'https://lemanapro.ru/product/osp-9/' },
+      { id: 'p_nail', name: 'Гвозди', unitCost: 300, store: 'Белка', mode: 'piece' }],
+    estimates: [{ id: 'e_osb', kind: 'house', name: 'Обшивка стен ОСП', stage: 2,
+      lines: [{ pid: 'p_osb', qty: 1 }, { pid: 'p_nail', qty: 1 }] }],
+    dbPlans: [], crmClients: [{ id: 'c1', name: 'Иванов' }], specSheets: [], specSheets2: [],
+    projects: [], buildRules: [], winTypes: [], objects: [], templates: [], contractDocs: [],
+    purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+  })
+  create(p, 'Дом со ссылками')
+  p.run('projBand="parts";')
+  const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
+  const openMats = p.dom.node({ a: 'est-mats-open', k: key }); p.run('bind();'); openMats.onclick()
+  const html = p.run('tProjects()')
+  t.ok('магазин со ссылкой кликабелен',
+    html.indexOf('href="https://lemanapro.ru/product/osp-9/"') >= 0, 'ссылки нет в разметке')
+  t.ok('и открывается в новой вкладке', /target="_blank"[^>]*>Лемана|Лемана[^<]*↗/.test(html))
+  // Ссылки нет — остаётся просто именем магазина, врать нечем.
+  t.ok('магазин без ссылки остался текстом', /Белка ·/.test(html), 'ожидали простой текст')
+  t.ok('и ложной ссылки не появилось', (html.match(/↗/g) || []).length === 1,
+    String((html.match(/↗/g) || []).length))
+}
+
 t.done()

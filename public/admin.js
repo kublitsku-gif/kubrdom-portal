@@ -12610,7 +12610,15 @@ function specMatsListHtml(pos, sh, live){
             (was?' <span style="font-size:9.5px;font-weight:700;color:#8e44ad;background:#f3ecf9;border-radius:5px;padding:1px 5px">заменён</span>':'')+
             (added?' <span style="font-size:9.5px;font-weight:700;color:#16a085;background:#e8f6f3;border-radius:5px;padding:1px 5px">добавлен</span>':'')+
             '<span style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;font-size:10px;color:#9aabbf;margin-top:2px">'+
-              (m.store?'<span>'+esc(m.store)+' ·</span>':'')+
+              // Магазин — ссылка на карточку товара: по ней снабженец идёт покупать,
+              // и «Озон» без ссылки означает поиск того же товара руками заново.
+              // Ссылки нет — остаётся просто именем магазина, врать нечем.
+              (function(){
+                const u=String(m.url||"");
+                const shop=m.store?esc(m.store):"товар";
+                if(!/^https?:\/\//.test(u))return m.store?('<span>'+esc(m.store)+' ·</span>'):'';
+                return '<a href="'+esc(u)+'" target="_blank" rel="noopener" title="Открыть карточку товара" style="color:#2980b9;font-weight:700;text-decoration:none">'+shop+' ↗</a><span>·</span>';
+              })()+
               ((Number(m.cost)||0)>0?'<span>'+Math.round(Number(m.cost)).toLocaleString("ru-RU")+' ₽/'+esc(unit)+' ×</span>':'')+
               // Количество правится руками: чертёж считает честно, но на площадке
               // бывает иначе — подрезка, запас, — и спорить с человеком незачем.
