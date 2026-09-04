@@ -12867,9 +12867,12 @@ function estBodyHtml(sh, types, live, actions){
   const canRule=canRuleSheet(sh);
   const seen={}, seenPref={};
   const suggest=canRule?optSuggest(w, sh):{};
+  // Переставлять есть смысл только там, где порядок кому-то записывается: у
+  // заготовки листа нет, и взятая на ней строка повисла бы поднятой навсегда.
+  const canMove=canRule&&!!live;
   // Ключ позиции у листов общий («base:e_osb»), поэтому взятая строка помнит и
   // свой лист: иначе в соседнем проекте подсвечивалась бы его тёзка.
-  const moving=(canRule&&estMoveSheet===String((live&&live.id)||sh.id||""))?String(estMoveKey||""):"";
+  const moving=(canMove&&estMoveSheet===String(live.id||""))?String(estMoveKey||""):"";
   let h='';
   // Деньги сверху: с них начинается любой разговор про смету, и лезть за итогом
   // в конец списка из сорока строк никто не будет.
@@ -12941,7 +12944,7 @@ function estBodyHtml(sh, types, live, actions){
               // общие; строка выключается в листе и возвращается тем же тапом.
               // Порядок внутри этапа: смета считается сама, но читают её глазами
               // сверху вниз, и бригаде важно, что сначала обрешётка, потом обшивка.
-              (canRule&&arr.length>1
+              (canMove&&arr.length>1
                 ? '<button data-a="est-pos-grab" data-k="'+esc(p.key)+'" title="'+(p.key===moving?"Отменить перенос":"Переставить в этапе: возьмите строку и укажите место")+'" style="height:24px;padding:0 7px;background:'+(p.key===moving?RULE_COL:"transparent")+';border:1px solid '+(p.key===moving?RULE_COL:"#dde6f0")+';border-radius:7px;cursor:pointer;color:'+(p.key===moving?"#fff":"#7a9aaa")+';font-size:11px;font-weight:700;flex-shrink:0;line-height:1">'+(p.key===moving?"✕":"↕")+'</button>'
                 : '')+
               // Этап работы правится тут же: по этапам идут сроки, приёмка и

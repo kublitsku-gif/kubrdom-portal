@@ -150,6 +150,31 @@ const SHEET = {
   const est2 = p.run('modelFull=false;spec2Tab="est";tSpec2()')
   t.ok('по заведённому листу объект собирается', est2.indexOf('data-a="spec-to-object"') >= 0)
   t.ok('и договор заводится', est2.indexOf('data-a="spec-to-contract"') >= 0)
+
+  // Порядок внутри этапа: взял строку — указал место. У заготовки листа нет, и
+  // записывать порядок некуда, поэтому там строку и не берут.
+  t.ok('у заготовки строку не берут', est.indexOf('data-a="est-pos-grab"') < 0)
+  // Переставлять есть что, когда в этапе не одна работа.
+  p.run('estimates=estimates.concat([{id:"e_more",kind:"house",name:"Обшивка ОСП",stage:2,lines:[{pid:"p_osb",qty:1}]}]);')
+  t.ok('а у листа берут', p.run('tSpec2()').indexOf('data-a="est-pos-grab"') >= 0)
+  const stKeys = () => p.q('(works2(specSheets2[0], Object.assign(specCtx(specSheets2[0]),{winTypes:winTypes})).stages.filter(function(s){return s.n===2;})[0]||{positions:[]}).positions.map(function(x){return x.key;})')
+  const was = stKeys()
+  if (was.length > 1) {
+    const grab = p.dom.node({ a: 'est-pos-grab', k: was[0] })
+    p.run('bind();'); grab.onclick()
+    const held = p.run('tSpec2()')
+    t.ok('места «сюда» раскрылись', held.indexOf('data-a="est-pos-drop"') >= 0)
+    t.ok('и видно, какую строку несём', /ПЕРЕНОШУ/.test(held))
+    const slot = p.dom.node({ a: 'est-pos-drop', k: was[0], i: String(was.length) })
+    p.run('bind();'); slot.onclick()
+    t.ok('работа встала на указанное место', stKeys().join(',') === was.slice(1).concat([was[0]]).join(','),
+      was.join(',') + ' → ' + stKeys().join(','))
+    t.ok('порядок записан в опытный лист', !!p.q('specSheets2[0].posOrder'))
+    t.ok('справочник не тронут', p.q('estimates.length') === 4)
+    t.ok('строку отпустили', p.q('estMoveKey') === '')
+  } else {
+    t.ok('в этапе есть что переставлять', false, 'строк: ' + was.length)
+  }
 }
 
 // ── 7. Правила в панели ─────────────────────────────────────────────────────
