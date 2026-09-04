@@ -12862,7 +12862,15 @@ function estBodyHtml(sh, types, live, actions){
             '<div style="display:flex;align-items:baseline;gap:8px">'+
               '<span style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#0d1b2e">'+esc(p.name)+
                 (p.added?' <span style="font-size:9.5px;font-weight:700;color:#16a085;background:#e8f6f3;border-radius:5px;padding:1px 5px">дописана</span>':'')+'</span>'+
-              '<span style="font-size:12px;font-weight:700;color:#0d1b2e;white-space:nowrap">'+Math.round(p.cost).toLocaleString("ru-RU")+' ₽</span>'+
+              // Цену работы правят руками: подряд берут за работу целиком, и
+              // сумма кабелей к этой цифре отношения не имеет.
+              (canRule
+                ? '<span style="display:flex;align-items:baseline;gap:3px;flex-shrink:0">'+
+                    '<input data-a="est-pos-cost" data-k="'+esc(p.key)+'" value="'+Math.round(p.cost)+'" inputmode="numeric" title="Цена работы в этом доме" style="width:74px;padding:2px 5px;border:1px solid '+(p.costSet?"#8e44ad":"#dde6f0")+';border-radius:6px;font-size:12px;font-weight:700;text-align:right;outline:none;color:'+(p.costSet?"#8e44ad":"#0d1b2e")+';background:#fff">'+
+                    '<span style="font-size:12px;font-weight:700;color:#0d1b2e">₽</span>'+
+                    (p.costSet?'<button data-a="est-pos-cost-reset" data-k="'+esc(p.key)+'" title="Вернуть цену по материалам" style="border:none;background:transparent;color:#8e44ad;font-size:10.5px;font-weight:700;cursor:pointer;padding:0 1px">⟲</button>':'')+
+                  '</span>'
+                : '<span style="font-size:12px;font-weight:700;color:#0d1b2e;white-space:nowrap">'+Math.round(p.cost).toLocaleString("ru-RU")+' ₽</span>')+
               // Убрать работу из ЭТОГО дома: контейнер уже стоит на участке,
               // электрику ведёт заказчик. Правило и справочник не трогаем — они
               // общие; строка выключается в листе и возвращается тем же тапом.
@@ -21808,6 +21816,21 @@ function bind(){
       const map=Object.assign({}, sh.matAdd||{});
       map[posKey]=(map[posKey]||[]).concat([m]);
       sh.matAdd=map; matAddOpen=""; fl();
+    };}
+    else if(a==="est-pos-cost"){el.onchange=()=>{
+      const key=el.dataset.k||"";
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
+      const v=parseFloat(String(el.value).replace(/\s/g,"").replace(",","."));
+      if(!isFinite(v)||v<0){ fl(); return; }
+      sh.posCost=Object.assign({}, sh.posCost||{}, { [key]:Math.round(v) });
+      scheduleSave(); fl();
+    };}
+    else if(a==="est-pos-cost-reset"){el.onclick=()=>{
+      const key=el.dataset.k||"";
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!sh.posCost)return;
+      const map=Object.assign({}, sh.posCost); delete map[key];
+      if(Object.keys(map).length)sh.posCost=map; else delete sh.posCost;
+      scheduleSave(); fl();
     };}
     else if(a==="est-mats-open"){el.onclick=()=>{
       const k=el.dataset.k||""; if(!k)return;

@@ -492,7 +492,7 @@ export function allPositionsRaw(sheet, ctx) {
   // коробка. Править справочник ради одного дома нельзя, он общий.
   const all = (c.pies ? out.concat(layerPositions(sheet, c.estimates, c.products, c.winTypes)) : out)
     .concat(addedPositions(sheet, c.estimates, c.products));
-  return applyOrder(applyStage(dropOff(applyPicks(applyMatEdits(all, sheet, c.products), sheet), sheet), sheet), sheet);
+  return applyOrder(applyStage(applyCost(dropOff(applyPicks(applyMatEdits(all, sheet, c.products), sheet), sheet), sheet), sheet), sheet);
 }
 
 // Работы, убранные руками из ЭТОГО дома. Смета справочника описывает типовой дом,
@@ -576,6 +576,24 @@ export function applyOrder(raw, sheet) {
   });
 }
 
+// Цена работы, назначенная руками. Смета считает её материалами — это честно,
+// пока работу делают своими руками из своего материала. Но бригаду берут на
+// подряд, и тогда цена — это цифра из договора с ней, а не сумма кабелей:
+// «электрика под ключ 25 000» одинаково верна при любом метраже гофры.
+//
+// Материалы при этом остаются: по ним закупаются. Просто перестают быть ценой.
+export function applyCost(raw, sheet) {
+  const map = (sheet && sheet.posCost) || {};
+  if (!Object.keys(map).length) return raw;
+  return Object.assign({}, raw, {
+    positions: (raw.positions || []).map(function (p) {
+      const v = map[p.key];
+      if (v == null) return p;
+      return Object.assign({}, p, { cost: Math.max(0, Math.round(Number(v) || 0)), costSet: true });
+    }),
+  });
+}
+
 export function applyStage(raw, sheet) {
   const map = (sheet && sheet.posStage) || {};
   if (!Object.keys(map).length) return raw;
@@ -612,7 +630,10 @@ export function positionWork(pos) {
     posKey: p.key || "", estId: p.estId || "",
     n: (p.name || "") + (p.room ? " — " + p.room : ""),
     room: "", labor: 0, note: "",
-    cost: Math.round(mats.reduce(function (a, m) { return a + m.cost * m.qty; }, 0)),
+    // Цена, назначенная руками, уходит в стройку как есть: иначе на экране
+    // подрядная цена, а в объекте сумма кабелей — и расходятся они молча.
+    cost: p.costSet ? (Number(p.cost) || 0)
+      : Math.round(mats.reduce(function (a, m) { return a + m.cost * m.qty; }, 0)),
     mats: mats,
   };
 }

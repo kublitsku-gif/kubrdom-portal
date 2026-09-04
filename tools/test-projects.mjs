@@ -424,4 +424,41 @@ function create(p, name) {
     p.q('allPositions(projects[0], specCtx(projects[0])).reduce(function(a,x){return a+x.cost;},0)'))
 }
 
+// ── Цену работы можно назначить руками ───────────────────────────────────────
+// Смета считает цену материалами — это честно, пока работу делают своими руками
+// из своего материала. Но бригаду берут на подряд, и тогда цена — цифра из
+// договора с ней: «электрика под ключ 25 000» верна при любом метраже гофры.
+{
+  t.section('Цена работы')
+  const p = panel()
+  create(p, 'Дом с подрядом')
+  p.run('projBand="parts";')
+  const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
+  const was = p.q('allPositions(projects[0], specCtx(projects[0]))[0].cost')
+  const total0 = p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost')
+  t.ok('цена правится в строке', p.run('tProjects()').indexOf('data-a="est-pos-cost"') >= 0)
+
+  const inp = p.dom.node({ a: 'est-pos-cost', k: key })
+  inp.value = '25000'
+  p.run('bind();'); inp.onchange()
+  const now = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0]')
+  t.ok('цена стала подрядной', now.cost === 25000, was + ' → ' + now.cost)
+  t.ok('и помечена как назначенная', now.costSet === true)
+  t.ok('итог дома пересчитался', 
+    p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost') === total0 - was + 25000)
+  // Материалы остаются: по ним закупаются, просто перестают быть ценой.
+  t.ok('материалы никуда не делись', (now.mats || []).length > 0)
+  t.ok('справочник не тронут', p.q('estimates.length') === 2)
+
+  // В стройку уходит ТА ЖЕ цена: иначе на экране подряд, а в объекте сумма кабелей.
+  const work = p.q('positionWork(allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0])')
+  t.ok('в объект уходит назначенная цена', work.cost === 25000, String(work.cost))
+
+  const back = p.dom.node({ a: 'est-pos-cost-reset', k: key })
+  p.run('bind();'); back.onclick()
+  t.ok('цена возвращается к материалам',
+    p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0].cost') === was)
+  t.ok('и отметка из листа стёрта', !p.q('projects[0].posCost'))
+}
+
 t.done()
