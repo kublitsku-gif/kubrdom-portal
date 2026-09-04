@@ -113,6 +113,26 @@ const ids = () => { let i = 0; return () => 'id' + (++i) }
   ok('в торце спальни окно 1850×2100', winTypes.some((t) => t.cat === 'os-1850x2100'))
 }
 
+// ── 2в. Заготовка «Мордвес 1» ────────────────────────────────────────────────
+// Тот же корпус, но вход и окно зала в ВЕРХНЕЙ стене, а отсеки 200 · 620 · 340.
+// Сверяем по подписанным площадям: 4,40 + 13,61 + 7,46.
+{
+  console.log('Мордвес 1')
+  const { model, winTypes } = presetModel('mordves-1', [], ids())
+  const rooms = modelRooms(model)
+  ok('санузел 4,40 м²', Math.abs(rooms[0].area - 4.40) <= 0.02, String(rooms[0].area))
+  ok('зал 13,61 м²', Math.abs(rooms[1].area - 13.61) <= 0.04, String(rooms[1].area))
+  ok('спальня 7,46 м²', Math.abs(rooms[2].area - 7.46) <= 0.03, String(rooms[2].area))
+  // Вход и окно — в верхней стене: на чертеже цепочка идёт по ней, и перепутать
+  // стороны значит поставить дверь в глухую стену дома.
+  const north = model.openings.filter((o) => o.side === 'n').map((o) => o.pos).sort((a, b) => a - b)
+  ok('вход и окно в верхней стене', north.join(',') === '3420,6200', north.join(','))
+  ok('в нижней стене проёмов нет', !model.openings.some((o) => o.side === 's'))
+  ok('модель без замечаний', modelIssues(model, winTypes).length === 0,
+    JSON.stringify(modelIssues(model, winTypes)))
+  ok('все изделия каталожные', winTypes.every((t) => !!t.cat), JSON.stringify(winTypes.map((t) => t.cat)))
+}
+
 // ── 3. Справочник изделий ────────────────────────────────────────────────────
 {
   console.log('Типовые изделия')
