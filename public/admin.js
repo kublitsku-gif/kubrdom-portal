@@ -54,7 +54,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2, works2 } from "../src/spec2.js";
-import { allPositions, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
+import { allPositions, allPositionsRaw, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
   pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
   optGroupOf, optLabelOf, optPrefixOf, matAddOf } from "../src/recipe.js";
 import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
@@ -12736,6 +12736,35 @@ function estWhyEditor(p, sh){
   return h;
 }
 
+// Убранные работы: перечнем, с ценой и кнопкой «вернуть». Держим их на виду —
+// смета, из которой молча пропала строка, читается как смета без этой работы, и
+// вспоминают о ней на площадке.
+function estDroppedHtml(sh, canRule){
+  const off=(sh&&sh.posOff)||{};
+  const keys=Object.keys(off);
+  if(!keys.length)return "";
+  const dropped=(allPositionsRaw(sh, specCtx(sh)).dropped)||[];
+  const sum=dropped.reduce(function(a,p){ return a+(Number(p.cost)||0); },0);
+  return '<div style="background:#fff;border:1px solid #f0d5d0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
+    '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px">'+
+      '<span style="flex:1;min-width:0;font-size:11px;font-weight:700;color:#c0392b;letter-spacing:0.4px">УБРАНО ИЗ ЭТОГО ДОМА · '+keys.length+'</span>'+
+      '<span style="font-size:12px;font-weight:700;color:#c0392b;white-space:nowrap">−'+Math.round(sum).toLocaleString("ru-RU")+' ₽</span>'+
+    '</div>'+
+    (dropped.length
+      ? dropped.map(function(p){
+          return '<div style="display:flex;align-items:baseline;gap:8px;padding:5px 0;border-top:1px solid #fbf1ef">'+
+            '<span style="flex:1;min-width:0;font-size:12px;color:#7a9aaa">'+esc(p.name)+(p.room?' — '+esc(p.room):'')+'</span>'+
+            '<span style="font-size:11.5px;color:#9aabbf;white-space:nowrap">'+Math.round(Number(p.cost)||0).toLocaleString("ru-RU")+' ₽</span>'+
+            (canRule?'<button data-a="est-pos-back" data-k="'+esc(p.key)+'" style="border:1px solid #16a08544;background:#fff;border-radius:7px;padding:3px 9px;font-size:10.5px;font-weight:700;color:#16a085;cursor:pointer">вернуть</button>':'')+
+          '</div>';
+        }).join("")
+      // Работа могла уехать вместе с правилом или комнатой: ключа больше нет,
+      // а отметка осталась. Показываем её честно и даём убрать отметку.
+      : '<div style="font-size:11.5px;color:#9aabbf;padding:4px 0">Строк с такими ключами в смете больше нет — планировка изменилась.</div>')+
+    (canRule?'<div style="margin-top:7px"><button data-a="est-pos-back" data-k="" style="border:1px solid #d0dae8;background:#fff;border-radius:7px;padding:5px 10px;font-size:11px;color:#7a9aaa;cursor:pointer">Вернуть все</button></div>':'')+
+  '</div>';
+}
+
 function estBodyHtml(sh, types, live, actions){
   const w=works2(sh, Object.assign(specCtx(sh), { winTypes:types }));
   const canRule=canRuleSheet(sh);
@@ -12760,6 +12789,7 @@ function estBodyHtml(sh, types, live, actions){
     '</div>'+
   '</div>';
   h+=spec2FactsHtml(w.facts);
+  h+=estDroppedHtml(sh, canRule);
   // Работы этапами: стройка меряется этапами, по ним же идут сроки, приёмка и
   // транши — смета обязана читаться в том же разрезе.
   if(w.stages.length){
@@ -12784,6 +12814,12 @@ function estBodyHtml(sh, types, live, actions){
             '<div style="display:flex;align-items:baseline;gap:8px">'+
               '<span style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#0d1b2e">'+esc(p.name)+'</span>'+
               '<span style="font-size:12px;font-weight:700;color:#0d1b2e;white-space:nowrap">'+Math.round(p.cost).toLocaleString("ru-RU")+' ₽</span>'+
+              // Убрать работу из ЭТОГО дома: контейнер уже стоит на участке,
+              // электрику ведёт заказчик. Правило и справочник не трогаем — они
+              // общие; строка выключается в листе и возвращается тем же тапом.
+              (canRule
+                ? '<button data-a="est-pos-del" data-k="'+esc(p.key)+'" title="Убрать эту работу из дома" style="width:22px;height:22px;background:transparent;border:1px solid #e74c3c33;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0;line-height:1">✕</button>'
+                : '')+
             '</div>'+
             optChipsHtml(p, sh, w)+
             '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:4px">'+
@@ -21706,6 +21742,24 @@ function bind(){
       const map=Object.assign({}, sh.matAdd||{});
       map[posKey]=(map[posKey]||[]).concat([m]);
       sh.matAdd=map; matAddOpen=""; fl();
+    };}
+    else if(a==="est-pos-del"){el.onclick=()=>{
+      const key=el.dataset.k||"";
+      const sh=schemeSheet()||spec2Sheet();
+      if(!sh||!key)return;
+      // Выключаем строку в ЭТОМ листе, не трогая правило и справочник: они общие
+      // на все дома, а решение «здесь этой работы нет» — про один дом.
+      sh.posOff=Object.assign({}, sh.posOff||{}, { [key]:1 });
+      scheduleSave(); fl();
+    };}
+    else if(a==="est-pos-back"){el.onclick=()=>{
+      const key=el.dataset.k||"";
+      const sh=schemeSheet()||spec2Sheet();
+      if(!sh||!sh.posOff)return;
+      if(!key){ delete sh.posOff; }                 // «вернуть все»
+      else { const map=Object.assign({}, sh.posOff); delete map[key];
+        if(Object.keys(map).length)sh.posOff=map; else delete sh.posOff; }
+      scheduleSave(); fl();
     };}
     else if(a==="est-mat-add-del"){el.onclick=()=>{
       const posKey=el.dataset.k||"", mid=el.dataset.m||"";

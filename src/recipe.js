@@ -488,7 +488,22 @@ export function allPositionsRaw(sheet, ctx) {
   // Пироги считают себя сами там же, где работают правила: боевые спецификации
   // ни того, ни другого не видят — по ним заведены договора, объекты и транши.
   const all = c.pies ? out.concat(layerPositions(sheet, c.estimates, c.products, c.winTypes)) : out;
-  return applyPicks(applyMatEdits(all, sheet, c.products), sheet);
+  return dropOff(applyPicks(applyMatEdits(all, sheet, c.products), sheet), sheet);
+}
+
+// Работы, убранные руками из ЭТОГО дома. Смета справочника описывает типовой дом,
+// а в конкретном бывает лишняя строка: контейнер уже стоит на участке, электрику
+// ведёт заказчик, кухню он привезёт свою. Править ради этого справочник нельзя —
+// он общий, — поэтому строка выключается в листе и помнится по своему ключу.
+//
+// Убранные возвращаются: список уходит на экран, и вернуть строку можно тем же
+// тапом. Молча выкинуть работу из сметы — это молча выкинуть её из стройки.
+export function dropOff(raw, sheet) {
+  const off = (sheet && sheet.posOff) || {};
+  if (!Object.keys(off).length) return Object.assign({ dropped: [] }, raw);
+  const kept = [], dropped = [];
+  (raw.positions || []).forEach(function (p) { (off[p.key] ? dropped : kept).push(p); });
+  return Object.assign({}, raw, { positions: kept, dropped: dropped });
 }
 
 // Позиция → работа объекта. ОДНА машинка на сборку объекта и на подпись состава:

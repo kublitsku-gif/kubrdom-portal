@@ -246,4 +246,48 @@ function create(p, name) {
   t.ok('и объясняет роль заготовки', /заготовка останется запасным вариантом/.test(form))
 }
 
+// ── Работу можно убрать из ЭТОГО дома ────────────────────────────────────────
+// Смета справочника описывает типовой дом, а в конкретном бывает лишняя строка:
+// контейнер уже стоит на участке, электрику ведёт заказчик. Править ради этого
+// справочник нельзя — он общий на все дома, — поэтому строка выключается в листе.
+{
+  t.section('Убрать работу')
+  const p = panel(RULES)
+  create(p, 'Дом с лишней работой')
+  p.run('projBand="parts";')
+  const before = p.run('tProjects()')
+  const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
+  const cost0 = p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost')
+  t.ok('у работы есть крестик', before.indexOf('data-a="est-pos-del"') >= 0)
+
+  const del = p.dom.node({ a: 'est-pos-del', k: key })
+  p.run('bind();'); del.onclick()
+  const after = p.run('tProjects()')
+  const cost1 = p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost')
+  t.ok('строка ушла из сметы',
+    p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';}).length') === 0)
+  t.ok('и деньги пересчитались', cost1 < cost0, cost0 + ' → ' + cost1)
+  // Молча выкинуть работу из сметы — это молча выкинуть её из стройки: убранное
+  // остаётся на виду, с ценой и кнопкой «вернуть».
+  t.ok('убранное показано отдельно', /УБРАНО ИЗ ЭТОГО ДОМА/.test(after))
+  t.ok('и его можно вернуть', after.indexOf('data-a="est-pos-back"') >= 0)
+  // Правило и справочник — общие на все дома, их выключение не трогает.
+  t.ok('справочник не тронут', p.q('estimates.length') === 2)
+  t.ok('правило на месте', p.q('buildRules.length') === 1)
+
+  const back = p.dom.node({ a: 'est-pos-back', k: key })
+  p.run('bind();'); back.onclick()
+  t.ok('вернулась на место',
+    p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';}).length') === 1)
+  t.ok('и деньги вернулись',
+    p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost') === cost0)
+  t.ok('отметка из листа стёрта', !p.q('projects[0].posOff'))
+
+  // Состав объекта собирается ТЕМ ЖЕ списком: убранная работа не должна уехать
+  // на стройку — иначе на экране одна смета, а в объекте другая.
+  del.onclick()
+  const inObj = p.q('allPositions(projects[0], specCtx(projects[0])).map(function(x){return x.key;})')
+  t.ok('в состав дома убранная работа не попадает', inObj.indexOf(key) < 0, JSON.stringify(inObj))
+}
+
 t.done()
