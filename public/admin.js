@@ -2275,7 +2275,10 @@ let matAddOpen="";         // у какой строки сметы открыт
 let matOfferAdd="";        // у какого товара открыта форма «＋ магазин»
 let posAddOpen="";         // у какого листа открыта форма «+ работа»
 let matsOpen={};           // у каких строк сметы раскрыт список материалов
-let stageShut={};          // какие этапы свёрнуты целиком
+// Этапы свёрнуты ПО УМОЛЧАНИЮ, поэтому карта про раскрытые: смета на сорок
+// строк открывается оглавлением — этапы с суммами, — и человек разворачивает
+// тот, в который пришёл. Развёрнутые сразу все читались как простыня.
+let stageOpen={};          // какие этапы раскрыты целиком
 let estMoveKey="";         // какую строку сметы сейчас переносят внутри этапа
 let estMoveSheet="";       // и в каком листе: ключ позиции у листов общий
 let blockShut={};          // какие блоки помещений свёрнуты: "<этап>|<ключ комнаты>"
@@ -2298,7 +2301,7 @@ let buildRules=[];
 // спецификация (модель, отделка, наценка), плюс ссылки на объект и договор —
 // поэтому редактор модели, смета, печать и сборка объекта работают без правок.
 let projects=[];
-let projOpenId=null, projBand="plan", projNew=null, projRulesOpen=false;
+let projOpenId=null, projBand="parts", projNew=null, projRulesOpen=false;
 let specOpenId=null;      // открытая спецификация (null = список)
 let specNew={name:"",kind:"banya",clientId:"",planId:"",model:"",preset:""};
 let specShowNew=false;
@@ -13198,7 +13201,7 @@ function estBodyHtml(sh, types, live, actions){
       // Этап сворачивается целиком: в смете на сорок строк искать нужный этап,
       // прокручивая чужие работы, — то же самое, что искать его в простыне. Шапка
       // с итогом остаётся всегда: по этим суммам идут транши и приёмка.
-      const shut=!!stageShut[st.n];
+      const shut=!stageOpen[st.n];
       const mi=moving?st.positions.findIndex(function(x){ return x.key===moving; }):-1;
       return '<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
         '<div data-a="est-stage-open" data-n="'+st.n+'" style="display:flex;align-items:baseline;gap:8px;margin-bottom:'+(shut?'0':'7px')+';cursor:pointer">'+
@@ -13321,9 +13324,11 @@ function spec2EstHtml(built, sh, pr){ return estBodyHtml(spec2Probe(built, sh, p
 // Проект — тот же лист, что спецификация (модель, отделка, наценка), поэтому
 // редактор модели, смета, печать бригаде и сборка объекта работают без единой
 // правки. Новое здесь одно: у дома появился адрес, по которому лежит ВСЁ о нём.
+// «Состав» стоит ПЕРВЫМ и открывается по умолчанию: в проект заходят к смете —
+// её правят каждый день, а чертёж смотрят, когда меняют сам дом.
 const PROJ_BANDS=[
-  ["plan",  "📐 Чертёж", "что построить"],
   ["parts", "🧾 Состав", "из чего"],
+  ["plan",  "📐 Чертёж", "что построить"],
   ["money", "💰 Деньги", "за сколько"],
   ["build", "🏗 Стройка", "как идёт"],
 ];
@@ -22206,9 +22211,9 @@ function bind(){
     };}
     else if(a==="est-stage-open"){el.onclick=()=>{
       const n=String(el.dataset.n||"");
-      const map=Object.assign({}, stageShut);
+      const map=Object.assign({}, stageOpen);
       if(map[n])delete map[n]; else map[n]=1;
-      stageShut=map; fl();
+      stageOpen=map; fl();
     };}
     else if(a==="est-mats-open"){el.onclick=()=>{
       const k=el.dataset.k||""; if(!k)return;
@@ -22602,7 +22607,7 @@ function bind(){
       p.model=applyLayers(p.model, "skin", skinLayers(p.model));
       modelSync(p);
       projects=projects.concat([p]);
-      projNew=null; projOpenId=p.id; projBand="plan"; fl();
+      projNew=null; projOpenId=p.id; projBand="parts"; fl();
       // Файл грузим ПОСЛЕ создания: проект уже открыт и им можно заниматься, пока
       // планировка едет в R2. Упадёт загрузка — проект от этого не пострадает.
       const fi=document.getElementById("proj-n-plan");
@@ -22610,7 +22615,7 @@ function bind(){
         attachPlanFiles(p.id, fi.files).then(function(){ projStartRead(p.id); });
       }
     };}
-    else if(a==="proj-open"){el.onclick=()=>{ projOpenId=el.dataset.id; projBand="plan"; render(); window.scrollTo(0,0); };}
+    else if(a==="proj-open"){el.onclick=()=>{ projOpenId=el.dataset.id; projBand="parts"; render(); window.scrollTo(0,0); };}
     else if(a==="proj-back"){el.onclick=()=>{ projOpenId=null; render(); window.scrollTo(0,0); };}
     else if(a==="proj-band"){el.onclick=()=>{ projBand=el.dataset.v||"plan"; render(); window.scrollTo(0,0); };}
     // Чертят проект тем же редактором, что и опытный лист: два редактора одной

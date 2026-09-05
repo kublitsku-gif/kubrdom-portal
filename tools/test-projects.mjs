@@ -44,6 +44,9 @@ function create(p, name) {
   const go = p.dom.node({ a: 'proj-create' })
   p.run('bind();')
   go.onclick()
+  // Этапы свёрнуты по умолчанию — оглавление сметы. Проверкам нужны сами строки,
+  // поэтому разворачиваем все; свёрнутость сторожит своя секция.
+  p.run('stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};')
 }
 
 // ── 1. Список и создание ────────────────────────────────────────────────────
@@ -56,6 +59,8 @@ function create(p, name) {
 
   create(p)
   t.ok('проект появился', p.q('projects.length') === 1)
+  // В проект заходят к смете: она первая полоса и открывается сразу.
+  t.ok('открывается «Состав»', p.q('projBand') === 'parts')
   t.ok('и открылся', p.q('projOpenId') === p.q('projects[0].id'))
   t.ok('имя своё', p.q('projects[0].name') === 'Дом Ивановых')
   t.ok('клиент привязан', p.q('projects[0].clientId') === 'c1')
@@ -84,6 +89,10 @@ function create(p, name) {
   // Кнопки действий живут на «Деньгах»: две одинаковые в соседних полосах
   // читаются как два разных действия.
   t.ok('объект отсюда не заводится', parts.indexOf('data-a="spec-to-object"') < 0)
+  const bands = p.run('tProjects()')
+  t.ok('и «Состав» стоит первой полосой',
+    bands.indexOf('data-v="parts"') < bands.indexOf('data-v="plan"'),
+    'parts@' + bands.indexOf('data-v="parts"') + ' plan@' + bands.indexOf('data-v="plan"'))
 
   const money = p.run('projBand="money";tProjects()')
   t.ok('деньги показаны', /СЕБЕСТОИМОСТЬ/.test(money) && /КЛИЕНТУ/.test(money))
@@ -553,11 +562,19 @@ function create(p, name) {
   const p = panel()
   create(p, 'Дом со свёрнутым этапом')
   p.run('projBand="parts";')
+  // Смета открывается ОГЛАВЛЕНИЕМ: этапы с суммами, работы — по тапу. Сорок строк
+  // сразу читаются как простыня, и нужный этап в ней ищут прокруткой.
+  p.run('stageOpen={};')
+  const start = p.run('tProjects()')
+  t.ok('по умолчанию этапы свёрнуты', !/Монтаж окна/.test(start))
+  t.ok('но итоги этапов видны', /Этап 2/.test(start) && /data-a="est-stage-open"/.test(start))
+
+  const head = p.dom.node({ a: 'est-stage-open', n: '2' })
+  p.run('bind();'); head.onclick()
   const open = p.run('tProjects()')
   t.ok('шапка этапа тапается', open.indexOf('data-a="est-stage-open"') >= 0)
   t.ok('работы видны', /Монтаж окна/.test(open))
 
-  const head = p.dom.node({ a: 'est-stage-open', n: '2' })
   p.run('bind();'); head.onclick()
   const shut = p.run('tProjects()')
   t.ok('работы спрятались', !/Монтаж окна/.test(shut))
@@ -567,7 +584,7 @@ function create(p, name) {
   t.ok('деньги не изменились',
     p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost') ===
     p.q('allPositions(projects[0], specCtx(projects[0])).reduce(function(a,x){return a+x.cost;},0)'))
-  t.ok('в листе ничего не записалось', !p.q('projects[0].stageShut'))
+  t.ok('в листе ничего не записалось', !p.q('projects[0].stageOpen'))
 
   p.run('bind();'); head.onclick()
   t.ok('разворачивается обратно', /Монтаж окна/.test(p.run('tProjects()')))

@@ -130,7 +130,7 @@ const SHEET = {
   t.ok('вкладки есть на обоих видах', scheme.indexOf('data-a="spec2-tab"') >= 0)
   t.ok('на схеме смета не печатается', scheme.indexOf('ОТКУДА ЧИСЛА') < 0)
 
-  const est = p.run('spec2Tab="est";tSpec2()')
+  const est = p.run('stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2()')
   t.ok('смета показана', /СЕБЕСТОИМОСТЬ ПО ЧЕРТЕЖУ/.test(est))
   // Справка «откуда числа» свёрнута: в шапке главные площади, подробности — по тапу.
   t.ok('справка есть, но свёрнута', /ОТКУДА ЧИСЛА/.test(est) && !/РАСКЛАДКА/.test(est))
@@ -152,7 +152,7 @@ const SHEET = {
   const edit = p.dom.node({ a: 'spec2-edit' })
   p.run('bind();')
   edit.onclick()
-  const est2 = p.run('modelFull=false;spec2Tab="est";tSpec2()')
+  const est2 = p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2()')
   t.ok('по заведённому листу объект собирается', est2.indexOf('data-a="spec-to-object"') >= 0)
   t.ok('и договор заводится', est2.indexOf('data-a="spec-to-contract"') >= 0)
 
@@ -226,7 +226,7 @@ const SHEET = {
   t.ok('правило показано словами', /каждого помещения/.test(shown))
   t.ok('и сколько строк даёт', /строк на/.test(shown))
 
-  const est = p.run('spec2Tab="est";tSpec2()')
+  const est = p.run('stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2()')
   t.ok('строки правила попали в смету', /ОСП/.test(est))
   t.ok('стены больше не пробел', est.indexOf('стены') < 0 || !/В СМЕТУ НЕ ПОПАЛО[\s\S]{0,400}стены/.test(est))
 
@@ -261,7 +261,7 @@ const SHEET = {
   p.run('spec2Tab="scheme";tSpec2();')
   const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
 
-  const est = p.run('modelFull=false;spec2Tab="est";tSpec2()')
+  const est = p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2()')
   t.ok('чип «откуда число» — кнопка', est.indexOf('data-a="est-why"') >= 0)
   t.ok('и он у обязательной строки тоже', /data-a="est-why" data-est="e_box"/.test(est))
   t.ok('редактор закрыт, пока не тапнули', est.indexOf('ЧЕМ МЕРЯЕТСЯ') < 0)
@@ -341,7 +341,7 @@ const SHEET = {
   // Замена материала в строке пирога правит САМ ПИРОГ: у стены один источник
   // правды о том, из чего она сделана.
   const lkey = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.from==="layer";})[0].key') + '|p_ppu'
-  const lopen = p.dom.node({ a: 'est-mat-open', k: lkey }); p.run('spec2Tab="est";tSpec2();bind();'); lopen.onclick()
+  const lopen = p.dom.node({ a: 'est-mat-open', k: lkey }); p.run('stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();bind();'); lopen.onclick()
   p.dom.field('msw-input', 'Монтажный комплект окна')
   const ldo = p.dom.node({ a: 'est-mat-do', k: lkey }); p.run('bind();'); ldo.onclick()
   t.ok('замена слоя ушла в пирог', p.q('spec2Sheet().model.skin[1].pid') === 'p_win')
@@ -375,7 +375,7 @@ const SHEET = {
   })
   p.run('spec2Tab="scheme";tSpec2();')
   const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  const est0 = p.run('modelFull=false;spec2Tab="est";tSpec2()')
+  const est0 = p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2()')
   // Список читают РАБОТАМИ: материалы свёрнуты за одну строку, пока в них не лезут.
   t.ok('материалы по умолчанию свёрнуты',
     est0.indexOf('data-a="est-mats-open"') >= 0 && est0.indexOf('data-a="est-mat-open"') < 0)
@@ -552,7 +552,7 @@ const SHEET = {
   })
   p.run('spec2Tab="scheme";tSpec2();')
   const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  p.run('modelFull=false;spec2Tab="est";')
+  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";')
 
   const three = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return /ППУ/.test(x.name);}).length')
   t.ok('до группировки в доме все три', three === 3)
@@ -629,7 +629,7 @@ const SHEET = {
   })
   p.run('spec2Tab="scheme";tSpec2();')
   const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  const est = p.run('modelFull=false;spec2Tab="est";tSpec2()')
+  const est = p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2()')
   const st = () => p.q('works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes})).stages.filter(function(s){return s.n===3;})[0]')
   const blocks = st().blocks
   t.ok('этап разложен по комнатам', blocks.length >= 2, 'блоков: ' + blocks.length)
