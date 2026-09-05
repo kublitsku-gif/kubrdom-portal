@@ -1866,6 +1866,10 @@ let dbWorks=[
   {id:"dw35",n:"Покрытие полков маслом",cost:20000,stage:"ЭТАП 3 — ЧИСТОВАЯ ОТДЕЛКА",note:"",mats:[]},
 ];
 let dbSection="mats";
+let hoursPickKey="";       // у какой строки открыт ряд быстрого выбора часов
+// Ряд плана: целые 1..10 закрывают почти все работы, 0,5 — мелочь вроде подвесов.
+// Всё, что не сюда, вписывается в поле руками.
+const PLAN_HOURS=[0.5,1,2,3,4,5,6,7,8,9,10];
 let roomsDbKind="";        // вид смет, чей справочник комнат открыт («» — первый)
 const ROOM_EMOJI=["🛋","🍽","🛏","🚽","🚪","🚿","🔥","🌿","🧺","🪟","🏗️","📍"];
 let dbMatSearch=""; // поиск по материалам в Базе данных (название или магазин)
@@ -6866,7 +6870,14 @@ ${obj.stages.map(s=>{
               if(objWorkView!=="receive")return "";
               const canLogTime=currentUser&&(currentUser.roles.includes("admin")||currentUser.roles.includes("financier")||currentUser.roles.includes("brigadier")||currentUser.roles.includes("worker")||currentUser.roles.includes("prod_head"));
               if(!canLogTime&&totalH===0)return "";
-              return `<button data-a="obj-toggle-time" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="padding:6px 12px;font-size:12px !important;background:${totalH>0?'#16a08518':isTimeOpen?'#16a08533':'transparent'};border:1px solid ${isTimeOpen?'#16a085':'#16a08544'};border-radius:5px;cursor:pointer;font-size:10px;color:#16a085;font-weight:600">⏱ ${totalH>0?totalH+'ч ('+logs.length+')':'+'}</button>`;
+              // План приехал из сметы вместе с работой — показываем его рядом с
+              // фактом: «сколько отработали из скольких заложили». Перерасход
+              // красный: бригадир должен увидеть его на объекте, а не в отчёте.
+              const planH=Number(w.planHours)||0;
+              const overH=planH>0&&totalH>planH;
+              const col=overH?'#e74c3c':'#16a085';
+              const face=totalH>0?(totalH+(planH>0?'/'+numRu(planH):'')+'ч ('+logs.length+')'):(planH>0?('план '+numRu(planH)+' ч'):'+');
+              return `<button data-a="obj-toggle-time" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="padding:6px 12px;font-size:12px !important;background:${totalH>0?col+'18':isTimeOpen?col+'33':'transparent'};border:1px solid ${isTimeOpen?col:col+'44'};border-radius:5px;cursor:pointer;font-size:10px;color:${col};font-weight:600">⏱ ${face}</button>`;
             })()}
             ${(()=>{
               if(objWorkView!=="receive")return "";
@@ -7391,6 +7402,54 @@ ${showNT?`<div style="background:#fff;border-radius:14px;border:2px solid #9b59b
 <div id="tpl-grid" style="display:flex;flex-direction:column;gap:10px"></div>
 `}
 </div>`;
+}
+
+// Расхождение план↔факт одной пометкой. Считать «одиннадцать минус восемь» в
+// уме при каждом взгляде на смету — работа, которую делает машина; красное
+// говорит «вышли за план», зелёное — «уложились».
+function hoursGapHtml(plan, fact){
+  const p=Number(plan)||0, f=Number(fact)||0;
+  if(!(p>0)||!(f>0))return '';
+  const d=Math.round((f-p)*10)/10;
+  if(!d)return '';
+  const over=d>0;
+  return '<span style="font-size:10.5px;font-weight:700;color:'+(over?"#e74c3c":"#16a085")+';margin-left:4px;white-space:nowrap">'+(over?"+":"−")+numRu(Math.abs(d))+' ч</span>';
+}
+
+// ── ФАКТ ЧАСОВ СО СТРОЙКИ ───────────────────────────────────────
+// План хозяин ставит в смете, факт бригада отмечает в объекте (timeLogs у работы).
+// Второй учёт времени не заводим: факт остаётся там, где его ведут, а смета
+// умеет его прочитать. Связь — posKey, ключ позиции, который объект хранит у
+// каждой работы с момента сборки; у объектов, собранных до появления ключа,
+// сверяемся по имени работы, иначе стройка молча осталась бы без факта.
+function objWorkFact(w){
+  return ((w&&w.timeLogs)||[]).reduce(function(a,l){ return a+(Number(l&&l.hours)||0); }, 0);
+}
+function objOfSheet(sh){
+  if(!sh)return null;
+  const byId=sh.objId?objects.find(function(o){return o.id===sh.objId;}):null;
+  if(byId)return byId;
+  return objects.find(function(o){return o.specId&&o.specId===sh.id;})||null;
+}
+function factHoursOf(sh){
+  const obj=objOfSheet(sh); const out={};
+  if(!obj)return out;
+  (obj.stages||[]).forEach(function(st){
+    ((st&&st.works)||[]).forEach(function(w){
+      const h=objWorkFact(w);
+      const k=w.posKey||("n:"+String(w.n||""));
+      out[k]=(out[k]||0)+h;
+    });
+  });
+  return out;
+}
+// Часы позиции сметы: сперва по ключу, затем по имени — на случай объектов,
+// собранных раньше, чем ключ начал уезжать в стройку.
+function factOfPos(fact, p){
+  if(!fact)return 0;
+  if(fact[p.key]!=null)return fact[p.key];
+  const nm=(p.name||"")+(p.room?" — "+p.room:"");
+  return fact["n:"+nm]||0;
 }
 
 // ── СПРАВОЧНИК КОМНАТ ───────────────────────────────────────────
@@ -13289,6 +13348,10 @@ function estRoomPickHtml(key, cur, w){
 }
 function estBodyHtml(sh, types, live, actions){
   const w=works2(sh, Object.assign(specCtx(sh), { winTypes:types }));
+  // Факт часов приезжает со стройки: пока объекта нет, карта пуста и в смете
+  // остаётся один план.
+  const fact=factHoursOf(sh);
+  const factSum=Object.keys(fact).reduce(function(a,k){ return a+(Number(fact[k])||0); }, 0);
   const canRule=canRuleSheet(sh);
   const seen={}, seenPref={};
   const suggest=canRule?optSuggest(w, sh):{};
@@ -13342,6 +13405,8 @@ function estBodyHtml(sh, types, live, actions){
           // План показываем, только когда он проставлен: нули в каждой строке
           // читались бы как «работа ничего не стоит по времени».
           ((st.hours>0)?' · план <b style="color:#2980b9">'+numRu(st.hours)+' ч</b>':'')+
+          (function(){ const f=st.positions.reduce(function(a,p){ return a+factOfPos(fact,p); },0);
+            return f>0?' · факт <b style="color:#16a085">'+numRu(f)+' ч</b>'+hoursGapHtml(st.hours,f):''; })()+
         '</div>'+
         (shut?'':estStageBody(st, moving, mi, st.positions.map(function(p, pi, arr){
           // Редактор раскрываем у ПЕРВОЙ строки этой сметы: правило по помещениям
@@ -13399,7 +13464,22 @@ function estBodyHtml(sh, types, live, actions){
                     // Факт часов ведут на объекте, здесь только план.
                     (function(){ const hv=((sh&&sh.posHours)||{})[p.key]; const hset=hv!=null&&Number(hv)>0;
                       return '<input data-a="est-pos-hours" data-k="'+esc(p.key)+'" value="'+(hset?numRu(Number(hv)):"")+'" placeholder="ч" inputmode="decimal" title="План работ в человеко-часах — сколько времени закладываем на эту работу" style="width:52px;height:28px;padding:0 7px;margin-left:6px;border:1px solid '+(hset?"#2980b9":"#dde6f0")+';border-radius:7px;font-size:12px;font-weight:700;text-align:right;outline:none;color:'+(hset?"#2980b9":"#0d1b2e")+';background:#fff;box-sizing:border-box">'+
-                        '<span style="font-size:12px;font-weight:700;color:#0d1b2e">ч</span>'; })()+
+                        '<span style="font-size:12px;font-weight:700;color:#0d1b2e">ч</span>'+
+                        // Факт со стройки — рядом с планом: расхождение видно там же,
+                        // где план и ставили, а не в отдельном отчёте.
+                        (function(){ const f=factOfPos(fact,p); if(!(f>0))return '';
+                          const pl=Number(((sh&&sh.posHours)||{})[p.key])||0;
+                          return '<span style="font-size:11px;color:#16a085;font-weight:700;margin-left:7px;white-space:nowrap">факт '+numRu(f)+' ч</span>'+hoursGapHtml(pl,f); })(); })()+
+                    // Ряд готовых часов: открывается тапом по полю и закрывается
+                    // выбором. Постоянно висящие одиннадцать кнопок в каждой строке
+                    // сметы на сорок работ — это уже не смета, а клавиатура.
+                    ((hoursPickKey===p.key)?'<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px">'+
+                      PLAN_HOURS.map(function(hh){
+                        return '<button data-a="est-pos-hours-set" data-k="'+esc(p.key)+'" data-h="'+hh+'" style="min-width:34px;padding:5px 8px;border-radius:7px;border:1.5px solid #2980b933;background:#fff;color:#2980b9;font-size:11.5px;font-weight:700;cursor:pointer">'+numRu(hh)+'</button>';
+                      }).join("")+
+                      '<button data-a="est-pos-hours-set" data-k="'+esc(p.key)+'" data-h="0" title="Убрать план" style="min-width:34px;padding:5px 8px;border-radius:7px;border:1.5px solid #dde6f0;background:#fff;color:#9aabbf;font-size:11.5px;font-weight:700;cursor:pointer">✕</button>'+
+                      '<span style="font-size:10.5px;color:#9aabbf;align-self:center;margin-left:2px">или впишите в поле</span>'+
+                    '</div>':'')+
                     // Смысл цифры: оплата бригаде (материалы сверху) или подряд под
                     // ключ (материалы уже в ней). «За работу» — обычный случай, ему
                     // хватает значка; словом говорим про исключение.
@@ -13449,6 +13529,7 @@ function estBodyHtml(sh, types, live, actions){
       '<div style="font-size:10.5px;color:#7a9aaa;margin-top:3px">'+
         'материалы <b style="color:#0d1b2e">'+Math.round(w.mats||0).toLocaleString("ru-RU")+' ₽</b> · работа <b style="color:#0d1b2e">'+Math.round(w.labor||0).toLocaleString("ru-RU")+' ₽</b>'+
         ((w.hours>0)?' · план <b style="color:#2980b9">'+numRu(w.hours)+' ч</b>':'')+
+        ((factSum>0)?' · факт <b style="color:#16a085">'+numRu(factSum)+' ч</b>'+hoursGapHtml(w.hours,factSum):'')+
       '</div>'+
     '</div>';
   } else {
@@ -22399,7 +22480,18 @@ function bind(){
       map[posKey]=(map[posKey]||[]).concat([m]);
       sh.matAdd=map; matAddOpen=""; fl();
     };}
-    else if(a==="est-pos-hours"){el.onchange=()=>{
+    else if(a==="est-pos-hours-set"){el.onclick=()=>{
+      const key=el.dataset.k||"", h=parseFloat(el.dataset.h||"0");
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
+      const next=Object.assign({}, sh.posHours||{});
+      if(!(h>0)) delete next[key]; else next[key]=h;
+      sh.posHours=next; hoursPickKey=""; scheduleSave(); fl();
+    };}
+    else if(a==="est-pos-hours"){
+      // Тап по полю показывает готовые часы: набирать «6» на телефоне в поле рядом
+      // с полем цены — способ поставить план не в ту строку.
+      el.onclick=()=>{ const key=el.dataset.k||""; hoursPickKey=(hoursPickKey===key)?"":key; fl(); };
+      el.onchange=()=>{
       const key=el.dataset.k||"";
       const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
       const raw=String(el.value||"").replace(/\s/g,"").replace(",",".");
@@ -22408,8 +22500,9 @@ function bind(){
       // Пустое поле — «плана нет», а не «ноль часов»: иначе лист копил бы нули по
       // каждой строке, которую человек просто потрогал.
       if(!raw||!isFinite(v)||v<=0) delete next[key]; else next[key]=Math.round(v*10)/10;
-      sh.posHours=next; scheduleSave(); fl();
-    };}
+      sh.posHours=next; hoursPickKey=""; scheduleSave(); fl();
+      };
+    }
     else if(a==="est-pos-cost"){el.onchange=()=>{
       const key=el.dataset.k||"";
       const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;

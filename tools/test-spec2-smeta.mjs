@@ -843,4 +843,40 @@ const SHEET = {
   t.ok('и часы из итога уходят', p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).hours') === 0)
 }
 
+// ── 10. Часы вводятся тапом, а не набором ───────────────────────────────────
+// Набирать «6» на телефоне в поле шириной в палец — там же, где рядом стоит поле
+// цены, — способ поставить план не туда. Готовый ряд 1..10 закрывает почти все
+// случаи, дробные (0,5 ч) остаются в поле.
+{
+  t.section('Быстрый выбор часов')
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS, estimates: EST, dbPlans: [], crmClients: [],
+    specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [],
+    contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+    buildRules: [],
+  })
+  p.run('spec2Tab="scheme";tSpec2();')
+  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
+  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key')
+
+  t.ok('пока не тапнули — ряда нет', p.run('tSpec2()').indexOf('data-a="est-pos-hours-set"') < 0)
+
+  const inp = p.dom.node({ a: 'est-pos-hours', k: key })
+  p.run('bind();'); inp.onclick()
+  const opened = p.run('tSpec2()')
+  const chips = opened.match(/data-a="est-pos-hours-set"/g) || []
+  t.ok('по тапу открывается ряд часов', chips.length >= 10, 'кнопок: ' + chips.length)
+  t.ok('есть и 1, и 10', /data-h="1"/.test(opened) && /data-h="10"/.test(opened))
+  t.ok('и полчаса для мелких работ', /data-h="0.5"/.test(opened))
+  t.ok('поле для ручного ввода осталось', opened.indexOf('data-a="est-pos-hours"') >= 0)
+
+  const chip = p.dom.node({ a: 'est-pos-hours-set', k: key, h: '6' })
+  p.run('bind();'); chip.onclick()
+  t.ok('тап по «6» ставит план', p.q('spec2Sheet().posHours[' + JSON.stringify(key) + ']') === 6,
+    'получили: ' + p.q('spec2Sheet().posHours[' + JSON.stringify(key) + ']'))
+  t.ok('и ряд закрывается', p.run('tSpec2()').indexOf('data-a="est-pos-hours-set"') < 0)
+}
+
 t.done()

@@ -823,6 +823,11 @@ export function positionWork(pos) {
     // на экране подрядная цена, а в объекте сумма кабелей — и расходятся они
     // молча. По `labor` объект потом и пересчитывает себя (normalizeWorkCosts).
     labor: Number(p.labor) || 0,
+    // План часов уезжает в стройку вместе с работой: мастер должен видеть, во
+    // сколько времени её заложили, а расхождение с фактом (timeLogs) считается
+    // по этой же паре. Это снимок на момент сборки объекта — стройка идёт по
+    // плану, который продали, а не по тому, что правят в смете задним числом.
+    planHours: Number(p.hours) || 0,
     costAll: !!p.costAll,
     cost: p.costSet ? (Number(p.cost) || 0)
       : Math.round(mats.reduce(function (a, m) { return a + m.cost * m.qty; }, 0)),
