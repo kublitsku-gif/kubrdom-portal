@@ -2272,6 +2272,7 @@ let spec2Tab="scheme";     // что смотрим в разделе: черт�
 let estWhyOpen="";         // у какой сметы раскрыт редактор правила прямо в строке
 let matSwapOpen="";        // какой материал сметы сейчас меняют: "<ключ позиции>|<pid>"
 let matAddOpen="";         // у какой строки сметы открыта форма «+ материал»
+let matOfferAdd="";        // у какого товара открыта форма «＋ магазин»
 let posAddOpen="";         // у какого листа открыта форма «+ работа»
 let matsOpen={};           // у каких строк сметы раскрыт список материалов
 let stageShut={};          // какие этапы свёрнуты целиком
@@ -8446,6 +8447,89 @@ function renderExpCard(containerId){
   el.querySelectorAll("[data-exp-price]").forEach(function(b){b.onclick=function(ev){if(ev)ev.stopPropagation();var p=expProducts.find(function(x){return x.id===b.dataset.id;});if(p)_matRefreshPrice(p);};});
 }
 
+// ── ОДИН ТОВАР — НЕСКОЛЬКО МАГАЗИНОВ ────────────────────────────────────────
+// Тот же стеллаж лежит и в Лемане, и на Маркете, и цены у них разные. Две карточки
+// на один товар — это две правды: в смете он окажется дважды, а при обновлении цены
+// разъедется. Поэтому карточка одна, а магазины — её предложения.
+//
+// Выбранное предложение ЗЕРКАЛИТСЯ в поля товара (`store`, `url`, `unitCost`): по ним
+// считают смета, объекты и снабжение, и учить каждое из них про предложения значило
+// бы переписать полпортала ради выбора магазина. Список помнит альтернативы,
+// активная цена остаётся там же, где была.
+function matOffers(p){ return (p&&p.offers&&p.offers.length)?p.offers:[]; }
+function matOfferPick(p, oid){
+  const o=matOffers(p).find(function(x){ return x.id===oid; });
+  if(!p||!o)return false;
+  p.offer=o.id;
+  p.store=o.store||"";
+  p.url=o.url||"";
+  p.unitCost=Number(o.unitCost)||0;
+  return true;
+}
+// Первое предложение заводится из того, что в карточке уже есть: иначе выбор
+// «другого магазина» стирал бы нынешний, и вернуться к нему было бы некуда.
+function matOfferSeed(p){
+  if(!p||matOffers(p).length)return;
+  if(!p.store&&!p.url&&!Number(p.unitCost))return;
+  const o={ id:gid(), store:p.store||"", url:p.url||"", unitCost:Number(p.unitCost)||0 };
+  p.offers=[o]; p.offer=o.id;
+}
+// Добавить магазин. Нынешняя цена карточки становится первым предложением, новый
+// сразу активен: его и вписали, чтобы по нему покупать.
+function matOfferAddNew(p, o){
+  if(!p)return null;
+  matOfferSeed(p);
+  const row={ id:gid(), store:(o&&o.store)||"", url:(o&&o.url)||"", unitCost:Number(o&&o.unitCost)||0 };
+  p.offers=matOffers(p).concat([row]);
+  matOfferPick(p, row.id);
+  return row;
+}
+// Убрать магазин. Последний не убираем: товар без магазина негде купить, а цена
+// в карточке останется от него же — получится предложение-призрак.
+function matOfferDrop(p, oid){
+  const rest=matOffers(p).filter(function(x){ return x.id!==oid; });
+  if(!p||!rest.length||rest.length===matOffers(p).length)return false;
+  p.offers=rest;
+  if(p.offer===oid)matOfferPick(p, rest[0].id);
+  return true;
+}
+function matOffersHtml(p){
+  const list=matOffers(p);
+  const cur=p.offer||((list[0]||{}).id||"");
+  const add=matOfferAdd===p.id;
+  return '<div style="padding:0 16px 4px">'+
+    '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.6px;margin-bottom:6px">ГДЕ КУПИТЬ'+(list.length>1?' · '+list.length:'')+'</div>'+
+    '<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">'+
+      list.map(function(o){
+        const on=o.id===cur;
+        const col=SC[o.store]||"#16a085";
+        return '<span style="display:inline-flex;align-items:center;gap:5px;border:1.5px solid '+(on?col:"#dde6f0")+';background:'+(on?col+"12":"#fff")+';border-radius:10px;padding:4px 8px">'+
+          '<button data-mat-offer="'+esc(o.id)+'" style="border:none;background:transparent;cursor:pointer;font-size:11.5px;font-weight:700;color:'+(on?col:"#5a7a9a")+';padding:0">'+
+            (on?"● ":"○ ")+esc(o.store||"магазин")+' · '+(Number(o.unitCost)||0).toLocaleString("ru-RU")+' ₽'+
+          '</button>'+
+          (/^https?:\/\//i.test(o.url||"")?'<a href="'+esc(o.url)+'" target="_blank" rel="noopener" title="Открыть в магазине" style="font-size:10px;font-weight:700;color:'+col+';text-decoration:none">↗</a>':'')+
+          (list.length>1?'<button data-mat-offer-del="'+esc(o.id)+'" title="Убрать магазин" style="border:none;background:transparent;cursor:pointer;color:#c0392b;font-size:11px;padding:0">✕</button>':'')+
+        '</span>';
+      }).join("")+
+      (add?'':'<button data-mat-offer-add="1" style="border:1px dashed #16a085;background:#eef6f4;border-radius:10px;padding:5px 9px;font-size:11.5px;font-weight:700;color:#16a085;cursor:pointer">＋ магазин</button>')+
+    '</div>'+
+    (add
+      ? '<div style="margin-top:7px;background:#eefaf6;border:1px solid #16a08544;border-radius:10px;padding:9px 10px">'+
+          '<div style="display:flex;gap:5px;margin-bottom:6px">'+
+            '<input id="mof-store" placeholder="Магазин" style="flex:1;min-width:0;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none">'+
+            '<input id="mof-cost" placeholder="Цена ₽" inputmode="decimal" style="width:96px;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none">'+
+          '</div>'+
+          '<input id="mof-url" placeholder="Ссылка на товар" style="width:100%;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;margin-bottom:6px">'+
+          '<div style="display:flex;gap:6px">'+
+            '<button data-mat-offer-do="1" style="flex:1;padding:8px;background:#16a085;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Добавить магазин</button>'+
+            '<button data-mat-offer-add="" style="padding:8px 12px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:12px">Отмена</button>'+
+          '</div>'+
+          '<div style="font-size:10px;color:#7a9aaa;line-height:1.45;margin-top:6px">Цена и ссылка выбранного магазина становятся ценой товара — по ней считаются сметы.</div>'+
+        '</div>'
+      : '')+
+  '</div>';
+}
+
 // ── ЭКСПЕРИМЕНТ: редактор товара (раскрывается по тапу) ─────────
 function expField(id,label,value){
   return '<div style="flex:1;min-width:0">'+
@@ -8577,6 +8661,7 @@ function expEditorHtml(p){
         ${EXP_MODES.map(function(x){const on=x.k===p.mode;return `<button data-exp-mode="${x.k}" style="flex:1;min-width:0;border:none;cursor:pointer;border-radius:9px;padding:8px 1px;font-size:10px;font-weight:700;line-height:1.3;background:${on?"#16a085":"transparent"};color:${on?"#fff":"#5a7a9a"};box-shadow:${on?"0 2px 8px rgba(22,160,133,0.35)":"none"};transition:all .15s"><div style="font-size:16px">${x.icon}</div>${x.label}</button>`;}).join("")}
       </div>
     </div>
+    ${matOffersHtml(p)}
     <div style="margin:14px 16px;padding:14px 16px;background:linear-gradient(135deg,#f6fbfa,#eef6f4);border:1px solid #d6ebe5;border-radius:14px">
       <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:10px">
         <div style="min-width:0">
@@ -8625,11 +8710,41 @@ function bindExpEditor(p){
   el.querySelectorAll("[data-exp-mode]").forEach(function(b){b.onclick=function(){p.mode=b.dataset.expMode;if((p.mode==="pack"||p.mode==="sheet")){if(!p.packBase)p.packBase="м²";if(!Number(p.packPer))p.packPer=1;}renderExpCard();};});
   el.querySelectorAll("[data-exp-base]").forEach(function(b){b.onclick=function(){p.packBase=b.dataset.expBase;renderExpCard();};});
   el.querySelectorAll("[data-exp-view]").forEach(function(b){b.onclick=function(){expView[p.id]=b.dataset.expView;renderExpCard();};});
+  // Магазины товара: выбрать, добавить, убрать. Выбранный зеркалится в поля
+  // карточки — по ним считает вся остальная система.
+  el.querySelectorAll("[data-mat-offer]").forEach(function(b){b.onclick=function(){
+    if(matOfferPick(p, b.dataset.matOffer)){ scheduleSave(); renderExpCard(); }
+  };});
+  el.querySelectorAll("[data-mat-offer-del]").forEach(function(b){b.onclick=function(){
+    if(matOfferDrop(p, b.dataset.matOfferDel)){ scheduleSave(); renderExpCard(); }
+  };});
+  el.querySelectorAll("[data-mat-offer-add]").forEach(function(b){b.onclick=function(){
+    matOfferAdd=b.dataset.matOfferAdd?p.id:""; renderExpCard();
+  };});
+  const ofDo=el.querySelector("[data-mat-offer-do]");
+  if(ofDo)ofDo.onclick=function(){
+    const store=((document.getElementById("mof-store")||{}).value||"").trim();
+    const url=((document.getElementById("mof-url")||{}).value||"").trim();
+    const cost=parseFloat(String(((document.getElementById("mof-cost")||{}).value||"")).replace(",","."))||0;
+    if(!store&&!url){ alert("Впишите магазин или ссылку."); return; }
+    matOfferAddNew(p, { store:store, url:url, unitCost:cost });
+    matOfferAdd=""; scheduleSave(); renderExpCard();
+  };
   const bindText=function(id,field,num){const i=document.getElementById(id);if(i)i.oninput=function(){p[field]=num?(parseFloat(this.value)||0):this.value;_expRecalc();};};
   bindText("exp-name","name",false);
-  bindText("exp-store","store",false);
-  bindText("exp-url","url",false);
-  bindText("exp-uc","unitCost",true);
+  // Правка полей карточки — это правка АКТИВНОГО магазина: иначе цена в шапке и
+  // цена в списке магазинов разъедутся, и какая из них настоящая, будет непонятно.
+  const mirror=function(){
+    const o=matOffers(p).find(function(x){ return x.id===p.offer; });
+    if(!o)return;
+    o.store=p.store||""; o.url=p.url||""; o.unitCost=Number(p.unitCost)||0;
+  };
+  const bindMirror=function(id,field,num){const i=document.getElementById(id);if(i)i.oninput=function(){
+    p[field]=num?(parseFloat(this.value)||0):this.value; mirror(); _expRecalc();
+  };};
+  bindMirror("exp-store","store",false);
+  bindMirror("exp-url","url",false);
+  bindMirror("exp-uc","unitCost",true);
   bindText("exp-qty","qty",true);
   bindText("exp-per","packPer",true);
   bindText("exp-sheetm2","sheetM2",true);
