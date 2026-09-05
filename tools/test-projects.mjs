@@ -876,4 +876,44 @@ function create(p, name) {
   }
 }
 
+// ── Своя работа: удаляется она сама, а не её «материал» ─────────────────────
+// У работы, вписанной руками, материалов нет — её цена показана одним
+// «материалом», чтобы деньги считались общим правилом. Строка с крестиком в
+// списке материалов обещала удаление и не делала ничего: у такого материала нет
+// ни товара, ни своего id, и адрес кнопки уходил пустым.
+{
+  t.section('Своя работа и её цена')
+  const p = panel()
+  create(p, 'Дом со своей работой')
+  p.run('projBand="parts";')
+  const open = p.dom.node({ a: 'est-pos-add-open', k: p.q('projects[0].id') })
+  p.run('bind();'); open.onclick()
+  p.dom.field('pad-n', 'Сборка стеллажей'); p.dom.field('pad-cost', '500'); p.dom.field('pad-stage', '1')
+  p.run('tProjects();')
+  const go = p.dom.node({ a: 'est-pos-add-do', k: p.q('projects[0].id') })
+  p.run('bind();'); go.onclick()
+  const own = () => p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.name==="Сборка стеллажей";})[0]')
+  t.ok('работа появилась', !!own() && own().cost === 500)
+  t.ok('у её цены есть свой адрес',
+    p.q('matKeyOf(allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.name==="Сборка стеллажей";})[0].mats[0])').length > 0)
+
+  const key = own().key
+  p.run('matsOpen[' + JSON.stringify(key) + ']=1;')
+  const html = p.run('tProjects()')
+  t.ok('фантомной строки материала нет', html.indexOf('data-a="est-mat-off" data-k="' + key + '|"') < 0)
+  t.ok('но материал дописать можно', html.indexOf('data-a="est-mat-add-open" data-k="' + key + '"') >= 0)
+
+  // Дописанный материал живёт своей жизнью, а цена работы видна подписью.
+  const ao = p.dom.node({ a: 'est-mat-add-open', k: key }); p.run('bind();'); ao.onclick()
+  p.dom.field('mad-n', 'Уголок'); p.dom.field('mad-qty', '2'); p.dom.field('mad-cost', '100')
+  const ad = p.dom.node({ a: 'est-mat-add-do', k: key }); p.run('bind();'); ad.onclick()
+  t.ok('цена сложилась из работы и материала', own().cost === 500 + 200, String(own().cost))
+  t.ok('в шапке видно обе половины', /работа 500 ₽ · итого 700 ₽/.test(p.run('tProjects()')))
+
+  // Удаляется работа целиком — крестиком в своей строке.
+  const del = p.dom.node({ a: 'est-pos-del', k: key }); p.run('bind();'); del.onclick()
+  t.ok('работа удалилась', !own())
+  t.ok('и её материалы не остались в листе', !p.q('projects[0].matAdd'))
+}
+
 t.done()

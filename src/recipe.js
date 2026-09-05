@@ -586,8 +586,11 @@ export function addedPositions(sheet, estimates, products) {
       key: key, estId: "", name: String(row.name || "Работа"), stage: Number(row.stage) || 0,
       room: "", roomId: "", surface: "", group: "", label: "",
       area: 0, point: "", count: 0, factor: 1, added: true, own: true,
-      mats: cost ? [{ pid: "", n: String(row.name || "Работа"), store: "", mode: "piece",
-        cost: cost, qty: 1 }] : [],
+      // У материала ОБЯЗАН быть свой адрес (`matKeyOf` = pid или id): без него
+      // ручное количество, замена, порядок и «убрать» уходили в пустой ключ, и
+      // кнопки в такой строке молча ничего не делали.
+      mats: cost ? [{ id: "own:" + (row.id || ""), pid: "", n: String(row.name || "Работа"),
+        store: "", mode: "piece", cost: cost, qty: 1 }] : [],
       cost: cost,
     };
   });

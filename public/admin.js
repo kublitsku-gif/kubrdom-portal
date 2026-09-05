@@ -12767,12 +12767,21 @@ function estForgetKey(sh, key){
 }
 function matSwapKey(pos, m){ return pos.key+"|"+matKeyOf(m); }
 function specMatsListHtml(pos, sh, live){
-  const mats=(pos.mats||[]).filter(function(m){ return (Number(m.qty)||0)>0 && String(m.n||"").trim(); });
+  // У СВОЕЙ работы «материал» — это она сама: её имя и её цена, показанные так,
+  // чтобы деньги считались общим правилом. В списке ему делать нечего: менять на
+  // товар из базы, переставлять и убирать нечего — работа целиком убирается
+  // крестиком в своей строке. Дописанные к ней материалы показываем как обычно.
+  const mats=(pos.mats||[]).filter(function(m){
+    if(pos.own&&!m.added&&!m.pid)return false;
+    return (Number(m.qty)||0)>0 && String(m.n||"").trim();
+  });
   const can=!!live&&canRuleSheet(sh);
   // Убранные материалы держат список открытым для себя: убери человек последний
   // материал строки, и без этой строки вернуть его было бы нечем.
   const off=can?matOffOf(sh, pos.key):[];
-  if(!mats.length&&!off.length)return "";
+  // Материалов нет вовсе (своя работа, строка без состава) — списка нет, но
+  // дописать материал по-прежнему можно: кнопка не должна пропадать вместе с ним.
+  if(!mats.length&&!off.length)return can?matAddHtml(pos):"";
   const sw=matSwapsOf(sh, pos.key);
   // Список работ читают работами: на экране двадцать строк сметы, и если каждая
   // разворачивает по шесть материалов, увидеть сам состав дома нельзя. Материалы
@@ -12791,6 +12800,9 @@ function specMatsListHtml(pos, sh, live){
       // Цена «за работу» — только половина строки: рядом с ней должно стоять,
       // во что обходится строка целиком, иначе итог сходится только в уме.
       ((Number(pos.labor)||0)>0?' · <span style="color:#0d1b2e">работа '+Math.round(pos.labor).toLocaleString("ru-RU")+' ₽ · итого '+Math.round(pos.cost).toLocaleString("ru-RU")+' ₽</span>':'')+
+      // У своей работы её собственная цена в список не попала (это она сама), и
+      // без этой подписи сумма материалов не сходилась бы с ценой строки.
+      (pos.own&&Math.round(pos.cost)!==Math.round(sum)?' · <span style="color:#0d1b2e">работа '+Math.round(pos.cost-sum).toLocaleString("ru-RU")+' ₽ · итого '+Math.round(pos.cost).toLocaleString("ru-RU")+' ₽</span>':'')+
     '</button>'+
   '</div>';
   if(!open)return head;

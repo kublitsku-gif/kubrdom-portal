@@ -668,4 +668,36 @@ const SHEET = {
     p.q('modelRooms(spec2Sheet().model).filter(function(r){return r.id===' + JSON.stringify(to.id) + ';})[0].name') === 'Мойка')
 }
 
+// ── 13. Своя работа и её цена ───────────────────────────────────────────────
+// Экран сметы у двух разделов один: здесь сторожим ту же строку со стороны
+// «Спецификации 2» — у работы, вписанной руками, крестик удаляет её саму.
+{
+  t.section('Своя работа в опытном разделе')
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS, estimates: EST, dbPlans: [], crmClients: [],
+    specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [],
+    contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+    buildRules: [],
+  })
+  p.run('spec2Tab="scheme";tSpec2();')
+  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
+  const open = p.dom.node({ a: 'est-pos-add-open', k: p.q('spec2Sheet().id') })
+  p.run('bind();'); open.onclick()
+  p.dom.field('pad-n', 'Сборка стеллажей'); p.dom.field('pad-cost', '500'); p.dom.field('pad-stage', '1')
+  p.run('tSpec2();')
+  const go = p.dom.node({ a: 'est-pos-add-do', k: p.q('spec2Sheet().id') })
+  p.run('bind();'); go.onclick()
+  const own = () => p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.name==="Сборка стеллажей";})[0]')
+  t.ok('работа появилась', !!own() && own().cost === 500)
+  const key = own().key
+  p.run('matsOpen[' + JSON.stringify(key) + ']=1;')
+  const html = p.run('tSpec2()')
+  t.ok('фантомной строки материала нет', html.indexOf('data-a="est-mat-off" data-k="' + key + '|"') < 0)
+  t.ok('крестик работы на месте', html.indexOf('data-a="est-pos-del" data-k="' + key + '"') >= 0)
+  const del = p.dom.node({ a: 'est-pos-del', k: key }); p.run('bind();'); del.onclick()
+  t.ok('и удаляет её', !own())
+}
+
 t.done()
