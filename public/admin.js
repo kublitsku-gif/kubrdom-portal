@@ -54,6 +54,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2, works2 } from "../src/spec2.js";
+import { priceHist, priceWas, pricePush, priceStale, refreshPrices } from "../src/prices.js";
 import { allPositions, allPositionsRaw, addedPositions, matKeyOf, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
   pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
   optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf, ROOM_HOUSE, roomKeyOf, positionSplit } from "../src/recipe.js";
@@ -7704,9 +7705,43 @@ function _matApplyPrice(p,newPrice){
   newPrice=Number(newPrice)||0; if(!newPrice)return false;
   const old=Number(p.unitCost)||0;
   if(newPrice!==old){ p.priceOld=old; }                 // запоминаем прежнюю — для дельты
+  // Первая правка застаёт историю пустой: прежнюю цифру нигде не записывали, и
+  // без неё «было 900 ₽» взять неоткуда. Дописываем её тем же ключом.
+  if(newPrice!==old&&!priceHist(p).length)pricePush(p, old, p.priceCheckedAt||"", "");
   p.unitCost=newPrice; p.priceCheckedAt=new Date().toISOString().slice(0,10);
+  pricePush(p, newPrice, new Date().toISOString(), (typeof currentUser!=="undefined"&&currentUser&&currentUser.name)||"");
   scheduleSave();
   return true;
+}
+// ── ИСТОРИЯ ЦЕН ТОВАРА ──────────────────────────────────────────────────────
+// Цена в каталоге живая: её правят, когда магазин поднял ценник. Смета, собранная
+// месяц назад, считалась по прежней цифре, и вопрос «почему подорожало» упирается
+// в то, что прежней цены больше нет нигде. Показываем короткий список: когда,
+// сколько и на сколько изменилось — этого хватает, чтобы объяснить счёт.
+function matPriceDate(at){
+  const v=String(at||"");
+  if(!v)return "раньше";
+  const d=v.slice(0,10).split("-");
+  return d.length===3?(d[2]+"."+d[1]+"."+d[0].slice(2)):v;
+}
+function matHistHtml(p){
+  const h=priceHist(p);
+  if(h.length<2)return "";
+  const rows=h.slice(-6).reverse();
+  return '<div style="margin:0 16px 14px;padding:10px 12px;border:1px solid #e6ecf3;border-radius:12px;background:#fbfdff">'+
+    '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:6px">ИСТОРИЯ ЦЕНЫ</div>'+
+    rows.map(function(r,i){
+      const c=Math.round(Number(r.c)||0);
+      const prev=rows[i+1]?Math.round(Number(rows[i+1].c)||0):null;
+      const d=prev==null?0:c-prev;
+      return '<div style="display:flex;align-items:baseline;gap:8px;font-size:11px;color:#5a7a9a;padding:2px 0">'+
+        '<span style="width:58px;flex-shrink:0;color:#9aabbf">'+esc(matPriceDate(r.at))+'</span>'+
+        '<span style="font-weight:700;color:#0d1b2e">'+c.toLocaleString("ru-RU")+' ₽</span>'+
+        (d?'<span style="font-weight:700;color:'+(d>0?"#e74c3c":"#27ae60")+'">'+(d>0?"▲ +":"▼ ")+Math.abs(d).toLocaleString("ru-RU")+'</span>':'')+
+        (r.by?'<span style="flex:1;min-width:0;text-align:right;color:#9aabbf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.by)+'</span>':'')+
+      '</div>';
+    }).join("")+
+  '</div>';
 }
 function _matManualPrice(p,why){
   if(p.url){ try{ window.open(p.url,"_blank","noopener"); }catch(e){} }   // откроем магазин
@@ -8847,6 +8882,7 @@ function expEditorHtml(p){
       </div>
       ${conv?`<div style="font-size:11px;color:#7a9aaa;margin-top:8px">${conv.footer}</div>`:``}
     </div>
+    ${matHistHtml(p)}
     <div style="padding:0 16px">
       <div style="display:flex;gap:8px">
         ${expField("exp-uc","Цена за "+saleUnit+", ₽",uc)}
@@ -8917,6 +8953,23 @@ function bindExpEditor(p){
   bindMirror("exp-store","store",false);
   bindMirror("exp-url","url",false);
   bindMirror("exp-uc","unitCost",true);
+  // Историю цен пишем по ЗАВЕРШЕНИИ правки, а не на каждую цифру: посимвольный
+  // ввод «1250» дал бы четыре записи, из которых три — это «1», «12» и «125».
+  (function(){
+    const i=document.getElementById("exp-uc");
+    if(!i)return;
+    let before=Number(p.unitCost)||0;
+    i.onfocus=function(){ before=Number(p.unitCost)||0; };
+    i.onchange=function(){
+      const now=Number(p.unitCost)||0;
+      // Первая правка застаёт историю пустой — прежнюю цену дописываем ею же,
+      // иначе первая же запись стала бы «единственной», и «было» не с чем сравнить.
+      if(!priceHist(p).length&&before!==now)pricePush(p, before, "", "");
+      if(pricePush(p, now, new Date().toISOString(), (currentUser&&currentUser.name)||"")){
+        scheduleSave(); renderExpCard();
+      }
+    };
+  })();
   bindText("exp-qty","qty",true);
   bindText("exp-per","packPer",true);
   bindText("exp-sheetm2","sheetM2",true);
@@ -12931,6 +12984,25 @@ function estForgetKey(sh, key){
   });
 }
 function matSwapKey(pos, m){ return pos.key+"|"+matKeyOf(m); }
+// Цена материала в строке — КОПИЯ: у дописанного руками товара она застыла в тот
+// момент, когда его вписали, а каталог с тех пор мог подорожать. Показываем обе
+// стороны: «в базе 1 200 ₽» с обновлением одним тапом (правим только копию — у
+// расчётной строки цена и так приезжает из карточки при каждом счёте) и «было
+// 900 ₽» из истории товара, чтобы вопрос «почему подорожало» имел ответ в строке.
+function matPriceTagHtml(pos, m, can){
+  const prod=(m&&m.pid)?(expProducts||[]).find(function(x){ return x.id===m.pid; }):null;
+  if(!prod)return '';
+  if(priceStale(m, prod)){
+    const txt='в базе '+Math.round(Number(prod.unitCost)||0).toLocaleString("ru-RU")+' \u20bd';
+    return (can&&m.added)
+      ? '<button data-a="est-mat-price" data-k="'+esc(matSwapKey(pos,m))+'" title="Взять цену из каталога" style="border:1px solid #8e44ad55;background:#f3ecf9;color:#8e44ad;border-radius:5px;padding:1px 5px;font-size:9.5px;font-weight:700;cursor:pointer">'+txt+' \u27f3</button>'
+      : '<span style="color:#8e44ad;font-weight:700">'+txt+'</span>';
+  }
+  const was=priceWas(prod);
+  if(!was)return '';
+  return '<span title="цена до '+esc(matPriceDate(was.at))+(was.by?', правил '+esc(was.by):'')+'" style="color:#9aabbf">было '+
+    Math.round(Number(was.c)||0).toLocaleString("ru-RU")+' \u20bd</span>';
+}
 // У СВОЕЙ работы «материал» — это она сама: её имя и её цена, показанные так,
 // чтобы деньги считались общим правилом. В списке ему делать нечего: менять на
 // товар из базы, переставлять и убирать нечего — работа целиком убирается
@@ -12993,6 +13065,7 @@ function specMatsListHtml(pos, sh, live){
                 return '<a href="'+esc(u)+'" target="_blank" rel="noopener" title="Открыть карточку товара" style="color:#2980b9;font-weight:700;text-decoration:none">'+shop+' ↗</a><span>·</span>';
               })()+
               ((Number(m.cost)||0)>0?'<span>'+Math.round(Number(m.cost)).toLocaleString("ru-RU")+' ₽/'+esc(unit)+' ×</span>':'')+
+              matPriceTagHtml(pos, m, can)+
               // Количество правится руками: чертёж считает честно, но на площадке
               // бывает иначе — подрезка, запас, — и спорить с человеком незачем.
               (can
@@ -13291,6 +13364,14 @@ function estDroppedHtml(sh, canRule){
 // Шаг на одну строку. Кнопка крупная (26 px) и живёт только у взятой строки:
 // три кнопки в каждой строке смету не читают, а тап мимо двадцати пикселей —
 // то, из-за чего прежние стрелки и убрали.
+// Отстала ли хоть одна цена этапа от каталога. Кнопка «цены» без этого выглядела
+// бы одинаково и когда работа есть, и когда всё уже свежее.
+function estStagePriceStale(st){
+  const byId={}; (expProducts||[]).forEach(function(x){ if(x&&x.id)byId[x.id]=x; });
+  return (st.positions||[]).some(function(p){
+    return (p.mats||[]).some(function(m){ return priceStale(m, byId[m.pid]); });
+  });
+}
 function estStepBtn(key, dir, off){
   return '<button data-a="est-pos-step" data-k="'+esc(key)+'" data-d="'+dir+'"'+(off?' disabled':'')+
     ' title="'+(dir<0?"Выше на одну строку":"Ниже на одну строку")+'" style="width:28px;height:28px;background:#fff;border:1px solid '+(off?"#e6ecf3":RULE_COL+"66")+';border-radius:7px;cursor:'+(off?"default":"pointer")+';color:'+(off?"#dde6f0":RULE_COL)+';font-size:11px;font-weight:700;line-height:1;padding:0">'+(dir<0?"↑":"↓")+'</button>';
@@ -13424,13 +13505,20 @@ function estBodyHtml(sh, types, live, actions){
         '</div>'+
         // Подытоги этапа теми же двумя цифрами, что стоят в строках: сколько по
         // нему закупать и сколько платить бригаде — это два разных кармана.
-        '<div data-a="est-stage-open" data-n="'+st.n+'" style="font-size:10.5px;color:#9aabbf;cursor:pointer;margin:'+(shut?'3px 0 0':'3px 0 7px')+'">'+
-          'материалы <b style="color:#5a7a9a">'+Math.round(st.mats||0).toLocaleString("ru-RU")+' ₽</b> · работа <b style="color:#5a7a9a">'+Math.round(st.labor||0).toLocaleString("ru-RU")+' ₽</b>'+
-          // План показываем, только когда он проставлен: нули в каждой строке
-          // читались бы как «работа ничего не стоит по времени».
-          ((st.hours>0)?' · план <b style="color:#2980b9">'+numRu(st.hours)+' ч</b>':'')+
-          (function(){ const f=st.positions.reduce(function(a,p){ return a+factOfPos(fact,p); },0);
-            return f>0?' · факт <b style="color:#16a085">'+numRu(f)+' ч</b>'+hoursGapHtml(st.hours,f):''; })()+
+        '<div style="display:flex;align-items:center;gap:8px;margin:'+(shut?'3px 0 0':'3px 0 7px')+'">'+
+          '<span data-a="est-stage-open" data-n="'+st.n+'" style="flex:1;min-width:0;font-size:10.5px;color:#9aabbf;cursor:pointer">'+
+            'материалы <b style="color:#5a7a9a">'+Math.round(st.mats||0).toLocaleString("ru-RU")+' ₽</b> · работа <b style="color:#5a7a9a">'+Math.round(st.labor||0).toLocaleString("ru-RU")+' ₽</b>'+
+            // План показываем, только когда он проставлен: нули в каждой строке
+            // читались бы как «работа ничего не стоит по времени».
+            ((st.hours>0)?' · план <b style="color:#2980b9">'+numRu(st.hours)+' ч</b>':'')+
+            (function(){ const f=st.positions.reduce(function(a,p){ return a+factOfPos(fact,p); },0);
+              return f>0?' · факт <b style="color:#16a085">'+numRu(f)+' ч</b>'+hoursGapHtml(st.hours,f):''; })()+
+          '</span>'+
+          // Цены товаров правят в каталоге, а в строках сметы лежат их копии —
+          // дописанные руками материалы. Кнопка подтягивает их по этапу и говорит,
+          // на сколько он от этого поехал: молчаливое «готово» не отличить от
+          // «нечего было делать».
+          (canRule?'<button data-a="est-stage-prices" data-n="'+st.n+'"'+(estStagePriceStale(st)?'':' disabled')+' title="Обновить цены материалов этапа по каталогу" style="height:24px;padding:0 8px;border:1px solid '+(estStagePriceStale(st)?"#8e44ad55":"#e6ecf3")+';background:#fff;color:'+(estStagePriceStale(st)?"#8e44ad":"#c9d6e4")+';border-radius:7px;font-size:10px;font-weight:700;cursor:'+(estStagePriceStale(st)?"pointer":"default")+';white-space:nowrap">💱 цены'+(estStagePriceStale(st)?' •':'')+'</button>':'')+
         '</div>'+
         (shut?'':estStageBody(st, moving, mi, st.positions.map(function(p, pi, arr){
           // Редактор раскрываем у ПЕРВОЙ строки этой сметы: правило по помещениям
@@ -22574,6 +22662,28 @@ function bind(){
     else if(a==="est-facts-open"){el.onclick=()=>{ factsOpen=!factsOpen; fl(); };}
     else if(a==="est-dropped-open"){el.onclick=()=>{ droppedOpen=!droppedOpen; fl(); };}
     else if(a==="est-gaps-open"){el.onclick=()=>{ gapsOpen=!gapsOpen; fl(); };}
+    // Цены материалов этапа — по каталогу. Правим ТОЛЬКО то, что лежит копией:
+    // дописанные руками материалы. У остальных цена и так приезжает из карточки
+    // товара при каждом расчёте, и «обновлять» там нечего.
+    else if(a==="est-stage-prices"){el.onclick=()=>{
+      const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
+      const n=Number(el.dataset.n)||0;
+      const w=works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes }));
+      const st=(w.stages||[]).find(function(x){ return x.n===n; }); if(!st)return;
+      const byId={}; (expProducts||[]).forEach(function(x){ if(x&&x.id)byId[x.id]=x; });
+      const keys={}; (st.positions||[]).forEach(function(p){ keys[p.key]=1; });
+      const add=Object.assign({}, sh.matAdd||{});
+      let cnt=0, diff=0;
+      Object.keys(add).forEach(function(k){
+        if(!keys[k])return;
+        const rows=(add[k]||[]).map(function(m){ return Object.assign({}, m); });
+        const r=refreshPrices(rows, byId);
+        if(r.n){ add[k]=rows; cnt+=r.n; diff+=r.diff; }
+      });
+      if(!cnt){ alert("Цены этапа уже совпадают с каталогом."); return; }
+      sh.matAdd=add; scheduleSave(); fl();
+      alert("Обновлено позиций: "+cnt+".\nЭтап "+(diff>=0?"подорожал на ":"подешевел на ")+Math.abs(diff).toLocaleString("ru-RU")+" ₽.");
+    };}
     else if(a==="est-pos-stage-pick"){el.onclick=()=>{ stagePickKey=(stagePickKey===(el.dataset.k||""))?"":(el.dataset.k||""); fl(); };}
     else if(a==="est-block-open"){el.onclick=()=>{
       const b=String(el.dataset.b||"");
@@ -22838,6 +22948,23 @@ function bind(){
         }
       }
       matSwapOpen=""; fl();
+    };}
+    // Взять цену одного материала из каталога. Правим ТОЛЬКО дописанный руками
+    // (`matAdd`): у расчётной строки цена приезжает из карточки товара при каждом
+    // счёте, и «обновлять» там нечего.
+    else if(a==="est-mat-price"){el.onclick=()=>{
+      const k=el.dataset.k||"";
+      const cut=k.lastIndexOf("|");
+      const posKey=k.slice(0,cut), mk=k.slice(cut+1);
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!posKey||!mk)return;
+      const byId={}; (expProducts||[]).forEach(function(x){ if(x&&x.id)byId[x.id]=x; });
+      const add=Object.assign({}, sh.matAdd||{});
+      const rows=(add[posKey]||[]).map(function(m){ return Object.assign({}, m); });
+      const row=rows.filter(function(m){ return matKeyOf(m)===mk; });
+      if(!row.length)return;
+      const r=refreshPrices(row, byId);
+      if(!r.n)return;
+      add[posKey]=rows; sh.matAdd=add; scheduleSave(); fl();
     };}
     else if(a==="est-mat-qty"){el.onchange=()=>{
       const k=el.dataset.k||"";

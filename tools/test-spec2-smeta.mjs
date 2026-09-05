@@ -918,4 +918,65 @@ const SHEET = {
   t.ok('комната у позиции сохранена', s2.positions.some((x) => !!x.room), 'ни у одной нет комнаты')
 }
 
+// ── Цены материалов по каталогу ─────────────────────────────────────────
+// Экран сметы у двух разделов ОДИН: то же самое сторожит test-projects. Здесь
+// проверяем вторую половину — что правка доехала и до опытного листа.
+{
+  t.section('Цены материалов по каталогу')
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS, estimates: EST, dbPlans: [], crmClients: [],
+    specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [],
+    contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+    buildRules: [],
+  })
+  p.run('spec2Tab="scheme";tSpec2();')
+  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
+  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_win";})[0].key')
+  const posOf = () => p.q('allPositions(spec2Sheet(), specCtx(spec2Sheet())).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0]')
+  p.run('matsOpen[' + JSON.stringify(key) + ']=1;tSpec2();')
+
+  // Дописываем товар ИЗ БАЗЫ, но по своей цене: 300 ₽ против 800 ₽ в каталоге.
+  const addOpen = p.dom.node({ a: 'est-mat-add-open', k: key }); p.run('bind();'); addOpen.onclick()
+  p.dom.field('mad-n', 'Наличник'); p.dom.field('mad-qty', '2'); p.dom.field('mad-cost', '300')
+  const addDo = p.dom.node({ a: 'est-mat-add-do', k: key }); p.run('bind();'); addDo.onclick()
+
+  const html = p.run('tSpec2()').replace(/[  ]/g, ' ')
+  t.ok('строка говорит, что в базе дороже', /в базе 800 ₽/.test(html), 'нет пометки о каталоге')
+  t.ok('и обновление — одним тапом',
+    html.indexOf('data-a="est-mat-price" data-k="' + key + '|p_dr"') >= 0, 'нет кнопки у материала')
+  const stN = p.q('works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes})).stages.filter(function(s){return (s.positions||[]).some(function(x){return x.key===' + JSON.stringify(key) + ';});})[0].n')
+  t.ok('и кнопка этапа зажглась',
+    new RegExp('data-a="est-stage-prices" data-n="' + stN + '"(?! disabled)').test(html), 'кнопка выключена')
+
+  const cost0 = posOf().cost
+  const one = p.dom.node({ a: 'est-mat-price', k: key + '|p_dr' }); p.run('bind();'); one.onclick()
+  const posA = posOf()
+  t.ok('цена материала стала каталожной',
+    (posA.mats || []).filter((m) => m.added)[0].cost === 800,
+    JSON.stringify((posA.mats || []).filter((m) => m.added).map((m) => m.cost)))
+  t.ok('и строка подорожала на разницу', posA.cost === cost0 + 1000, cost0 + ' → ' + posA.cost)
+  t.ok('правка легла в опытный лист',
+    p.q('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].cost') === 800)
+  t.ok('справочник товаров не тронут',
+    p.q('expProducts.filter(function(x){return x.id==="p_dr";})[0].unitCost') === 800)
+  t.ok('кнопка этапа погасла',
+    new RegExp('data-a="est-stage-prices" data-n="' + stN + '" disabled').test(p.run('tSpec2()')),
+    'кнопка всё ещё горит')
+
+  // И тот же материал — кнопкой этапа, оптом.
+  p.run('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].cost=300;tSpec2();')
+  const stage = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); stage.onclick()
+  t.ok('этап обновил копию', p.q('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].cost') === 800,
+    String(p.q('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].cost')))
+
+  // История цены товара: строка отвечает на «почему подорожало» сама.
+  p.run('expProducts.filter(function(x){return x.id==="p_win";})[0].hist=[{at:"2026-01-10T00:00:00Z",c:1200,by:"Иван"},{at:"2026-03-01T00:00:00Z",c:1500,by:"Иван"}];')
+  const withHist = p.run('tSpec2()').replace(/[  ]/g, ' ')
+  t.ok('в строке видно прежнюю цену', /было 1 200 ₽/.test(withHist), 'истории нет в строке')
+  t.ok('и когда её правили', withHist.indexOf('цена до 10.01.26') >= 0, 'нет даты правки')
+}
+
 t.done()
+

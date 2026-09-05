@@ -1021,4 +1021,59 @@ function create(p, name) {
   t.ok('раскладка без повтора итога', /материалы [\d ]+ ₽ · работа [\d ]+ ₽/.test(plain) && !/· итого /.test(plain))
 }
 
+// ── Цены материалов: каталог подорожал ───────────────────────────────────────
+// Цена дописанного материала — КОПИЯ: она застыла в момент, когда его вписали, а
+// каталог с тех пор мог подорожать. Строка обязана это показать, а обновление —
+// быть одним тапом: и по одному материалу, и по этапу целиком. Экран сметы у
+// проекта и у опытного раздела ОДИН, поэтому то же самое сторожит test-spec2-smeta.
+{
+  t.section('Цены материалов по каталогу')
+  const p = panel()
+  create(p, 'Дом с ценами')
+  p.run('projBand="parts";')
+  const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
+  const posOf = () => p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0]')
+  const openMats = p.dom.node({ a: 'est-mats-open', k: key }); p.run('bind();'); openMats.onclick()
+
+  // Дописываем товар ИЗ БАЗЫ, но по своей цене: 100 ₽ против 300 ₽ в каталоге.
+  const addOpen = p.dom.node({ a: 'est-mat-add-open', k: key }); p.run('bind();'); addOpen.onclick()
+  p.dom.field('mad-n', 'Розетка'); p.dom.field('mad-qty', '2'); p.dom.field('mad-cost', '100')
+  const addDo = p.dom.node({ a: 'est-mat-add-do', k: key }); p.run('bind();'); addDo.onclick()
+
+  const html = p.run('tProjects()').replace(/[  ]/g, ' ')
+  t.ok('строка говорит, что в базе дороже', /в базе 300 ₽/.test(html), 'нет пометки о каталоге')
+  t.ok('и обновление — одним тапом',
+    html.indexOf('data-a="est-mat-price" data-k="' + key + '|p_sock"') >= 0, 'нет кнопки у материала')
+  // Кнопка этапа зажигается только тогда, когда есть что обновлять.
+  const stN = p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).stages.filter(function(s){return (s.positions||[]).some(function(x){return x.key===' + JSON.stringify(key) + ';});})[0].n')
+  t.ok('и кнопка этапа зажглась',
+    new RegExp('data-a="est-stage-prices" data-n="' + stN + '"(?! disabled)').test(html), 'кнопка выключена')
+
+  // Этап целиком: одним тапом по всем отставшим копиям.
+  const cost0 = posOf().cost
+  const stage = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); stage.onclick()
+  const posA = posOf()
+  const matA = (posA.mats || []).filter((m) => m.added)[0]
+  t.ok('цена материала стала каталожной', matA && matA.cost === 300, JSON.stringify(matA && matA.cost))
+  t.ok('и строка подорожала на разницу', posA.cost === cost0 + 400, cost0 + ' → ' + posA.cost)
+  t.ok('правка легла в проект', p.q('projects[0].matAdd[' + JSON.stringify(key) + '][0].cost') === 300)
+  t.ok('справочник товаров не тронут',
+    p.q('expProducts.filter(function(x){return x.id==="p_sock";})[0].unitCost') === 300)
+  t.ok('кнопка этапа погасла',
+    new RegExp('data-a="est-stage-prices" data-n="' + stN + '" disabled').test(p.run('tProjects()')),
+    'кнопка всё ещё горит')
+
+  // И тот же материал — кнопкой в самой строке.
+  p.run('projects[0].matAdd[' + JSON.stringify(key) + '][0].cost=100;tProjects();')
+  const one = p.dom.node({ a: 'est-mat-price', k: key + '|p_sock' }); p.run('bind();'); one.onclick()
+  t.ok('строка обновилась сама', p.q('projects[0].matAdd[' + JSON.stringify(key) + '][0].cost') === 300,
+    String(p.q('projects[0].matAdd[' + JSON.stringify(key) + '][0].cost')))
+
+  // История цены товара: строка отвечает на «почему подорожало» сама.
+  p.run('expProducts.filter(function(x){return x.id==="p_osb";})[0].hist=[{at:"2026-01-10T00:00:00Z",c:700,by:"Иван"},{at:"2026-03-01T00:00:00Z",c:1000,by:"Иван"}];')
+  const withHist = p.run('tProjects()').replace(/[  ]/g, ' ')
+  t.ok('в строке видно прежнюю цену', /было 700 ₽/.test(withHist), 'истории нет в строке')
+  t.ok('и когда её правили', withHist.indexOf('цена до 10.01.26') >= 0, 'нет даты правки')
+}
+
 t.done()
