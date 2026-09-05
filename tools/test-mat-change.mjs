@@ -200,4 +200,37 @@ function fill(p, { name, cost, qty = {}, reason = '', payer = 'company' }) {
     'иначе на согласование ушло бы исправление опечатки в заметке')
 }
 
+// ── Цена в подсказках поиска ────────────────────────────────────────────────
+// Выбирая материал по названию, человек выбирает и цену — а её в подсказках не
+// было видно. «ОСП» в базе несколько, и какая из них за 710, а какая за 600,
+// выяснялось уже после добавления строки.
+{
+  t.section('Подсказки материалов показывают цену')
+  const p = boot({})
+  p.set({
+    expProducts: [
+      { id: 'p1', name: 'ОСП 30 м²', unitCost: 710, store: 'Белка', mode: 'piece' },
+      { id: 'p2', name: 'Труба профильная 60x40x2 мм 3 м', unitCost: 298.67, store: 'Лемана', mode: 'mp', lenPer: 3 },
+      { id: 'p3', name: 'Плитка Маттоне', unitCost: 1086, store: 'Лемана', mode: 'pack', packPer: 0.96, packBase: 'м²' },
+      { id: 'p4', name: 'Без цены', unitCost: 0, store: '', mode: 'piece' },
+    ],
+    estimates: [], dbPlans: [], crmClients: [], specSheets: [], specSheets2: [], winTypes: [],
+    objects: [], templates: [], contractDocs: [], purchases: [], issues: [], users: [], stock: [],
+    settings: {}, buildRules: [],
+  })
+  const html = p.run('matPickOptions()').replace(/[\u00a0\u202f]/g, ' ')
+  t.ok('название остаётся значением', /value="ОСП 30 м²"/.test(html), html.slice(0, 120))
+  t.ok('цена за штуку видна', /label="710 ₽\/шт/.test(html), html)
+  // Единица — та, в которой товар продают: труба в метрах, плитка в пачках.
+  t.ok('метры погонные — своей единицей', /label="298,67 ₽\/м\.п\./.test(html), html)
+  t.ok('пачка — своей', /label="1 086 ₽\/пачка/.test(html), html)
+  t.ok('магазин подсказан рядом', /· Белка/.test(html) && /· Лемана/.test(html))
+  // У товара без цены подсказка не врёт «0 ₽» — там просто нечего показать.
+  t.ok('без цены — без ценника', !/label="0 ₽/.test(html), html)
+
+  // Тот же список во всех местах, где ищут материал: смета, замена, объект, приёмка.
+  const est = p.run('matAddOpen="k1";matAddHtml({key:"k1"})').replace(/[\u00a0\u202f]/g, ' ')
+  t.ok('в форме «+ материал» цена есть', /label="710 ₽/.test(est), 'нет цены в подсказках сметы')
+}
+
 t.done()

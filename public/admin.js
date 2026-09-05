@@ -7109,7 +7109,7 @@ ${objMatModal?`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);di
     </div>`;}).join("")+`${wMats.length===0?`<div style="text-align:center;color:#aaa;font-size:13px;padding:12px">Нет материалов</div>`:""}<div style="margin-top:10px;background:#f0f4f8;border-radius:10px;padding:12px">
       <div style="font-size:10px;color:#7a9aaa;font-weight:700;margin-bottom:6px">+ ДОБАВИТЬ МАТЕРИАЛ <span style="font-weight:400">(можно выбрать из базы — цена и единица подтянутся)</span></div>
       <input id="opm-n" list="opm-catalog" autocomplete="off" placeholder="Название или выбрать из базы…" style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;margin-bottom:5px;outline:none;box-sizing:border-box">
-      <datalist id="opm-catalog">${(typeof expProducts!=="undefined"?expProducts:[]).map(function(p){return '<option value="'+esc(p.name).replace(/"/g,"&quot;")+'"></option>';}).join("")}</datalist>
+      <datalist id="opm-catalog">${typeof matPickOptions!=="undefined"?matPickOptions():""}</datalist>
       <div style="display:flex;gap:5px;margin-bottom:7px">
         <input id="opm-cost" placeholder="Цена ₽ (из базы)" type="number" style="flex:2;padding:7px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;min-width:0">
         <input id="opm-qty" placeholder="Кол-во" type="number" value="1" step="any" style="flex:1;padding:7px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;min-width:0">
@@ -7414,6 +7414,26 @@ function hoursGapHtml(plan, fact){
   if(!d)return '';
   const over=d>0;
   return '<span style="font-size:10.5px;font-weight:700;color:'+(over?"#e74c3c":"#16a085")+';margin-left:4px;white-space:nowrap">'+(over?"+":"−")+numRu(Math.abs(d))+' ч</span>';
+}
+
+// ── ПОДСКАЗКИ ВЫБОРА МАТЕРИАЛА ──────────────────────────────────
+// Выбирая материал по названию, человек выбирает и цену. «ОСП» в базе несколько,
+// и какая из них за 710, а какая за 600, выяснялось уже после того, как строка
+// добавлена. Поэтому в подсказке рядом с названием — цена в той единице, в
+// которой товар продают, и магазин: по нему в каталоге и различают одинаковые
+// названия. Значением остаётся ЧИСТОЕ имя — по нему потом ищется товар в базе.
+function matPickLabel(p){
+  const uc=Number(p&&p.unitCost)||0;
+  const mode=EXP_MODES.find(function(m){return m.k===(p&&p.mode);})||EXP_MODES[0];
+  const price=uc>0?(uc.toLocaleString("ru-RU",{maximumFractionDigits:2})+" ₽/"+mode.unit):"";
+  const store=(p&&p.store)||"";
+  return [price, store].filter(Boolean).join(" · ");
+}
+function matPickOptions(list){
+  return (list||expProducts||[]).map(function(x){
+    const lbl=matPickLabel(x);
+    return '<option value="'+esc(x.name||"").replace(/"/g,"&quot;")+'"'+(lbl?' label="'+esc(lbl).replace(/"/g,"&quot;")+'"':'')+'></option>';
+  }).join("");
 }
 
 // ── ФАКТ ЧАСОВ СО СТРОЙКИ ───────────────────────────────────────
@@ -13085,7 +13105,7 @@ function matAddHtml(pos){
   return '<div style="margin:7px 0 2px;background:#eefaf6;border:1px solid #16a08544;border-radius:9px;padding:9px 10px">'+
     '<div style="font-size:9px;font-weight:800;color:#16a085;letter-spacing:0.3px;margin-bottom:5px">+ ДОБАВИТЬ МАТЕРИАЛ В ЭТУ СТРОКУ</div>'+
     '<input id="mad-n" list="msw-catalog" autocomplete="off" placeholder="Название — можно выбрать из базы" style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;margin-bottom:5px;outline:none;box-sizing:border-box">'+
-    '<datalist id="msw-catalog">'+expProducts.map(function(x){return '<option value="'+esc(x.name||"").replace(/"/g,"&quot;")+'"></option>';}).join("")+'</datalist>'+
+    '<datalist id="msw-catalog">'+matPickOptions()+'</datalist>'+
     '<div style="display:flex;gap:5px;margin-bottom:6px">'+
       '<input id="mad-qty" placeholder="Кол-во" value="1" inputmode="decimal" style="flex:1;min-width:0;padding:7px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none">'+
       '<input id="mad-cost" placeholder="Цена ₽ (из базы)" inputmode="decimal" style="flex:2;min-width:0;padding:7px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none">'+
@@ -13101,7 +13121,7 @@ function matSwapEditor(pos, m, sh, was){
   return '<div style="margin-top:6px;background:#eaf1f8;border:1px solid #2980b944;border-radius:9px;padding:9px 10px">'+
     '<div style="font-size:9px;font-weight:800;color:#2980b9;letter-spacing:0.3px;margin-bottom:5px">⇄ ЗАМЕНИТЬ НА МАТЕРИАЛ ИЗ БАЗЫ</div>'+
     '<input id="msw-input" list="msw-cat2" autocomplete="off" placeholder="Начните вводить название из базы…" style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;margin-bottom:6px;outline:none;box-sizing:border-box">'+
-    '<datalist id="msw-cat2">'+expProducts.map(function(x){return '<option value="'+esc(x.name||"").replace(/"/g,"&quot;")+'"></option>';}).join("")+'</datalist>'+
+    '<datalist id="msw-cat2">'+matPickOptions()+'</datalist>'+
     '<div style="display:flex;gap:6px;flex-wrap:wrap">'+
       '<button data-a="est-mat-do" data-k="'+esc(matSwapKey(pos,m))+'" style="flex:1;min-width:120px;padding:8px;background:#2980b9;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Заменить</button>'+
       (was&&pos.from!=="layer"?'<button data-a="est-mat-reset" data-k="'+esc(matSwapKey(pos,m))+'" style="padding:8px 12px;background:#fff;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;color:#7a9aaa;font-size:12px">Вернуть из базы</button>':'')+
@@ -17914,7 +17934,7 @@ function tSupplyDetail(sel, sortBy){
           (multi?'<div style="background:#fff3e0;border:1px solid #e67e2233;border-radius:9px;padding:8px 10px;margin-bottom:10px;font-size:11px;color:#8a5a1f;line-height:1.45">'+
             'Правка пойдёт во <b>все '+ctxs.length+' потребности</b> этой строки — по всем работам и объектам сразу. Количество у каждой своё, задаётся ниже.</div>':'')+
           '<input id="sem-n" data-a="sem-live" list="sem-catalog" autocomplete="off" value="'+(em.n||"").replace(/"/g,"&quot;")+'" placeholder="Название — или выберите из базы" style="'+inp+';margin-bottom:2px">'+
-          '<datalist id="sem-catalog">'+(typeof expProducts!=="undefined"?expProducts:[]).map(function(pr){return '<option value="'+esc(pr.name).replace(/"/g,"&quot;")+'"></option>';}).join("")+'</datalist>'+
+          '<datalist id="sem-catalog">'+matPickOptions()+'</datalist>'+
           '<div style="font-size:10px;color:#a0b4c8;margin:0 0 8px 2px">Выберите товар из базы — цена, единица и магазин подставятся сами</div>'+
           '<div style="display:flex;gap:8px;margin-bottom:8px">'+
             '<select id="sem-mode" style="'+inp+';flex:1">'+opts+'</select>'+
