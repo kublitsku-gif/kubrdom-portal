@@ -2288,6 +2288,7 @@ let matMoveSheet="";       // и в каком листе
 // объёмы и убранное — это контекст, к которому обращаются, когда он нужен.
 let factsOpen=false;       // раскрыт ли блок «откуда числа»
 let droppedOpen=false;     // раскрыт ли список убранных работ
+let gapsOpen=false;        // раскрыт ли список «посчитано, но в смету не попало»
 let modelStageTab=0;       // 0 = все этапы
 let specSheets=[];
 // «Спецификация 2» — опытный раздел (см. src/spec2.js). Листы держим ОТДЕЛЬНО: по
@@ -13352,13 +13353,19 @@ function estBodyHtml(sh, types, live, actions){
   }
   // Чего дом не досчитался. Список не для красоты: это задание на правила
   // сборки, и пока он не пуст — дом продаётся не целиком.
+  // Свёрнут по умолчанию, как и остальные справки: сколько дом не досчитал —
+  // в шапке, а сам перечень нужен, когда садятся писать правила.
   if(w.gaps.length){
-    h+='<div style="background:#fffaf3;border:1px solid #f0d9b8;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
-      '<div style="font-size:10px;font-weight:700;color:#b9770e;letter-spacing:0.5px;margin-bottom:6px">ПОСЧИТАНО, НО В СМЕТУ НЕ ПОПАЛО</div>'+
-      w.gaps.map(function(g){
-        return '<div style="font-size:12px;color:#0d1b2e;padding:4px 0;line-height:1.45"><b>'+esc(g.t)+'</b> <span style="color:#a08a6a">— '+esc(g.why)+'</span></div>';
-      }).join("")+
-      '<div style="font-size:10.5px;color:#a08a6a;line-height:1.45;margin-top:5px">Каждая строка — правило, которого пока нет.</div>'+
+    h+='<div style="background:#fffaf3;border:1px solid #f0d9b8;border-radius:13px;padding:9px 13px;margin-bottom:9px">'+
+      '<div data-a="est-gaps-open" style="display:flex;align-items:baseline;gap:8px;cursor:pointer;padding:2px 0'+(gapsOpen?';margin-bottom:6px':'')+'">'+
+        '<span style="flex:1;min-width:0;font-size:10px;font-weight:700;color:#b9770e;letter-spacing:0.5px">'+(gapsOpen?"▾ ":"▸ ")+'ПОСЧИТАНО, НО В СМЕТУ НЕ ПОПАЛО</span>'+
+        '<span style="font-size:11.5px;font-weight:700;color:#b9770e;white-space:nowrap">'+w.gaps.length+'</span>'+
+      '</div>'+
+      (!gapsOpen?'':
+        w.gaps.map(function(g){
+          return '<div style="font-size:12px;color:#0d1b2e;padding:4px 0;line-height:1.45"><b>'+esc(g.t)+'</b> <span style="color:#a08a6a">— '+esc(g.why)+'</span></div>';
+        }).join("")+
+        '<div style="font-size:10.5px;color:#a08a6a;line-height:1.45;margin-top:5px">Каждая строка — правило, которого пока нет.</div>')+
     '</div>';
   }
   // Объект и договор — только по заведённому листу: из заготовки, которая нигде
@@ -22282,6 +22289,7 @@ function bind(){
     };}
     else if(a==="est-facts-open"){el.onclick=()=>{ factsOpen=!factsOpen; fl(); };}
     else if(a==="est-dropped-open"){el.onclick=()=>{ droppedOpen=!droppedOpen; fl(); };}
+    else if(a==="est-gaps-open"){el.onclick=()=>{ gapsOpen=!gapsOpen; fl(); };}
     else if(a==="est-block-open"){el.onclick=()=>{
       const b=String(el.dataset.b||"");
       const map=Object.assign({}, blockShut);
