@@ -720,7 +720,7 @@ const SHEET = {
   const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key')
   const fieldHtml = () => (p.run('tSpec2()').match(/data-a="est-pos-cost"[^>]*/) || [''])[0]
   t.ok('поле цены пустое и подписано «работа»',
-    /value=""/.test(fieldHtml()) && /placeholder="работа ₽"/.test(fieldHtml()), fieldHtml().slice(0, 120))
+    /value=""/.test(fieldHtml()) && /placeholder="работа"/.test(fieldHtml()), fieldHtml().slice(0, 120))
   const inp = p.dom.node({ a: 'est-pos-cost', k: key })
   p.run('bind();'); inp.value = '7000'; inp.onchange()
   t.ok('цена бригаде видна отдельно', /· работа 7 000 ₽ · итого /.test(plain()))
@@ -728,6 +728,16 @@ const SHEET = {
   const st = p.q('works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes})).stages.filter(function(s){return s.positions.some(function(x){return x.key===' + JSON.stringify(key) + ';});})[0]')
   t.ok('этап делит свою сумму так же', st.mats + st.labor === Math.round(st.cost), st.mats + ' + ' + st.labor + ' vs ' + st.cost)
   t.ok('и подытоги видны в шапке этапа', /материалы [\d ]+ ₽ · работа [\d ]+ ₽/.test(plain()))
+  // Те же пять правок строки — экран сметы у двух разделов один.
+  const html2 = p.run('tSpec2()')
+  t.ok('итог строки виден в шапке',
+    /font-weight:800[^>]*white-space:nowrap;margin-left:3px">[\d\s\u00a0]+ ₽/.test(html2))
+  t.ok('«работа» в раскладке ведёт в поле цены', html2.indexOf('data-a="est-pos-cost-focus"') >= 0)
+  t.ok('чип режима стоит всегда', html2.indexOf('data-a="est-pos-cost-mode"') >= 0)
+  p.run('matsOpen[' + JSON.stringify(key) + ']=1;')
+  const marks2 = p.run('tSpec2()')
+  t.ok('✕ материала приглушён', /data-a="est-mat-off"[^>]*color:#9aabbf/.test(marks2))
+  t.ok('✕ работы красный', /data-a="est-pos-del"[^>]*color:#e74c3c/.test(marks2))
 }
 
 t.done()

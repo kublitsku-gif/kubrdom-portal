@@ -199,8 +199,12 @@ function create(p, name) {
   // В каждой строке две цифры: сколько тут материалов и сколько работы. Одна
   // сумма отвечала «сколько стоит», но не на те два вопроса, которые задают:
   // сколько закупать и сколько платить бригаде.
+  const partsPlain = parts.replace(/<[^>]*>/g, '').replace(/[\u00a0\u202f]/g, ' ')
   t.ok('в строке видно материалы, работу и итог',
-    /материалы <\/span><span[^>]*>[\d\s\u00a0]+ ₽<\/span><span[^>]*> · работа /.test(parts), 'нет раскладки')
+    /материалы [\d ]+ ₽ · работа [\d ]+ ₽ · итого [\d ]+ ₽/.test(partsPlain), 'нет раскладки')
+  // Цифра ведёт туда, где её правят.
+  t.ok('«материалы» раскрывают список', parts.indexOf('data-a="est-mats-open"') >= 0)
+  t.ok('«работа» ведёт в поле цены', parts.indexOf('data-a="est-pos-cost-focus"') >= 0)
   const matsKey = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
   const openMats = p.dom.node({ a: 'est-mats-open', k: matsKey }); p.run('bind();'); openMats.onclick()
   const parts2 = p.run('tProjects()')
@@ -915,6 +919,18 @@ function create(p, name) {
   const own2 = p.run('tProjects()').replace(/<[^>]*>/g, '').replace(/[\u00a0\u202f]/g, ' ')
   t.ok('в строке видно обе половины', /материалы 200 ₽ · работа 500 ₽ · итого 700 ₽/.test(own2), 'нет раскладки')
 
+  // Цена своей работы правится В ПОЛЕ: она лежит в самой строке, а не отметкой
+  // поверх расчёта, и раньше поле оставалось пустым при живой цене.
+  const ownField = () => (p.run('tProjects()').match(new RegExp('id="pc-' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"[^>]*')) || [''])[0]
+  t.ok('цена своей работы стоит в поле', /value="500"/.test(ownField()), ownField().slice(0, 140))
+  const setOwn = p.dom.node({ a: 'est-pos-cost', k: key })
+  p.run('bind();'); setOwn.value = '900'; setOwn.onchange()
+  t.ok('и правится там же', own().cost === 900 + 200, String(own().cost))
+  t.ok('правка ушла в саму работу, а не в отметку поверх расчёта',
+    p.q('projects[0].posAdd[0].cost') === 900 && !p.q('projects[0].posCost'))
+  t.ok('пустого чипа «откуда число» нет',
+    !/border-radius:7px;padding:2px 7px[^>]*"><\/span>/.test(p.run('tProjects()')))
+
   // Удаляется работа целиком — крестиком в своей строке.
   const del = p.dom.node({ a: 'est-pos-del', k: key }); p.run('bind();'); del.onclick()
   t.ok('работа удалилась', !own())
@@ -937,7 +953,7 @@ function create(p, name) {
   // же, сколько всё», и вносить оплату было некуда.
   const fieldHtml = () => (p.run('tProjects()').match(/data-a="est-pos-cost"[^>]*/) || [''])[0]
   t.ok('поле цены пустое', /value=""/.test(fieldHtml()), fieldHtml().slice(0, 120))
-  t.ok('и подписано «работа»', /placeholder="работа ₽"/.test(fieldHtml()))
+  t.ok('и подписано «работа»', /placeholder="работа"/.test(fieldHtml()))
   t.ok('без цены бригаде работа нулевая',
     new RegExp('материалы ' + cost0.toLocaleString('ru-RU').replace(/[\u00a0\u202f]/g, ' ') + ' ₽ · работа 0 ₽').test(plain()), 'нет раскладки')
 
@@ -959,6 +975,19 @@ function create(p, name) {
   const st = p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).stages.filter(function(s){return s.n===2;})[0]')
   t.ok('этап знает свои материалы и работу', st.mats > 0 && st.labor === 12000, st.mats + ' / ' + st.labor)
   t.ok('и сумма сходится с итогом этапа', st.mats + st.labor === Math.round(st.cost), st.cost)
+  // Итог строки — крупной цифрой рядом с полем, чип режима стоит всегда.
+  t.ok('итог строки виден в шапке',
+    /font-weight:800[^>]*white-space:nowrap;margin-left:3px">[\d\s\u00a0]+ ₽/.test(p.run('tProjects()')))
+  t.ok('чип «за работу / под ключ» есть и без назначенной цены',
+    p.run('tProjects()').indexOf('data-a="est-pos-cost-mode"') >= 0)
+  // Крестик работы красный, крестик материала приглушён: рядом стоящие одинаковые
+  // стирали всю работу вместо одного материала.
+  p.run('matsOpen[' + JSON.stringify(key) + ']=1;')
+  const marks = p.run('tProjects()')
+  t.ok('✕ материала приглушён', /data-a="est-mat-off"[^>]*color:#9aabbf/.test(marks))
+  t.ok('✕ работы остаётся красным', /data-a="est-pos-del"[^>]*color:#e74c3c/.test(marks))
+  t.ok('«+ материал» во всю ширину', /est-mat-add-open[^>]*width:100%/.test(marks))
+
   t.ok('подытоги видны в шапке этапа',
     new RegExp('материалы ' + st.mats.toLocaleString('ru-RU').replace(/[\u00a0\u202f]/g, ' ') + ' ₽ · работа 12 000 ₽').test(plain()))
 }

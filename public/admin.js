@@ -12843,11 +12843,11 @@ function specMatsListHtml(pos, sh, live){
           // Заменять дописанный руками материал нечем: у него нет товара в базе,
           // а есть крестик — удалить и вписать заново.
           (can&&!added?'<button data-a="est-mat-open" data-k="'+esc(matSwapKey(pos,m))+'" title="Заменить материал из базы" style="width:24px;height:24px;background:'+(open?"#2980b9":"transparent")+';border:1px solid #2980b955;border-radius:6px;cursor:pointer;color:'+(open?"#fff":"#2980b9")+';font-size:11px;flex-shrink:0">⇄</button>':'')+
-          (can&&added?'<button data-a="est-mat-add-del" data-k="'+esc(pos.key)+'" data-m="'+esc(m.id||"")+'" title="Убрать дописанный материал" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>':'')+
+          (can&&added?'<button data-a="est-mat-add-del" data-k="'+esc(pos.key)+'" data-m="'+esc(m.id||"")+'" title="Убрать дописанный материал" style="width:24px;height:24px;background:transparent;border:1px solid #dde6f0;border-radius:6px;cursor:pointer;color:#9aabbf;font-size:11px;flex-shrink:0">✕</button>':'')+
           // Убрать материал из ЭТОГО дома: справочник общий, и удалять из него
           // ради одного дома значит менять состав всех будущих. Материал
           // выключается в листе и возвращается тем же тапом.
-          (can&&!added?'<button data-a="est-mat-off" data-k="'+esc(matSwapKey(pos,m))+'" title="Убрать материал из этой строки" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>':'')+
+          (can&&!added?'<button data-a="est-mat-off" data-k="'+esc(matSwapKey(pos,m))+'" title="Убрать материал из этой строки" style="width:24px;height:24px;background:transparent;border:1px solid #dde6f0;border-radius:6px;cursor:pointer;color:#9aabbf;font-size:11px;flex-shrink:0">✕</button>':'')+
           // Порядок материалов — тот же жест, что у работ: взял и указал место, а
           // на соседнюю строку быстрее тапнуть стрелкой. Список читают сверху вниз
           // и по нему закупают.
@@ -12917,19 +12917,26 @@ function estSplitHtml(pos, count, open){
       '<span style="'+on+'">под ключ '+money(pos.cost)+'</span>'+
     '</button>';
   }
-  return '<button data-a="est-mats-open" data-k="'+esc(pos.key)+'" style="border:none;background:transparent;padding:2px 0;font-size:11px;cursor:pointer;text-align:left">'+
-    '<span style="'+dim+'">'+(open?"▾":"▸")+' материалы </span>'+
-    '<span style="'+(sp.mats?on:dim)+'">'+money(sp.mats)+'</span>'+
-    '<span style="'+dim+'"> · работа </span>'+
-    '<span style="'+(sp.labor?on:dim)+'">'+money(sp.labor)+'</span>'+
+  // Цифра ведёт туда, где её правят: «материалы» раскрывают список, «работа»
+  // ставит курсор в поле цены. Одна кнопка на всю строку делала одно и то же.
+  return '<span style="font-size:11px">'+
+    '<button data-a="est-mats-open" data-k="'+esc(pos.key)+'" style="border:none;background:transparent;padding:2px 0;font-size:11px;cursor:pointer;text-align:left">'+
+      '<span style="'+dim+'">'+(open?"▾":"▸")+' материалы </span>'+
+      '<span style="'+(sp.mats?on:dim)+'">'+money(sp.mats)+'</span>'+
+    '</button>'+
+    '<span style="'+dim+'"> · </span>'+
+    '<button data-a="est-pos-cost-focus" data-k="'+esc(pos.key)+'" title="Вписать оплату бригаде" style="border:none;background:transparent;padding:2px 0;font-size:11px;cursor:pointer">'+
+      '<span style="'+dim+'">работа </span>'+
+      '<span style="'+(sp.labor?on:dim)+'">'+money(sp.labor)+'</span>'+
+    '</button>'+
     '<span style="'+dim+'"> · итого </span>'+
     '<span style="'+on+'">'+money(pos.cost)+'</span>'+
-  '</button>';
+  '</span>';
 }
 function matAddHtml(pos){
   if(matAddOpen!==pos.key){
     return '<div style="padding:6px 0 2px">'+
-      '<button data-a="est-mat-add-open" data-k="'+esc(pos.key)+'" style="border:1px dashed #c9d6e4;background:#fff;border-radius:8px;padding:5px 10px;font-size:11px;color:#5a7a9a;cursor:pointer">+ материал</button>'+
+      '<button data-a="est-mat-add-open" data-k="'+esc(pos.key)+'" style="width:100%;border:1px dashed #c9d6e4;background:#fff;border-radius:8px;padding:6px 10px;font-size:11px;color:#5a7a9a;cursor:pointer">+ материал</button>'+
     '</div>';
   }
   return '<div style="margin:7px 0 2px;background:#eefaf6;border:1px solid #16a08544;border-radius:9px;padding:9px 10px">'+
@@ -13264,19 +13271,30 @@ function estBodyHtml(sh, types, live, actions){
               // Цену работы правят руками: подряд берут за работу целиком, и
               // сумма кабелей к этой цифре отношения не имеет.
               (canRule
-                ? '<span style="display:flex;align-items:baseline;gap:3px;flex-shrink:0">'+
-                    // Поле — это цена БРИГАДЕ за работу. Пока её не назначили, оно
-                    // ПУСТОЕ с подсказкой «работа ₽»: подставленный туда итог
-                    // строки читался как «работа стоит столько же, сколько всё»,
-                    // и было непонятно, куда вносить оплату.
-                    '<input data-a="est-pos-cost" data-k="'+esc(p.key)+'" value="'+(p.costSet?Math.round(p.costMode==="labor"?(Number(p.labor)||0):p.cost):"")+'" placeholder="работа ₽" inputmode="numeric" title="'+(p.costSet&&p.costMode!=="labor"?"Подряд под ключ — материалы уже в этой цене":"Сколько платим бригаде за эту работу — материалы считаются сверху")+'" style="width:84px;padding:2px 5px;border:1px solid '+(p.costSet?"#8e44ad":"#dde6f0")+';border-radius:6px;font-size:12px;font-weight:700;text-align:right;outline:none;color:'+(p.costSet?"#8e44ad":"#0d1b2e")+';background:#fff">'+
+                ? (function(){
+                    // Поле — это цена БРИГАДЕ за работу. У СВОЕЙ работы её цена и
+                    // есть эта цифра (она лежит в самой строке, а не в `posCost`),
+                    // поэтому поле показывает её же — иначе цену вписанной руками
+                    // работы нечем править, хотя в раскладке она стоит.
+                    const sp=positionSplit(p);
+                    const shown=p.own?sp.labor:(p.costSet?Math.round(p.costMode==="labor"?(Number(p.labor)||0):p.cost):"");
+                    const set=p.own||p.costSet;
+                    return '<span style="display:flex;align-items:baseline;gap:3px;flex-shrink:0">'+
+                    '<input id="pc-'+esc(p.key)+'" data-a="est-pos-cost" data-k="'+esc(p.key)+'" value="'+shown+'" placeholder="работа" inputmode="numeric" title="'+(p.costSet&&p.costMode!=="labor"?"Подряд под ключ — материалы уже в этой цене":"Сколько платим бригаде за эту работу — материалы считаются сверху")+'" style="width:78px;padding:2px 5px;border:1px solid '+(set?"#8e44ad":"#dde6f0")+';border-radius:6px;font-size:12px;font-weight:700;text-align:right;outline:none;color:'+(set?"#8e44ad":"#0d1b2e")+';background:#fff">'+
                     '<span style="font-size:12px;font-weight:700;color:#0d1b2e">₽</span>'+
-                    // Что означает эта цифра: оплату бригаде (материалы идут
-                    // сверху) или подряд под ключ (материалы уже в ней). Смыслы
-                    // разные, и по одному числу их не различить.
-                    (p.costSet?'<button data-a="est-pos-cost-mode" data-k="'+esc(p.key)+'" title="'+(p.costMode==="labor"?"Оплата работы — материалы считаются сверху":"Подряд под ключ — материалы уже в этой цене")+'" style="border:1px solid #8e44ad55;background:#f6f2fa;color:#8e44ad;border-radius:6px;padding:1px 6px;font-size:9.5px;font-weight:700;cursor:pointer;white-space:nowrap">'+(p.costMode==="labor"?"за работу":"под ключ")+'</button>':'')+
+                    // Что означает эта цифра: оплату бригаде (материалы идут сверху)
+                    // или подряд под ключ (материалы уже в ней). Чип стоит ВСЕГДА:
+                    // появляясь только после ввода, он не давал узнать, что у цифры
+                    // вообще два смысла. У своей работы выбора нет — её цена это
+                    // всегда работа, материалы к ней дописывают отдельно.
+                    (p.own?'':'<button data-a="est-pos-cost-mode" data-k="'+esc(p.key)+'" title="'+(p.costMode==="labor"||!p.costSet?"Оплата работы — материалы считаются сверху":"Подряд под ключ — материалы уже в этой цене")+'" style="border:1px solid #8e44ad55;background:'+(p.costSet?"#f6f2fa":"#fff")+';color:'+(p.costSet?"#8e44ad":"#9aabbf")+';border-radius:6px;padding:1px 6px;font-size:9.5px;font-weight:700;cursor:pointer;white-space:nowrap">'+((p.costMode==="labor"||!p.costSet)?"за работу":"под ключ")+' ⇄</button>')+
                     (p.costSet?'<button data-a="est-pos-cost-reset" data-k="'+esc(p.key)+'" title="Вернуть цену по материалам" style="border:none;background:transparent;color:#8e44ad;font-size:10.5px;font-weight:700;cursor:pointer;padding:0 1px">⟲</button>':'')+
-                  '</span>'
+                    // Итог строки — крупной цифрой, тем же весом, что суммы этапов:
+                    // пока цена не задана, в шапке не было ни одного числа, и смету
+                    // нельзя было пробежать глазами по суммам.
+                    '<span style="font-size:12.5px;font-weight:800;color:#0d1b2e;white-space:nowrap;margin-left:3px">'+Math.round(p.cost).toLocaleString("ru-RU")+' ₽</span>'+
+                  '</span>';
+                  })()
                 : '<span style="font-size:12px;font-weight:700;color:#0d1b2e;white-space:nowrap">'+Math.round(p.cost).toLocaleString("ru-RU")+' ₽</span>')+
               // Убрать работу из ЭТОГО дома: контейнер уже стоит на участке,
               // электрику ведёт заказчик. Правило и справочник не трогаем — они
@@ -13312,7 +13330,10 @@ function estBodyHtml(sh, types, live, actions){
             '</div>'+
             optChipsHtml(p, sh, w)+
             '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:4px">'+
-              (canRule&&p.estId
+              // У своей работы расчёта нет, и `why` пустой: плашка рисовалась
+              // пустым синим пятном под названием.
+              (!p.why?''
+                : canRule&&p.estId
                 ? '<button data-a="est-why" data-est="'+p.estId+'" title="Чем меряется эта строка" style="background:'+(open?RULE_COL:"#eef6ff")+';color:'+(open?"#fff":"#2980b9")+';border:none;border-radius:7px;padding:3px 8px;font-size:10.5px;font-weight:700;cursor:pointer">'+esc(p.why)+' ⚙</button>'
                 : '<span style="background:#eef6ff;color:#2980b9;border-radius:7px;padding:2px 7px;font-size:10.5px;font-weight:700">'+esc(p.why)+'</span>')+
             '</div>'+
@@ -22220,11 +22241,28 @@ function bind(){
       const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
       const v=parseFloat(String(el.value).replace(/\s/g,"").replace(",","."));
       if(!isFinite(v)||v<0){ fl(); return; }
+      // У СВОЕЙ работы цена живёт в самой строке (`posAdd[].cost`), а не отметкой
+      // поверх расчёта: её там и правим — иначе к вписанной руками цифре
+      // прибавилась бы вторая, и строка стоила бы вдвое.
+      if(key.indexOf("add:")===0){
+        const id=key.slice(4);
+        const rows=(sh.posAdd||[]);
+        const at=rows.findIndex(function(x){ return String(x.id)===id&&!x.estId; });
+        if(at>=0){
+          const next=rows.slice();
+          next[at]=Object.assign({}, next[at], { cost:Math.round(v) });
+          sh.posAdd=next; scheduleSave(); fl(); return;
+        }
+      }
       sh.posCost=Object.assign({}, sh.posCost||{}, { [key]:Math.round(v) });
       // Новая цена по умолчанию — оплата бригаде: так её и назначают, а материалы
       // остаются своей строкой. Уже введённые цифры смысла не меняют.
       if(!((sh.posCostMode||{})[key]))sh.posCostMode=Object.assign({}, sh.posCostMode||{}, { [key]:"labor" });
       scheduleSave(); fl();
+    };}
+    else if(a==="est-pos-cost-focus"){el.onclick=()=>{
+      const f=document.getElementById("pc-"+(el.dataset.k||""));
+      if(f&&f.focus){ f.focus(); if(f.select)f.select(); }
     };}
     else if(a==="est-pos-cost-mode"){el.onclick=()=>{
       const key=el.dataset.k||"";
