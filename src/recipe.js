@@ -352,7 +352,50 @@ export function matQtyOf(sheet, key) {
 export function matAddKey(m) { return "+" + String((m && (m.id || m.pid)) || ""); }
 export function matKeyOf(m) {
   if (m && m.added) return matAddKey(m);
-  return String((m && (m.pid || m.id)) || "");
+  const base = String((m && (m.pid || m.id)) || "");
+  const ix = Number(m && m.mix) || 0;
+  return ix > 1 ? base + "#" + ix : base;
+}
+
+// Смета справочника может назвать один товар ДВАЖДЫ («ОСП на пол» и «ОСП на
+// стены» одной работой, две фасовки одного крепежа): это две строки, и правят их
+// порознь. Адресом обеих был один товар, поэтому замена меняла товар в обеих,
+// ручное количество доставалось обеим, а «убрать» уносило сразу две.
+//
+// Различаем их НОМЕРОМ ПОВТОРА в смете: первая строка товара сохраняет прежний
+// адрес (`p_osb`) — по нему лежат все правки боевых листов, и трогать его нельзя,
+// — а каждая следующая получает свой (`p_osb#2`). Номер считается по строкам
+// справочника, а не по порядку на экране: перестановка материалов в листе не
+// должна переадресовывать чужие правки.
+export function matAddrPid(addr) {
+  const v = String(addr || "");
+  const cut = v.indexOf("#");
+  return cut < 0 ? v : v.slice(0, cut);
+}
+// Адрес того же материала после замены товара: номер повтора переезжает вместе с
+// ним («p_osb#2» → «p_ply#2»), иначе ручное количество второй строки досталось бы
+// первой.
+export function matAddrSwap(addr, pid) {
+  const v = String(addr || "");
+  const cut = v.indexOf("#");
+  return cut < 0 ? String(pid || "") : String(pid || "") + v.slice(cut);
+}
+export function stampMatIx(positions) {
+  return (positions || []).map(function (pos) {
+    const mats = (pos && pos.mats) || [];
+    if (mats.length < 2) return pos;
+    const seen = {};
+    let dup = false;
+    const out = mats.map(function (m) {
+      const pid = String((m && m.pid) || "");
+      if (!pid) return m;
+      seen[pid] = (seen[pid] || 0) + 1;
+      if (seen[pid] < 2) return m;
+      dup = true;
+      return Object.assign({}, m, { mix: seen[pid] });
+    });
+    return dup ? Object.assign({}, pos, { mats: out }) : pos;
+  });
 }
 
 // Адреса дописанных материалов сменились (был `pid`, стал `+id`), а правки по
@@ -436,7 +479,7 @@ export function applyMatEdits(positions, sheet, products) {
     let hit = !!add.length || !!off.length || !!Object.keys(ord).length;
     const mats = (pos.mats || []).map(function (m) {
       let out = m;
-      const nid = sw[m.pid || ""];
+      const nid = sw[matKeyOf(m)];
       const prod = nid && prodById[nid];
       if (prod) { out = swapMat(m, prod, pos.area); hit = true; }
       // Ручное количество ставится ПОСЛЕ замены: человек правит то число, которое
@@ -587,7 +630,10 @@ export function allPositionsRaw(sheet, ctx) {
   // хранит только адрес комнаты, а имя живёт в модели — второй его копии в
   // листе быть не должно, она разошлась бы с чертежом.
   const rooms = ((probeSheet(sheet, c.winTypes).specs || {}).rooms) || [];
-  return applyRooms(applyOrder(applyStage(applyHours(applyCost(dropOff(applyPicks(applyMatEdits(all, sheet, c.products), sheet), sheet), sheet), sheet), sheet), sheet), sheet, rooms);
+  // Номер повтора проставляется ДО правок: по нему они и адресуются, а считается
+  // он по составу справочника, поэтому не зависит ни от замен, ни от перестановки.
+  const numbered = stampMatIx(all);
+  return applyRooms(applyOrder(applyStage(applyHours(applyCost(dropOff(applyPicks(applyMatEdits(numbered, sheet, c.products), sheet), sheet), sheet), sheet), sheet), sheet), sheet, rooms);
 }
 
 // Работы, убранные руками из ЭТОГО дома. Смета справочника описывает типовой дом,

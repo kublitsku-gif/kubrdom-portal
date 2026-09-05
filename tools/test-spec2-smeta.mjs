@@ -1027,5 +1027,51 @@ const SHEET = {
     JSON.stringify((left.mats || []).map((m) => [m.pid, !!m.added])))
 }
 
+// ── Один товар дважды в самой смете ─────────────────────────────────────────
+// Экран сметы у двух разделов ОДИН: то же самое сторожит test-projects. Адресом
+// обеих строк был один товар, поэтому замена меняла товар в обеих, а ручное
+// количество доставалось обеим.
+{
+  t.section('Один товар дважды в смете')
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS.concat([{ id: 'p_ply', name: 'Фанера 4 мм', unitCost: 700, store: 'Лемана', mode: 'piece' }]),
+    estimates: [{ id: 'e_win', kind: 'house', name: 'Монтаж окна', stage: 2, optPoint: 'win',
+      lines: [{ pid: 'p_win', qty: 1 }, { pid: 'p_win', qty: 2 }] }],
+    dbPlans: [], crmClients: [], specSheets: [], specSheets2: [], winTypes: [], objects: [],
+    templates: [], contractDocs: [], purchases: [], issues: [], users: [], stock: [],
+    settings: { specMarkup: 30 }, buildRules: [],
+  })
+  p.run('spec2Tab="scheme";tSpec2();')
+  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
+  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_win";})[0].key')
+  const posOf = () => p.q('allPositions(spec2Sheet(), specCtx(spec2Sheet())).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0]')
+  p.run('matsOpen[' + JSON.stringify(key) + ']=1;tSpec2();')
+  t.ok('в строке две записи товара', posOf().mats.length === 2,
+    JSON.stringify(posOf().mats.map((m) => [m.pid, m.qty])))
+
+  const html = p.run('tSpec2()')
+  t.ok('у первой прежний адрес', html.indexOf('data-a="est-mat-qty" data-k="' + key + '|p_win"') >= 0)
+  t.ok('у повтора свой', html.indexOf('data-a="est-mat-qty" data-k="' + key + '|p_win#2"') >= 0,
+    'адрес повтора не проставлен')
+
+  const open = p.dom.node({ a: 'est-mat-open', k: key + '|p_win' }); p.run('bind();'); open.onclick()
+  p.run('tSpec2();')
+  p.dom.field('msw-input', 'Фанера 4 мм')
+  const doIt = p.dom.node({ a: 'est-mat-do', k: key + '|p_win' }); p.run('bind();'); doIt.onclick()
+  const after = posOf().mats
+  t.ok('заменилась одна строка', after.filter((m) => m.pid === 'p_ply').length === 1,
+    JSON.stringify(after.map((m) => m.pid)))
+  t.ok('и это первая', after[0].pid === 'p_ply' && after[1].pid === 'p_win',
+    JSON.stringify(after.map((m) => m.pid)))
+
+  const qty = p.dom.node({ a: 'est-mat-qty', k: key + '|p_win#2' })
+  qty.value = '9'; p.run('bind();'); qty.onchange()
+  const now = posOf().mats
+  t.ok('количество досталось повтору', now[1].qty === 9, JSON.stringify(now.map((m) => m.qty)))
+  t.ok('а первая строка своё сохранила', !now[0].qtySet, JSON.stringify([now[0].qty, !!now[0].qtySet]))
+}
+
 t.done()
 

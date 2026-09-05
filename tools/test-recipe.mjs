@@ -8,7 +8,7 @@
 import { presetModel, MODEL_PRESETS } from '../src/model.js'
 import { sheetPositions } from '../src/spec.js'
 import { rulePositions, allPositions, allPositionsRaw, ruleText, ruleReady, probeSheet,
-  layerPositions, pieArea, pieCost, applyPicks, optLabelOf, optPrefixOf, applyRooms, roomKeyOf, posRoomOf, ROOM_HOUSE, applyMatEdits, matOrderOf, matKeyOf, matAddKey, migrateMatAddrs } from '../src/recipe.js'
+  layerPositions, pieArea, pieCost, applyPicks, optLabelOf, optPrefixOf, applyRooms, roomKeyOf, posRoomOf, ROOM_HOUSE, applyMatEdits, matOrderOf, matKeyOf, matAddKey, matAddrPid, matAddrSwap, stampMatIx, migrateMatAddrs } from '../src/recipe.js'
 import { modelAreas, modelTotals, applyLayers } from '../src/model.js'
 import { gaps2 } from '../src/spec2.js'
 
@@ -438,6 +438,50 @@ const R = (o) => Object.assign({ id: 'r1', kind: 'house', what: 'surface', k: 'w
   const fresh = { matAdd: { k: [{ id: 'm2', pid: 'p_tile' }] }, matQty: { k: { p_tile: 2, '+m2': 9 } } }
   t.ok('своё число не перебивается', migrateMatAddrs(fresh) === false && fresh.matQty.k['+m2'] === 9)
   t.ok('лист без дописанных не трогается', migrateMatAddrs({}) === false)
+}
+
+// ── Один товар дважды в самой смете ─────────────────────────────────────────
+// «ОСП на пол» и «ОСП на стены» одной работой — это две строки, и правят их
+// порознь. Адрес у обеих был один, поэтому замена меняла товар в обеих, ручное
+// количество доставалось обеим, а «убрать» уносило сразу две.
+{
+  t.section('Один товар дважды в смете')
+  const raw = [{ key: 'k', name: 'Обшивка', factor: 1, cost: 3000, area: 10, mats: [
+    { pid: 'p_osb', n: 'ОСП 9 мм', cost: 1000, qty: 1 },
+    { pid: 'p_tile', n: 'Плитка', cost: 1000, qty: 1 },
+    { pid: 'p_osb', n: 'ОСП 9 мм', cost: 1000, qty: 1 },
+  ] }]
+  const pos = stampMatIx(raw)[0]
+  t.ok('первая строка адреса не сменила', matKeyOf(pos.mats[0]) === 'p_osb', matKeyOf(pos.mats[0]))
+  t.ok('одиночный товар тоже', matKeyOf(pos.mats[1]) === 'p_tile')
+  t.ok('а повтор получил свой', matKeyOf(pos.mats[2]) === 'p_osb#2', matKeyOf(pos.mats[2]))
+  t.ok('исходный список не тронут', raw[0].mats[2].mix === undefined)
+  t.ok('строка без повторов остаётся собой',
+    stampMatIx([{ key: 'k2', mats: [{ pid: 'a' }, { pid: 'b' }] }])[0].mats[0].mix === undefined)
+
+  // Замена по адресу первой строки вторую не трогает.
+  const one = applyMatEdits(stampMatIx(raw), { mats: { k: { p_osb: 'p_tile' } } }, PRODUCTS)[0]
+  t.ok('заменилась одна строка', one.mats.filter((m) => m.pid === 'p_osb').length === 1,
+    JSON.stringify(one.mats.map((m) => m.pid)))
+  t.ok('и это первая', one.mats[0].pid === 'p_tile' && one.mats[2].pid === 'p_osb',
+    JSON.stringify(one.mats.map((m) => m.pid)))
+  // Заменить можно и вторую — по её собственному адресу.
+  const two = applyMatEdits(stampMatIx(raw), { mats: { k: { 'p_osb#2': 'p_tile' } } }, PRODUCTS)[0]
+  t.ok('вторая заменяется своим адресом', two.mats[0].pid === 'p_osb' && two.mats[2].pid === 'p_tile',
+    JSON.stringify(two.mats.map((m) => m.pid)))
+  t.ok('и номер повтора переезжает с ней', matKeyOf(two.mats[2]) === 'p_tile#2', matKeyOf(two.mats[2]))
+
+  // Количество и «убрать» — так же врозь.
+  const q = applyMatEdits(stampMatIx(raw), { matQty: { k: { 'p_osb#2': 7 } } }, PRODUCTS)[0]
+  t.ok('количество досталось повтору', q.mats[2].qty === 7 && q.mats[0].qty === 1,
+    JSON.stringify(q.mats.map((m) => m.qty)))
+  const off = applyMatEdits(stampMatIx(raw), { matOff: { k: ['p_osb'] } }, PRODUCTS)[0]
+  t.ok('убралась одна строка', off.mats.length === 2, String(off.mats.length))
+  t.ok('и осталась вторая', matKeyOf(off.mats[1]) === 'p_osb#2', JSON.stringify(off.mats.map(matKeyOf)))
+
+  t.ok('товар из адреса читается', matAddrPid('p_osb#2') === 'p_osb' && matAddrPid('p_osb') === 'p_osb')
+  t.ok('и адрес после замены собирается',
+    matAddrSwap('p_osb#2', 'p_ply') === 'p_ply#2' && matAddrSwap('p_osb', 'p_ply') === 'p_ply')
 }
 
 t.done()

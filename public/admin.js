@@ -55,7 +55,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2, works2 } from "../src/spec2.js";
 import { priceHist, priceWas, pricePush, priceStale, refreshPrices } from "../src/prices.js";
-import { allPositions, allPositionsRaw, addedPositions, matKeyOf, matAddKey, migrateMatAddrs, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
+import { allPositions, allPositionsRaw, addedPositions, matKeyOf, matAddKey, matAddrPid, matAddrSwap, migrateMatAddrs, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
   pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
   optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf, ROOM_HOUSE, roomKeyOf, positionSplit } from "../src/recipe.js";
 import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
@@ -22959,11 +22959,13 @@ function bind(){
         sh.mats=mats;
         // Ручное количество переезжает на новый товар: человек правил ЭТУ строку,
         // а не карточку каталога.
+        // Номер повтора переезжает вместе со строкой («p_osb#2» → «p_ply#2»):
+        // иначе ручное количество второй строки того же товара досталось бы первой.
         const q=(sh.matQty||{})[posKey];
         if(q&&q[oldPid]!=null){
           const map=Object.assign({}, sh.matQty);
           const qrow=Object.assign({}, map[posKey]);
-          qrow[prod.id]=qrow[oldPid]; delete qrow[oldPid];
+          qrow[matAddrSwap(oldPid, prod.id)]=qrow[oldPid]; delete qrow[oldPid];
           map[posKey]=qrow; sh.matQty=map;
         }
       }
@@ -23075,7 +23077,9 @@ function bind(){
       // Заменённый материал ищем и по новому pid: строка уже показывает новый товар,
       // а в замене ключом остался старый.
       delete row[pid];
-      Object.keys(row).forEach(function(oldPid){ if(row[oldPid]===pid)delete row[oldPid]; });
+      // В значении замены лежит голый товар, а на экране адрес со своим номером
+      // повтора — сравнивать надо товар с товаром.
+      Object.keys(row).forEach(function(oldPid){ if(row[oldPid]===matAddrPid(pid))delete row[oldPid]; });
       if(Object.keys(row).length)mats[posKey]=row; else delete mats[posKey];
       sh.mats=mats; matSwapOpen=""; fl();
     };}

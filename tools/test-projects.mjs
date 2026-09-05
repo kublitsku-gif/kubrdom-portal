@@ -1154,4 +1154,55 @@ function create(p, name) {
   t.ok('повторная загрузка ничего не меняет', p.q('ensureMatAddrs()') === 0)
 }
 
+// ── Один товар дважды в самой смете ─────────────────────────────────────────
+// «ОСП на пол» и «ОСП на стены» одной работой — это две строки, и правят их
+// порознь. Адресом обеих был один товар: замена меняла товар в обеих, ручное
+// количество доставалось обеим. Экран сметы у двух разделов ОДИН — то же самое
+// сторожит test-spec2-smeta.
+{
+  t.section('Один товар дважды в смете')
+  const p = boot({})
+  p.set({
+    expProducts: [{ id: 'p_osb', name: 'ОСП 9 мм', unitCost: 1000, store: 'Лемана', mode: 'piece' },
+      { id: 'p_ply', name: 'Фанера 4 мм', unitCost: 700, store: 'Лемана', mode: 'piece' }],
+    estimates: [{ id: 'e_osb', kind: 'house', name: 'Обшивка стен ОСП', stage: 2,
+      lines: [{ pid: 'p_osb', qty: 1 }, { pid: 'p_osb', qty: 2 }] }],
+    dbPlans: [], crmClients: [{ id: 'c1', name: 'Иванов' }], specSheets: [], specSheets2: [],
+    projects: [], buildRules: [], winTypes: [], objects: [], templates: [], contractDocs: [],
+    purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+  })
+  create(p, 'Дом с двумя строками ОСП')
+  p.run('projBand="parts";')
+  const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
+  const posOf = () => p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0]')
+  const openMats = p.dom.node({ a: 'est-mats-open', k: key }); p.run('bind();'); openMats.onclick()
+  const both = posOf().mats
+  t.ok('в строке две записи товара', both.length === 2, JSON.stringify(both.map((m) => [m.pid, m.qty])))
+
+  const html = p.run('tProjects()')
+  t.ok('у первой прежний адрес', html.indexOf('data-a="est-mat-qty" data-k="' + key + '|p_osb"') >= 0)
+  t.ok('у повтора свой', html.indexOf('data-a="est-mat-qty" data-k="' + key + '|p_osb#2"') >= 0,
+    'адрес повтора не проставлен')
+
+  // Заменяем ПЕРВУЮ: вторая обязана остаться прежним товаром.
+  const open = p.dom.node({ a: 'est-mat-open', k: key + '|p_osb' }); p.run('bind();'); open.onclick()
+  p.run('tProjects();')
+  p.dom.field('msw-input', 'Фанера 4 мм')
+  const doIt = p.dom.node({ a: 'est-mat-do', k: key + '|p_osb' }); p.run('bind();'); doIt.onclick()
+  const after = posOf().mats
+  t.ok('заменилась одна строка', after.filter((m) => m.pid === 'p_ply').length === 1,
+    JSON.stringify(after.map((m) => m.pid)))
+  t.ok('и это первая', after[0].pid === 'p_ply' && after[1].pid === 'p_osb',
+    JSON.stringify(after.map((m) => m.pid)))
+  t.ok('замена адресована первой', p.q('projects[0].mats[' + JSON.stringify(key) + '].p_osb') === 'p_ply')
+
+  // Количество повтора — тоже своё.
+  const qty = p.dom.node({ a: 'est-mat-qty', k: key + '|p_osb#2' })
+  qty.value = '9'; p.run('bind();'); qty.onchange()
+  const now = posOf().mats
+  t.ok('количество досталось повтору', now[1].qty === 9, JSON.stringify(now.map((m) => m.qty)))
+  t.ok('а первая строка своё сохранила', now[0].qty === 1 && !now[0].qtySet,
+    JSON.stringify([now[0].qty, !!now[0].qtySet]))
+}
+
 t.done()
