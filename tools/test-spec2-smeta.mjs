@@ -91,6 +91,25 @@ const SHEET = {
   t.ok('итог = сумма этапов', w.cost === w.stages.reduce((a, s) => a + s.cost, 0), 'получили: ' + w.cost)
 }
 
+// ── 3б. Итог сметы двумя карманами ──────────────────────────────────────────
+// Этапные подытоги отвечают «сколько по этому этапу», а закупщику и бригадиру
+// нужен ответ по стройке целиком: сколько всего закупать и сколько всего платить.
+// Складывать этапы глазами по экрану — как раз тот счёт, который делает машина.
+{
+  t.section('Итого по всем этапам')
+  const w = works2(SHEET, { estimates: EST, products: PRODUCTS, winTypes: TYPES, stages: STAGES })
+  t.ok('итог материалов посчитан', typeof w.mats === 'number', 'получили: ' + w.mats)
+  t.ok('итог работы посчитан', typeof w.labor === 'number', 'получили: ' + w.labor)
+  t.ok('материалы = сумма по этапам',
+    w.mats === w.stages.reduce((a, s) => a + s.mats, 0), 'получили: ' + w.mats)
+  t.ok('работа = сумма по этапам',
+    w.labor === w.stages.reduce((a, s) => a + s.labor, 0), 'получили: ' + w.labor)
+  // Два кармана обязаны давать ту же себестоимость, что стоит в шапке: иначе
+  // один из трёх итогов на экране врёт, и непонятно который.
+  t.ok('два кармана дают себестоимость', Math.abs(w.mats + w.labor - w.cost) <= 1,
+    'получили: ' + (w.mats + w.labor) + ' против ' + w.cost)
+}
+
 // ── 4. Чего дом не досчитал ─────────────────────────────────────────────────
 // Этот список — не украшение экрана, а задание на правила сборки.
 {
@@ -734,6 +753,15 @@ const SHEET = {
   const st = p.q('works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes})).stages.filter(function(s){return s.positions.some(function(x){return x.key===' + JSON.stringify(key) + ';});})[0]')
   t.ok('этап делит свою сумму так же', st.mats + st.labor === Math.round(st.cost), st.mats + ' + ' + st.labor + ' vs ' + st.cost)
   t.ok('и подытоги видны в шапке этапа', /материалы [\d ]+ ₽ · работа [\d ]+ ₽/.test(plain()))
+  // Итог по стройке целиком — последняя строка списка этапов: складывать этапы
+  // глазами приходилось при каждом разговоре с закупщиком.
+  const tot = p.q('(function(){var w=works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes}));return {m:w.mats,l:w.labor,c:w.cost};})()')
+  const ru = (n) => n.toLocaleString('ru-RU').replace(/[\u00a0\u202f]/g, ' ')
+  const totBlock = plain().split('ИТОГО ПО ВСЕМ ЭТАПАМ')[1] || ''
+  t.ok('итог стоит под этапами', totBlock.length > 0, 'блока нет')
+  t.ok('в итоге общая сумма', totBlock.indexOf(ru(tot.c)) >= 0, totBlock.slice(0, 140))
+  t.ok('и те же два кармана',
+    totBlock.indexOf('материалы ' + ru(tot.m) + ' ₽ · работа ' + ru(tot.l) + ' ₽') >= 0, totBlock.slice(0, 180))
   // Те же пять правок строки — экран сметы у двух разделов один.
   const html2 = p.run('tSpec2()')
   t.ok('итог строки виден в шапке',

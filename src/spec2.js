@@ -139,6 +139,13 @@ export function works2(sheet, ctx) {
   const raw = allPositionsRaw(sheet, c);
   const positions = raw.positions;
   const cost = positions.reduce(function (a, p) { return a + (Number(p.cost) || 0); }, 0);
+  // Те же два кармана, что стоят в подытоге каждого этапа, но по стройке целиком:
+  // закупщику — сколько всего брать материалов, бригадиру — сколько всего платить.
+  // Считаем по позициям, а не сложением этапов: работа без этапа тоже чьи-то деньги.
+  const split = positions.reduce(function (a, p) {
+    const sp = positionSplit(p);
+    return { mats: a.mats + sp.mats, labor: a.labor + sp.labor };
+  }, { mats: 0, labor: 0 });
   const mk = (function () {
     const m = Number(sheet && sheet.markup);
     return isFinite(m) && m >= 0 ? m : 0;
@@ -176,6 +183,7 @@ export function works2(sheet, ctx) {
     rooms: (((probeSheet(sheet, c.winTypes).specs) || {}).rooms || [])
       .map(function (r) { return { id: r.id, name: String(r.name || "") }; }),
     positions: positions, stages: stages, groups: raw.groups,
+    mats: Math.round(split.mats), labor: Math.round(split.labor),
     cost: Math.round(cost), markup: mk, price: Math.round(cost * (1 + mk / 100)),
     gaps: gaps2(sheet, c),
   };

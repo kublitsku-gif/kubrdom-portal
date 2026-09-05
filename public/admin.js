@@ -13364,6 +13364,19 @@ function estBodyHtml(sh, types, live, actions){
                 }), sh, w, canRule))+
       '</div>';
     }).join("");
+    // Итог по стройке целиком теми же двумя цифрами, что стоят в каждом этапе:
+    // закупщику нужен один ответ «сколько всего брать», а не сложение четырёх
+    // этапов в уме. Стоит под этапами, потому что читается как их последняя строка.
+    h+='<div style="background:#eef3f9;border:1px solid #c9d6e5;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
+      '<div style="display:flex;align-items:baseline;gap:8px">'+
+        '<span style="flex:1;min-width:0;font-size:11px;font-weight:800;color:#0d1b2e;letter-spacing:0.4px">ИТОГО ПО ВСЕМ ЭТАПАМ'+
+          ' <span style="font-weight:700;color:#7a9aaa;letter-spacing:0">· '+w.positions.length+' '+pluralRu(w.positions.length,"работа","работы","работ")+'</span></span>'+
+        '<span style="font-size:13px;font-weight:800;color:#0d1b2e;white-space:nowrap">'+Math.round(w.cost).toLocaleString("ru-RU")+' ₽</span>'+
+      '</div>'+
+      '<div style="font-size:10.5px;color:#7a9aaa;margin-top:3px">'+
+        'материалы <b style="color:#0d1b2e">'+Math.round(w.mats||0).toLocaleString("ru-RU")+' ₽</b> · работа <b style="color:#0d1b2e">'+Math.round(w.labor||0).toLocaleString("ru-RU")+' ₽</b>'+
+      '</div>'+
+    '</div>';
   } else {
     h+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:14px;margin-bottom:9px;font-size:12px;color:#7a9aaa;line-height:1.5">'+
       'По этому дому не посчиталась ни одна позиция: в справочнике смет нет ничего, что меряется его площадями и раскладкой. Это и есть работа следующего шага — правила сборки.'+
