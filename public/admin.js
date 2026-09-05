@@ -56,7 +56,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
 import { totals2, issues2, works2 } from "../src/spec2.js";
 import { allPositions, allPositionsRaw, addedPositions, matKeyOf, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
   pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
-  optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf, ROOM_HOUSE, roomKeyOf } from "../src/recipe.js";
+  optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf, ROOM_HOUSE, roomKeyOf, positionSplit } from "../src/recipe.js";
 import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
 import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
@@ -12766,15 +12766,18 @@ function estForgetKey(sh, key){
   });
 }
 function matSwapKey(pos, m){ return pos.key+"|"+matKeyOf(m); }
-function specMatsListHtml(pos, sh, live){
-  // У СВОЕЙ работы «материал» — это она сама: её имя и её цена, показанные так,
-  // чтобы деньги считались общим правилом. В списке ему делать нечего: менять на
-  // товар из базы, переставлять и убирать нечего — работа целиком убирается
-  // крестиком в своей строке. Дописанные к ней материалы показываем как обычно.
-  const mats=(pos.mats||[]).filter(function(m){
-    if(pos.own&&!m.added&&!m.pid)return false;
+// У СВОЕЙ работы «материал» — это она сама: её имя и её цена, показанные так,
+// чтобы деньги считались общим правилом. В списке ему делать нечего: менять на
+// товар из базы, переставлять и убирать нечего — работа целиком убирается
+// крестиком в своей строке. Дописанные к ней материалы показываем как обычно.
+function matsShown(pos){
+  return ((pos&&pos.mats)||[]).filter(function(m){
+    if(m.own)return false;
     return (Number(m.qty)||0)>0 && String(m.n||"").trim();
   });
+}
+function specMatsListHtml(pos, sh, live){
+  const mats=matsShown(pos);
   const can=!!live&&canRuleSheet(sh);
   // Убранные материалы держат список открытым для себя: убери человек последний
   // материал строки, и без этой строки вернуть его было бы нечем.
@@ -12793,24 +12796,14 @@ function specMatsListHtml(pos, sh, live){
   // Строка, из которой убрали ВСЁ, раскрыта сама: «материалы · 0» без списка
   // выглядит как потеря, а вернуть убранное можно только в самом списке.
   const open=!!matsOpen[pos.key]||busyHere||(!mats.length&&off.length>0);
-  const sum=mats.reduce(function(a,m){ return a+(Number(m.cost)||0)*(Number(m.qty)||0); },0);
-  const head='<div style="margin-top:5px">'+
-    '<button data-a="est-mats-open" data-k="'+esc(pos.key)+'" style="border:none;background:transparent;padding:2px 0;font-size:10.5px;font-weight:700;color:#7a9aaa;cursor:pointer">'+
-      (open?"▾":"▸")+' материалы · '+mats.length+' · '+Math.round(sum).toLocaleString("ru-RU")+' ₽'+
-      // Цена «за работу» — только половина строки: рядом с ней должно стоять,
-      // во что обходится строка целиком, иначе итог сходится только в уме.
-      ((Number(pos.labor)||0)>0?' · <span style="color:#0d1b2e">работа '+Math.round(pos.labor).toLocaleString("ru-RU")+' ₽ · итого '+Math.round(pos.cost).toLocaleString("ru-RU")+' ₽</span>':'')+
-      // У своей работы её собственная цена в список не попала (это она сама), и
-      // без этой подписи сумма материалов не сходилась бы с ценой строки.
-      (pos.own&&Math.round(pos.cost)!==Math.round(sum)?' · <span style="color:#0d1b2e">работа '+Math.round(pos.cost-sum).toLocaleString("ru-RU")+' ₽ · итого '+Math.round(pos.cost).toLocaleString("ru-RU")+' ₽</span>':'')+
-    '</button>'+
-  '</div>';
-  if(!open)return head;
+  // Раскладка «материалы · работа · итого» живёт в самой строке сметы, а не в
+  // шапке списка: две цифры нужны в КАЖДОЙ работе, в том числе там, где списка нет.
+  if(!open)return '';
   // Индекс взятого материала в ЭТОЙ строке: место «сюда» показываем только там,
   // где его взяли — материал принадлежит своей работе.
   const moving=(can&&matMoveSheet===String((live&&live.id)||sh.id||"")&&(matMoveKey||"").indexOf(pos.key+"|")===0)?matMoveKey:"";
   const mi=moving?mats.findIndex(function(x){ return matSwapKey(pos,x)===moving; }):-1;
-  return head+'<div style="margin-top:2px;border-top:1px dashed #eef2f7">'+
+  return '<div style="margin-top:2px;border-top:1px dashed #eef2f7">'+
     matDropSlot(moving, 0, mi)+
     mats.map(function(m, midx){
       const unit=specMatUnit(m);
@@ -12907,6 +12900,31 @@ function matDropSlot(key, j, mi){
   return '<div data-a="est-mat-drop" data-k="'+esc(key)+'" data-i="'+j+'" title="Поставить материал сюда" '+
     'style="margin:2px 0;padding:4px 0;border:1px dashed '+RULE_COL+'88;border-radius:7px;background:'+RULE_COL+'0d;'+
     'text-align:center;font-size:10px;font-weight:700;color:'+RULE_COL+';cursor:pointer;line-height:1.2">сюда</div>';
+}
+// Две цифры в КАЖДОЙ строке: сколько в ней материалов и сколько работы. Одна
+// сумма отвечала на вопрос «сколько стоит», но не на те два, которые задают на
+// самом деле: сколько закупать и сколько платить бригаде. Считает разбивку общий
+// модуль (`positionSplit`) — те же числа стоят в подытоге этапа.
+function estSplitHtml(pos, count, open){
+  const sp=positionSplit(pos);
+  const money=function(v){ return Math.round(v).toLocaleString("ru-RU")+' ₽'; };
+  const dim='color:#9aabbf', on='color:#0d1b2e;font-weight:700';
+  // «Под ключ» не делится: материалы в эту цифру уже включены, и показать её
+  // половинками значит соврать про закупку.
+  if(sp.all){
+    return '<button data-a="est-mats-open" data-k="'+esc(pos.key)+'" style="border:none;background:transparent;padding:2px 0;font-size:11px;cursor:pointer;text-align:left">'+
+      '<span style="'+dim+'">'+(open?"▾":"▸")+' материалы '+count+' · </span>'+
+      '<span style="'+on+'">под ключ '+money(pos.cost)+'</span>'+
+    '</button>';
+  }
+  return '<button data-a="est-mats-open" data-k="'+esc(pos.key)+'" style="border:none;background:transparent;padding:2px 0;font-size:11px;cursor:pointer;text-align:left">'+
+    '<span style="'+dim+'">'+(open?"▾":"▸")+' материалы </span>'+
+    '<span style="'+(sp.mats?on:dim)+'">'+money(sp.mats)+'</span>'+
+    '<span style="'+dim+'"> · работа </span>'+
+    '<span style="'+(sp.labor?on:dim)+'">'+money(sp.labor)+'</span>'+
+    '<span style="'+dim+'"> · итого </span>'+
+    '<span style="'+on+'">'+money(pos.cost)+'</span>'+
+  '</button>';
 }
 function matAddHtml(pos){
   if(matAddOpen!==pos.key){
@@ -13222,6 +13240,11 @@ function estBodyHtml(sh, types, live, actions){
             (shut?' <span style="font-weight:700;color:#9aabbf;text-transform:none;letter-spacing:0">· '+st.positions.length+' '+pluralRu(st.positions.length,"работа","работы","работ")+'</span>':'')+'</span>'+
           '<span style="font-size:12.5px;font-weight:800;color:#0d1b2e;white-space:nowrap">'+Math.round(st.cost).toLocaleString("ru-RU")+' ₽</span>'+
         '</div>'+
+        // Подытоги этапа теми же двумя цифрами, что стоят в строках: сколько по
+        // нему закупать и сколько платить бригаде — это два разных кармана.
+        '<div data-a="est-stage-open" data-n="'+st.n+'" style="font-size:10.5px;color:#9aabbf;cursor:pointer;margin:'+(shut?'3px 0 0':'3px 0 7px')+'">'+
+          'материалы <b style="color:#5a7a9a">'+Math.round(st.mats||0).toLocaleString("ru-RU")+' ₽</b> · работа <b style="color:#5a7a9a">'+Math.round(st.labor||0).toLocaleString("ru-RU")+' ₽</b>'+
+        '</div>'+
         (shut?'':estStageBody(st, moving, mi, st.positions.map(function(p, pi, arr){
           // Редактор раскрываем у ПЕРВОЙ строки этой сметы: правило по помещениям
           // даёт их несколько, и три одинаковых редактора подряд — это не выбор.
@@ -13289,6 +13312,8 @@ function estBodyHtml(sh, types, live, actions){
                 ? '<button data-a="est-why" data-est="'+p.estId+'" title="Чем меряется эта строка" style="background:'+(open?RULE_COL:"#eef6ff")+';color:'+(open?"#fff":"#2980b9")+';border:none;border-radius:7px;padding:3px 8px;font-size:10.5px;font-weight:700;cursor:pointer">'+esc(p.why)+' ⚙</button>'
                 : '<span style="background:#eef6ff;color:#2980b9;border-radius:7px;padding:2px 7px;font-size:10.5px;font-weight:700">'+esc(p.why)+'</span>')+
             '</div>'+
+            // Две цифры в каждой строке: сколько тут материалов и сколько работы.
+            '<div style="margin-top:4px">'+estSplitHtml(p, matsShown(p).length, !!matsOpen[p.key])+'</div>'+
             specMatsListHtml(p, sh, live)+
             (open?estWhyEditor(p, sh):'')+
           '</div>';

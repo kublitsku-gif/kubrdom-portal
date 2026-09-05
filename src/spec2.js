@@ -17,7 +17,8 @@
 
 import { sheetTotals, pointTotals, pointMeta } from "./spec.js";
 import { modelIssues, modelAreas, modelTotals } from "./model.js";
-import { allPositions, allPositionsRaw, probeSheet, positionWhy, roomKeyOf, PIE_SOURCES, pieCost } from "./recipe.js";
+import { allPositions, allPositionsRaw, probeSheet, positionWhy, roomKeyOf, positionSplit, PIE_SOURCES, pieCost } from "./recipe.js";
+export { positionSplit } from "./recipe.js";
 export { ROOM_HOUSE, posRoomOf } from "./recipe.js";
 
 // Пробный лист и объяснение количества живут в src/recipe.js — там же, где
@@ -148,9 +149,14 @@ export function works2(sheet, ctx) {
   const order = [];
   positions.forEach(function (p) {
     const n = Number(p.stage) || 0;
-    if (!byStage[n]) { byStage[n] = { n: n, positions: [], cost: 0 }; order.push(n); }
+    if (!byStage[n]) { byStage[n] = { n: n, positions: [], cost: 0, mats: 0, labor: 0 }; order.push(n); }
     byStage[n].positions.push(p);
     byStage[n].cost += Number(p.cost) || 0;
+    // Подытоги этапа теми же двумя цифрами, что стоят в строке: сколько закупать
+    // и сколько платить бригаде — это два разных решения и два разных кармана.
+    const sp = positionSplit(p);
+    byStage[n].mats += sp.mats;
+    byStage[n].labor += sp.labor;
   });
   const stages = order.sort(function (a, b) { return a - b; }).map(function (n) {
     const st = known[n];

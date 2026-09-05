@@ -589,7 +589,9 @@ export function addedPositions(sheet, estimates, products) {
       // У материала ОБЯЗАН быть свой адрес (`matKeyOf` = pid или id): без него
       // ручное количество, замена, порядок и «убрать» уходили в пустой ключ, и
       // кнопки в такой строке молча ничего не делали.
-      mats: cost ? [{ id: "own:" + (row.id || ""), pid: "", n: String(row.name || "Работа"),
+      // Флаг `own` на самом материале: по нему и экран, и разбивка «материалы /
+      // работа» узнают, что эта строка — цена работы, а не купленный товар.
+      mats: cost ? [{ id: "own:" + (row.id || ""), pid: "", own: true, n: String(row.name || "Работа"),
         store: "", mode: "piece", cost: cost, qty: 1 }] : [],
       cost: cost,
     };
@@ -761,6 +763,31 @@ export function dropOff(raw, sheet) {
 // если бы объект собирался одним кодом, а сравнивался другим, «в проекте
 // изменилось» загоралось бы на ровном месте — или молчало, когда изменилось.
 // Идентификаторы здесь не выдаются: их ставит тот, кто кладёт работу в объект.
+// Две цифры строки: сколько в ней МАТЕРИАЛОВ и сколько РАБОТЫ. Считается здесь, а
+// не на экране: те же числа идут в подытог этапа, и вторая копия формулы разошлась
+// бы с первой на первой правке.
+//
+//   своя работа  — вся цена это работа: материалов у неё нет, а её «материал» это
+//                  она сама (см. `addedPositions`);
+//   «под ключ»   — цифра из договора с бригадой, и делить её нельзя: материалы в
+//                  неё уже включены, поэтому вся сумма считается работой;
+//   обычная      — оплата работы лежит в `labor`, остальное и есть материалы.
+export function positionSplit(pos) {
+  const p = pos || {};
+  const cost = Math.round(Number(p.cost) || 0);
+  // У своей работы её цена лежит помеченным материалом, а дописанные к ней
+  // товары — обычные: делим по флагу, иначе купленный уголок считался бы работой.
+  if (p.own) {
+    const labor = Math.round((p.mats || []).reduce(function (a, m) {
+      return a + (m && m.own ? (Number(m.cost) || 0) * (Number(m.qty) || 0) : 0);
+    }, 0));
+    return { mats: Math.max(0, cost - labor), labor: labor, all: false };
+  }
+  if (p.costAll) return { mats: 0, labor: cost, all: true };
+  const labor = Math.max(0, Math.round(Number(p.labor) || 0));
+  return { mats: Math.max(0, cost - labor), labor: labor, all: false };
+}
+
 export function positionWork(pos) {
   const p = pos || {};
   const mats = (p.mats || []).map(function (m) {

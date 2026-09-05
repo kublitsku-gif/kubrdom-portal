@@ -196,7 +196,11 @@ function create(p, name) {
   // материалов, не дают увидеть сам состав дома. Материалы — за одну строку.
   t.ok('материалы свёрнуты', parts.indexOf('data-a="est-mats-open"') >= 0 &&
     parts.indexOf('data-a="est-mat-open"') < 0)
-  t.ok('и видно, сколько их и на сколько', /материалы · \d+ · /.test(parts), 'нет сводки')
+  // В каждой строке две цифры: сколько тут материалов и сколько работы. Одна
+  // сумма отвечала «сколько стоит», но не на те два вопроса, которые задают:
+  // сколько закупать и сколько платить бригаде.
+  t.ok('в строке видно материалы, работу и итог',
+    /материалы <\/span><span[^>]*>[\d\s\u00a0]+ ₽<\/span><span[^>]*> · работа /.test(parts), 'нет раскладки')
   const matsKey = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
   const openMats = p.dom.node({ a: 'est-mats-open', k: matsKey }); p.run('bind();'); openMats.onclick()
   const parts2 = p.run('tProjects()')
@@ -518,7 +522,7 @@ function create(p, name) {
   // Материалы остаются: по ним закупаются, и в цене строки они тоже есть.
   t.ok('материалы никуда не делись', (now.mats || []).length > 0)
   t.ok('справочник не тронут', p.q('estimates.length') === 2)
-  t.ok('в строке видно обе половины', /работа 25\s\u00a0?000|работа 25/.test(p.run('tProjects()')))
+  t.ok('в строке видно обе половины', /работа <\/span><span[^>]*>25[\s\u00a0]000 ₽/.test(p.run('tProjects()')))
 
   // В стройку уходит и цена, и её половина: объект пересчитывает себя по `labor`.
   const work = p.q('positionWork(allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0])')
@@ -908,12 +912,48 @@ function create(p, name) {
   p.dom.field('mad-n', 'Уголок'); p.dom.field('mad-qty', '2'); p.dom.field('mad-cost', '100')
   const ad = p.dom.node({ a: 'est-mat-add-do', k: key }); p.run('bind();'); ad.onclick()
   t.ok('цена сложилась из работы и материала', own().cost === 500 + 200, String(own().cost))
-  t.ok('в шапке видно обе половины', /работа 500 ₽ · итого 700 ₽/.test(p.run('tProjects()')))
+  const own2 = p.run('tProjects()').replace(/<[^>]*>/g, '').replace(/[\u00a0\u202f]/g, ' ')
+  t.ok('в строке видно обе половины', /материалы 200 ₽ · работа 500 ₽ · итого 700 ₽/.test(own2), 'нет раскладки')
 
   // Удаляется работа целиком — крестиком в своей строке.
   const del = p.dom.node({ a: 'est-pos-del', k: key }); p.run('bind();'); del.onclick()
   t.ok('работа удалилась', !own())
   t.ok('и её материалы не остались в листе', !p.q('projects[0].matAdd'))
+}
+
+// ── Две цифры: материалы и работа ───────────────────────────────────────────
+// Одна сумма отвечала на вопрос «сколько стоит», но не на те два, которые задают
+// на самом деле: сколько закупать и сколько платить бригаде.
+{
+  t.section('Материалы и работа порознь')
+  const p = panel()
+  create(p, 'Дом двумя цифрами')
+  p.run('projBand="parts";')
+  const plain = () => p.run('tProjects()').replace(/<[^>]*>/g, '').replace(/[\u00a0\u202f]/g, ' ')
+  const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
+  const cost0 = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0].cost')
+  t.ok('без цены бригаде работа нулевая',
+    new RegExp('материалы ' + cost0.toLocaleString('ru-RU').replace(/[\u00a0\u202f]/g, ' ') + ' ₽ · работа 0 ₽').test(plain()), 'нет раскладки')
+
+  const inp = p.dom.node({ a: 'est-pos-cost', k: key })
+  p.run('bind();'); inp.value = '12000'; inp.onchange()
+  t.ok('цена бригаде встала в «работу»', /· работа 12 000 ₽ · итого /.test(plain()), 'нет цены работы')
+  t.ok('и материалы остались своей цифрой',
+    new RegExp('материалы ' + cost0.toLocaleString('ru-RU').replace(/[\u00a0\u202f]/g, ' ') + ' ₽ · работа 12 000').test(plain()))
+
+  // «Под ключ» не делится: материалы в эту цифру уже включены.
+  const chip = p.dom.node({ a: 'est-pos-cost-mode', k: key })
+  p.run('bind();'); chip.onclick()
+  t.ok('под ключ показан одной цифрой', /под ключ 12 000 ₽/.test(plain()), plain().slice(0, 200))
+  t.ok('и на половинки не делится', !/материалы 2 000 ₽ · работа/.test(plain()))
+  p.run('bind();'); chip.onclick()
+
+  // Подытоги этапа — те же две цифры, считает их общий модуль.
+  const st = p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).stages.filter(function(s){return s.n===2;})[0]')
+  t.ok('этап знает свои материалы и работу', st.mats > 0 && st.labor === 12000, st.mats + ' / ' + st.labor)
+  t.ok('и сумма сходится с итогом этапа', st.mats + st.labor === Math.round(st.cost), st.cost)
+  t.ok('подытоги видны в шапке этапа',
+    new RegExp('материалы ' + st.mats.toLocaleString('ru-RU').replace(/[\u00a0\u202f]/g, ' ') + ' ₽ · работа 12 000 ₽').test(plain()))
 }
 
 t.done()

@@ -700,4 +700,31 @@ const SHEET = {
   t.ok('и удаляет её', !own())
 }
 
+// ── 14. Две цифры в строке: материалы и работа ──────────────────────────────
+// Экран сметы у двух разделов один — сторожим ту же раскладку здесь.
+{
+  t.section('Материалы и работа порознь')
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS, estimates: EST, dbPlans: [], crmClients: [],
+    specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [],
+    contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+    buildRules: [],
+  })
+  p.run('spec2Tab="scheme";tSpec2();')
+  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
+  const plain = () => p.run('tSpec2()').replace(/<[^>]*>/g, '').replace(/[\u00a0\u202f]/g, ' ')
+  t.ok('раскладка есть в каждой строке', /материалы [\d ]+ ₽ · работа [\d ]+ ₽ · итого [\d ]+ ₽/.test(plain()), 'нет раскладки')
+
+  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key')
+  const inp = p.dom.node({ a: 'est-pos-cost', k: key })
+  p.run('bind();'); inp.value = '7000'; inp.onchange()
+  t.ok('цена бригаде видна отдельно', /· работа 7 000 ₽ · итого /.test(plain()))
+
+  const st = p.q('works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes})).stages.filter(function(s){return s.positions.some(function(x){return x.key===' + JSON.stringify(key) + ';});})[0]')
+  t.ok('этап делит свою сумму так же', st.mats + st.labor === Math.round(st.cost), st.mats + ' + ' + st.labor + ' vs ' + st.cost)
+  t.ok('и подытоги видны в шапке этапа', /материалы [\d ]+ ₽ · работа [\d ]+ ₽/.test(plain()))
+}
+
 t.done()
