@@ -2289,6 +2289,7 @@ let matMoveSheet="";       // и в каком листе
 let factsOpen=false;       // раскрыт ли блок «откуда числа»
 let droppedOpen=false;     // раскрыт ли список убранных работ
 let gapsOpen=false;        // раскрыт ли список «посчитано, но в смету не попало»
+let stagePickKey="";       // у какой строки раскрыт выбор этапа
 let modelStageTab=0;       // 0 = все этапы
 let specSheets=[];
 // «Спецификация 2» — опытный раздел (см. src/spec2.js). Листы держим ОТДЕЛЬНО: по
@@ -12915,7 +12916,7 @@ function estSplitHtml(pos, count, open){
   if(sp.all){
     return '<button data-a="est-mats-open" data-k="'+esc(pos.key)+'" style="border:none;background:transparent;padding:2px 0;font-size:11px;cursor:pointer;text-align:left">'+
       '<span style="'+dim+'">'+(open?"▾":"▸")+' материалы '+count+' · </span>'+
-      '<span style="'+on+'">под ключ '+money(pos.cost)+'</span>'+
+      '<span style="'+on+'">под ключ</span>'+
     '</button>';
   }
   // Цифра ведёт туда, где её правят: «материалы» раскрывают список, «работа»
@@ -12930,8 +12931,6 @@ function estSplitHtml(pos, count, open){
       '<span style="'+dim+'">работа </span>'+
       '<span style="'+(sp.labor?on:dim)+'">'+money(sp.labor)+'</span>'+
     '</button>'+
-    '<span style="'+dim+'"> · итого </span>'+
-    '<span style="'+on+'">'+money(pos.cost)+'</span>'+
   '</span>';
 }
 function matAddHtml(pos){
@@ -13131,7 +13130,7 @@ function estDroppedHtml(sh, canRule){
 // то, из-за чего прежние стрелки и убрали.
 function estStepBtn(key, dir, off){
   return '<button data-a="est-pos-step" data-k="'+esc(key)+'" data-d="'+dir+'"'+(off?' disabled':'')+
-    ' title="'+(dir<0?"Выше на одну строку":"Ниже на одну строку")+'" style="width:26px;height:26px;background:#fff;border:1px solid '+(off?"#e6ecf3":RULE_COL+"66")+';border-radius:7px;cursor:'+(off?"default":"pointer")+';color:'+(off?"#dde6f0":RULE_COL)+';font-size:11px;font-weight:700;line-height:1;padding:0">'+(dir<0?"↑":"↓")+'</button>';
+    ' title="'+(dir<0?"Выше на одну строку":"Ниже на одну строку")+'" style="width:28px;height:28px;background:#fff;border:1px solid '+(off?"#e6ecf3":RULE_COL+"66")+';border-radius:7px;cursor:'+(off?"default":"pointer")+';color:'+(off?"#dde6f0":RULE_COL)+';font-size:11px;font-weight:700;line-height:1;padding:0">'+(dir<0?"↑":"↓")+'</button>';
 }
 function estDropSlot(key, j, mi){
   if(mi<0||j===mi||j===mi+1)return '';
@@ -13264,86 +13263,81 @@ function estBodyHtml(sh, types, live, actions){
           if(pref)seenPref[pref]=true;
           const held=p.key===moving;
           return (tip?optSuggestHtml(tip):'')+
-            '<div style="padding:7px '+(held?'8px':'0')+';border-top:1px solid #f4f7fb'+(held?';background:'+RULE_COL+'0d;border:1px solid '+RULE_COL+'55;border-radius:9px':'')+'">'+
+            // Строка читается сверху вниз: имя и итог — чипы — управление. Раньше
+            // всё стояло в один ряд, и на узкой колонке имя сжималось до одного
+            // слова в строку: поле, чип, итог, ↕, этап и ✕ не сжимаются. Строки
+            // разделяет воздух, а не полоска: сорок работ, слепленных линиями в
+            // один пиксель, читаются как простыня.
+            '<div style="padding:'+(held?'9px 10px':'12px 0')+(held?';background:'+RULE_COL+'0d;border:1px solid '+RULE_COL+'55;border-radius:9px':'')+'">'+
             (held?'<div style="font-size:10px;font-weight:700;color:'+RULE_COL+';letter-spacing:0.4px;margin-bottom:4px">ПЕРЕНОШУ — УКАЖИТЕ МЕСТО «СЮДА»</div>':'')+
-            '<div style="display:flex;align-items:baseline;gap:8px">'+
-              '<span style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#0d1b2e">'+esc(p.name)+
+            // Имя во всю ширину и не длиннее двух строк (полное — в подсказке):
+            // одно наименование на пол-экрана прятало соседние работы. Итог прижат
+            // к правому краю, у всех строк он встаёт в одну колонку.
+            '<div style="display:flex;align-items:baseline;gap:10px">'+
+              '<span title="'+esc(p.name)+'" style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#0d1b2e;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+esc(p.name)+
                 (p.added?' <span style="font-size:9.5px;font-weight:700;color:#16a085;background:#e8f6f3;border-radius:5px;padding:1px 5px">дописана</span>':'')+'</span>'+
-              // Цену работы правят руками: подряд берут за работу целиком, и
-              // сумма кабелей к этой цифре отношения не имеет.
-              (canRule
-                ? (function(){
-                    // Поле — это цена БРИГАДЕ за работу. У СВОЕЙ работы её цена и
-                    // есть эта цифра (она лежит в самой строке, а не в `posCost`),
-                    // поэтому поле показывает её же — иначе цену вписанной руками
-                    // работы нечем править, хотя в раскладке она стоит.
-                    const sp=positionSplit(p);
-                    const shown=p.own?sp.labor:(p.costSet?Math.round(p.costMode==="labor"?(Number(p.labor)||0):p.cost):"");
-                    const set=p.own||p.costSet;
-                    return '<span style="display:flex;align-items:baseline;gap:3px;flex-shrink:0">'+
-                    '<input id="pc-'+esc(p.key)+'" data-a="est-pos-cost" data-k="'+esc(p.key)+'" value="'+shown+'" placeholder="работа" inputmode="numeric" title="'+(p.costSet&&p.costMode!=="labor"?"Подряд под ключ — материалы уже в этой цене":"Сколько платим бригаде за эту работу — материалы считаются сверху")+'" style="width:78px;padding:2px 5px;border:1px solid '+(set?"#8e44ad":"#dde6f0")+';border-radius:6px;font-size:12px;font-weight:700;text-align:right;outline:none;color:'+(set?"#8e44ad":"#0d1b2e")+';background:#fff">'+
-                    '<span style="font-size:12px;font-weight:700;color:#0d1b2e">₽</span>'+
-                    // Что означает эта цифра: оплату бригаде (материалы идут сверху)
-                    // или подряд под ключ (материалы уже в ней). Чип стоит ВСЕГДА:
-                    // появляясь только после ввода, он не давал узнать, что у цифры
-                    // вообще два смысла. У своей работы выбора нет — её цена это
-                    // всегда работа, материалы к ней дописывают отдельно.
-                    (p.own?'':'<button data-a="est-pos-cost-mode" data-k="'+esc(p.key)+'" title="'+(p.costMode==="labor"||!p.costSet?"Оплата работы — материалы считаются сверху":"Подряд под ключ — материалы уже в этой цене")+'" style="border:1px solid #8e44ad55;background:'+(p.costSet?"#f6f2fa":"#fff")+';color:'+(p.costSet?"#8e44ad":"#9aabbf")+';border-radius:6px;padding:1px 6px;font-size:9.5px;font-weight:700;cursor:pointer;white-space:nowrap">'+((p.costMode==="labor"||!p.costSet)?"за работу":"под ключ")+' ⇄</button>')+
-                    (p.costSet?'<button data-a="est-pos-cost-reset" data-k="'+esc(p.key)+'" title="Вернуть цену по материалам" style="border:none;background:transparent;color:#8e44ad;font-size:10.5px;font-weight:700;cursor:pointer;padding:0 1px">⟲</button>':'')+
-                    // Итог строки — крупной цифрой, тем же весом, что суммы этапов:
-                    // пока цена не задана, в шапке не было ни одного числа, и смету
-                    // нельзя было пробежать глазами по суммам.
-                    '<span style="font-size:12.5px;font-weight:800;color:#0d1b2e;white-space:nowrap;margin-left:3px">'+Math.round(p.cost).toLocaleString("ru-RU")+' ₽</span>'+
-                  '</span>';
-                  })()
-                : '<span style="font-size:12px;font-weight:700;color:#0d1b2e;white-space:nowrap">'+Math.round(p.cost).toLocaleString("ru-RU")+' ₽</span>')+
-              // Убрать работу из ЭТОГО дома: контейнер уже стоит на участке,
-              // электрику ведёт заказчик. Правило и справочник не трогаем — они
-              // общие; строка выключается в листе и возвращается тем же тапом.
-              // Порядок внутри этапа: смета считается сама, но читают её глазами
-              // сверху вниз, и бригаде важно, что сначала обрешётка, потом обшивка.
-              (canMove&&arr.length>1
-                ? (p.key===moving
-                    // Взятая строка ходит и по одному шагу: далеко её несут местом
-                    // «сюда», а на соседнюю позицию быстрее тапнуть стрелкой. Строка
-                    // при этом остаётся взятой — шагов обычно несколько подряд.
-                    ? '<span style="display:flex;align-items:center;gap:3px;flex-shrink:0">'+
-                        estStepBtn(p.key, -1, pi<=0||roomKeyOf(arr[pi-1])!==roomKeyOf(p))+
-                        estStepBtn(p.key, 1, pi>=arr.length-1||roomKeyOf(arr[pi+1])!==roomKeyOf(p))+
-                        '<button data-a="est-pos-grab" data-k="'+esc(p.key)+'" title="Положить строку обратно" style="height:26px;padding:0 8px;background:'+RULE_COL+';border:1px solid '+RULE_COL+';border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700;line-height:1">✕</button>'+
-                      '</span>'
-                    : '<button data-a="est-pos-grab" data-k="'+esc(p.key)+'" title="Переставить в этапе: возьмите строку и укажите место" style="height:24px;padding:0 7px;background:transparent;border:1px solid #dde6f0;border-radius:7px;cursor:pointer;color:#7a9aaa;font-size:11px;font-weight:700;flex-shrink:0;line-height:1">↕</button>')
-                : '')+
-              // Этап работы правится тут же: по этапам идут сроки, приёмка и
-              // транши, и уводить человека за этим в правило — значит менять
-              // порядок стройки во ВСЕХ домах ради одного.
-              (canRule
-                ? '<select data-a="est-pos-stage" data-k="'+esc(p.key)+'" title="Этап, в котором эта работа делается в этом доме" style="border:1px solid '+(p.stageSet?"#8e44ad":"#dde6f0")+';background:#fff;border-radius:6px;padding:2px 4px;font-size:10.5px;color:'+(p.stageSet?"#8e44ad":"#7a9aaa")+';outline:none;flex-shrink:0">'+
-                    [[0,"без этапа"]].concat(EST_STAGES.map(function(st){ return [st.n, st.short]; })).map(function(o){
-                      return '<option value="'+o[0]+'"'+((Number(p.stage)||0)===Number(o[0])?" selected":"")+'>'+esc(o[1])+'</option>';
-                    }).join("")+
-                  '</select>'+
-                  (p.stageSet?'<button data-a="est-pos-stage-reset" data-k="'+esc(p.key)+'" title="Вернуть этап из справочника" style="border:none;background:transparent;color:#8e44ad;font-size:10.5px;font-weight:700;cursor:pointer;padding:0 2px;flex-shrink:0">⟲</button>':'')
-                : '')+
-              (canRule
-                ? '<button data-a="est-pos-del" data-k="'+esc(p.key)+'" title="'+(p.added?"Удалить дописанную работу":"Убрать эту работу из дома")+'" style="width:22px;height:22px;background:transparent;border:1px solid #e74c3c33;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0;line-height:1">✕</button>'
-                : '')+
+              '<span style="font-size:13px;font-weight:800;color:#0d1b2e;white-space:nowrap">'+Math.round(p.cost).toLocaleString("ru-RU")+' ₽</span>'+
             '</div>'+
             optChipsHtml(p, sh, w)+
-            '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:4px">'+
-              // У своей работы расчёта нет, и `why` пустой: плашка рисовалась
-              // пустым синим пятном под названием.
+            // Чип «откуда число» и раскладка — одной строкой: две подписи под каждой
+            // работой съедали по двадцать пикселей. «Итого» из раскладки убрано —
+            // оно уже стоит справа от имени.
+            '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin-top:5px">'+
               (!p.why?''
                 : canRule&&p.estId
                 ? '<button data-a="est-why" data-est="'+p.estId+'" title="Чем меряется эта строка" style="background:'+(open?RULE_COL:"#eef6ff")+';color:'+(open?"#fff":"#2980b9")+';border:none;border-radius:7px;padding:3px 8px;font-size:10.5px;font-weight:700;cursor:pointer">'+esc(p.why)+' ⚙</button>'
                 : '<span style="background:#eef6ff;color:#2980b9;border-radius:7px;padding:2px 7px;font-size:10.5px;font-weight:700">'+esc(p.why)+'</span>')+
+              estSplitHtml(p, matsShown(p).length, !!matsOpen[p.key])+
             '</div>'+
-            // Две цифры в каждой строке: сколько тут материалов и сколько работы.
-            '<div style="margin-top:4px">'+estSplitHtml(p, matsShown(p).length, !!matsOpen[p.key])+'</div>'+
+            // Ряд управления — своей строкой, кнопки одного размера (28 px), и всё,
+            // что двигает строку, прижато к правому краю.
+            (canRule
+              ? '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:7px">'+
+                  (function(){
+                    // Поле — это цена БРИГАДЕ за работу. У СВОЕЙ работы её цена и
+                    // есть эта цифра (она лежит в самой строке, а не в `posCost`),
+                    // поэтому поле показывает её же.
+                    const sp=positionSplit(p);
+                    const shown=p.own?sp.labor:(p.costSet?Math.round(p.costMode==="labor"?(Number(p.labor)||0):p.cost):"");
+                    const set=p.own||p.costSet;
+                    const all=p.costSet&&p.costMode!=="labor";
+                    return '<input id="pc-'+esc(p.key)+'" data-a="est-pos-cost" data-k="'+esc(p.key)+'" value="'+shown+'" placeholder="работа" inputmode="numeric" title="'+(all?"Подряд под ключ — материалы уже в этой цене":"Сколько платим бригаде за эту работу — материалы считаются сверху")+'" style="width:86px;height:28px;padding:0 7px;border:1px solid '+(set?"#8e44ad":"#dde6f0")+';border-radius:7px;font-size:12px;font-weight:700;text-align:right;outline:none;color:'+(set?"#8e44ad":"#0d1b2e")+';background:#fff;box-sizing:border-box">'+
+                    '<span style="font-size:12px;font-weight:700;color:#0d1b2e">₽</span>'+
+                    // Смысл цифры: оплата бригаде (материалы сверху) или подряд под
+                    // ключ (материалы уже в ней). «За работу» — обычный случай, ему
+                    // хватает значка; словом говорим про исключение.
+                    (p.own?''
+                      : all
+                      ? '<button data-a="est-pos-cost-mode" data-k="'+esc(p.key)+'" title="Подряд под ключ — материалы уже в этой цене. Тап: оплата работы" style="height:28px;padding:0 8px;border:1px solid #8e44ad55;background:#f6f2fa;color:#8e44ad;border-radius:7px;font-size:9.5px;font-weight:800;cursor:pointer;white-space:nowrap">под ключ ⇄</button>'
+                      : '<button data-a="est-pos-cost-mode" data-k="'+esc(p.key)+'" title="Оплата работы — материалы считаются сверху. Тап: подряд под ключ" style="width:28px;height:28px;border:1px solid #dde6f0;background:#fff;color:#9aabbf;border-radius:7px;font-size:11px;cursor:pointer">⇄</button>')+
+                    (p.costSet?'<button data-a="est-pos-cost-reset" data-k="'+esc(p.key)+'" title="Вернуть цену по материалам" style="width:28px;height:28px;border:1px solid #8e44ad33;background:#fff;color:#8e44ad;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer">⟲</button>':'');
+                  })()+
+                  '<span style="flex:1"></span>'+
+                  // Этап показываем ТОЛЬКО у переставленных строк: внутри «ЭТАП 1» у
+                  // каждой работы стояло «Этап 1» — колонка повторяла заголовок.
+                  // Остальным хватает кнопки, раскрывающей тот же выбор.
+                  ((p.stageSet||stagePickKey===p.key)
+                    ? '<select data-a="est-pos-stage" data-k="'+esc(p.key)+'" title="Этап, в котором эта работа делается в этом доме" style="height:28px;border:1px solid '+(p.stageSet?"#8e44ad":"#dde6f0")+';background:#fff;border-radius:7px;padding:0 4px;font-size:10.5px;color:'+(p.stageSet?"#8e44ad":"#7a9aaa")+';outline:none;flex-shrink:0">'+
+                        [[0,"без этапа"]].concat(EST_STAGES.map(function(st){ return [st.n, st.short]; })).map(function(o){
+                          return '<option value="'+o[0]+'"'+((Number(p.stage)||0)===Number(o[0])?" selected":"")+'>'+esc(o[1])+'</option>';
+                        }).join("")+
+                      '</select>'+
+                      (p.stageSet?'<button data-a="est-pos-stage-reset" data-k="'+esc(p.key)+'" title="Вернуть этап из справочника" style="width:28px;height:28px;border:1px solid #8e44ad33;background:#fff;color:#8e44ad;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer">⟲</button>':'')
+                    : '<button data-a="est-pos-stage-pick" data-k="'+esc(p.key)+'" title="Переставить работу в другой этап" style="width:28px;height:28px;border:1px solid #dde6f0;background:#fff;color:#7a9aaa;border-radius:7px;font-size:11px;cursor:pointer">⇅</button>')+
+                  (canMove&&arr.length>1
+                    ? (p.key===moving
+                        ? estStepBtn(p.key, -1, pi<=0||roomKeyOf(arr[pi-1])!==roomKeyOf(p))+
+                          estStepBtn(p.key, 1, pi>=arr.length-1||roomKeyOf(arr[pi+1])!==roomKeyOf(p))+
+                          '<button data-a="est-pos-grab" data-k="'+esc(p.key)+'" title="Положить строку обратно" style="width:28px;height:28px;background:'+RULE_COL+';border:1px solid '+RULE_COL+';border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">✕</button>'
+                        : '<button data-a="est-pos-grab" data-k="'+esc(p.key)+'" title="Переставить в этапе: возьмите строку и укажите место" style="width:28px;height:28px;background:#fff;border:1px solid #dde6f0;border-radius:7px;cursor:pointer;color:#7a9aaa;font-size:11px;font-weight:700">↕</button>')
+                    : '')+
+                  '<button data-a="est-pos-del" data-k="'+esc(p.key)+'" title="'+(p.added?"Удалить дописанную работу":"Убрать эту работу из дома")+'" style="width:28px;height:28px;background:#fff;border:1px solid #e74c3c44;border-radius:7px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button>'+
+                '</div>'
+              : '<div style="font-size:12px;font-weight:700;color:#0d1b2e;margin-top:5px">'+Math.round(p.cost).toLocaleString("ru-RU")+' ₽</div>')+
             specMatsListHtml(p, sh, live)+
             (open?estWhyEditor(p, sh):'')+
           '</div>';
-        }), sh, w, canRule))+
+                }), sh, w, canRule))+
       '</div>';
     }).join("");
   } else {
@@ -22290,6 +22284,7 @@ function bind(){
     else if(a==="est-facts-open"){el.onclick=()=>{ factsOpen=!factsOpen; fl(); };}
     else if(a==="est-dropped-open"){el.onclick=()=>{ droppedOpen=!droppedOpen; fl(); };}
     else if(a==="est-gaps-open"){el.onclick=()=>{ gapsOpen=!gapsOpen; fl(); };}
+    else if(a==="est-pos-stage-pick"){el.onclick=()=>{ stagePickKey=(stagePickKey===(el.dataset.k||""))?"":(el.dataset.k||""); fl(); };}
     else if(a==="est-block-open"){el.onclick=()=>{
       const b=String(el.dataset.b||"");
       const map=Object.assign({}, blockShut);

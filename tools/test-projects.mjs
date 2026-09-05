@@ -201,7 +201,7 @@ function create(p, name) {
   // сколько закупать и сколько платить бригаде.
   const partsPlain = parts.replace(/<[^>]*>/g, '').replace(/[\u00a0\u202f]/g, ' ')
   t.ok('в строке видно материалы, работу и итог',
-    /материалы [\d ]+ ₽ · работа [\d ]+ ₽ · итого [\d ]+ ₽/.test(partsPlain), 'нет раскладки')
+    /материалы [\d ]+ ₽ · работа [\d ]+ ₽/.test(partsPlain), 'нет раскладки')
   // Цифра ведёт туда, где её правят.
   t.ok('«материалы» раскрывают список', parts.indexOf('data-a="est-mats-open"') >= 0)
   t.ok('«работа» ведёт в поле цены', parts.indexOf('data-a="est-pos-cost-focus"') >= 0)
@@ -382,7 +382,12 @@ function create(p, name) {
   p.run('projBand="parts";')
   const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
   const was = p.q('allPositions(projects[0], specCtx(projects[0]))[0].stage')
-  t.ok('у работы есть выбор этапа', p.run('tProjects()').indexOf('data-a="est-pos-stage"') >= 0)
+  // Внутри «ЭТАП 1» у каждой строки стояло «Этап 1» — колонка повторяла заголовок.
+  // Выбор прячется за кнопкой ⇅ и раскрывается тапом; у переставленных он виден сам.
+  t.ok('пока этап не менян — только кнопка', p.run('tProjects()').indexOf('data-a="est-pos-stage-pick"') >= 0
+    && p.run('tProjects()').indexOf('data-a="est-pos-stage"') < 0)
+  const pick = p.dom.node({ a: 'est-pos-stage-pick', k: key }); p.run('bind();'); pick.onclick()
+  t.ok('тап раскрывает выбор этапа', p.run('tProjects()').indexOf('data-a="est-pos-stage"') >= 0)
 
   const sel = p.dom.node({ a: 'est-pos-stage', k: key })
   sel.value = '1'
@@ -917,7 +922,7 @@ function create(p, name) {
   const ad = p.dom.node({ a: 'est-mat-add-do', k: key }); p.run('bind();'); ad.onclick()
   t.ok('цена сложилась из работы и материала', own().cost === 500 + 200, String(own().cost))
   const own2 = p.run('tProjects()').replace(/<[^>]*>/g, '').replace(/[\u00a0\u202f]/g, ' ')
-  t.ok('в строке видно обе половины', /материалы 200 ₽ · работа 500 ₽ · итого 700 ₽/.test(own2), 'нет раскладки')
+  t.ok('в строке видно обе половины', /материалы 200 ₽ · работа 500 ₽/.test(own2), 'нет раскладки')
 
   // Цена своей работы правится В ПОЛЕ: она лежит в самой строке, а не отметкой
   // поверх расчёта, и раньше поле оставалось пустым при живой цене.
@@ -959,7 +964,7 @@ function create(p, name) {
 
   const inp = p.dom.node({ a: 'est-pos-cost', k: key })
   p.run('bind();'); inp.value = '12000'; inp.onchange()
-  t.ok('цена бригаде встала в «работу»', /· работа 12 000 ₽ · итого /.test(plain()), 'нет цены работы')
+  t.ok('цена бригаде встала в «работу»', /· работа 12 000 ₽/.test(plain()), 'нет цены работы')
   t.ok('и в поле стоит она же, а не итог', /value="12000"/.test(fieldHtml()), fieldHtml().slice(0, 120))
   t.ok('и материалы остались своей цифрой',
     new RegExp('материалы ' + cost0.toLocaleString('ru-RU').replace(/[\u00a0\u202f]/g, ' ') + ' ₽ · работа 12 000').test(plain()))
@@ -967,7 +972,9 @@ function create(p, name) {
   // «Под ключ» не делится: материалы в эту цифру уже включены.
   const chip = p.dom.node({ a: 'est-pos-cost-mode', k: key })
   p.run('bind();'); chip.onclick()
-  t.ok('под ключ показан одной цифрой', /под ключ 12 000 ₽/.test(plain()), plain().slice(0, 200))
+  // «Под ключ» не делится на половинки: сама цифра стоит справа от имени, а в
+  // раскладке остаётся пометка, что материалы в неё уже включены.
+  t.ok('под ключ помечен в раскладке', /материалы \d+ · под ключ/.test(plain()), plain().slice(0, 200))
   t.ok('и на половинки не делится', !/материалы 2 000 ₽ · работа/.test(plain()))
   p.run('bind();'); chip.onclick()
 
@@ -977,7 +984,7 @@ function create(p, name) {
   t.ok('и сумма сходится с итогом этапа', st.mats + st.labor === Math.round(st.cost), st.cost)
   // Итог строки — крупной цифрой рядом с полем, чип режима стоит всегда.
   t.ok('итог строки виден в шапке',
-    /font-weight:800[^>]*white-space:nowrap;margin-left:3px">[\d\s\u00a0]+ ₽/.test(p.run('tProjects()')))
+    /font-size:13px;font-weight:800[^>]*white-space:nowrap">[\d\s\u00a0]+ ₽/.test(p.run('tProjects()')))
   t.ok('чип «за работу / под ключ» есть и без назначенной цены',
     p.run('tProjects()').indexOf('data-a="est-pos-cost-mode"') >= 0)
   // Крестик работы красный, крестик материала приглушён: рядом стоящие одинаковые
@@ -990,6 +997,28 @@ function create(p, name) {
 
   t.ok('подытоги видны в шапке этапа',
     new RegExp('материалы ' + st.mats.toLocaleString('ru-RU').replace(/[\u00a0\u202f]/g, ' ') + ' ₽ · работа 12 000 ₽').test(plain()))
+}
+
+// ── Строка не рассыпается и читается сверху вниз ─────────────────────────────
+// Всё управление стояло в один ряд с именем, и на узкой колонке имя сжималось до
+// одного слова в строку: поле, чип, итог, ↕, этап и ✕ не сжимаются.
+{
+  t.section('Вёрстка строки')
+  const p = panel()
+  create(p, 'Дом с длинным именем')
+  p.run('estimates=estimates.concat([{id:"e_long",kind:"house",name:"Монтаж подвесов для обрешётки к стенам",stage:1,lines:[{pid:"p_osb",qty:2}]}]);')
+  p.run('projBand="parts";')
+  const html = p.run('tProjects()')
+  t.ok('имя не длиннее двух строк', /-webkit-line-clamp:2/.test(html))
+  t.ok('и полное имя в подсказке', /title="Монтаж подвесов для обрешётки к стенам"/.test(html))
+  t.ok('итог стоит справа от имени',
+    /font-size:13px;font-weight:800[^>]*white-space:nowrap">[\d\s\u00a0\u202f]+ ₽/.test(html))
+  t.ok('строки разделяет воздух, а не линия',
+    /padding:12px 0/.test(html) && html.indexOf('border-top:1px solid #f4f7fb') < 0)
+  t.ok('кнопки одного размера', (html.match(/width:28px;height:28px/g) || []).length >= 3)
+  // «Итого» из раскладки убрано: число уже стоит справа.
+  const plain = html.replace(/<[^>]*>/g, '').replace(/[\u00a0\u202f]/g, ' ')
+  t.ok('раскладка без повтора итога', /материалы [\d ]+ ₽ · работа [\d ]+ ₽/.test(plain) && !/· итого /.test(plain))
 }
 
 t.done()
