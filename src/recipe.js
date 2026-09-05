@@ -549,7 +549,7 @@ export function allPositionsRaw(sheet, ctx) {
   // хранит только адрес комнаты, а имя живёт в модели — второй его копии в
   // листе быть не должно, она разошлась бы с чертежом.
   const rooms = ((probeSheet(sheet, c.winTypes).specs || {}).rooms) || [];
-  return applyRooms(applyOrder(applyStage(applyCost(dropOff(applyPicks(applyMatEdits(all, sheet, c.products), sheet), sheet), sheet), sheet), sheet), sheet, rooms);
+  return applyRooms(applyOrder(applyStage(applyHours(applyCost(dropOff(applyPicks(applyMatEdits(all, sheet, c.products), sheet), sheet), sheet), sheet), sheet), sheet), sheet, rooms);
 }
 
 // Работы, убранные руками из ЭТОГО дома. Смета справочника описывает типовой дом,
@@ -736,6 +736,24 @@ export function applyCost(raw, sheet) {
         return Object.assign({}, p, { labor: n, cost: Math.round(mats) + n, costSet: true, costMode: "labor" });
       }
       return Object.assign({}, p, { labor: 0, cost: n, costSet: true, costAll: true, costMode: "all" });
+    }),
+  });
+}
+
+// План работ в человеко-часах. Деньги бригаде видно, а времени — нет: по этим
+// часам считают сроки и загрузку людей. План ставит хозяин и живёт он в ЛИСТЕ
+// дома, а не в справочнике смет: справочник общий на все объекты, и часы одного
+// дома не должны становиться часами всех.
+export function applyHours(raw, sheet) {
+  const map = (sheet && sheet.posHours) || {};
+  if (!Object.keys(map).length) return raw;
+  return Object.assign({}, raw, {
+    positions: (raw.positions || []).map(function (p) {
+      const v = map[p.key];
+      if (v == null) return p;
+      const n = Number(v);
+      if (!isFinite(n) || n <= 0) return p;
+      return Object.assign({}, p, { hours: n, hoursSet: true });
     }),
   });
 }

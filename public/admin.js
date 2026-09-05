@@ -13339,6 +13339,9 @@ function estBodyHtml(sh, types, live, actions){
         // нему закупать и сколько платить бригаде — это два разных кармана.
         '<div data-a="est-stage-open" data-n="'+st.n+'" style="font-size:10.5px;color:#9aabbf;cursor:pointer;margin:'+(shut?'3px 0 0':'3px 0 7px')+'">'+
           'материалы <b style="color:#5a7a9a">'+Math.round(st.mats||0).toLocaleString("ru-RU")+' ₽</b> · работа <b style="color:#5a7a9a">'+Math.round(st.labor||0).toLocaleString("ru-RU")+' ₽</b>'+
+          // План показываем, только когда он проставлен: нули в каждой строке
+          // читались бы как «работа ничего не стоит по времени».
+          ((st.hours>0)?' · план <b style="color:#2980b9">'+numRu(st.hours)+' ч</b>':'')+
         '</div>'+
         (shut?'':estStageBody(st, moving, mi, st.positions.map(function(p, pi, arr){
           // Редактор раскрываем у ПЕРВОЙ строки этой сметы: правило по помещениям
@@ -13391,6 +13394,12 @@ function estBodyHtml(sh, types, live, actions){
                     const all=p.costSet&&p.costMode!=="labor";
                     return '<input id="pc-'+esc(p.key)+'" data-a="est-pos-cost" data-k="'+esc(p.key)+'" value="'+shown+'" placeholder="работа" inputmode="numeric" title="'+(all?"Подряд под ключ — материалы уже в этой цене":"Сколько платим бригаде за эту работу — материалы считаются сверху")+'" style="width:86px;height:28px;padding:0 7px;border:1px solid '+(set?"#8e44ad":"#dde6f0")+';border-radius:7px;font-size:12px;font-weight:700;text-align:right;outline:none;color:'+(set?"#8e44ad":"#0d1b2e")+';background:#fff;box-sizing:border-box">'+
                     '<span style="font-size:12px;font-weight:700;color:#0d1b2e">₽</span>'+
+                    // План в человеко-часах — рядом с деньгами: сколько платим уже
+                    // видно, а сколько это времени — нет, а по нему считают сроки.
+                    // Факт часов ведут на объекте, здесь только план.
+                    (function(){ const hv=((sh&&sh.posHours)||{})[p.key]; const hset=hv!=null&&Number(hv)>0;
+                      return '<input data-a="est-pos-hours" data-k="'+esc(p.key)+'" value="'+(hset?numRu(Number(hv)):"")+'" placeholder="ч" inputmode="decimal" title="План работ в человеко-часах — сколько времени закладываем на эту работу" style="width:52px;height:28px;padding:0 7px;margin-left:6px;border:1px solid '+(hset?"#2980b9":"#dde6f0")+';border-radius:7px;font-size:12px;font-weight:700;text-align:right;outline:none;color:'+(hset?"#2980b9":"#0d1b2e")+';background:#fff;box-sizing:border-box">'+
+                        '<span style="font-size:12px;font-weight:700;color:#0d1b2e">ч</span>'; })()+
                     // Смысл цифры: оплата бригаде (материалы сверху) или подряд под
                     // ключ (материалы уже в ней). «За работу» — обычный случай, ему
                     // хватает значка; словом говорим про исключение.
@@ -13439,6 +13448,7 @@ function estBodyHtml(sh, types, live, actions){
       '</div>'+
       '<div style="font-size:10.5px;color:#7a9aaa;margin-top:3px">'+
         'материалы <b style="color:#0d1b2e">'+Math.round(w.mats||0).toLocaleString("ru-RU")+' ₽</b> · работа <b style="color:#0d1b2e">'+Math.round(w.labor||0).toLocaleString("ru-RU")+' ₽</b>'+
+        ((w.hours>0)?' · план <b style="color:#2980b9">'+numRu(w.hours)+' ч</b>':'')+
       '</div>'+
     '</div>';
   } else {
@@ -22388,6 +22398,17 @@ function bind(){
       const map=Object.assign({}, sh.matAdd||{});
       map[posKey]=(map[posKey]||[]).concat([m]);
       sh.matAdd=map; matAddOpen=""; fl();
+    };}
+    else if(a==="est-pos-hours"){el.onchange=()=>{
+      const key=el.dataset.k||"";
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
+      const raw=String(el.value||"").replace(/\s/g,"").replace(",",".");
+      const v=parseFloat(raw);
+      const next=Object.assign({}, sh.posHours||{});
+      // Пустое поле — «плана нет», а не «ноль часов»: иначе лист копил бы нули по
+      // каждой строке, которую человек просто потрогал.
+      if(!raw||!isFinite(v)||v<=0) delete next[key]; else next[key]=Math.round(v*10)/10;
+      sh.posHours=next; scheduleSave(); fl();
     };}
     else if(a==="est-pos-cost"){el.onchange=()=>{
       const key=el.dataset.k||"";

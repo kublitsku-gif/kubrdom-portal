@@ -146,6 +146,8 @@ export function works2(sheet, ctx) {
     const sp = positionSplit(p);
     return { mats: a.mats + sp.mats, labor: a.labor + sp.labor };
   }, { mats: 0, labor: 0 });
+  // План в человеко-часах по всей смете: по нему считают сроки и загрузку людей.
+  const hours = positions.reduce(function (a, p) { return a + (Number(p.hours) || 0); }, 0);
   const mk = (function () {
     const m = Number(sheet && sheet.markup);
     return isFinite(m) && m >= 0 ? m : 0;
@@ -156,7 +158,7 @@ export function works2(sheet, ctx) {
   const order = [];
   positions.forEach(function (p) {
     const n = Number(p.stage) || 0;
-    if (!byStage[n]) { byStage[n] = { n: n, positions: [], cost: 0, mats: 0, labor: 0 }; order.push(n); }
+    if (!byStage[n]) { byStage[n] = { n: n, positions: [], cost: 0, mats: 0, labor: 0, hours: 0 }; order.push(n); }
     byStage[n].positions.push(p);
     byStage[n].cost += Number(p.cost) || 0;
     // Подытоги этапа теми же двумя цифрами, что стоят в строке: сколько закупать
@@ -164,6 +166,7 @@ export function works2(sheet, ctx) {
     const sp = positionSplit(p);
     byStage[n].mats += sp.mats;
     byStage[n].labor += sp.labor;
+    byStage[n].hours += Number(p.hours) || 0;
   });
   const stages = order.sort(function (a, b) { return a - b; }).map(function (n) {
     const st = known[n];
@@ -184,6 +187,7 @@ export function works2(sheet, ctx) {
       .map(function (r) { return { id: r.id, name: String(r.name || "") }; }),
     positions: positions, stages: stages, groups: raw.groups,
     mats: Math.round(split.mats), labor: Math.round(split.labor),
+    hours: Math.round(hours * 10) / 10,
     cost: Math.round(cost), markup: mk, price: Math.round(cost * (1 + mk / 100)),
     gaps: gaps2(sheet, c),
   };

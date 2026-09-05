@@ -800,4 +800,47 @@ const SHEET = {
   t.ok('✕ работы красный', /data-a="est-pos-del"[^>]*color:#e74c3c/.test(marks2))
 }
 
+// ── 9. План в человеко-часах ────────────────────────────────────────────────
+// Сколько денег бригаде — уже видно, а сколько это времени — нет. План ставит
+// хозяин, и живёт он в ЛИСТЕ дома: справочник смет общий на все объекты, и часы
+// одного дома не должны становиться часами всех.
+{
+  t.section('План работ в человеко-часах')
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS, estimates: EST, dbPlans: [], crmClients: [],
+    specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [],
+    contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+    buildRules: [],
+  })
+  p.run('spec2Tab="scheme";tSpec2();')
+  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
+
+  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key')
+  const html = p.run('tSpec2()')
+  t.ok('у работы есть поле часов', html.indexOf('data-a="est-pos-hours"') >= 0)
+  t.ok('и оно подписано часами', /placeholder="ч"/.test(html) || /план, ч/.test(html), 'нет подписи')
+
+  const inp = p.dom.node({ a: 'est-pos-hours', k: key })
+  p.run('bind();'); inp.value = '8'; inp.onchange()
+  t.ok('план записан в лист дома', p.q('spec2Sheet().posHours[' + JSON.stringify(key) + ']') === 8,
+    'получили: ' + p.q('spec2Sheet().posHours[' + JSON.stringify(key) + ']'))
+  t.ok('справочник смет не тронут', p.q('estimates.every(function(e){return e.hours==null;})'))
+
+  const w = () => p.q('(function(){var x=works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes}));return {h:x.hours,ph:x.positions.filter(function(q){return q.key===' + JSON.stringify(key) + ';})[0].hours,sh:x.stages.map(function(s){return s.hours;})};})()')
+  t.ok('позиция знает свой план', w().ph === 8, 'получили: ' + w().ph)
+  t.ok('часы сложились по смете', w().h === 8, 'получили: ' + w().h)
+  t.ok('и по этапу', w().sh.reduce((a, b) => a + b, 0) === 8, 'получили: ' + JSON.stringify(w().sh))
+
+  const plain = () => p.run('tSpec2()').replace(/<[^>]*>/g, '').replace(/[\u00a0\u202f]/g, ' ')
+  t.ok('план виден в итоге', /план 8 ч/.test(plain()), 'нет строки плана')
+
+  // Пустое поле — это «плана нет», а не «ноль часов»: иначе лист копил бы нули по
+  // каждой строке, которую человек просто потрогал.
+  p.run('bind();'); inp.value = ''; inp.onchange()
+  t.ok('пустое поле убирает план', p.q('spec2Sheet().posHours[' + JSON.stringify(key) + ']') == null)
+  t.ok('и часы из итога уходят', p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).hours') === 0)
+}
+
 t.done()
