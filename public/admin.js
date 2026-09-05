@@ -13295,6 +13295,10 @@ function estRowsHtml(moving, mi, rows){
 // заголовки, иначе экран читался бы комнатами, а объект собирался россыпью.
 function estStageBody(st, moving, mi, rows, sh, w, canRule){
   const blocks=st.blocks||[];
+  // Этап без блоков (не чистовой) — просто список работ. Проверяем ДО режима
+  // переноса: иначе взятая строка обошла бы список по пустым блокам и этап
+  // остался бы на экране пустым.
+  if(!blocks.length)return estRowsHtml(moving, mi, rows);
   if(blocks.length<2&&!moving)return estRowsHtml(moving, mi, rows);
   let base=0, h='';
   blocks.forEach(function(b){

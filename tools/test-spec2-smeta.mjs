@@ -879,4 +879,43 @@ const SHEET = {
   t.ok('и ряд закрывается', p.run('tSpec2()').indexOf('data-a="est-pos-hours-set"') < 0)
 }
 
+// ── 11. Комнаты — только на чистовом этапе ──────────────────────────────────
+// Подготовительные и черновые работы делают по всему дому разом: утепление,
+// обрешётка, электрика. Дробить их на «санузел/зал/спальню» — придумывать
+// границы, которых на стройке нет, и превращать короткий этап в три коротких
+// блока. Комната имеет смысл там, где по ней и работают, — на чистовом этапе
+// (его же спрашивают у сметы в карточке: «КОМНАТА (для чистового этапа)»).
+{
+  t.section('Разбивка по комнатам только на чистовом этапе')
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS, estimates: EST, dbPlans: [], crmClients: [],
+    specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [],
+    contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+    buildRules: [
+      // Одна и та же работа по комнатам, но на РАЗНЫХ этапах: чистовой делится,
+      // черновой — нет.
+      { id: 'r_f2', kind: 'house', estId: 'e_dr', what: 'surface', k: 'floor', scope: 'room', qty: 1, stage: 2 },
+      { id: 'r_w3', kind: 'house', estId: 'e_wall', what: 'surface', k: 'wall', scope: 'room', qty: 1, stage: 3 },
+    ],
+  })
+  p.run('spec2Tab="scheme";tSpec2();')
+  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
+
+  const stg = (n) => p.q('works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes})).stages.filter(function(s){return s.n===' + n + ';})[0]')
+  const s2 = stg(2), s3 = stg(3)
+  t.ok('на черновом работы по комнатам есть', s2 && s2.positions.length >= 2, 'позиций: ' + (s2 && s2.positions.length))
+  t.ok('но блоков он не заводит', s2 && s2.blocks.length === 0, 'блоков: ' + (s2 && s2.blocks.length))
+  t.ok('чистовой по-прежнему делится', s3 && s3.blocks.length >= 2, 'блоков: ' + (s3 && s3.blocks.length))
+  // Строки при этом никуда не деваются — пропасть работам нельзя.
+  const html = p.run('tSpec2()')
+  t.ok('работы чернового видны', (html.match(/data-a="est-pos-del"/g) || []).length >=
+    (s2.positions.length + s3.positions.length), 'строк меньше, чем позиций')
+  t.ok('сумма этапа сходится со строками',
+    s2.cost === s2.positions.reduce((a, x) => a + x.cost, 0))
+  // Комната у самой работы остаётся: она нужна и для чипа в строке, и для переноса.
+  t.ok('комната у позиции сохранена', s2.positions.some((x) => !!x.room), 'ни у одной нет комнаты')
+}
+
 t.done()
