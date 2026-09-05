@@ -2281,6 +2281,10 @@ let estMoveSheet="";       // и в каком листе: ключ позици
 let blockShut={};          // какие блоки помещений свёрнуты: "<этап>|<ключ комнаты>"
 let matMoveKey="";         // какой материал сейчас переносят: "<ключ позиции>|<адрес>"
 let matMoveSheet="";       // и в каком листе
+// Справки над сметой свёрнуты по умолчанию: экран открывают ради сметы, а
+// объёмы и убранное — это контекст, к которому обращаются, когда он нужен.
+let factsOpen=false;       // раскрыт ли блок «откуда числа»
+let droppedOpen=false;     // раскрыт ли список убранных работ
 let modelStageTab=0;       // 0 = все этапы
 let specSheets=[];
 // «Спецификация 2» — опытный раздел (см. src/spec2.js). Листы держим ОТДЕЛЬНО: по
@@ -12542,9 +12546,17 @@ function spec2FactsHtml(f){
       '<div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.5px">'+label+'</div>'+
       '<div style="font-size:14px;font-weight:800;color:#0d1b2e">'+numRu(val)+' м²</div></div>';
   };
-  let h='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
-    '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:8px">ОТКУДА ЧИСЛА · ДОМ ПОСЧИТАЛ СЕБЯ САМ</div>'+
-    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">'+
+  // Свёрнутая шапка несёт главные числа: площади и есть то, ради чего сюда
+  // заглядывают, а перечень изделий и раскладка нужны, когда их проверяют.
+  const opCount=(f.openings||[]).reduce(function(a,o){ return a+(Number(o.count)||0); },0);
+  let h='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:9px 13px;margin-bottom:9px">'+
+    '<div data-a="est-facts-open" style="display:flex;align-items:baseline;gap:8px;cursor:pointer;padding:2px 0">'+
+      '<span style="flex:1;min-width:0;font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+
+        (factsOpen?"▾ ":"▸ ")+'ОТКУДА ЧИСЛА · ДОМ ПОСЧИТАЛ СЕБЯ САМ</span>'+
+      (factsOpen?'':'<span style="font-size:11px;font-weight:700;color:#0d1b2e;white-space:nowrap">пол '+numRu(f.total.floor)+' · стены '+numRu(f.total.wallNet)+' м²'+(opCount?' · '+opCount+' изд.':'')+'</span>')+
+    '</div>';
+  if(!factsOpen)return h+'</div>';
+  h+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px">'+
       cell("ПОЛ",f.total.floor)+cell("ПОТОЛОК",f.total.ceil)+cell("СТЕНЫ",f.total.wallNet)+
     '</div>';
   if(f.openings.length){
@@ -13045,11 +13057,14 @@ function estDroppedHtml(sh, canRule){
   if(!keys.length)return "";
   const dropped=(allPositionsRaw(sh, specCtx(sh)).dropped)||[];
   const sum=dropped.reduce(function(a,p){ return a+(Number(p.cost)||0); },0);
-  return '<div style="background:#fff;border:1px solid #f0d5d0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
-    '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px">'+
-      '<span style="flex:1;min-width:0;font-size:11px;font-weight:700;color:#c0392b;letter-spacing:0.4px">УБРАНО ИЗ ЭТОГО ДОМА · '+keys.length+'</span>'+
+  // Свёрнут по умолчанию: сколько убрано и на сколько денег — в шапке, а сам
+  // перечень нужен, когда что-то возвращают.
+  return '<div style="background:#fff;border:1px solid #f0d5d0;border-radius:13px;padding:9px 13px;margin-bottom:9px">'+
+    '<div data-a="est-dropped-open" style="display:flex;align-items:baseline;gap:8px;cursor:pointer;padding:2px 0'+(droppedOpen?';margin-bottom:6px':'')+'">'+
+      '<span style="flex:1;min-width:0;font-size:11px;font-weight:700;color:#c0392b;letter-spacing:0.4px">'+(droppedOpen?"▾ ":"▸ ")+'УБРАНО ИЗ ЭТОГО ДОМА · '+keys.length+'</span>'+
       '<span style="font-size:12px;font-weight:700;color:#c0392b;white-space:nowrap">−'+Math.round(sum).toLocaleString("ru-RU")+' ₽</span>'+
     '</div>'+
+    (!droppedOpen?'':
     (dropped.length
       ? dropped.map(function(p){
           return '<div style="display:flex;align-items:baseline;gap:8px;padding:5px 0;border-top:1px solid #fbf1ef">'+
@@ -13061,7 +13076,7 @@ function estDroppedHtml(sh, canRule){
       // Работа могла уехать вместе с правилом или комнатой: ключа больше нет,
       // а отметка осталась. Показываем её честно и даём убрать отметку.
       : '<div style="font-size:11.5px;color:#9aabbf;padding:4px 0">Строк с такими ключами в смете больше нет — планировка изменилась.</div>')+
-    (canRule?'<div style="margin-top:7px"><button data-a="est-pos-back" data-k="" style="border:1px solid #d0dae8;background:#fff;border-radius:7px;padding:5px 10px;font-size:11px;color:#7a9aaa;cursor:pointer">Вернуть все</button></div>':'')+
+    (canRule?'<div style="margin-top:7px"><button data-a="est-pos-back" data-k="" style="border:1px solid #d0dae8;background:#fff;border-radius:7px;padding:5px 10px;font-size:11px;color:#7a9aaa;cursor:pointer">Вернуть все</button></div>':''))+
   '</div>';
 }
 
@@ -22181,6 +22196,8 @@ function bind(){
       if(Object.keys(mm).length)sh.posCostMode=mm; else delete sh.posCostMode;
       scheduleSave(); fl();
     };}
+    else if(a==="est-facts-open"){el.onclick=()=>{ factsOpen=!factsOpen; fl(); };}
+    else if(a==="est-dropped-open"){el.onclick=()=>{ droppedOpen=!droppedOpen; fl(); };}
     else if(a==="est-block-open"){el.onclick=()=>{
       const b=String(el.dataset.b||"");
       const map=Object.assign({}, blockShut);

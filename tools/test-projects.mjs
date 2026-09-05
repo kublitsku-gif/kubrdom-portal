@@ -277,8 +277,13 @@ function create(p, name) {
   t.ok('и деньги пересчитались', cost1 < cost0, cost0 + ' → ' + cost1)
   // Молча выкинуть работу из сметы — это молча выкинуть её из стройки: убранное
   // остаётся на виду, с ценой и кнопкой «вернуть».
+  // Шапка «убрано» видна всегда — со счётом и суммой; сам перечень свёрнут,
+  // потому что экран открывают ради сметы, а не ради убранного.
   t.ok('убранное показано отдельно', /УБРАНО ИЗ ЭТОГО ДОМА/.test(after))
-  t.ok('и его можно вернуть', after.indexOf('data-a="est-pos-back"') >= 0)
+  t.ok('перечень свёрнут', after.indexOf('data-a="est-pos-back"') < 0)
+  const dropHead = p.dom.node({ a: 'est-dropped-open' }); p.run('bind();'); dropHead.onclick()
+  const openDrop = p.run('tProjects()')
+  t.ok('и его можно вернуть', openDrop.indexOf('data-a="est-pos-back"') >= 0)
   // Правило и справочник — общие на все дома, их выключение не трогает.
   t.ok('справочник не тронут', p.q('estimates.length') === 2)
   t.ok('правило на месте', p.q('buildRules.length') === 1)
