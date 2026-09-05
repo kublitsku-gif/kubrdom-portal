@@ -14,7 +14,8 @@
     "test:supply": "node tools/test-supply-group.mjs",
     "test:mats": "node tools/test-material-link.mjs",
     "test:change": "node tools/test-mat-change.mjs",
-    "test": "node tools/run-tests.mjs"
+    "test": "node tools/run-tests.mjs",
+    "mcp:live": "wrangler d1 execute banya-db --remote --json --command \"SELECT work_id, data FROM work_states WHERE storage_key='admin_panel' AND work_id IN ('objects','purchases','purchased','arrived')\" | node tools/mcp-live.mjs"
   },
   "dependencies": {
     "react": "^19.2.6",

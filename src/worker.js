@@ -15,11 +15,12 @@ import { workText, workCallback, workMedia } from "./botwork.js";
 import { issueText, issueCallback, issueMedia, issueReplyToAuthor } from "./botissue.js";
 import { planRequest, planFromResponse, planNormalize, PLAN_MODEL, PLAN_MAX_FILES,
   planRequestOpenAI, planFromOpenAI, PLAN_MODEL_KIMI } from "./plan-read.js";
+import { mcpFetch } from "./mcp.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, X-Admin-Token",
+  "Access-Control-Allow-Headers": "Content-Type, X-Admin-Token, Authorization, MCP-Protocol-Version",
   "Access-Control-Max-Age":       "86400",
 };
 
@@ -1605,6 +1606,14 @@ export default {
     if (tgMatch && request.method === "GET") {
       try { return await getTgVideo(env, decodeURIComponent(tgMatch[1])); }
       catch (err) { return new Response(String(err), { status: 500, headers: CORS_HEADERS }); }
+    }
+
+    // MCP-сервер (только чтение) — ДО авторизации: у него свой секрет MCP_TOKEN и своя
+    // схема (Authorization: Bearer), общий X-Admin-Token сюда пускать нельзя — это токен
+    // записи всей панели, а наружу торчит машинный эндпоинт. См. src/mcp.js.
+    if (url.pathname === "/api/mcp") {
+      try { return await mcpFetch(request, env, { getPrice }); }
+      catch (err) { return json({ success: false, error: String((err && err.message) || err) }, 500); }
     }
 
     // Вебхук бота напоминаний — ДО авторизации: Telegram не шлёт X-Admin-Token.

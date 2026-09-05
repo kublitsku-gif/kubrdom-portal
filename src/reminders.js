@@ -88,7 +88,7 @@ async function sendOnce(env, who, kind, key, text) {
   return ok;
 }
 
-async function loadState(env, keys) {
+export async function loadState(env, keys) {
   const ph = keys.map(function () { return "?"; }).join(",");
   const rows = await env.DB.prepare("SELECT work_id, data FROM work_states WHERE storage_key='admin_panel' AND work_id IN (" + ph + ")").bind(...keys).all();
   const out = {};

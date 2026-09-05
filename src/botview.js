@@ -29,7 +29,7 @@ function visibleObjects(st, uid, roles) {
   if (has(roles, ["admin", "financier", "supply", "prod_head"])) return all;
   return all.filter(function (o) { return objTeam(st, o.id).has(uid); });
 }
-function objStats(st, o) {
+export function objStats(st, o) {
   const works = (o.stages || []).flatMap(function (s) { return s.works || []; });
   const done = works.filter(function (w) { return w.done; });
   const cost = works.reduce(function (a, w) { return a + (w.cost || 0); }, 0);
