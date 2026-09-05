@@ -62,7 +62,7 @@ import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
-const APP_BUILD = "2026-08-30.9";
+const APP_BUILD = "2026-09-05.1";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -3286,7 +3286,30 @@ function _mobileOS(){
 }
 // Chrome/Android даёт нативное окно установки через это событие — перехватываем, показываем свою кнопку.
 var _deferredInstallPrompt=null;
-window.addEventListener("beforeinstallprompt",function(e){ e.preventDefault(); _deferredInstallPrompt=e; });
+window.addEventListener("beforeinstallprompt",function(e){
+  e.preventDefault(); _deferredInstallPrompt=e;
+  // Событие приходит уже ПОСЛЕ первой отрисовки, поэтому кнопку надо показать заново:
+  // без этого нативное окно установки на экране входа не появлялось никогда.
+  try{ if(!currentUser && !clientAuthContract) render(); }catch(_e){}
+});
+
+// Кнопка «Установить» в шапке портала. Экран входа виден только до первого входа
+// (токен живёт в localStorage), поэтому иначе установить приложение уже невозможно.
+function _installBtnHtml(){
+  if(_isStandalone()||_mobileOS()==="other") return "";
+  return '<button data-a="pwa-install-hdr" title="Установить приложение" style="width:30px;height:30px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:13px;color:#7a9aaa;flex-shrink:0">📲</button>';
+}
+// Нативное окно установки, если браузер его предложил; иначе — шаги для платформы.
+async function _runInstallPrompt(){
+  if(_deferredInstallPrompt){
+    _deferredInstallPrompt.prompt();
+    try{ await _deferredInstallPrompt.userChoice; }catch(e){}
+    _deferredInstallPrompt=null; render(); return;
+  }
+  alert(_mobileOS()==="ios"
+    ? "Установка на iPhone:\n\n1. Откройте портал в Safari\n2. «Поделиться» ↑ внизу экрана\n3. «На экран „Домой“» → «Добавить»"
+    : "Установка на Android:\n\n1. Меню браузера ⋮ (вверху справа)\n2. «Установить приложение» / «Добавить на главный экран»\n3. Подтвердите\n\nЕсли такого пункта нет: портал уже установлен (посмотрите список приложений телефона) либо страница открыта во встроенном браузере другого приложения — откройте её в Chrome.");
+}
 
 // Блок «Установить приложение» на экране входа: свёрнут по умолчанию, платформо-зависимые шаги.
 function installBlockHtml(){
@@ -4945,6 +4968,7 @@ function page(){
     <div style="font-size:13px;font-weight:700;color:#0d1b2e">${esc(currentUser.name)}</div>
     <div style="font-size:10px;color:#7a9aaa">${currentUser.roles.map(rid=>{const r=roles.find(x=>x.id===rid);return r?r.n:"";}).filter(Boolean).join(", ")}</div>
   </div>
+  ${_installBtnHtml()}
   <button data-a="notify-open" title="Напоминания в Telegram" style="width:30px;height:30px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:13px;color:#7a9aaa;flex-shrink:0">🔔</button>
   <button data-a="pin-change-open" title="Сменить PIN" style="width:30px;height:30px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:13px;color:#7a9aaa;flex-shrink:0">🔑</button>
   <button data-a="logout" style="padding:5px 10px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:11px;color:#7a9aaa">Выйти</button>
@@ -21067,6 +21091,7 @@ function bind(){
       render();
     };}
     else if(a==="notify-pref"){el.onclick=()=>{ notifySetPref(el.dataset.k, el.dataset.v==="1"); };}
+    else if(a==="pwa-install-hdr"){el.onclick=_runInstallPrompt;}
     else if(a==="pin-change-open"){el.onclick=()=>{showPinChange=true;showNotify=false;render();};}
     else if(a==="pin-change-close"){el.onclick=()=>{showPinChange=false;render();};}
     else if(a==="pin-change-save"){el.onclick=async ()=>{
