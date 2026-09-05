@@ -1866,6 +1866,8 @@ let dbWorks=[
   {id:"dw35",n:"Покрытие полков маслом",cost:20000,stage:"ЭТАП 3 — ЧИСТОВАЯ ОТДЕЛКА",note:"",mats:[]},
 ];
 let dbSection="mats";
+let roomsDbKind="";        // вид смет, чей справочник комнат открыт («» — первый)
+const ROOM_EMOJI=["🛋","🍽","🛏","🚽","🚪","🚿","🔥","🌿","🧺","🪟","🏗️","📍"];
 let dbMatSearch=""; // поиск по материалам в Базе данных (название или магазин)
 let matPackView={}; // {matId: "m2"|"pack"} — режим отображения цены для материалов, продаваемых упаковками
 // === ДЕМО «Эксперимент»: список товаров (не сохраняется) ===
@@ -1960,6 +1962,7 @@ const ROOMS_BANYA=[
 ];
 const ROOMS_HOUSE=[
   {k:"zal",      n:"Зал",           emoji:"🛋", color:"#8e44ad"},
+  {k:"kuhnyagost",n:"Кухня-гостиная",emoji:"🍽", color:"#c0392b"},
   {k:"spalnya",  n:"Спальня",       emoji:"🛏", color:"#2980b9"},
   {k:"sanuzel",  n:"Сан узел",      emoji:"🚽", color:"#16a085"},
   {k:"koridor",  n:"Коридор",       emoji:"🚪", color:"#e67e22"},
@@ -7390,6 +7393,46 @@ ${showNT?`<div style="background:#fff;border-radius:14px;border:2px solid #9b59b
 </div>`;
 }
 
+// ── СПРАВОЧНИК КОМНАТ ───────────────────────────────────────────
+// Комнаты живут в справочнике ВИДА смет, а не дома вообще: у бани парная, у дома
+// кухня-гостиная. От этого же справочника зависит цвет блоков в смете по чертежу
+// (см. roomLook), поэтому имя и цвет правятся здесь, а не в карточке случайной сметы.
+function roomsDbCurKind(){
+  const k=roomsDbKind||((EST_KINDS[0]||{}).k||"banya");
+  return estKindMeta(k).k;
+}
+function roomsDbHtml(){
+  const kind=roomsDbCurKind();
+  const rooms=roomsFor(kind);
+  return '<div>'+
+    '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:12px">'+
+      EST_KINDS.map(function(kd){ const on=kd.k===kind;
+        return '<button data-a="rooms-kind" data-k="'+esc(kd.k)+'" style="flex:1 0 auto;padding:8px 11px;border-radius:9px;cursor:pointer;font-size:12px;font-weight:700;border:2px solid '+(on?"#c0392b":"#dde6f0")+';background:'+(on?"#c0392b":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+'">'+kd.emoji+' '+esc(kd.n)+'</button>';
+      }).join("")+
+    '</div>'+
+    '<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:4px">КОМНАТЫ ВИДА «'+esc(estKindMeta(kind).n).toUpperCase()+'» ('+rooms.length+')</div>'+
+    '<div style="font-size:11px;color:#9aabbf;line-height:1.45;margin-bottom:10px">Ими помечаются чистовые сметы, и этими же цветами смета по чертежу делится на блоки. Имя сверяется с чертежом по смыслу: «Санузел» на плане найдёт «Сан узел» здесь.</div>'+
+    rooms.map(function(rm){
+      const sys=rm.k==="obshchie";
+      return '<div style="background:#fff;border:1px solid #dde6f0;border-left:3px solid '+rm.color+';border-radius:11px;padding:9px 11px;margin-bottom:7px">'+
+        '<div style="display:flex;align-items:center;gap:7px">'+
+          '<button data-a="rooms-emoji" data-r="'+esc(rm.k)+'" title="Сменить значок" style="width:30px;height:30px;flex-shrink:0;border:1px solid #dde6f0;border-radius:8px;background:#fff;cursor:pointer;font-size:14px;line-height:1">'+rm.emoji+'</button>'+
+          (sys
+            ? '<span style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:'+rm.color+'">'+esc(rm.n)+' <span style="font-weight:400;color:#9aabbf">· системная</span></span>'
+            : '<input data-a="rooms-name" data-r="'+esc(rm.k)+'" value="'+esc(rm.n)+'" style="flex:1;min-width:0;padding:6px 9px;border:1px solid #dde6f0;border-radius:8px;font-size:12.5px;font-weight:700;color:'+rm.color+'">')+
+          (sys?'':'<button data-a="rooms-del" data-r="'+esc(rm.k)+'" title="Удалить комнату" style="width:30px;height:30px;flex-shrink:0;border:1px solid #e74c3c44;border-radius:8px;background:#fff;cursor:pointer;color:#e74c3c;font-size:12px">✕</button>')+
+        '</div>'+
+        '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:7px">'+
+          COLS.map(function(c){ const on=String(rm.color).toLowerCase()===c;
+            return '<button data-a="rooms-color" data-r="'+esc(rm.k)+'" data-c="'+c+'" title="'+c+'" style="width:22px;height:22px;border-radius:7px;cursor:pointer;background:'+c+';border:'+(on?"2px solid #0d1b2e":"1px solid #ffffff00")+'"></button>';
+          }).join("")+
+        '</div>'+
+      '</div>';
+    }).join("")+
+    '<button data-a="rooms-add" style="width:100%;padding:10px;border:1.5px dashed #c0392b;border-radius:11px;background:#fff;color:#c0392b;font-size:12px;font-weight:700;cursor:pointer">＋ Комната</button>'+
+  '</div>';
+}
+
 // ── ПЕРЕЧЕНЬ РАБОТ ──────────────────────────────────────────────
 function tWorks(){
   const allMats=dbWorks.flatMap(w=>(w.mats||[]).map(m=>({...m,wn:w.n,wid:w.id})));
@@ -7404,9 +7447,11 @@ ${plansOnly?"":`<div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wr
   <button data-a="db-tab" data-dt="mats" style="flex:1;min-width:96px;padding:11px 6px;border-radius:12px;cursor:pointer;font-size:12px;font-weight:700;border:2px solid ${dbSection==="mats"?"#2980b9":"#dde6f0"};background:${dbSection==="mats"?"#2980b9":"#fff"};color:${dbSection==="mats"?"#fff":"#7a9aaa"};box-shadow:${dbSection==="mats"?"0 3px 10px rgba(41,128,185,0.3)":"none"};transition:all 0.15s">📦 Материалы</button>
   <button data-a="db-tab" data-dt="plans" style="flex:1;min-width:96px;padding:11px 6px;border-radius:12px;cursor:pointer;font-size:12px;font-weight:700;border:2px solid ${dbSection==="plans"?"#8e44ad":"#dde6f0"};background:${dbSection==="plans"?"#8e44ad":"#fff"};color:${dbSection==="plans"?"#fff":"#7a9aaa"};box-shadow:${dbSection==="plans"?"0 3px 10px rgba(142,68,173,0.3)":"none"};transition:all 0.15s">📐 Планировки</button>
   <button data-a="db-tab" data-dt="est" style="flex:1;min-width:96px;padding:11px 6px;border-radius:12px;cursor:pointer;font-size:12px;font-weight:700;border:2px solid ${dbSection==="est"?"#16a085":"#dde6f0"};background:${dbSection==="est"?"#16a085":"#fff"};color:${dbSection==="est"?"#fff":"#7a9aaa"};box-shadow:${dbSection==="est"?"0 3px 10px rgba(22,160,133,0.3)":"none"};transition:all 0.15s">🧾 Сметы</button>
+  <button data-a="db-tab" data-dt="rooms" style="flex:1;min-width:96px;padding:11px 6px;border-radius:12px;cursor:pointer;font-size:12px;font-weight:700;border:2px solid ${dbSection==="rooms"?"#c0392b":"#dde6f0"};background:${dbSection==="rooms"?"#c0392b":"#fff"};color:${dbSection==="rooms"?"#fff":"#7a9aaa"};box-shadow:${dbSection==="rooms"?"0 3px 10px rgba(192,57,43,0.3)":"none"};transition:all 0.15s">🚪 Комнаты</button>
 </div>`}
+<div id="dbrooms-wrap" style="display:${dbSection==="rooms"?"block":"none"}">${dbSection==="rooms"?roomsDbHtml():""}</div>
 
-<div id="dbworks-list-wrap" style="display:block">
+<div id="dbworks-list-wrap" style="display:${dbSection==="works"?"block":"none"}">
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
   <div>
     <div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">ПЕРЕЧЕНЬ РАБОТ (${dbWorks.length})</div>
@@ -21168,6 +21213,56 @@ function bind(){
       dbSection=el.dataset.dt;
       showNDBWork=false;showNDBMat=null;showNDBPlan=false;
       render();
+    };}
+    else if(a==="rooms-kind"){el.onclick=()=>{ roomsDbKind=el.dataset.k; render(); };}
+    else if(a==="rooms-add"){el.onclick=()=>{
+      const kind=roomsDbCurKind(); ensureKindRooms(kind);
+      const list=EST_ROOMS[kind].slice();
+      // Новая комната встаёт ПЕРЕД «Общими»: они системные и всегда замыкают список.
+      let at=list.findIndex(function(x){return x.k==="obshchie";}); if(at<0)at=list.length;
+      // Цвет — первый свободный из палитры: две одноцветные комнаты не различить
+      // ни в списке, ни в блоках сметы.
+      const used=list.map(function(x){return String(x.color).toLowerCase();});
+      const free=COLS.filter(function(c){return used.indexOf(c)<0;});
+      list.splice(at,0,{k:"r"+gid(), n:"Новая комната", emoji:"🚪", color:free[0]||COLS[list.length%COLS.length]});
+      EST_ROOMS[kind]=list; fl();
+    };}
+    else if(a==="rooms-del"){el.onclick=()=>{
+      const kind=roomsDbCurKind(), rk=el.dataset.r;
+      const rm=roomsFor(kind).find(function(x){return x.k===rk;}); if(!rm)return;
+      if(rk==="obshchie"){alert("«Общие» — системная комната, в неё попадают сметы без своей. Её удалить нельзя.");return;}
+      // Сметы с этой комнатой не пропадают — они переходят в «Общие», и об этом
+      // надо сказать ДО удаления, а не после.
+      const cnt=estimates.filter(function(x){return (x.kind||"banya")===kind&&x.room===rk;}).length;
+      if(!confirm("Удалить комнату «"+rm.n+"» из вида «"+estKindMeta(kind).n+"»?"+(cnt?"\n\nСмет с этой комнатой: "+cnt+" — они перейдут в «Общие».":"")))return;
+      ensureKindRooms(kind);
+      EST_ROOMS[kind]=EST_ROOMS[kind].filter(function(x){return x.k!==rk;});
+      fl();
+    };}
+    else if(a==="rooms-name"){el.onchange=()=>{
+      const kind=roomsDbCurKind(), rk=el.dataset.r, nm=String(el.value||"").trim();
+      if(!nm)return;
+      ensureKindRooms(kind);
+      EST_ROOMS[kind]=EST_ROOMS[kind].map(function(x){return x.k===rk?Object.assign({},x,{n:nm}):x;});
+      fl();
+    };}
+    else if(a==="rooms-color"){el.onclick=()=>{
+      const kind=roomsDbCurKind(), rk=el.dataset.r, c=el.dataset.c;
+      ensureKindRooms(kind);
+      EST_ROOMS[kind]=EST_ROOMS[kind].map(function(x){return x.k===rk?Object.assign({},x,{color:c}):x;});
+      fl();
+    };}
+    else if(a==="rooms-emoji"){el.onclick=()=>{
+      const kind=roomsDbCurKind(), rk=el.dataset.r;
+      ensureKindRooms(kind);
+      // Значок перебирается по кругу: список короткий, и выбирать его отдельным
+      // окном ради одного символа — лишний экран.
+      EST_ROOMS[kind]=EST_ROOMS[kind].map(function(x){
+        if(x.k!==rk)return x;
+        const i=ROOM_EMOJI.indexOf(x.emoji);
+        return Object.assign({},x,{emoji:ROOM_EMOJI[(i+1)%ROOM_EMOJI.length]});
+      });
+      fl();
     };}
     else if(a==="dbmat-search-clear"){el.onclick=()=>{dbMatSearch="";render();};}
     else if(a==="db-plan-tab"){el.onclick=()=>{ dbPlanTab=el.dataset.c; render(); };}
