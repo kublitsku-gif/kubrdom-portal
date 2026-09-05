@@ -338,11 +338,49 @@ export function matQtyOf(sheet, key) {
 // справочника описывает типовой дом, а на этом доме бывает лишний уголок или
 // вторая коробка — дописать его прямо в строке честнее, чем править справочник
 // ради одного дома.
-// Адрес материала внутри строки сметы. У каталожного это его товар (`pid`), у
-// дописанного руками товара может не быть вовсе — тогда собственный id. Без этого
-// ручное количество дописанного уходило в пустой ключ и молча доставалось чужому
-// материалу без товара, а сам дописанный оставался с прежним числом.
-export function matKeyOf(m) { return String((m && (m.pid || m.id)) || ""); }
+// Адрес материала внутри строки сметы. У расчётного это его товар (`pid`): по
+// нему же лежит замена (`sheet.mats[posKey][oldPid]`), и другого адреса у него
+// быть не может. У ДОПИСАННОГО руками — всегда собственный id, даже когда товар
+// из базы у него есть.
+//
+// Иначе дописанный «ОСП 9 мм» получал адрес того же товара, что уже посчитан в
+// строке, и две разные позиции жили по одному адресу: ручное количество,
+// перестановка, «убрать» и обновление цены доставались обеим сразу, а вернуть
+// убранное можно было только вместе. Дописанный материал — отдельная строка
+// (его и добавляли ради второй фасовки или лишней коробки), значит и адрес у
+// него отдельный.
+export function matAddKey(m) { return "+" + String((m && (m.id || m.pid)) || ""); }
+export function matKeyOf(m) {
+  if (m && m.added) return matAddKey(m);
+  return String((m && (m.pid || m.id)) || "");
+}
+
+// Адреса дописанных материалов сменились (был `pid`, стал `+id`), а правки по
+// старым адресам лежат в боевых листах: убранный материал вернулся бы на экран,
+// ручное количество откатилось бы к расчётному, порядок сбросился.
+//
+// Поэтому старый адрес НЕ переносим, а ДОПИСЫВАЕМ рядом новый: там, где старый
+// адрес был общим с расчётным материалом, обе строки останутся такими, какими
+// человек их видел до правки, а дальше живут порознь. Прогон идемпотентен —
+// новый адрес уже есть, значит мигрировать нечего.
+export function migrateMatAddrs(sheet) {
+  const adds = (sheet && sheet.matAdd) || {};
+  let hit = false;
+  Object.keys(adds).forEach(function (posKey) {
+    (adds[posKey] || []).forEach(function (row) {
+      const was = String((row && (row.pid || row.id)) || "");
+      const now = matAddKey(row);
+      if (!was || was === now) return;
+      const qty = (sheet.matQty || {})[posKey];
+      if (qty && qty[was] != null && qty[now] == null) { qty[now] = qty[was]; hit = true; }
+      const ord = (sheet.matOrder || {})[posKey];
+      if (ord && ord[was] != null && ord[now] == null) { ord[now] = ord[was]; hit = true; }
+      const off = (sheet.matOff || {})[posKey];
+      if (Array.isArray(off) && off.indexOf(was) >= 0 && off.indexOf(now) < 0) { off.push(now); hit = true; }
+    });
+  });
+  return hit;
+}
 
 export function matAddOf(sheet, key) {
   return (((sheet && sheet.matAdd) || {})[key]) || [];
@@ -418,7 +456,7 @@ export function applyMatEdits(positions, sheet, products) {
     // Ручное количество работает и на дописанных: их прибавляют последними, и
     // раньше правка их просто не догоняла — число на экране менялось, а в смете нет.
     const full = mats.concat(add.map(function (a) {
-      const own = Number(q[matKeyOf(a)]);
+      const own = Number(q[matAddKey(a)]);
       const row = Object.assign({}, a, { added: true });
       return (isFinite(own) && own > 0)
         ? Object.assign(row, { qty: own, qtySet: true })
@@ -586,7 +624,7 @@ export function addedPositions(sheet, estimates, products) {
       key: key, estId: "", name: String(row.name || "Работа"), stage: Number(row.stage) || 0,
       room: "", roomId: "", surface: "", group: "", label: "",
       area: 0, point: "", count: 0, factor: 1, added: true, own: true,
-      // У материала ОБЯЗАН быть свой адрес (`matKeyOf` = pid или id): без него
+      // У материала ОБЯЗАН быть свой адрес (`matKeyOf`): без него
       // ручное количество, замена, порядок и «убрать» уходили в пустой ключ, и
       // кнопки в такой строке молча ничего не делали.
       // Флаг `own` на самом материале: по нему и экран, и разбивка «материалы /

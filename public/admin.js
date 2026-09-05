@@ -55,7 +55,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2, works2 } from "../src/spec2.js";
 import { priceHist, priceWas, pricePush, priceStale, refreshPrices } from "../src/prices.js";
-import { allPositions, allPositionsRaw, addedPositions, matKeyOf, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
+import { allPositions, allPositionsRaw, addedPositions, matKeyOf, matAddKey, migrateMatAddrs, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
   pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
   optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf, ROOM_HOUSE, roomKeyOf, positionSplit } from "../src/recipe.js";
 import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
@@ -351,6 +351,7 @@ function applyState(items){
   if (settings && settings.aiProvider === "yandex") settings = Object.assign({}, settings, { aiProvider: "yandexpro" });
   try{ normalizeWorkCosts(); }catch(e){}   // стоимость работ = сумма материалов
   try{ ensureMatPids(); }catch(e){}        // ссылка материала на карточку каталога (по имени, разово)
+  try{ ensureMatAddrs(); }catch(e){}       // адреса дописанных материалов: был pid, стал +id
   try{ backfillWorkRooms(); }catch(e){}    // комнаты работ из сметы по estId (шаблон → объект)
   // Имя клиента договора из привязанного CRM-клиента, если поле пустое.
   try{ (contractDocs||[]).forEach(function(c){ if((!c.client||!String(c.client).trim())&&c.crmClientId){ var cl=crmClients.find(function(x){return x.id===c.crmClientId;}); if(cl&&cl.name)c.client=cl.name; } }); }catch(e){}
@@ -8094,6 +8095,20 @@ function ensureMatPids(){
   });
   return n;
 }
+// Адрес дописанного руками материала — его собственный id, а не товар: иначе
+// дописанный «ОСП 9 мм» жил по одному адресу с тем же товаром, уже посчитанным в
+// строке, и ручное количество, порядок, «убрать» и обновление цены доставались
+// обоим сразу. Правки по старым адресам лежат в боевых листах, поэтому при
+// загрузке к ним ДОПИСЫВАЕТСЯ новый адрес (см. `migrateMatAddrs`): экран после
+// правки выглядит ровно так же, как до неё, а дальше строки живут порознь.
+// Прогон идемпотентен, поэтому гоняется при каждой загрузке и сохранения не просит.
+function ensureMatAddrs(){
+  let n=0;
+  [specSheets, specSheets2, projects].forEach(function(list){
+    (list||[]).forEach(function(sh){ if(migrateMatAddrs(sh))n++; });
+  });
+  return n;
+}
 // Где используется товар каталога: работы шаблонов и объектов, ссылающиеся на него.
 // Ссылку ищем по pid; исторические позиции без ссылки добираем по точному имени,
 // иначе на карточке старого материала «где используется» пустовало бы.
@@ -12977,7 +12992,7 @@ function optChipsHtml(pos, sh, w){
 // следующей работе с тем же адресом.
 function estForgetKey(sh, key){
   if(!sh||!key)return;
-  ["posRoom","posStage","posCost","posCostMode","posOrder","matQty","mats","matAdd","matOff"].forEach(function(f){
+  ["posRoom","posStage","posCost","posCostMode","posOrder","matQty","mats","matAdd","matOff","matOrder"].forEach(function(f){
     const map=sh[f]; if(!map||!Object.prototype.hasOwnProperty.call(map,key))return;
     const next=Object.assign({}, map); delete next[key];
     if(Object.keys(next).length)sh[f]=next; else delete sh[f];
@@ -13095,7 +13110,7 @@ function specMatsListHtml(pos, sh, live){
       '</div>'+
       matDropSlot(moving, midx+1, mi);
     }).join("")+
-    matOffHtml(pos, off)+
+    matOffHtml(pos, off, sh)+
     // Смета из справочника описывает типовой дом, а на этом бывает лишний уголок
     // или вторая коробка: дописать его в строке честнее, чем править справочник
     // ради одного дома.
@@ -13105,15 +13120,20 @@ function specMatsListHtml(pos, sh, live){
 // Убранное остаётся на виду: «нет в этом доме» — это решение, и по строке должно
 // быть видно, что оно принято, иначе материал выглядит потерянным, а вернуть его
 // нечем. Имя берём из каталога — в листе лежит только адрес товара.
-function matOffHtml(pos, off){
+function matOffHtml(pos, off, sh){
   if(!off||!off.length)return '';
+  // Адрес убранного — либо товар каталога, либо дописанный руками материал
+  // (`+id`), и имя у него лежит в самом листе: «материал ⟲» без названия
+  // предлагает вернуть неизвестно что.
+  const added=matAddOf(sh, pos.key);
   return '<div style="padding:6px 0 2px;display:flex;flex-wrap:wrap;align-items:center;gap:5px">'+
     '<span style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.3px">УБРАНО ИЗ ЭТОГО ДОМА:</span>'+
     off.map(function(pid){
-      const prod=(expProducts||[]).find(function(x){return x.id===pid;});
+      const prod=(expProducts||[]).find(function(x){return x.id===pid;})
+        ||added.find(function(x){return matAddKey(x)===pid;});
       return '<button data-a="est-mat-on" data-k="'+esc(pos.key+"|"+pid)+'" title="Вернуть материал в строку" '+
         'style="border:1px solid #dde6f0;background:#fff;border-radius:7px;padding:3px 8px;font-size:10.5px;color:#7a9aaa;cursor:pointer">'+
-        esc((prod&&prod.name)||"материал")+' ⟲</button>';
+        esc((prod&&(prod.name||prod.n))||"материал")+' ⟲</button>';
     }).join("")+
   '</div>';
 }
@@ -22960,7 +22980,7 @@ function bind(){
       const byId={}; (expProducts||[]).forEach(function(x){ if(x&&x.id)byId[x.id]=x; });
       const add=Object.assign({}, sh.matAdd||{});
       const rows=(add[posKey]||[]).map(function(m){ return Object.assign({}, m); });
-      const row=rows.filter(function(m){ return matKeyOf(m)===mk; });
+      const row=rows.filter(function(m){ return matAddKey(m)===mk; });
       if(!row.length)return;
       const r=refreshPrices(row, byId);
       if(!r.n)return;

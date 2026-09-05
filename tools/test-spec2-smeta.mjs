@@ -941,17 +941,18 @@ const SHEET = {
   const addOpen = p.dom.node({ a: 'est-mat-add-open', k: key }); p.run('bind();'); addOpen.onclick()
   p.dom.field('mad-n', 'Наличник'); p.dom.field('mad-qty', '2'); p.dom.field('mad-cost', '300')
   const addDo = p.dom.node({ a: 'est-mat-add-do', k: key }); p.run('bind();'); addDo.onclick()
+  const mid = p.q('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].id')
 
   const html = p.run('tSpec2()').replace(/[  ]/g, ' ')
   t.ok('строка говорит, что в базе дороже', /в базе 800 ₽/.test(html), 'нет пометки о каталоге')
   t.ok('и обновление — одним тапом',
-    html.indexOf('data-a="est-mat-price" data-k="' + key + '|p_dr"') >= 0, 'нет кнопки у материала')
+    html.indexOf('data-a="est-mat-price" data-k="' + key + '|+' + mid + '"') >= 0, 'нет кнопки у материала')
   const stN = p.q('works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes})).stages.filter(function(s){return (s.positions||[]).some(function(x){return x.key===' + JSON.stringify(key) + ';});})[0].n')
   t.ok('и кнопка этапа зажглась',
     new RegExp('data-a="est-stage-prices" data-n="' + stN + '"(?! disabled)').test(html), 'кнопка выключена')
 
   const cost0 = posOf().cost
-  const one = p.dom.node({ a: 'est-mat-price', k: key + '|p_dr' }); p.run('bind();'); one.onclick()
+  const one = p.dom.node({ a: 'est-mat-price', k: key + '|+' + mid }); p.run('bind();'); one.onclick()
   const posA = posOf()
   t.ok('цена материала стала каталожной',
     (posA.mats || []).filter((m) => m.added)[0].cost === 800,
@@ -976,6 +977,54 @@ const SHEET = {
   const withHist = p.run('tSpec2()').replace(/[  ]/g, ' ')
   t.ok('в строке видно прежнюю цену', /было 1 200 ₽/.test(withHist), 'истории нет в строке')
   t.ok('и когда её правили', withHist.indexOf('цена до 10.01.26') >= 0, 'нет даты правки')
+}
+
+// ── Дописан тот же товар, что в расчёте ─────────────────────────────────────
+// Экран сметы у двух разделов ОДИН: то же самое сторожит test-projects. Адрес
+// материала был «его товар», и дописанная вторая фасовка жила по одному адресу с
+// расчётной строкой — количество, порядок и «убрать» доставались обеим сразу.
+{
+  t.section('Дописан тот же товар, что в расчёте')
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS, estimates: EST, dbPlans: [], crmClients: [],
+    specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [],
+    contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+    buildRules: [],
+  })
+  p.run('spec2Tab="scheme";tSpec2();')
+  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
+  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_win";})[0].key')
+  const posOf = () => p.q('allPositions(spec2Sheet(), specCtx(spec2Sheet())).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0]')
+  p.run('matsOpen[' + JSON.stringify(key) + ']=1;tSpec2();')
+  const base = (posOf().mats || []).filter((m) => m.pid === 'p_win')[0]
+  t.ok('в строке уже есть этот товар', !!base)
+
+  const addOpen = p.dom.node({ a: 'est-mat-add-open', k: key }); p.run('bind();'); addOpen.onclick()
+  p.dom.field('mad-n', 'Монтажный комплект окна'); p.dom.field('mad-qty', '1'); p.dom.field('mad-cost', '1500')
+  const addDo = p.dom.node({ a: 'est-mat-add-do', k: key }); p.run('bind();'); addDo.onclick()
+  const mid = p.q('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].id')
+  t.ok('в строке две записи товара',
+    (posOf().mats || []).filter((m) => m.pid === 'p_win').length === 2)
+
+  const qty = p.dom.node({ a: 'est-mat-qty', k: key + '|+' + mid })
+  qty.value = '5'; p.run('bind();'); qty.onchange()
+  const now = posOf()
+  const added = (now.mats || []).filter((m) => m.added)[0]
+  const calc = (now.mats || []).filter((m) => !m.added && m.pid === 'p_win')[0]
+  t.ok('количество досталось дописанному', added && added.qty === 5, JSON.stringify(added && added.qty))
+  t.ok('а расчётный остался как был', calc && calc.qty === base.qty && !calc.qtySet,
+    JSON.stringify(calc && [calc.qty, !!calc.qtySet]))
+  t.ok('правка адресована своим ключом',
+    p.q('spec2Sheet().matQty[' + JSON.stringify(key) + '][' + JSON.stringify('+' + mid) + ']') === 5)
+
+  const drop = p.dom.node({ a: 'est-mat-off', k: key + '|p_win' }); p.run('bind();'); drop.onclick()
+  const left = posOf()
+  t.ok('убрался только расчётный',
+    (left.mats || []).filter((m) => m.pid === 'p_win').length === 1
+    && (left.mats || []).filter((m) => m.pid === 'p_win')[0].added === true,
+    JSON.stringify((left.mats || []).map((m) => [m.pid, !!m.added])))
 }
 
 t.done()

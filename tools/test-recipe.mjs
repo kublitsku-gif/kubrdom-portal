@@ -8,7 +8,7 @@
 import { presetModel, MODEL_PRESETS } from '../src/model.js'
 import { sheetPositions } from '../src/spec.js'
 import { rulePositions, allPositions, allPositionsRaw, ruleText, ruleReady, probeSheet,
-  layerPositions, pieArea, pieCost, applyPicks, optLabelOf, optPrefixOf, applyRooms, roomKeyOf, posRoomOf, ROOM_HOUSE, applyMatEdits, matOrderOf } from '../src/recipe.js'
+  layerPositions, pieArea, pieCost, applyPicks, optLabelOf, optPrefixOf, applyRooms, roomKeyOf, posRoomOf, ROOM_HOUSE, applyMatEdits, matOrderOf, matKeyOf, matAddKey, migrateMatAddrs } from '../src/recipe.js'
 import { modelAreas, modelTotals, applyLayers } from '../src/model.js'
 import { gaps2 } from '../src/spec2.js'
 
@@ -379,6 +379,65 @@ const R = (o) => Object.assign({ id: 'r1', kind: 'house', what: 'surface', k: 'w
   t.ok('без разметки список прежний',
     applyMatEdits(pos, {}, [])[0].mats.map((m) => m.pid).join(',') === 'a,b,c')
   t.ok('адрес порядка читается', matOrderOf({ matOrder: { k: { a: 1 } } }, 'k').a === 1)
+}
+
+// ── Адрес материала внутри строки ────────────────────────────────────────────
+// Дописанный руками материал — отдельная строка, даже когда товар у него тот же,
+// что уже посчитан в смете (вторая фасовка, лишняя коробка). Значит и адрес у
+// него отдельный: по общему адресу ручное количество, порядок и «убрать»
+// доставались обеим строкам сразу.
+{
+  t.section('Адрес материала')
+  const pos = [{ key: 'k', name: 'Обшивка', factor: 1, cost: 1000,
+    mats: [{ pid: 'p_osb', n: 'ОСП 9 мм', cost: 1000, qty: 1 }] }]
+  const sheet = { matAdd: { k: [{ id: 'm1', pid: 'p_osb', n: 'ОСП 9 мм', cost: 1000, qty: 1 }] } }
+
+  t.ok('адрес расчётного — его товар', matKeyOf({ pid: 'p_osb' }) === 'p_osb')
+  t.ok('адрес дописанного — его id', matKeyOf({ added: true, id: 'm1', pid: 'p_osb' }) === '+m1',
+    matKeyOf({ added: true, id: 'm1', pid: 'p_osb' }))
+  t.ok('и он же считается по сырой записи', matAddKey({ id: 'm1', pid: 'p_osb' }) === '+m1')
+
+  const both = applyMatEdits(pos, sheet, PRODUCTS)[0].mats
+  t.ok('в строке две записи', both.length === 2, String(both.length))
+  t.ok('и адреса у них разные', matKeyOf(both[0]) !== matKeyOf(both[1]),
+    both.map(matKeyOf).join(','))
+
+  // Ручное количество дописанного не трогает расчётный — ради этого адрес и разошёлся.
+  const qty = applyMatEdits(pos, Object.assign({ matQty: { k: { '+m1': 5 } } }, sheet), PRODUCTS)[0]
+  t.ok('количество досталось дописанному', qty.mats[1].qty === 5, String(qty.mats[1].qty))
+  t.ok('а расчётный остался как был', qty.mats[0].qty === 1 && !qty.mats[0].qtySet,
+    String(qty.mats[0].qty))
+  t.ok('и деньги строки выросли только на него', qty.cost === 1000 + 5000, String(qty.cost))
+
+  // «Убрать» — так же врозь.
+  const off = applyMatEdits(pos, Object.assign({ matOff: { k: ['p_osb'] } }, sheet), PRODUCTS)[0]
+  t.ok('убрался только расчётный', off.mats.length === 1 && off.mats[0].added === true,
+    JSON.stringify(off.mats.map(matKeyOf)))
+}
+
+// ── Старые адреса переживают правку ─────────────────────────────────────────
+// Правки по прежним адресам лежат в боевых листах: убранный материал вернулся бы
+// на экран, ручное количество откатилось бы к расчётному. Поэтому старый адрес не
+// переносится, а рядом с ним ДОПИСЫВАЕТСЯ новый — экран остаётся прежним.
+{
+  t.section('Миграция адресов')
+  const sheet = {
+    matAdd: { k: [{ id: 'm1', pid: 'p_osb', n: 'ОСП 9 мм', cost: 1000, qty: 1 }] },
+    matQty: { k: { p_osb: 4 } }, matOrder: { k: { p_osb: 0 } }, matOff: { k: ['p_osb'] },
+  }
+  t.ok('миграция сработала', migrateMatAddrs(sheet) === true)
+  t.ok('количество доехало', sheet.matQty.k['+m1'] === 4, JSON.stringify(sheet.matQty.k))
+  t.ok('порядок доехал', sheet.matOrder.k['+m1'] === 0)
+  t.ok('и «убрано» тоже', sheet.matOff.k.indexOf('+m1') >= 0, JSON.stringify(sheet.matOff.k))
+  // Старый адрес остаётся: по нему живёт расчётный материал, и стереть его значит
+  // вернуть в строку то, что человек убрал.
+  t.ok('старый адрес не тронут', sheet.matQty.k.p_osb === 4 && sheet.matOff.k.indexOf('p_osb') >= 0)
+  t.ok('повтор ничего не меняет', migrateMatAddrs(sheet) === false)
+
+  // Правка по новому адресу миграцию не интересует: человек уже сказал своё число.
+  const fresh = { matAdd: { k: [{ id: 'm2', pid: 'p_tile' }] }, matQty: { k: { p_tile: 2, '+m2': 9 } } }
+  t.ok('своё число не перебивается', migrateMatAddrs(fresh) === false && fresh.matQty.k['+m2'] === 9)
+  t.ok('лист без дописанных не трогается', migrateMatAddrs({}) === false)
 }
 
 t.done()

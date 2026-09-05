@@ -653,7 +653,7 @@ function create(p, name) {
   const cost1 = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0].cost')
 
   // И правим количество: было 1, стало 4.
-  const qty = p.dom.node({ a: 'est-mat-qty', k: key + '|' + mid })
+  const qty = p.dom.node({ a: 'est-mat-qty', k: key + '|+' + mid })
   qty.value = '4'
   p.run('bind();'); qty.onchange()
   const pos = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0]')
@@ -669,7 +669,7 @@ function create(p, name) {
   // Заменять дописанный нечем — у него нет товара в базе; есть крестик.
   const html = p.run('tProjects()')
   t.ok('у дописанного нет «заменить»',
-    html.indexOf('data-a="est-mat-open" data-k="' + key + '|' + mid + '"') < 0)
+    html.indexOf('data-a="est-mat-open" data-k="' + key + '|+' + mid + '"') < 0)
   t.ok('зато есть «убрать»', html.indexOf('data-a="est-mat-add-del"') >= 0)
 }
 
@@ -1039,11 +1039,12 @@ function create(p, name) {
   const addOpen = p.dom.node({ a: 'est-mat-add-open', k: key }); p.run('bind();'); addOpen.onclick()
   p.dom.field('mad-n', 'Розетка'); p.dom.field('mad-qty', '2'); p.dom.field('mad-cost', '100')
   const addDo = p.dom.node({ a: 'est-mat-add-do', k: key }); p.run('bind();'); addDo.onclick()
+  const mid = p.q('projects[0].matAdd[' + JSON.stringify(key) + '][0].id')
 
   const html = p.run('tProjects()').replace(/[  ]/g, ' ')
   t.ok('строка говорит, что в базе дороже', /в базе 300 ₽/.test(html), 'нет пометки о каталоге')
   t.ok('и обновление — одним тапом',
-    html.indexOf('data-a="est-mat-price" data-k="' + key + '|p_sock"') >= 0, 'нет кнопки у материала')
+    html.indexOf('data-a="est-mat-price" data-k="' + key + '|+' + mid + '"') >= 0, 'нет кнопки у материала')
   // Кнопка этапа зажигается только тогда, когда есть что обновлять.
   const stN = p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).stages.filter(function(s){return (s.positions||[]).some(function(x){return x.key===' + JSON.stringify(key) + ';});})[0].n')
   t.ok('и кнопка этапа зажглась',
@@ -1065,7 +1066,7 @@ function create(p, name) {
 
   // И тот же материал — кнопкой в самой строке.
   p.run('projects[0].matAdd[' + JSON.stringify(key) + '][0].cost=100;tProjects();')
-  const one = p.dom.node({ a: 'est-mat-price', k: key + '|p_sock' }); p.run('bind();'); one.onclick()
+  const one = p.dom.node({ a: 'est-mat-price', k: key + '|+' + mid }); p.run('bind();'); one.onclick()
   t.ok('строка обновилась сама', p.q('projects[0].matAdd[' + JSON.stringify(key) + '][0].cost') === 300,
     String(p.q('projects[0].matAdd[' + JSON.stringify(key) + '][0].cost')))
 
@@ -1074,6 +1075,83 @@ function create(p, name) {
   const withHist = p.run('tProjects()').replace(/[  ]/g, ' ')
   t.ok('в строке видно прежнюю цену', /было 700 ₽/.test(withHist), 'истории нет в строке')
   t.ok('и когда её правили', withHist.indexOf('цена до 10.01.26') >= 0, 'нет даты правки')
+}
+
+// ── Дописанный материал того же товара — своя строка ─────────────────────────
+// Адрес материала внутри строки был «его товар», и дописанный «ОСП 9 мм» жил по
+// одному адресу с тем же товаром, уже посчитанным в смете: ручное количество,
+// порядок и «убрать» доставались обеим строкам сразу. Экран сметы у двух
+// разделов ОДИН — то же самое сторожит test-spec2-smeta.
+{
+  t.section('Дописан тот же товар, что в расчёте')
+  const p = panel()
+  create(p, 'Дом с двумя ОСП')
+  p.run('projBand="parts";')
+  const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
+  const posOf = () => p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0]')
+  const openMats = p.dom.node({ a: 'est-mats-open', k: key }); p.run('bind();'); openMats.onclick()
+  const was = posOf()
+  const base = (was.mats || []).filter((m) => m.pid === 'p_osb')[0]
+  t.ok('в строке уже есть этот товар', !!base, JSON.stringify((was.mats || []).map((m) => m.pid)))
+
+  // Дописываем ТОТ ЖЕ товар второй строкой — так добирают вторую фасовку.
+  const addOpen = p.dom.node({ a: 'est-mat-add-open', k: key }); p.run('bind();'); addOpen.onclick()
+  p.dom.field('mad-n', 'ОСП 9 мм'); p.dom.field('mad-qty', '1'); p.dom.field('mad-cost', '1000')
+  const addDo = p.dom.node({ a: 'est-mat-add-do', k: key }); p.run('bind();'); addDo.onclick()
+  const mid = p.q('projects[0].matAdd[' + JSON.stringify(key) + '][0].id')
+  const two = posOf()
+  t.ok('в строке две записи товара',
+    (two.mats || []).filter((m) => m.pid === 'p_osb').length === 2,
+    JSON.stringify((two.mats || []).map((m) => [m.pid, m.qty])))
+
+  // Правим количество ДОПИСАННОГО: расчётный остаётся как посчитано.
+  const qty = p.dom.node({ a: 'est-mat-qty', k: key + '|+' + mid })
+  qty.value = '5'; p.run('bind();'); qty.onchange()
+  const now = posOf()
+  const added = (now.mats || []).filter((m) => m.added)[0]
+  const calc = (now.mats || []).filter((m) => !m.added && m.pid === 'p_osb')[0]
+  t.ok('количество досталось дописанному', added && added.qty === 5, JSON.stringify(added && added.qty))
+  t.ok('а расчётный остался как был', calc && calc.qty === base.qty && !calc.qtySet,
+    JSON.stringify(calc && [calc.qty, !!calc.qtySet]))
+  t.ok('правка адресована своим ключом',
+    p.q('projects[0].matQty[' + JSON.stringify(key) + '][' + JSON.stringify('+' + mid) + ']') === 5,
+    JSON.stringify(p.q('projects[0].matQty[' + JSON.stringify(key) + ']')))
+
+  // «Убрать» расчётный — дописанный остаётся: это две разные строки.
+  const drop = p.dom.node({ a: 'est-mat-off', k: key + '|p_osb' }); p.run('bind();'); drop.onclick()
+  const left = posOf()
+  t.ok('убрался только расчётный',
+    (left.mats || []).filter((m) => m.pid === 'p_osb').length === 1
+    && (left.mats || []).filter((m) => m.pid === 'p_osb')[0].added === true,
+    JSON.stringify((left.mats || []).map((m) => [m.pid, !!m.added])))
+}
+
+// ── Старые адреса переживают загрузку ───────────────────────────────────────
+// Правки по прежним адресам лежат в боевых листах: убранный материал вернулся бы
+// на экран, а ручное количество откатилось бы к расчётному. Поэтому при загрузке
+// к старому адресу дописывается новый — экран остаётся таким же, как был.
+{
+  t.section('Миграция адресов при загрузке')
+  const p = panel()
+  create(p, 'Дом со старыми адресами')
+  p.run('projBand="parts";')
+  const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
+  const openMats = p.dom.node({ a: 'est-mats-open', k: key }); p.run('bind();'); openMats.onclick()
+  const addOpen = p.dom.node({ a: 'est-mat-add-open', k: key }); p.run('bind();'); addOpen.onclick()
+  p.dom.field('mad-n', 'ОСП 9 мм'); p.dom.field('mad-qty', '1'); p.dom.field('mad-cost', '1000')
+  const addDo = p.dom.node({ a: 'est-mat-add-do', k: key }); p.run('bind();'); addDo.onclick()
+  const mid = p.q('projects[0].matAdd[' + JSON.stringify(key) + '][0].id')
+
+  // Так эта правка лежит в листах, сделанных до смены адреса.
+  p.run('projects[0].matQty={' + JSON.stringify(key) + ':{p_osb:7}};ensureMatAddrs();')
+  t.ok('новый адрес дописан',
+    p.q('projects[0].matQty[' + JSON.stringify(key) + '][' + JSON.stringify('+' + mid) + ']') === 7,
+    JSON.stringify(p.q('projects[0].matQty[' + JSON.stringify(key) + ']')))
+  const pos = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0]')
+  t.ok('количество дописанного не потерялось',
+    (pos.mats || []).filter((m) => m.added)[0].qty === 7,
+    JSON.stringify((pos.mats || []).map((m) => [m.pid, m.qty, !!m.added])))
+  t.ok('повторная загрузка ничего не меняет', p.q('ensureMatAddrs()') === 0)
 }
 
 t.done()
