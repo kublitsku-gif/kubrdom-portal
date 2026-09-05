@@ -932,12 +932,19 @@ function create(p, name) {
   const plain = () => p.run('tProjects()').replace(/<[^>]*>/g, '').replace(/[\u00a0\u202f]/g, ' ')
   const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
   const cost0 = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0].cost')
+  // Поле в шапке — это цена БРИГАДЕ, и пока её не назначили, оно пустое с
+  // подсказкой: подставленный туда итог строки читался как «работа стоит столько
+  // же, сколько всё», и вносить оплату было некуда.
+  const fieldHtml = () => (p.run('tProjects()').match(/data-a="est-pos-cost"[^>]*/) || [''])[0]
+  t.ok('поле цены пустое', /value=""/.test(fieldHtml()), fieldHtml().slice(0, 120))
+  t.ok('и подписано «работа»', /placeholder="работа ₽"/.test(fieldHtml()))
   t.ok('без цены бригаде работа нулевая',
     new RegExp('материалы ' + cost0.toLocaleString('ru-RU').replace(/[\u00a0\u202f]/g, ' ') + ' ₽ · работа 0 ₽').test(plain()), 'нет раскладки')
 
   const inp = p.dom.node({ a: 'est-pos-cost', k: key })
   p.run('bind();'); inp.value = '12000'; inp.onchange()
   t.ok('цена бригаде встала в «работу»', /· работа 12 000 ₽ · итого /.test(plain()), 'нет цены работы')
+  t.ok('и в поле стоит она же, а не итог', /value="12000"/.test(fieldHtml()), fieldHtml().slice(0, 120))
   t.ok('и материалы остались своей цифрой',
     new RegExp('материалы ' + cost0.toLocaleString('ru-RU').replace(/[\u00a0\u202f]/g, ' ') + ' ₽ · работа 12 000').test(plain()))
 

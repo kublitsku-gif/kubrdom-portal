@@ -13265,7 +13265,11 @@ function estBodyHtml(sh, types, live, actions){
               // сумма кабелей к этой цифре отношения не имеет.
               (canRule
                 ? '<span style="display:flex;align-items:baseline;gap:3px;flex-shrink:0">'+
-                    '<input data-a="est-pos-cost" data-k="'+esc(p.key)+'" value="'+Math.round(p.costMode==="labor"?(Number(p.labor)||0):p.cost)+'" inputmode="numeric" title="'+(p.costMode==="labor"?"Сколько платим бригаде за эту работу — материалы считаются сверху":"Цена работы в этом доме")+'" style="width:74px;padding:2px 5px;border:1px solid '+(p.costSet?"#8e44ad":"#dde6f0")+';border-radius:6px;font-size:12px;font-weight:700;text-align:right;outline:none;color:'+(p.costSet?"#8e44ad":"#0d1b2e")+';background:#fff">'+
+                    // Поле — это цена БРИГАДЕ за работу. Пока её не назначили, оно
+                    // ПУСТОЕ с подсказкой «работа ₽»: подставленный туда итог
+                    // строки читался как «работа стоит столько же, сколько всё»,
+                    // и было непонятно, куда вносить оплату.
+                    '<input data-a="est-pos-cost" data-k="'+esc(p.key)+'" value="'+(p.costSet?Math.round(p.costMode==="labor"?(Number(p.labor)||0):p.cost):"")+'" placeholder="работа ₽" inputmode="numeric" title="'+(p.costSet&&p.costMode!=="labor"?"Подряд под ключ — материалы уже в этой цене":"Сколько платим бригаде за эту работу — материалы считаются сверху")+'" style="width:84px;padding:2px 5px;border:1px solid '+(p.costSet?"#8e44ad":"#dde6f0")+';border-radius:6px;font-size:12px;font-weight:700;text-align:right;outline:none;color:'+(p.costSet?"#8e44ad":"#0d1b2e")+';background:#fff">'+
                     '<span style="font-size:12px;font-weight:700;color:#0d1b2e">₽</span>'+
                     // Что означает эта цифра: оплату бригаде (материалы идут
                     // сверху) или подряд под ключ (материалы уже в ней). Смыслы

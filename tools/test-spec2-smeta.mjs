@@ -718,6 +718,9 @@ const SHEET = {
   t.ok('раскладка есть в каждой строке', /материалы [\d ]+ ₽ · работа [\d ]+ ₽ · итого [\d ]+ ₽/.test(plain()), 'нет раскладки')
 
   const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key')
+  const fieldHtml = () => (p.run('tSpec2()').match(/data-a="est-pos-cost"[^>]*/) || [''])[0]
+  t.ok('поле цены пустое и подписано «работа»',
+    /value=""/.test(fieldHtml()) && /placeholder="работа ₽"/.test(fieldHtml()), fieldHtml().slice(0, 120))
   const inp = p.dom.node({ a: 'est-pos-cost', k: key })
   p.run('bind();'); inp.value = '7000'; inp.onchange()
   t.ok('цена бригаде видна отдельно', /· работа 7 000 ₽ · итого /.test(plain()))
