@@ -664,6 +664,28 @@ const SHEET = {
     blocks.reduce((a, b) => a + b.cost, 0) === Math.round(st().cost))
   t.ok('заголовки блоков на экране', (est.match(/data-a="est-block-open"/g) || []).length === blocks.length)
 
+  // Блоки помещений различаются цветом. Этап из четырёх комнат одинаковыми серыми
+  // шапками читается как один длинный список: глаз не цепляется за границу, и
+  // работу ищут прокруткой. Цвет берём из справочника комнат — тот же, что на
+  // остальных экранах, иначе санузел был бы бирюзовым в шаблоне и серым в смете.
+  const heads = est.split('data-a="est-block-open"').slice(1).map((x) => x.slice(0, 500))
+  const colOf = (x) => ((x.match(/color:(#[0-9a-f]{6})/i) || [])[1] || '').toLowerCase()
+  const cols = heads.map(colOf)
+  t.ok('у каждого блока свой цвет', cols.every(Boolean) && new Set(cols).size === cols.length,
+    'цвета: ' + JSON.stringify(cols))
+  // Общий блок есть не в каждой смете: здесь все работы разложены по комнатам.
+  const common = heads.find((x) => /Общее по дому/.test(x))
+  if (common) t.ok('«общее по дому» — нейтральное серо-синее', colOf(common) === '#7a9aaa', colOf(common))
+  // Имя комнаты сверяем со справочником по смыслу, а не по написанию: на чертеже
+  // пишут «Санузел», в справочнике — «Сан узел».
+  const known = { 'зал': '#8e44ad', 'спальня': '#2980b9', 'санузел': '#16a085', 'коридор': '#e67e22' }
+  const named = heads.filter((x) => !/Общее по дому/.test(x))
+  named.forEach((x) => {
+    const nm = ((x.match(/>[▸▾] ([^<·]+)/) || [])[1] || '').trim().toLowerCase().replace(/ё/g, 'е').replace(/[^а-я]/g, '')
+    if (!known[nm]) return
+    t.ok('цвет «' + nm + '» — как в справочнике комнат', colOf(x) === known[nm], 'получили: ' + colOf(x))
+  })
+
   const head = p.dom.node({ a: 'est-block-open', b: '3|' + blocks[0].key })
   p.run('bind();'); head.onclick()
   t.ok('блок сворачивается',

@@ -1972,6 +1972,21 @@ function roomsFor(kind){ var c=EST_ROOMS[kind]; return (Array.isArray(c)&&c.leng
 // Перед первым редактированием комнат вида — материализуем копию дефолта.
 function ensureKindRooms(kind){ if(!Array.isArray(EST_ROOMS[kind]))EST_ROOMS[kind]=roomsFor(kind).map(function(r){return {k:r.k,n:r.n,emoji:r.emoji,color:r.color};}); }
 const ROOMS_EST=ROOMS_BANYA; // по умолчанию — баня (обратная совместимость)
+// Цвет и значок помещения для блоков сметы. Сперва ищем комнату в справочнике —
+// тогда санузел в смете того же цвета, что в шаблоне и на чертеже; сверяем по
+// смыслу, а не по написанию («Санузел» на плане против «Сан узел» в справочнике).
+// Незнакомую комнату красим стабильно по имени: цвет не должен прыгать от правки
+// соседней строки.
+const ROOM_COL_FREE=["#7d3c98","#b9770e","#148f77","#a93226","#1f618d","#6c3483"];
+function roomNorm(s){ return String(s||"").toLowerCase().replace(/ё/g,"е").replace(/[^a-zа-я0-9]/g,""); }
+function roomLook(name, kind){
+  const n=roomNorm(name);
+  if(!n)return {color:"#7a9aaa", emoji:"🏗️"};   // общее по дому — нейтральное
+  const list=roomsFor(kind||"house");
+  for(let i=0;i<list.length;i++){ if(roomNorm(list[i].n)===n)return {color:list[i].color, emoji:list[i].emoji}; }
+  let h=0; for(let i=0;i<n.length;i++)h=(h*31+n.charCodeAt(i))>>>0;
+  return {color:ROOM_COL_FREE[h%ROOM_COL_FREE.length], emoji:"📍"};
+}
 // Площадь помещения для чистовой работы: по комнате (e.room) и типу из названия (стены/пол/потолок).
 function workFillArea(e, specs, kind){
   if(!specs||!Array.isArray(specs.rooms))return null;
@@ -13182,12 +13197,16 @@ function estStageBody(st, moving, mi, rows, sh, w, canRule){
     const from=base, to=base+b.positions.length; base=to;
     const id=st.n+"|"+b.key;
     const shut=!!blockShut[id];
-    h+='<div style="display:flex;align-items:center;gap:5px;margin:8px 0 2px;padding:4px 8px;background:#f6f8fb;border-radius:8px">'+
-        '<span data-a="est-block-open" data-b="'+esc(id)+'" style="flex:1;min-width:0;font-size:10.5px;font-weight:800;color:#5a7a9a;letter-spacing:0.4px;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;padding:3px 0">'+
+    // Каждое помещение своим цветом: этап из четырёх комнат одинаковыми серыми
+    // шапками читается как одна простыня — глаз не цепляется за границу блока.
+    const rl=roomLook(b.room, sh&&sh.kind);
+    h+='<div style="display:flex;align-items:center;gap:5px;margin:8px 0 2px;padding:4px 8px;background:'+rl.color+'12;border:1px solid '+rl.color+'2e;border-left:3px solid '+rl.color+';border-radius:8px">'+
+        '<span style="flex-shrink:0;font-size:11px;line-height:1">'+rl.emoji+'</span>'+
+        '<span data-a="est-block-open" data-b="'+esc(id)+'" style="flex:1;min-width:0;font-size:10.5px;font-weight:800;color:'+rl.color+';letter-spacing:0.4px;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;padding:3px 0">'+
           (shut?"▸ ":"▾ ")+esc(b.room||"Общее по дому")+
           '<span style="font-weight:700;color:#9aabbf;text-transform:none;letter-spacing:0"> · '+b.positions.length+' '+pluralRu(b.positions.length,"работа","работы","работ")+'</span>'+
         '</span>'+
-        '<span style="font-size:11.5px;font-weight:800;color:#5a7a9a;white-space:nowrap">'+Math.round(b.cost).toLocaleString("ru-RU")+' ₽</span>'+
+        '<span style="font-size:11.5px;font-weight:800;color:'+rl.color+';white-space:nowrap">'+Math.round(b.cost).toLocaleString("ru-RU")+' ₽</span>'+
         // Имя комнаты правится ЗДЕСЬ же: смотрят на него в смете, а живёт оно в
         // модели — то же имя стоит на чертеже и в площадях.
         (canRule&&b.key?'<button data-a="est-room-name" data-r="'+esc(b.key)+'" title="Переименовать помещение" style="width:24px;height:24px;background:transparent;border:1px solid #dde6f0;border-radius:7px;cursor:pointer;color:#7a9aaa;font-size:11px;flex-shrink:0">✎</button>':'')+
