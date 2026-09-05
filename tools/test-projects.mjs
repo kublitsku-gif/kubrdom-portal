@@ -796,4 +796,62 @@ function create(p, name) {
     !p.q('Object.keys(projects[0].posStage||{}).filter(function(k){return k.indexOf("add:")===0;}).length'))
 }
 
+// ── Материалы переставляются тем же жестом ──────────────────────────────────
+// Список читают сверху вниз и по нему закупают. Жест тот же, что у работ: взял —
+// указал место, а на соседнюю строку быстрее тапнуть стрелкой.
+{
+  t.section('Порядок материалов в строке')
+  const p = panel()
+  create(p, 'Дом с материалами')
+  // Строка с тремя материалами: у смет набора их по одному, а переставлять надо
+  // то, что видно в списке.
+  p.run('estimates=estimates.concat([{id:"e_many",kind:"house",name:"Обшивка",stage:2,' +
+    'lines:[{pid:"p_osb",qty:2},{pid:"p_sock",qty:50}]}]);')
+  p.run('projBand="parts";')
+  const key = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.estId==="e_many";})[0].key')
+  const openMats = p.dom.node({ a: 'est-mats-open', k: key }); p.run('bind();'); openMats.onclick()
+  const mats = () => p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0].mats.map(function(m){return m.pid||m.id;})')
+  const was = mats()
+  const cost0 = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0].cost')
+  if (was.length < 2) {
+    t.ok('в строке есть что переставлять', false, 'материалов: ' + was.length)
+  } else {
+    const idle = p.run('tProjects()')
+    t.ok('у материала есть ↕', idle.indexOf('data-a="est-mat-grab"') >= 0)
+    t.ok('до взятия мест «сюда» нет', idle.indexOf('data-a="est-mat-drop"') < 0)
+
+    const grab = p.dom.node({ a: 'est-mat-grab', k: key + '|' + was[was.length - 1] })
+    p.run('bind();'); grab.onclick()
+    const held = p.run('tProjects()')
+    t.ok('места «сюда» раскрылись', held.indexOf('data-a="est-mat-drop"') >= 0)
+    t.ok('и стрелки шага у взятого', (held.match(/data-a="est-mat-step"/g) || []).length === 2)
+
+    const slot = p.dom.node({ a: 'est-mat-drop', k: key + '|' + was[was.length - 1], i: '0' })
+    p.run('bind();'); slot.onclick()
+    t.ok('материал встал первым', mats()[0] === was[was.length - 1], mats().join(','))
+    t.ok('порядок записан в лист', !!p.q('projects[0].matOrder'))
+    t.ok('материал отпущен', p.q('matMoveKey') === '')
+    t.ok('цена строки не изменилась',
+      p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0].cost') === cost0)
+    t.ok('справочник не тронут', p.q('estimates.length') === 3)
+
+    // Шаг вниз — и материал остаётся взятым: шагов обычно несколько подряд.
+    const g2 = p.dom.node({ a: 'est-mat-grab', k: key + '|' + was[was.length - 1] })
+    p.run('bind();'); g2.onclick()
+    const step = p.dom.node({ a: 'est-mat-step', k: key + '|' + was[was.length - 1], d: '1' })
+    p.run('bind();'); step.onclick()
+    t.ok('шаг вниз сработал', mats()[1] === was[was.length - 1], mats().join(','))
+    t.ok('и материал ещё взят', p.q('matMoveKey') === key + '|' + was[was.length - 1])
+
+    // На стройку уезжает тот же порядок, что показан.
+    p.run('projBand="money";tProjects();')
+    const toObj = p.dom.node({ a: 'spec-to-object', id: p.q('projects[0].id') }); p.run('bind();'); toObj.onclick()
+    const w = p.q('objects[0].stages.reduce(function(a,s){return a.concat(s.works||[]);},[])')
+      .filter((x) => x.posKey === key)[0]
+    t.ok('в объекте тот же порядок материалов',
+      (w.mats || []).map((m) => m.pid).join(',') === mats().join(','),
+      (w.mats || []).map((m) => m.pid).join(','))
+  }
+}
+
 t.done()

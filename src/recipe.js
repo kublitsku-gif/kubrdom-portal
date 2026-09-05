@@ -357,13 +357,32 @@ export function matOffOf(sheet, key) {
   return Array.isArray(v) ? v.map(String) : [];
 }
 
+// Порядок материалов внутри строки (`sheet.matOrder[posKey][адрес] = номер`).
+// Список читают сверху вниз и по нему закупают: сначала лист, потом крепёж. В
+// справочнике порядок общий на все дома, поэтому перестановка живёт на листе —
+// как замена, ручное количество и всё остальное про один дом.
+export function matOrderOf(sheet, key) {
+  return (((sheet && sheet.matOrder) || {})[key]) || {};
+}
+function sortMats(mats, order) {
+  if (!Object.keys(order || {}).length) return mats;
+  return mats.map(function (m, i) { return { m: m, i: i }; }).sort(function (a, b) {
+    const av = order[matKeyOf(a.m)], bv = order[matKeyOf(b.m)];
+    if (av != null && bv != null) return av - bv;
+    if (av != null) return -1;          // расставленные руками идут первыми
+    if (bv != null) return 1;
+    return a.i - b.i;                   // остальные — в порядке сметы
+  }).map(function (r) { return r.m; });
+}
+
 export function applyMatEdits(positions, sheet, products) {
   const swaps = (sheet && sheet.mats) || {};
   const qtys = (sheet && sheet.matQty) || {};
   const adds = (sheet && sheet.matAdd) || {};
   const offs = (sheet && sheet.matOff) || {};
+  const ords = (sheet && sheet.matOrder) || {};
   if (!Object.keys(swaps).length && !Object.keys(qtys).length && !Object.keys(adds).length
-    && !Object.keys(offs).length) return positions;
+    && !Object.keys(offs).length && !Object.keys(ords).length) return positions;
   const prodById = {};
   (products || []).forEach(function (p) { if (p && p.id) prodById[p.id] = p; });
   return (positions || []).map(function (pos) {
@@ -371,9 +390,12 @@ export function applyMatEdits(positions, sheet, products) {
     const q = qtys[pos.key] || {};
     const add = adds[pos.key] || [];
     const off = matOffOf(sheet, pos.key);
-    if (!Object.keys(sw).length && !Object.keys(q).length && !add.length && !off.length) return pos;
-    // Убранный материал — тоже правка: без него строка возвращалась бы как есть.
-    let hit = !!add.length || !!off.length;
+    const ord = matOrderOf(sheet, pos.key);
+    if (!Object.keys(sw).length && !Object.keys(q).length && !add.length && !off.length
+      && !Object.keys(ord).length) return pos;
+    // Убранный материал и ручной порядок — тоже правка: без них строка
+    // возвращалась бы как есть.
+    let hit = !!add.length || !!off.length || !!Object.keys(ord).length;
     const mats = (pos.mats || []).map(function (m) {
       let out = m;
       const nid = sw[m.pid || ""];
@@ -404,7 +426,8 @@ export function applyMatEdits(positions, sheet, products) {
     }));
     // Убранный материал вычитается ПОСЛЕДНИМ — после замены: человек убирает то,
     // что видит на экране, а видит он уже новый товар.
-    const kept = off.length ? full.filter(function (m) { return off.indexOf(matKeyOf(m)) < 0; }) : full;
+    const kept = sortMats(
+      off.length ? full.filter(function (m) { return off.indexOf(matKeyOf(m)) < 0; }) : full, ord);
     const sum = kept.reduce(function (a, m) { return a + (Number(m.cost) || 0) * (Number(m.qty) || 0); }, 0);
     return Object.assign({}, pos, { mats: kept, cost: Math.round(sum * (Number(pos.factor) || 1)) });
   });

@@ -8,7 +8,7 @@
 import { presetModel, MODEL_PRESETS } from '../src/model.js'
 import { sheetPositions } from '../src/spec.js'
 import { rulePositions, allPositions, allPositionsRaw, ruleText, ruleReady, probeSheet,
-  layerPositions, pieArea, pieCost, applyPicks, optLabelOf, optPrefixOf, applyRooms, roomKeyOf, posRoomOf, ROOM_HOUSE } from '../src/recipe.js'
+  layerPositions, pieArea, pieCost, applyPicks, optLabelOf, optPrefixOf, applyRooms, roomKeyOf, posRoomOf, ROOM_HOUSE, applyMatEdits, matOrderOf } from '../src/recipe.js'
 import { modelAreas, modelTotals, applyLayers } from '../src/model.js'
 import { gaps2 } from '../src/spec2.js'
 
@@ -354,6 +354,31 @@ const R = (o) => Object.assign({ id: 'r1', kind: 'house', what: 'surface', k: 'w
   }).find((p) => p.key === ruled[0].key)
   t.ok('комнатную работу можно отдать дому', roomKeyOf(back) === '' && back.roomSet === true)
   t.ok('адрес приписки читается', posRoomOf({ posRoom: { a: 'x' } }, 'a') === 'x')
+}
+
+// ── 9. Порядок материалов внутри строки ─────────────────────────────────────
+// Список материалов читают сверху вниз и по нему закупают: сначала лист, потом
+// крепёж. В справочнике порядок общий на все дома, поэтому перестановка живёт на
+// листе — как замена и ручное количество.
+{
+  t.section('Порядок материалов')
+  const pos = [{ key: 'k', name: 'Обшивка', factor: 1, cost: 3,
+    mats: [{ pid: 'a', n: 'A', cost: 1, qty: 1 }, { pid: 'b', n: 'B', cost: 1, qty: 1 }, { pid: 'c', n: 'C', cost: 1, qty: 1 }] }]
+  const moved = applyMatEdits(pos, { matOrder: { k: { c: 0, a: 1, b: 2 } } }, [])
+  t.ok('порядок применился', moved[0].mats.map((m) => m.pid).join(',') === 'c,a,b',
+    moved[0].mats.map((m) => m.pid).join(','))
+  t.ok('материалы не потерялись', moved[0].mats.length === 3)
+  t.ok('и цена строки та же', moved[0].cost === 3, String(moved[0].cost))
+
+  // Расставленные руками идут первыми, остальные — в порядке сметы: иначе
+  // дописанный материал молча уезжал бы в начало списка.
+  const half = applyMatEdits(pos, { matOrder: { k: { c: 0 } } }, [])
+  t.ok('неразмеченные остаются в порядке сметы',
+    half[0].mats.map((m) => m.pid).join(',') === 'c,a,b', half[0].mats.map((m) => m.pid).join(','))
+
+  t.ok('без разметки список прежний',
+    applyMatEdits(pos, {}, [])[0].mats.map((m) => m.pid).join(',') === 'a,b,c')
+  t.ok('адрес порядка читается', matOrderOf({ matOrder: { k: { a: 1 } } }, 'k').a === 1)
 }
 
 t.done()
