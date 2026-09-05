@@ -429,6 +429,25 @@ function create(p, name) {
   p.run('bind();'); slot2.onclick()
   t.ok('и возвращается обратно', stageKeys().join(',') === before.join(','), stageKeys().join(','))
 
+  // Далеко строку несут местом «сюда», а на соседнюю позицию быстрее тапнуть
+  // стрелкой — и строка остаётся взятой, потому что шагов обычно несколько.
+  t.ok('до взятия стрелок нет', p.run('tProjects()').indexOf('data-a="est-pos-step"') < 0)
+  const grabS = p.dom.node({ a: 'est-pos-grab', k: before[0] })
+  p.run('bind();'); grabS.onclick()
+  const withSteps = p.run('tProjects()')
+  t.ok('у взятой строки две стрелки', (withSteps.match(/data-a="est-pos-step"/g) || []).length === 2)
+  t.ok('вверх у первой строки отключена', /data-a="est-pos-step" data-k="[^"]*" data-d="-1" disabled/.test(withSteps))
+  const step = p.dom.node({ a: 'est-pos-step', k: before[0], d: '1' })
+  p.run('bind();'); step.onclick()
+  t.ok('шаг вниз переставил строку', stageKeys().join(',') === before.slice().reverse().join(','),
+    stageKeys().join(','))
+  t.ok('и строка осталась взятой', p.q('estMoveKey') === before[0])
+  const stepUp = p.dom.node({ a: 'est-pos-step', k: before[0], d: '-1' })
+  p.run('bind();'); stepUp.onclick()
+  t.ok('шаг вверх вернул на место', stageKeys().join(',') === before.join(','))
+  const cancel = p.dom.node({ a: 'est-pos-grab', k: before[0] })
+  p.run('bind();'); cancel.onclick()
+
   // Передумал — тот же тап кладёт строку обратно, а не оставляет экран в режиме переноса.
   const grab3 = p.dom.node({ a: 'est-pos-grab', k: before[0] })
   p.run('bind();'); grab3.onclick()

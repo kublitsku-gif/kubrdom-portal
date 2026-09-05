@@ -56,7 +56,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
 import { totals2, issues2, works2 } from "../src/spec2.js";
 import { allPositions, allPositionsRaw, addedPositions, matKeyOf, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
   pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
-  optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf, ROOM_HOUSE } from "../src/recipe.js";
+  optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf, ROOM_HOUSE, roomKeyOf } from "../src/recipe.js";
 import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
 import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
@@ -12921,6 +12921,13 @@ function estDroppedHtml(sh, canRule){
 // умещаются в двадцать пикселей, в которые на телефоне не попасть. Взятая
 // строка раскрывает между соседями места «сюда» — они во всю ширину и ставят
 // работу куда надо одним тапом.
+// Шаг на одну строку. Кнопка крупная (26 px) и живёт только у взятой строки:
+// три кнопки в каждой строке смету не читают, а тап мимо двадцати пикселей —
+// то, из-за чего прежние стрелки и убрали.
+function estStepBtn(key, dir, off){
+  return '<button data-a="est-pos-step" data-k="'+esc(key)+'" data-d="'+dir+'"'+(off?' disabled':'')+
+    ' title="'+(dir<0?"Выше на одну строку":"Ниже на одну строку")+'" style="width:26px;height:26px;background:#fff;border:1px solid '+(off?"#e6ecf3":RULE_COL+"66")+';border-radius:7px;cursor:'+(off?"default":"pointer")+';color:'+(off?"#dde6f0":RULE_COL)+';font-size:11px;font-weight:700;line-height:1;padding:0">'+(dir<0?"↑":"↓")+'</button>';
+}
 function estDropSlot(key, j, mi){
   if(mi<0||j===mi||j===mi+1)return '';
   return '<div data-a="est-pos-drop" data-k="'+esc(key)+'" data-i="'+j+'" title="Поставить работу сюда" '+
@@ -13071,7 +13078,16 @@ function estBodyHtml(sh, types, live, actions){
               // Порядок внутри этапа: смета считается сама, но читают её глазами
               // сверху вниз, и бригаде важно, что сначала обрешётка, потом обшивка.
               (canMove&&arr.length>1
-                ? '<button data-a="est-pos-grab" data-k="'+esc(p.key)+'" title="'+(p.key===moving?"Отменить перенос":"Переставить в этапе: возьмите строку и укажите место")+'" style="height:24px;padding:0 7px;background:'+(p.key===moving?RULE_COL:"transparent")+';border:1px solid '+(p.key===moving?RULE_COL:"#dde6f0")+';border-radius:7px;cursor:pointer;color:'+(p.key===moving?"#fff":"#7a9aaa")+';font-size:11px;font-weight:700;flex-shrink:0;line-height:1">'+(p.key===moving?"✕":"↕")+'</button>'
+                ? (p.key===moving
+                    // Взятая строка ходит и по одному шагу: далеко её несут местом
+                    // «сюда», а на соседнюю позицию быстрее тапнуть стрелкой. Строка
+                    // при этом остаётся взятой — шагов обычно несколько подряд.
+                    ? '<span style="display:flex;align-items:center;gap:3px;flex-shrink:0">'+
+                        estStepBtn(p.key, -1, pi<=0||roomKeyOf(arr[pi-1])!==roomKeyOf(p))+
+                        estStepBtn(p.key, 1, pi>=arr.length-1||roomKeyOf(arr[pi+1])!==roomKeyOf(p))+
+                        '<button data-a="est-pos-grab" data-k="'+esc(p.key)+'" title="Положить строку обратно" style="height:26px;padding:0 8px;background:'+RULE_COL+';border:1px solid '+RULE_COL+';border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700;line-height:1">✕</button>'+
+                      '</span>'
+                    : '<button data-a="est-pos-grab" data-k="'+esc(p.key)+'" title="Переставить в этапе: возьмите строку и укажите место" style="height:24px;padding:0 7px;background:transparent;border:1px solid #dde6f0;border-radius:7px;cursor:pointer;color:#7a9aaa;font-size:11px;font-weight:700;flex-shrink:0;line-height:1">↕</button>')
                 : '')+
               // Этап работы правится тут же: по этапам идут сроки, приёмка и
               // транши, и уводить человека за этим в правило — значит менять
@@ -22042,6 +22058,27 @@ function bind(){
       estMoveKey=(estMoveKey===key)?"":key;
       estMoveSheet=estMoveKey?String((sh&&sh.id)||""):"";
       fl();
+    };}
+    // Шаг на одну строку внутри своего помещения. Соседа из чужой комнаты не
+    // трогаем: группировка вернула бы строку обратно тем же рендером.
+    else if(a==="est-pos-step"){el.onclick=()=>{
+      const key=el.dataset.k||"", dir=Number(el.dataset.d)||0;
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!key||!dir)return;
+      const w=works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes }));
+      const st=(w.stages||[]).find(function(s){ return s.positions.some(function(x){ return x.key===key; }); });
+      if(!st)return;
+      const list=st.positions;
+      const i=list.findIndex(function(x){ return x.key===key; });
+      const j=i+dir;
+      if(i<0||j<0||j>=list.length)return;
+      if(roomKeyOf(list[j])!==roomKeyOf(list[i]))return;
+      const keys=list.map(function(x){ return x.key; });
+      keys.splice(j, 0, keys.splice(i, 1)[0]);
+      const map=Object.assign({}, sh.posOrder||{});
+      keys.forEach(function(k,n){ map[k]=n; });
+      // Строку НЕ отпускаем: шагов подряд обычно несколько, а отпущенная строка
+      // заставляла бы брать её заново на каждый шаг.
+      sh.posOrder=map; scheduleSave(); fl();
     };}
     else if(a==="est-pos-drop"){el.onclick=()=>{
       const key=el.dataset.k||"", j=Number(el.dataset.i);

@@ -165,6 +165,16 @@ const SHEET = {
     const held = p.run('tSpec2()')
     t.ok('места «сюда» раскрылись', held.indexOf('data-a="est-pos-drop"') >= 0)
     t.ok('и видно, какую строку несём', /ПЕРЕНОШУ/.test(held))
+    // Шаг на одну строку — той же взятой строкой: стрелки живут только у неё.
+    t.ok('у взятой строки есть стрелки', (held.match(/data-a="est-pos-step"/g) || []).length === 2)
+    const step = p.dom.node({ a: 'est-pos-step', k: was[0], d: '1' })
+    p.run('bind();'); step.onclick()
+    t.ok('шаг вниз сработал', stKeys()[0] === was[1], stKeys().join(','))
+    t.ok('и строка осталась взятой', p.q('estMoveKey') === was[0])
+    const stepUp = p.dom.node({ a: 'est-pos-step', k: was[0], d: '-1' })
+    p.run('bind();'); stepUp.onclick()
+    t.ok('шаг вверх вернул как было', stKeys().join(',') === was.join(','))
+
     const slot = p.dom.node({ a: 'est-pos-drop', k: was[0], i: String(was.length) })
     p.run('bind();'); slot.onclick()
     t.ok('работа встала на указанное место', stKeys().join(',') === was.slice(1).concat([was[0]]).join(','),
