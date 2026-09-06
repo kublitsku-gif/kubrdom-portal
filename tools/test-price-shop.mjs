@@ -108,4 +108,38 @@ function panel() {
   t.ok('повторный тап снимает пометку', !p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].oosAt'))
 }
 
+// ── 4. Видно, что подтверждено, а что нет ───────────────────────────────────
+// Сверка идёт по шестнадцати позициям, и через пять карточек уже не помнишь, где
+// ты был. Поэтому у каждой карточки — свой статус: сверено сегодня, давно, не
+// сверялось, кончился. Без этого сверка превращается в «кажется, всё проверил».
+{
+  t.section('Статус каждой карточки')
+  const p = panel()
+  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
+
+  const html0 = p.run('tSpec2()')
+  t.ok('пока не сверяли — так и написано', /не сверял/i.test(html0), 'нет метки «не сверялось»')
+  t.ok('счётчик показывает ноль из двух', /сверено 0 из 2/i.test(html0), 'нет счётчика')
+  t.ok('есть кнопка «цена верна»', html0.indexOf('data-a="price-shop-ok"') >= 0)
+
+  // Подтвердили цену как есть — карточка зеленеет с датой.
+  const ok = p.dom.node({ a: 'price-shop-ok', p: 'p_kab', o: '' })
+  p.run('bind();'); ok.onclick()
+  t.ok('дата подтверждения записана', !!p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].priceOkAt'))
+  const html1 = p.run('tSpec2()')
+  t.ok('статус стал «сверено»', /сверено 6 сен|сверено сегодня/i.test(html1), 'нет свежего статуса')
+  t.ok('счётчик поехал', /сверено 1 из 2/i.test(html1), 'счётчик не обновился')
+
+  // Новая цена — тоже подтверждение: смотрели же в магазине.
+  const inp = p.dom.node({ a: 'price-shop-set', p: 'p_br', o: '' })
+  p.run('bind();'); inp.value = '120'; inp.onchange()
+  t.ok('ввод цены подтверждает карточку', !!p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].priceOkAt'))
+  t.ok('сверены обе', /сверено 2 из 2/i.test(p.run('tSpec2()')))
+
+  // Давняя сверка — не то же самое, что свежая: цену могли поднять неделю назад.
+  p.run('expProducts.filter(function(x){return x.id==="p_kab";})[0].priceOkAt="2026-06-01";')
+  t.ok('старая сверка помечена как давняя', /давно/i.test(p.run('tSpec2()')), 'нет метки «давно»')
+}
+
 t.done()

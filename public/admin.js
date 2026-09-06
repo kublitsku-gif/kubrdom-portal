@@ -13509,6 +13509,24 @@ function dayRu(iso){
 // а Ozon и Лемана роботов не пускают (401 и редирект на антибот) — значит ходит
 // человек, а портал берёт на себя остальное: собрать ссылки, принять новую цену,
 // записать историю и пересчитать проект.
+// Свежесть сверки. Цена, подтверждённая месяц назад, — это не подтверждённая
+// цена: магазины двигают ценники чаще, чем мы строим дома.
+const PRICE_FRESH_DAYS=14;
+function priceDaysAgo(iso){
+  const d=Date.parse(String(iso||"")+"T00:00:00");
+  if(!isFinite(d))return null;
+  return Math.floor((Date.now()-d)/86400000);
+}
+// Статус одной карточки товара: по нему видно, где ты уже был и что нашёл.
+// Без него сверка по шестнадцати позициям превращается в «кажется, всё проверил».
+function priceShopState(o){
+  if(o&&o.oosAt)return { k:"oos", col:"#e74c3c", dot:"✕", txt:"кончился" };
+  const ago=priceDaysAgo(o&&o.okAt);
+  if(ago===null)return { k:"new", col:"#c3cedb", dot:"○", txt:"не сверялось" };
+  if(ago<=PRICE_FRESH_DAYS)return { k:"ok", col:"#16a085", dot:"✓", txt:"сверено "+dayRu(o.okAt) };
+  return { k:"old", col:"#e67e22", dot:"⏳", txt:"давно · "+dayRu(o.okAt) };
+}
+
 function priceShopRows(st){
   const byId={}; (expProducts||[]).forEach(function(x){ if(x&&x.id)byId[x.id]=x; });
   const seen={}, out=[];
@@ -13525,7 +13543,16 @@ function priceShopHtml(st){
   const rows=priceShopRows(st);
   if(!rows.length)return '';
   return '<div style="margin:0 0 10px;padding:10px;border:1px solid #8e44ad33;border-radius:11px;background:#8e44ad08">'+
-    '<div style="font-size:10px;font-weight:800;color:#8e44ad;letter-spacing:0.3px;margin-bottom:2px">СВЕРКА С МАГАЗИНАМИ · '+rows.length+'</div>'+
+    (function(){
+      // Счётчик — ответ на «я всё проверил?»: считаем карточки, а не товары,
+      // потому что ходить приходится в каждую.
+      let all=0, done=0;
+      rows.forEach(function(pr){
+        const list=matOffers(pr).length?matOffers(pr):[{ okAt:pr.priceOkAt, oosAt:pr.oosAt }];
+        list.forEach(function(o){ all++; const st=priceShopState(o); if(st.k==="ok"||st.k==="oos")done++; });
+      });
+      return '<div style="font-size:10px;font-weight:800;color:#8e44ad;letter-spacing:0.3px;margin-bottom:2px">СВЕРКА С МАГАЗИНАМИ · сверено '+done+' из '+all+'</div>';
+    })()+
     '<div style="font-size:10.5px;color:#7a9aaa;line-height:1.4;margin-bottom:8px">Откройте карточку, посмотрите цену и впишите её. Цена уйдёт в каталог со всей историей, и проект пересчитается сам.</div>'+
     rows.map(function(pr){
       const mode=EXP_MODES.find(function(x){return x.k===pr.mode;})||EXP_MODES[0];
@@ -13539,13 +13566,16 @@ function priceShopHtml(st){
         list.map(function(o){
           const oos=!!o.oosAt, act=offers.length?(o.id===pr.offer):true;
           const who=(o.store||"магазин")+(o.seller?" · "+o.seller:"");
+          const stt=priceShopState(offers.length?o:{ okAt:pr.priceOkAt, oosAt:pr.oosAt });
           return '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:2px 0 2px 8px">'+
             (act?'<span title="Из этой карточки берётся цена" style="font-size:9px;color:#16a085">●</span>':'<span style="font-size:9px;color:#dde6f0">○</span>')+
+            '<span title="'+esc(stt.txt)+'" style="font-size:9.5px;font-weight:800;color:'+stt.col+';white-space:nowrap;min-width:96px">'+stt.dot+' '+esc(stt.txt)+'</span>'+
             (/^https?:\/\//.test(String(o.url||""))
               ? '<a href="'+esc(o.url)+'" target="_blank" rel="noopener" style="flex:1 1 120px;font-size:10.5px;font-weight:700;color:'+(oos?"#c3cedb":"#2980b9")+';text-decoration:'+(oos?"line-through":"none")+'">'+esc(who)+' ↗</a>'
               : '<span style="flex:1 1 120px;font-size:10.5px;color:#c3cedb">'+esc(who)+' · без ссылки</span>')+
             '<span style="font-size:10.5px;color:#9aabbf;white-space:nowrap">'+(Number(o.unitCost)||0).toLocaleString("ru-RU",{maximumFractionDigits:2})+' ₽/'+mode.unit+'</span>'+
             '<input data-a="price-shop-set" data-p="'+esc(pr.id)+'" data-o="'+esc(o.id||"")+'" placeholder="новая" inputmode="decimal" style="width:70px;padding:4px 7px;border:1px solid #8e44ad55;border-radius:7px;font-size:11px;font-weight:700;text-align:right;outline:none;background:#fff">'+
+            '<button data-a="price-shop-ok" data-p="'+esc(pr.id)+'" data-o="'+esc(o.id||"")+'" title="Цена верна — подтвердить без правки" style="padding:4px 8px;border:1px solid #16a08555;background:#fff;color:#16a085;border-radius:7px;font-size:10.5px;font-weight:700;cursor:pointer;white-space:nowrap">✓ верна</button>'+
             '<button data-a="price-shop-oos" data-p="'+esc(pr.id)+'" data-o="'+esc(o.id||"")+'" title="'+(oos?"Снова в наличии":"Здесь кончился")+'" style="padding:4px 8px;border:1px solid '+(oos?"#e74c3c":"#dde6f0")+';background:'+(oos?"#e74c3c":"#fff")+';color:'+(oos?"#fff":"#8a97a6")+';border-radius:7px;font-size:10.5px;font-weight:700;cursor:pointer;white-space:nowrap">'+(oos?"вернулся":"кончился")+'</button>'+
           '</div>';
         }).join("")+
@@ -22870,6 +22900,17 @@ function bind(){
     // Цены материалов этапа — по каталогу. Правим ТОЛЬКО то, что лежит копией:
     // дописанные руками материалы. У остальных цена и так приезжает из карточки
     // товара при каждом расчёте, и «обновлять» там нечего.
+    else if(a==="price-shop-ok"){el.onclick=()=>{
+      const pid=el.dataset.p||"", oid=el.dataset.o||"";
+      const prod=(expProducts||[]).find(function(x){ return x&&x.id===pid; }); if(!prod)return;
+      // «Цена верна» — тоже результат похода в магазин: карточку смотрели, цифра
+      // та же. Без этой кнопки подтвердить цену можно было только перевводом.
+      const off=oid?matOffers(prod).find(function(x){ return x.id===oid; }):null;
+      if(off){ off.okAt=todayISO(); if(off.oosAt)delete off.oosAt; if(matOfferAlive(prod).length&&prod.oosAt)delete prod.oosAt; }
+      else prod.priceOkAt=todayISO();
+      prod.priceCheckedAt=todayISO();
+      scheduleSave(); fl();
+    };}
     else if(a==="price-shop-set"){el.onchange=()=>{
       const pid=el.dataset.p||"", oid=el.dataset.o||"";
       const prod=(expProducts||[]).find(function(x){ return x&&x.id===pid; }); if(!prod)return;
@@ -22881,6 +22922,7 @@ function bind(){
       const off=oid?matOffers(prod).find(function(x){ return x.id===oid; }):null;
       if(off){
         off.unitCost=v;
+        off.okAt=todayISO();
         if(off.oosAt)delete off.oosAt;
         const best=matOfferBest(prod);
         const cur=matOffers(prod).find(function(x){ return x.id===prod.offer; });
@@ -22897,6 +22939,7 @@ function bind(){
       if(!off)prod.unitCost=v;
       pricePush(prod, Number(prod.unitCost)||0, todayISO(), who);
       prod.priceCheckedAt=todayISO();
+      if(!off)prod.priceOkAt=todayISO();
       // Цена вернулась — значит товар в магазине есть.
       if(prod.oosAt)delete prod.oosAt;
       scheduleSave(); fl();
@@ -22907,8 +22950,8 @@ function bind(){
       // Кончился у КОНКРЕТНОГО продавца: остальные карточки живут своей жизнью, и
       // портал сам перейдёт на живую. Цену не обнуляем — товар вернётся, а смета
       // не должна дешеветь из-за пустого склада.
-      if(oid)matOfferOos(prod, oid);
-      else if(prod.oosAt)delete prod.oosAt; else prod.oosAt=todayISO();
+      if(oid){ matOfferOos(prod, oid); const o=matOffers(prod).find(function(x){ return x.id===oid; }); if(o)o.okAt=todayISO(); }
+      else { if(prod.oosAt)delete prod.oosAt; else prod.oosAt=todayISO(); prod.priceOkAt=todayISO(); }
       prod.priceCheckedAt=todayISO();
       scheduleSave(); fl();
     };}
