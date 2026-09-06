@@ -1321,5 +1321,30 @@ const SHEET = {
   t.ok('и подпись блока', /СОСТАВ · \d/.test(html), 'нет подписи блока')
 }
 
+// ── Рулон называется рулоном ────────────────────────────────────────────────
+// Экран сметы у двух разделов ОДИН: то же самое сторожит test-projects.
+{
+  t.section('Слово одной покупки')
+  const p = boot({})
+  p.set({
+    expProducts: [{ id: 'p_film', name: 'Пароизоляция', unitCost: 20, store: 'Лемана',
+      mode: 'm2', sheetM2: 60, packName: 'рулон' }],
+    estimates: [{ id: 'e_win', kind: 'house', name: 'Монтаж окна', stage: 2, optPoint: 'win',
+      lines: [{ id: 'l1', pid: 'p_film', qty: 25 }] }],
+    dbPlans: [], crmClients: [], specSheets: [], specSheets2: [], winTypes: [], objects: [],
+    templates: [], contractDocs: [], purchases: [], issues: [], users: [], stock: [],
+    settings: { specMarkup: 30 }, buildRules: [],
+  })
+  p.run('spec2Tab="scheme";tSpec2();')
+  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
+  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key')
+  p.run('matsOpen[' + JSON.stringify(key) + ']=1;')
+  const html = p.run('tSpec2()').replace(/[  ]/g, ' ')
+  t.ok('пересчёт называет рулон рулоном', /≈ [\d,]+ рулон/.test(html),
+    JSON.stringify(html.match(/≈ [^<]+/g)))
+  t.ok('и слова «лист» рядом нет', !/≈ [\d,]+ лист/.test(html), 'остался «лист»')
+}
+
 t.done()
 

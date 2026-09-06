@@ -151,6 +151,9 @@ export function positionFor(est, ctx, prodById, qtyOverride) {
       pid: l.pid || "", n: p.name || "", store: p.store || "", url: p.url || "",
       cost: Number(p.unitCost) || 0, mode: p.mode || "piece",
       packBase: p.packBase, packPer: p.packPer, lenPer: p.lenPer, sheetM2: p.sheetM2,
+      // Как называется одна покупка (рулон, бухта, мешок) — это свойство ТОВАРА,
+      // и в строке сметы оно должно остаться: иначе рулон снова зовётся листом.
+      packName: p.packName,
       qty: Number(l.qty) || 0,
     };
     // Смета считается либо от площади, либо от числа точек — но не от обоих сразу:

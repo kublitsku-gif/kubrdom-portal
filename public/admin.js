@@ -7680,31 +7680,47 @@ ${(function(){
 
 // ── ЭКСПЕРИМЕНТ: список товаров (демо) ──────────────────────────
 // Описание двух режимов цены для товара (переключатель). null = переключателя нет.
+// Как называется ОДНА покупка этого товара: лист, рулон, хлыст, пачка, бухта.
+// Слово живёт в карточке (`packName`), а не выводится из режима: режим говорит,
+// как товар СЧИТАЕТСЯ, а не как он называется на складе. «≈ 0,4 лист» у рулона
+// пароизоляции читается как ошибка расчёта, хотя число верное, — и человек идёт
+// перепроверять то, что и так посчитано правильно.
+const PACK_WORDS=["лист","рулон","хлыст","пачка","бухта","коробка","мешок","упаковка"];
+function packWord(p){
+  const own=String((p&&p.packName)||"").trim();
+  if(own)return own.slice(0,16);
+  const mode=(p&&p.mode)||"piece";
+  if(mode==="pack")return "пачка";
+  if(mode==="mp")return "хлыст";
+  if(mode==="sheet"||mode==="m2")return "лист";
+  return "шт";
+}
 function expConv(p){
   const mode=EXP_MODES.find(function(x){return x.k===p.mode;})||EXP_MODES[0];
   const uc=Number(p.unitCost)||0;
+  const W=packWord(p);
   if((p.mode==="pack"||p.mode==="sheet")&&Number(p.packPer)>0){
     const ratio=Number(p.packPer), base=p.packBase||"м²", per=ratio>0?Math.round(uc/ratio):uc;
     return {
-      views:[{unit:base,price:per},{unit:mode.unit,price:uc}], def:1,
-      footer:"1 "+mode.unit+" = "+numRu(ratio)+" "+base+(per>0?" · "+per.toLocaleString("ru-RU")+" ₽/"+base:""),
+      views:[{unit:base,price:per},{unit:W,price:uc}], def:1,
+      footer:"1 "+W+" = "+numRu(ratio)+" "+base+(per>0?" · "+per.toLocaleString("ru-RU")+" ₽/"+base:""),
       altTotal:function(qty){return numRu(qty*ratio)+" "+base+" по "+per.toLocaleString("ru-RU")+" ₽";}
     };
   }
   if(p.mode==="m2"&&Number(p.sheetM2)>0){
     const r=Number(p.sheetM2), perSheet=Math.round(uc*r);
     return {
-      views:[{unit:"м²",price:uc},{unit:"лист",price:perSheet}], def:0,
-      footer:"1 лист = "+numRu(r)+" м² · "+perSheet.toLocaleString("ru-RU")+" ₽/лист",
-      altTotal:function(qty){const sheets=r>0?Math.round(qty/r*100)/100:0;return numRu(sheets)+" лист по "+perSheet.toLocaleString("ru-RU")+" ₽";}
+      views:[{unit:"м²",price:uc},{unit:W,price:perSheet}], def:0,
+      footer:"1 "+W+" = "+numRu(r)+" м² · "+perSheet.toLocaleString("ru-RU")+" ₽/"+W,
+      altTotal:function(qty){const sheets=r>0?Math.round(qty/r*100)/100:0;return numRu(sheets)+" "+W+" по "+perSheet.toLocaleString("ru-RU")+" ₽";}
     };
   }
   if(p.mode==="mp"&&Number(p.lenPer)>0){
     const L=Number(p.lenPer), perPiece=Math.round(uc*L);
     return {
-      views:[{unit:"м.п.",price:uc},{unit:"хлыст",price:perPiece}], def:0,
-      footer:"1 хлыст = "+numRu(L)+" м.п. · "+perPiece.toLocaleString("ru-RU")+" ₽/хлыст",
-      altTotal:function(qty){const need=L>0?Math.ceil(qty/L):0;return need+" хлыст ("+numRu(need*L)+" м.п.) по "+perPiece.toLocaleString("ru-RU")+" ₽";}
+      views:[{unit:"м.п.",price:uc},{unit:W,price:perPiece}], def:0,
+      footer:"1 "+W+" = "+numRu(L)+" м.п. · "+perPiece.toLocaleString("ru-RU")+" ₽/"+W,
+      altTotal:function(qty){const need=L>0?Math.ceil(qty/L):0;return need+" "+W+" ("+numRu(need*L)+" м.п.) по "+perPiece.toLocaleString("ru-RU")+" ₽";}
     };
   }
   return null;
@@ -8811,7 +8827,7 @@ function productNew(o){
     mode:(o&&o.mode)||"piece", unitCost:Math.round((Number(o&&o.cost)||0)*100)/100, qty:1,
     priceCheckedAt:todayISO() };
   if(!p.name)return null;
-  ["packBase","packPer","lenPer","sheetM2","shopPer"].forEach(function(k){ if(o&&o[k]!=null)p[k]=o[k]; });
+  ["packBase","packPer","lenPer","sheetM2","shopPer","packName"].forEach(function(k){ if(o&&o[k]!=null)p[k]=o[k]; });
   expProducts=[p].concat(expProducts||[]);
   return p;
 }
@@ -8957,13 +8973,18 @@ function expUsesHtml(p){
 }
 function expEditorHtml(p){
   const mode=EXP_MODES.find(function(x){return x.k===p.mode;})||EXP_MODES[0];
-  const saleUnit=mode.unit;
+  // У пачек и листов одна покупка называется так, как её зовёт товар: рулон,
+  // бухта, мешок. У штук, квадратов и метража единица общая.
+  const word=packWord(p);
+  const saleUnit=(p.mode==="pack"||p.mode==="sheet")?word:mode.unit;
   const uc=Number(p.unitCost)||0, qty=Number(p.qty!=null?p.qty:1)||0;
   const total=Math.round(uc*qty);
   const base=p.packBase||"м²", packPer=Number(p.packPer)||0, sheetM2=Number(p.sheetM2)||0, lenPer=Number(p.lenPer)||0;
   const showPack=(p.mode==="pack"||p.mode==="sheet"); // продаётся ед., содержащей base-единицы
   const showSheet=(p.mode==="m2");                    // продаётся за м², пересчёт в лист
   const showMp=(p.mode==="mp");                        // продаётся хлыстами фиксированной длины
+  // Своё слово нужно там, где одна покупка — это не «штука»: лист, рулон, бухта.
+  const showWord=(showPack||showSheet||showMp);
   const conv=expConv(p);
   const idx=conv?expViewIdx(p,conv):0;
   const storeColor=SC[p.store]||"#16a085";
@@ -9012,13 +9033,19 @@ function expEditorHtml(p){
         ${expField("exp-uc","Цена за "+saleUnit+", ₽",uc)}
         ${expField("exp-qty","Количество, "+saleUnit,qty)}
       </div>
+      ${showWord?`<div style="margin-top:10px">
+        <div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.4px;margin-bottom:4px">КАК НАЗЫВАЕТСЯ ОДНА ПОКУПКА</div>
+        <input id="exp-packname" list="exp-packwords" autocomplete="off" value="${String(p.packName||"").replace(/"/g,"&quot;")}" placeholder="${saleUnit}" style="width:100%;padding:9px 10px;border-radius:10px;border:1.5px solid #e2e8f0;font-size:14px;font-weight:600;color:#0d1b2e;outline:none;box-sizing:border-box">
+        <datalist id="exp-packwords">${PACK_WORDS.map(function(w){return '<option value="'+w+'"></option>';}).join("")}</datalist>
+        <div style="font-size:10px;color:#9aabbf;margin-top:5px">Рулон, бухта, мешок — как товар зовут на складе. Этим словом смета и напишет «≈ 0,4 рулон» вместо «≈ 0,4 лист».</div>
+      </div>`:``}
       ${showPack?`<div style="display:flex;gap:8px;margin-top:8px">${expField("exp-per","1 "+saleUnit+" = ? "+base,packPer||"")}<div style="flex:1"></div></div>
       <div style="margin-top:10px"><div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:5px">ЕДИНИЦА ВНУТРИ ${saleUnit==="лист"?"ЛИСТА":"ПАЧКИ"}</div>
         <div style="display:flex;gap:5px;flex-wrap:wrap">${EXP_BASE_UNITS.map(function(u){const on=u===base;return `<button data-exp-base="${u}" style="border:1px solid ${on?"#16a085":"#dde6f0"};background:${on?"#16a085":"#fff"};color:${on?"#fff":"#5a7a9a"};border-radius:8px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer">${u}</button>`;}).join("")}</div></div>`:``}
-      ${showSheet?`<div style="display:flex;gap:8px;margin-top:8px">${expField("exp-sheetm2","1 лист = ? м²",sheetM2||"")}<div style="flex:1"></div></div>
-      <div style="font-size:10px;color:#9aabbf;margin-top:5px">Заполни — на карточке появится переключатель м² / лист</div>`:``}
-      ${showMp?`<div style="display:flex;gap:8px;margin-top:8px">${expField("exp-lenper","Длина 1 хлыста, м.п.",lenPer||"")}<div style="flex:1"></div></div>
-      <div style="font-size:10px;color:#9aabbf;margin-top:5px">Если продаётся хлыстами (напр. по 3 м) — появится переключатель м.п. / хлыст</div>`:``}
+      ${showSheet?`<div style="display:flex;gap:8px;margin-top:8px">${expField("exp-sheetm2","1 "+word+" = ? м²",sheetM2||"")}<div style="flex:1"></div></div>
+      <div style="font-size:10px;color:#9aabbf;margin-top:5px">Заполни — на карточке появится переключатель м² / ${word}</div>`:``}
+      ${showMp?`<div style="display:flex;gap:8px;margin-top:8px">${expField("exp-lenper","Длина 1 «"+word+"», м.п.",lenPer||"")}<div style="flex:1"></div></div>
+      <div style="font-size:10px;color:#9aabbf;margin-top:5px">Если продаётся ${word=="хлыст"?"хлыстами":"«"+word+"»"} (напр. по 3 м) — появится переключатель м.п. / ${word}</div>`:``}
       ${(showSheet||showMp)?``:`<div style="display:flex;gap:8px;margin-top:8px">${expField("exp-shopper","В одной покупке, "+saleUnit,Number(p.shopPer)>0?p.shopPer:"")}<div style="flex:1"></div></div>
       <div style="font-size:10px;color:#9aabbf;margin-top:5px">Магазин продаёт коробкой (напр. 12 шт в комплекте) — впишите сколько. При сверке цену пишут с ценника, портал поделит сам.</div>`}
     </div>
@@ -9101,6 +9128,7 @@ function bindExpEditor(p){
   bindText("exp-sheetm2","sheetM2",true);
   bindText("exp-lenper","lenPer",true);
   bindText("exp-shopper","shopPer",true);
+  bindText("exp-packname","packName",false);
   // «Где используется»: переход к шаблону/объекту и ручная синхронизация цены.
   el.querySelectorAll("[data-mat-goto]").forEach(function(b){b.onclick=function(){
     const v=String(b.dataset.matGoto||"").split(":"), id=v.slice(1).join(":");
@@ -10384,7 +10412,15 @@ const SPEC_SURFACE={floor:"пол", wall:"стены", ceil:"потолок"};
 // Что физически входит в позицию. Одна формулировка на экран продавца и на печать
 // клиенту: расхождение здесь означает, что в кабинете обещали одно, а на бумаге другое.
 // Количества показываем, закупочные цены — нет: это спецификация, а не наша калькуляция.
-function specMatUnit(m){ const md=EXP_MODES.find(function(x){return x.k===((m&&m.mode)||"piece");}); return md?md.unit:"шт"; }
+function specMatUnit(m){
+  // У пачек и листов единица — это и есть одна покупка, и называется она так, как
+  // её называет товар: рулон, бухта, мешок. У штук, квадратов и метража единица
+  // общая и переименованию не подлежит.
+  const mode=(m&&m.mode)||"piece";
+  if(mode==="pack"||mode==="sheet")return packWord(m);
+  const md=EXP_MODES.find(function(x){return x.k===mode;});
+  return md?md.unit:"шт";
+}
 // Сколько это в базовой единице. «30 лист» ни о чём не говорит тому, кто мерил
 // стены в квадратах: считать в уме 30 × 3,12 при каждом взгляде на строку — не
 // работа человека. Число живёт в самом материале (`packPer`, `sheetM2`, `lenPer`),
@@ -10398,8 +10434,8 @@ function matAltQty(m, qty){
   }
   // У квадратов и метража единица учёта уже базовая — показываем, сколько это
   // ЛИСТОВ и ХЛЫСТОВ: покупают именно их, и «≈» здесь честнее точного числа.
-  if(mode==="m2"&&Number(m.sheetM2)>0)return "≈ "+numRu(Math.ceil(q/Number(m.sheetM2)*10)/10)+" лист";
-  if(mode==="mp"&&Number(m.lenPer)>0)return "≈ "+numRu(Math.ceil(q/Number(m.lenPer)*10)/10)+" хлыст";
+  if(mode==="m2"&&Number(m.sheetM2)>0)return "≈ "+numRu(Math.ceil(q/Number(m.sheetM2)*10)/10)+" "+packWord(m);
+  if(mode==="mp"&&Number(m.lenPer)>0)return "≈ "+numRu(Math.ceil(q/Number(m.lenPer)*10)/10)+" "+packWord(m);
   return "";
 }
 // Пересчёт рядом с количеством — или честное «не из чего». Если в карточке товара
@@ -10411,7 +10447,7 @@ function matAltQtyHtml(m, qty){
   if(alt)return '<span title="Столько это в базовой единице товара" style="color:#5a7a9a;font-weight:700">= '+esc(alt)+'</span>';
   const mode=(m&&m.mode)||"piece";
   const need=(mode==="pack"||mode==="sheet")?((m&&m.packBase)||"м²")
-    :(mode==="m2"?"лист":(mode==="mp"?"хлыст":""));
+    :((mode==="m2"||mode==="mp")?packWord(m):"");
   if(!need||!(m&&m.pid))return '';
   return '<button data-a="est-mat-card" data-p="'+esc(m.pid)+'" '+
     'title="В карточке товара не задано, сколько '+esc(need)+' в одной единице. Впишите — и пересчёт появится здесь." '+
@@ -23581,7 +23617,7 @@ function bind(){
         cost:isFinite(cv)&&cv>=0?cv:(Number(prod&&prod.unitCost)||0),
         qty:isFinite(qv)&&qv>0?qv:1 };
       m.unitCost=m.cost;
-      if(prod)["packBase","packPer","lenPer","sheetM2"].forEach(function(k){ if(prod[k]!=null)m[k]=prod[k]; });
+      if(prod)["packBase","packPer","lenPer","sheetM2","packName"].forEach(function(k){ if(prod[k]!=null)m[k]=prod[k]; });
       const map=Object.assign({}, sh.matAdd||{});
       map[posKey]=(map[posKey]||[]).concat([m]);
       sh.matAdd=map; matAddOpen=""; fl();

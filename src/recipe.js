@@ -319,7 +319,7 @@ export function swapMat(mat, product, area) {
     cost: Number(p.unitCost) || 0, unitCost: Number(p.unitCost) || 0, mode: p.mode || "piece",
     swapped: true,
   });
-  ["packBase", "packPer", "lenPer", "sheetM2"].forEach(function (k) {
+  ["packBase", "packPer", "lenPer", "sheetM2", "packName"].forEach(function (k) {
     if (p[k] != null) next[k] = p[k]; else delete next[k];
   });
   if (Number(area) > 0) next.qty = matQtyForArea(next, Number(area));
@@ -935,7 +935,7 @@ export function positionWork(pos) {
     const mm = { pid: m.pid || "", n: m.n || "", store: m.store || "", url: m.url || "", note: "",
       cost: Number(m.cost) || 0, qty: Number(m.qty) || 0, mode: m.mode || "piece",
       unitCost: Number(m.cost) || 0 };
-    ["packBase", "packPer", "lenPer", "sheetM2"].forEach(function (k) { if (m[k] != null) mm[k] = m[k]; });
+    ["packBase", "packPer", "lenPer", "sheetM2", "packName"].forEach(function (k) { if (m[k] != null) mm[k] = m[k]; });
     return mm;
   });
   return {

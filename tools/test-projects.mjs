@@ -1452,4 +1452,42 @@ function create(p, name) {
     !/border-left:3px solid #c9d6e4/.test(p.run('tProjects()')), 'блок остался после сворачивания')
 }
 
+// ── Рулон называется рулоном ────────────────────────────────────────────────
+// Режим товара говорит, как он СЧИТАЕТСЯ, а не как называется на складе.
+// «≈ 0,4 лист» у рулона пароизоляции читается как ошибка расчёта, хотя число
+// верное, — и человек идёт перепроверять то, что и так посчитано правильно.
+{
+  t.section('Слово одной покупки')
+  const p = boot({})
+  p.set({
+    expProducts: [
+      { id: 'p_film', name: 'Пароизоляция', unitCost: 20, store: 'Лемана', mode: 'm2',
+        sheetM2: 60, packName: 'рулон' },
+      { id: 'p_wool', name: 'Утеплитель', unitCost: 1081, store: 'Лемана', mode: 'pack',
+        packBase: 'м²', packPer: 6, packName: 'мешок' },
+    ],
+    estimates: [{ id: 'e_w', kind: 'house', name: 'Пароизоляция стен', stage: 2,
+      lines: [{ id: 'l1', pid: 'p_film', qty: 25 }, { id: 'l2', pid: 'p_wool', qty: 2 }] }],
+    dbPlans: [], crmClients: [{ id: 'c1', name: 'Иванов' }], specSheets: [], specSheets2: [],
+    projects: [], buildRules: [], winTypes: [], objects: [], templates: [], contractDocs: [],
+    purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+  })
+  create(p, 'Дом с рулонами')
+  p.run('projBand="parts";')
+  const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
+  const openMats = p.dom.node({ a: 'est-mats-open', k: key }); p.run('bind();'); openMats.onclick()
+  const html = p.run('tProjects()').replace(/[  ]/g, ' ')
+
+  t.ok('пересчёт называет рулон рулоном', /≈ 0,5 рулон/.test(html),
+    JSON.stringify(html.match(/≈ [^<]+/g)))
+  t.ok('и слова «лист» рядом нет', !/≈ [\d,]+ лист/.test(html), 'остался «лист»')
+  // У пачки слово — это её единица: и в цене, и в количестве.
+  t.ok('пачка зовётся мешком', /₽\/мешок/.test(html), JSON.stringify(html.match(/₽\/[^<]+/g)))
+
+  // Слова нет — остаётся умолчание по режиму, как было.
+  p.run('delete expProducts.filter(function(x){return x.id==="p_film";})[0].packName;')
+  t.ok('без слова — прежний «лист»',
+    /≈ 0,5 лист/.test(p.run('tProjects()').replace(/[  ]/g, ' ')), 'умолчание сломалось')
+}
+
 t.done()
