@@ -142,4 +142,35 @@ function panel() {
   t.ok('старая сверка помечена как давняя', /давно/i.test(p.run('tSpec2()')), 'нет метки «давно»')
 }
 
+// ── 5. Отчёт от расширения ──────────────────────────────────────────────────
+// Расширение обходит карточки в браузере хозяина (там он уже авторизован, и
+// защита магазинов к нему не придирается) и приносит цены пачкой. Панель должна
+// разложить их по каталогу так же аккуратно, как если бы их вводили руками.
+{
+  t.section('Панель принимает отчёт расширения')
+  const p = panel()
+  const before = p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].unitCost')
+
+  const sum = p.run('applyPriceReports([' +
+    '{ id:"p_kab", ok:true, price:5600, inStock:true },' +      // подорожал
+    '{ id:"p_br",  ok:true, price:107.67, inStock:false },' +   // цена та же, но кончился
+    '{ id:"p_zzz", ok:true, price:10, inStock:true },' +        // товара нет в базе
+    '{ id:"p_kab", ok:false, error:"страница не ответила" }' +  // не сверилось
+  '])')
+  t.ok('цена обновилась', p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].unitCost') === 5600,
+    'было ' + before)
+  t.ok('история записана', (p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].hist')||[]).length >= 2)
+  t.ok('отсутствие проставлено', !!p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].oosAt'))
+  t.ok('цена кончившегося не тронута', p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].unitCost') === 107.67)
+  t.ok('оба помечены сверенными',
+    !!p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].priceOkAt') &&
+    !!p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].priceOkAt'))
+  // Сводка нужна, чтобы сказать человеку, что произошло: молчаливое «готово»
+  // не отличить от «ничего не нашлось».
+  t.ok('сводка посчитана', sum && sum.checked === 2 && sum.changed === 1 && sum.oos === 1,
+    JSON.stringify(sum))
+  t.ok('неудачи посчитаны отдельно', sum.failed === 1, JSON.stringify(sum))
+  t.ok('чужой товар не создаётся', p.q('expProducts.length') === 2, 'товаров: ' + p.q('expProducts.length'))
+}
+
 t.done()

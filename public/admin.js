@@ -1870,6 +1870,8 @@ let dbWorks=[
 ];
 let dbSection="mats";
 let priceShopStage="";
+let priceExtReady=false;  // в браузере стоит расширение сверки
+let priceExtBusy="";      // идёт обход магазинов: что показывать вместо кнопки
 let priceWizStage="";     // этап, который разбирают мастером
 let priceWizIdx=0;        // какая карточка на экране    // этап, у которого раскрыт список магазинов для сверки
 let hoursPickKey="";       // у какой строки открыт ряд быстрого выбора часов
@@ -13541,6 +13543,51 @@ function priceShopRows(st){
   });
   return out;
 }
+// Отчёт от расширения. Оно обходит карточки прямо в браузере хозяина — там он
+// уже авторизован, и защита магазинов к нему не придирается, — и приносит цены
+// пачкой. Раскладываем их по каталогу так же, как если бы вводили руками: с
+// историей, наличием и отметкой сверки.
+function applyPriceReports(list){
+  const who=(currentUser&&currentUser.name)||"расширение";
+  const out={ checked:0, changed:0, oos:0, failed:0, diff:0, missing:0 };
+  (list||[]).forEach(function(r){
+    if(!r)return;
+    if(!r.ok){ out.failed++; return; }
+    const prod=(expProducts||[]).find(function(x){ return x&&x.id===r.id; });
+    // Товара нет в базе — молча заводить его нельзя: каталог общий, и правит его
+    // человек. Считаем и показываем отдельной строкой.
+    if(!prod){ out.missing++; return; }
+    const off=r.offerId?matOffers(prod).find(function(x){ return x.id===r.offerId; }):null;
+    out.checked++;
+    if(r.inStock===false){
+      if(off){ if(!off.oosAt)matOfferOos(prod, off.id); off.okAt=todayISO(); }
+      else prod.oosAt=todayISO();
+      out.oos++;
+    } else {
+      const v=Number(r.price)||0;
+      const cur=Number(off?off.unitCost:prod.unitCost)||0;
+      if(v>0&&Math.round(v*100)!==Math.round(cur*100)){
+        const was=Number(prod.unitCost)||0;
+        if(off){
+          off.unitCost=v; if(off.oosAt)delete off.oosAt;
+          const best=matOfferBest(prod), act=matOffers(prod).find(function(x){ return x.id===prod.offer; });
+          if(!act||act.oosAt||(best&&Number(best.unitCost)<Number(act.unitCost)))matOfferPick(prod, (best||off).id);
+          else if(act.id===off.id)matOfferPick(prod, off.id);
+        } else prod.unitCost=v;
+        pricePush(prod, was, prod.priceCheckedAt||todayISO(), who);
+        pricePush(prod, Number(prod.unitCost)||0, todayISO(), who);
+        out.changed++; out.diff+=Math.round((Number(prod.unitCost)||0)-was);
+      }
+      if(off){ off.okAt=todayISO(); if(off.oosAt)delete off.oosAt; }
+      if(prod.oosAt&&(!matOffers(prod).length||matOfferAlive(prod).length))delete prod.oosAt;
+      prod.priceOkAt=todayISO();
+    }
+    if(off)off.okAt=todayISO(); else prod.priceOkAt=todayISO();
+    prod.priceCheckedAt=todayISO();
+  });
+  return out;
+}
+
 // Мастер сверки: ОДНА карточка крупно и кнопки в палец шириной. Список из
 // семнадцати мелких полей — это не работа, а прицеливание: на телефоне мажешь
 // мимо поля и теряешь место в списке. Здесь портал сам ведёт по очереди —
@@ -13606,6 +13653,8 @@ function priceShopHtml(st){
         // Мастер — для прохода по всему списку подряд; список ниже остаётся для
         // точечной правки одной строки.
         '<button data-a="price-wiz-open" data-n="'+st.n+'" style="padding:4px 10px;border:1.5px solid #8e44ad;background:#8e44ad;color:#fff;border-radius:8px;font-size:10.5px;font-weight:700;cursor:pointer">▶ мастер сверки</button>'+
+        (priceExtBusy?'<span style="font-size:10.5px;font-weight:700;color:#8e44ad">'+esc(priceExtBusy)+'</span>'
+          :(priceExtReady?'<button data-a="price-ext-run" data-n="'+st.n+'" title="Расширение обойдёт карточки само" style="padding:4px 10px;border:1.5px solid #16a085;background:#16a085;color:#fff;border-radius:8px;font-size:10.5px;font-weight:700;cursor:pointer">⚡ сверить всё</button>':''))+
       '</div>';
     })()+
     '<div style="font-size:10.5px;color:#7a9aaa;line-height:1.4;margin-bottom:8px">Откройте карточку, посмотрите цену и впишите её. Цена уйдёт в каталог со всей историей, и проект пересчитается сам.</div>'+
@@ -22956,6 +23005,21 @@ function bind(){
     // Цены материалов этапа — по каталогу. Правим ТОЛЬКО то, что лежит копией:
     // дописанные руками материалы. У остальных цена и так приезжает из карточки
     // товара при каждом расчёте, и «обновлять» там нечего.
+    else if(a==="price-ext-run"){el.onclick=()=>{
+      const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
+      const w=works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes }));
+      const st=(w.stages||[]).find(function(x){ return String(x.n)===String(el.dataset.n||""); }); if(!st)return;
+      // Шлём ровно то, что расширение умеет открыть: без ссылки идти некуда.
+      const items=[];
+      priceShopRows(st).forEach(function(pr){
+        const offers=matOffers(pr);
+        if(offers.length)offers.forEach(function(o){ if(/^https?:\/\//.test(String(o.url||"")))items.push({ id:pr.id, offerId:o.id, url:o.url }); });
+        else if(/^https?:\/\//.test(String(pr.url||"")))items.push({ id:pr.id, offerId:"", url:pr.url });
+      });
+      if(!items.length){ alert("В этом этапе нет карточек со ссылками — сверять нечего."); return; }
+      priceExtBusy="открываю карточки…"; fl();
+      window.postMessage({ source:"kubrdom-panel", type:"check-prices", items:items }, "*");
+    };}
     else if(a==="price-wiz-open"){el.onclick=()=>{
       priceWizStage=String(el.dataset.n||""); priceWizIdx=0; fl();
     };}
@@ -26747,6 +26811,28 @@ function applyDeepLink(){
   currentUser = null; clientAuthContract = null;
   render();
 })();
+
+// ── РАСШИРЕНИЕ СВЕРКИ ЦЕН ───────────────────────────────────────────────────
+// Магазины не пускают роботов, но пускают ХОЗЯИНА: в его браузере он авторизован
+// и защита к нему не придирается. Расширение обходит карточки там и приносит
+// цены сюда. Панель работает и без него — просто без автосверки, поэтому вся
+// связь сведена к двум сообщениям и нигде больше не аукается.
+window.addEventListener("message", function(ev){
+  const d=ev&&ev.data;
+  if(ev.source!==window||!d||d.source!=="kubrdom-ext")return;
+  if(d.type==="ready"){ priceExtReady=true; try{ fl(); }catch(e){} return; }
+  if(d.type==="progress"){ priceExtBusy="сверяю "+d.done+" из "+d.total+"…"; try{ fl(); }catch(e){} return; }
+  if(d.type==="prices"){
+    priceExtBusy="";
+    const sum=applyPriceReports(d.results||[]);
+    scheduleSave(); fl();
+    alert("Сверка через расширение\n\nПроверено: "+sum.checked+
+      "\nЦены изменились: "+sum.changed+(sum.diff?" ("+(sum.diff>0?"+":"")+sum.diff.toLocaleString("ru-RU")+" ₽)":"")+
+      "\nНет в наличии: "+sum.oos+
+      (sum.failed?"\nНе открылось: "+sum.failed:"")+
+      (sum.missing?"\nНет в каталоге: "+sum.missing:""));
+  }
+});
 
 // Авто-обновление панели: работает в обоих путях загрузки (cache-first и первый вход).
 setTimeout(checkAppUpdate, 4000);                       // первый замер ETag (база для сравнения)

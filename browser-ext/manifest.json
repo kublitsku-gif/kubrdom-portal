@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "КубрДом — сверка цен",
+  "version": "1.0.0",
+  "description": "Обходит карточки товаров в магазинах и приносит цены и наличие в портал КубрДом.",
+  "permissions": ["tabs", "storage"],
+  "host_permissions": [
+    "https://portal.kubrdom.ru/*",
+    "https://kubrdom-portal.pages.dev/*",
+    "https://lemanapro.ru/*",
+    "https://www.ozon.ru/*",
+    "https://market.yandex.ru/*",
+    "https://moscow.petrovich.ru/*",
+    "https://pechki.su/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://portal.kubrdom.ru/*", "https://kubrdom-portal.pages.dev/*"],
+      "js": ["content-portal.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://lemanapro.ru/product/*",
+        "https://www.ozon.ru/product/*",
+        "https://market.yandex.ru/card/*",
+        "https://moscow.petrovich.ru/product/*",
+        "https://pechki.su/*"
+      ],
+      "js": ["content-shop.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
