@@ -97,4 +97,28 @@ const stageOf = (p) => p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0
   t.ok('смета на месте', /ЭТАП/.test(done))
 }
 
+// ── Динамика цены в карточке мастера ────────────────────────────────────────
+// В мастере человек стоит перед решением «цена верна или нет» и первым делом
+// должен видеть, куда она уже двигалась. Тот же чип, что в списке сверки, —
+// экран один и тот же вопрос.
+{
+  t.section('Динамика цены в мастере')
+  const p = panel()
+  const stN = stageOf(p)
+  // Товар уже дорожал: так это и лежит в каталоге после прошлой сверки.
+  p.run('(function(){var x=expProducts.filter(function(y){return y.id==="p_kab";})[0];'
+    + 'x.hist=[{at:"2026-08-01T00:00:00Z",c:4600,by:"Юрий"},{at:"2026-09-01T00:00:00Z",c:5100,by:"Юрий"}];})();')
+  const open = p.dom.node({ a: 'price-wiz-open', n: String(stN) }); p.run('bind();'); open.onclick()
+  const html = p.run('tSpec2()').replace(/[\u00a0\u202f]/g, ' ')
+  t.ok('в карточке видно рост', /▲ \+500 ₽/.test(html), 'нет динамики в мастере')
+  t.ok('и в процентах', /▲ \+500 ₽ · 11%/.test(html), 'нет процента')
+  t.ok('чип ведёт в карточку товара', html.indexOf('data-a="price-hist" data-p="p_kab"') >= 0)
+  t.ok('в подсказке прежняя цена', html.indexOf('title="Было 4 600 ₽') >= 0, 'нет «было»')
+  // У товара без истории чипа нет: сравнивать не с чем, а «0 ₽» читалось бы как
+  // «цена не менялась», чего мы не знаем.
+  const next = p.dom.node({ a: 'price-wiz-skip' }); p.run('bind();'); next.onclick()
+  t.ok('у товара без истории чипа нет',
+    p.run('tSpec2()').indexOf('data-a="price-hist"') < 0, 'чип нарисован без истории')
+}
+
 t.done()

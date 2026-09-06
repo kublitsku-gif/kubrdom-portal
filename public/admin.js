@@ -13553,6 +13553,54 @@ function priceShopState(o){
   return { k:"old", col:"#e67e22", dot:"⏳", txt:"давно · "+dayRu(o.okAt) };
 }
 
+// Динамика цены: подорожал товар или подешевел с прошлой записи в истории.
+// Сверку затевают ради одного вопроса — ЧТО ПОДОРОЖАЛО, — и ответ на него должен
+// стоять рядом с ценой: цифра «6 843 ₽» сама по себе не говорит ничего, а «▲ +550»
+// говорит всё. История лежит в самом товаре (`prod.hist`), поэтому считать нечего.
+function priceTrend(prod){
+  const was=priceWas(prod);
+  if(!was)return null;
+  const now=Math.round(Number(prod&&prod.unitCost)||0), old=Math.round(Number(was.c)||0);
+  if(!old||now===old)return null;
+  return { d:now-old, was:old, at:was.at||"", by:was.by||"",
+    pct:Math.round(Math.abs(now-old)/old*100) };
+}
+// Чип рядом с ценой. Он же и вход в историю: тап открывает карточку товара, где
+// перечислены последние правки — «▲ +550 ₽» отвечает на «что», карточка на «когда
+// и с чего».
+function priceTrendHtml(prod, big){
+  const t=priceTrend(prod);
+  if(!t)return '';
+  const up=t.d>0, col=up?"#e74c3c":"#27ae60";
+  const past=priceHist(prod).slice(-4).map(function(r){
+    return dayRu(r.at)+" — "+Math.round(Number(r.c)||0).toLocaleString("ru-RU")+" \u20bd";
+  }).join(", ");
+  const tip="Было "+t.was.toLocaleString("ru-RU")+" \u20bd"+(t.at?" \u00b7 "+dayRu(t.at):"")+(t.by?" \u00b7 "+t.by:"")+
+    (past?"\nИстория: "+past:"")+"\nОткрыть карточку товара";
+  return '<button data-a="price-hist" data-p="'+esc(prod.id)+'" title="'+esc(tip)+'" '+
+    'style="border:1px solid '+col+'55;background:'+col+'12;color:'+col+';border-radius:6px;'+
+    'padding:'+(big?"3px 9px":"1px 6px")+';font-size:'+(big?"11.5px":"9.5px")+';font-weight:800;'+
+    'cursor:pointer;white-space:nowrap;line-height:1.5">'+
+    (up?"\u25b2 +":"\u25bc \u2212")+Math.abs(t.d).toLocaleString("ru-RU")+' \u20bd'+(t.pct?' \u00b7 '+t.pct+'%':'')+'</button>';
+}
+// Сводка по этапу: сколько товаров подорожало, сколько подешевело. Одна строка
+// вместо чтения шестнадцати чипов подряд, и в подсказке — кто именно подрос.
+function priceTrendSum(rows){
+  const up=[], down=[];
+  (rows||[]).forEach(function(pr){
+    const t=priceTrend(pr); if(!t)return;
+    (t.d>0?up:down).push(String(pr.name||"")+" "+(t.d>0?"+":"\u2212")+Math.abs(t.d).toLocaleString("ru-RU")+" \u20bd");
+  });
+  return { up:up, down:down };
+}
+function priceTrendSumHtml(rows){
+  const sum=priceTrendSum(rows);
+  if(!sum.up.length&&!sum.down.length)return '';
+  return '<span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;font-weight:800">'+
+    (sum.up.length?'<span title="'+esc(sum.up.join("\n"))+'" style="color:#e74c3c;cursor:help">\u25b2 подорожало '+sum.up.length+'</span>':'')+
+    (sum.down.length?'<span title="'+esc(sum.down.join("\n"))+'" style="color:#27ae60;cursor:help">\u25bc подешевело '+sum.down.length+'</span>':'')+
+  '</span>';
+}
 function priceShopRows(st){
   const byId={}; (expProducts||[]).forEach(function(x){ if(x&&x.id)byId[x.id]=x; });
   const seen={}, out=[];
@@ -13658,6 +13706,9 @@ function priceWizHtml(st){
     '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">'+
       '<span style="font-size:11px;font-weight:800;color:'+stt.col+'">'+stt.dot+' '+esc(stt.txt)+'</span>'+
       '<span style="font-size:13px;font-weight:800;color:#0d1b2e">'+cost.toLocaleString("ru-RU",{maximumFractionDigits:2})+' ₽/'+mode.unit+'</span>'+
+      // В мастере человек стоит перед решением «цена верна или нет» — и первым
+      // делом должен видеть, куда она уже двигалась.
+      ((!o||o.id===pr.offer)?priceTrendHtml(pr, true):'')+
     '</div>'+
     (/^https?:\/\//.test(url)
       ? '<a href="'+esc(url)+'" target="_blank" rel="noopener" style="display:block;text-align:center;padding:12px;margin-bottom:8px;border-radius:11px;background:#2980b9;color:#fff;font-size:13px;font-weight:700;text-decoration:none">Открыть '+esc(who)+' ↗</a>'
@@ -13688,6 +13739,7 @@ function priceShopHtml(st){
       });
       return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:2px">'+
         '<span style="font-size:10px;font-weight:800;color:#8e44ad;letter-spacing:0.3px">СВЕРКА С МАГАЗИНАМИ · сверено '+done+' из '+all+'</span>'+
+        priceTrendSumHtml(rows)+
         // Мастер — для прохода по всему списку подряд; список ниже остаётся для
         // точечной правки одной строки.
         '<button data-a="price-wiz-open" data-n="'+st.n+'" style="padding:4px 10px;border:1.5px solid #8e44ad;background:#8e44ad;color:#fff;border-radius:8px;font-size:10.5px;font-weight:700;cursor:pointer">▶ мастер сверки</button>'+
@@ -13736,6 +13788,9 @@ function priceShopHtml(st){
               ? '<a href="'+esc(o.url)+'" target="_blank" rel="noopener" style="flex:1 1 120px;font-size:10.5px;font-weight:700;color:'+(oos?"#c3cedb":"#2980b9")+';text-decoration:'+(oos?"line-through":"none")+'">'+esc(who)+' ↗</a>'
               : '<span style="flex:1 1 120px;font-size:10.5px;color:#c3cedb">'+esc(who)+' · без ссылки</span>')+
             '<span style="font-size:10.5px;color:#9aabbf;white-space:nowrap">'+(Number(o.unitCost)||0).toLocaleString("ru-RU",{maximumFractionDigits:2})+' ₽/'+mode.unit+'</span>'+
+            // Динамика — только у карточки, из которой берётся цена: история цен
+            // живёт у ТОВАРА, и приписывать её чужому предложению значит соврать.
+            (act?priceTrendHtml(pr):'')+
             // Ручной ввод — на случай, когда сверку делают глазами; отметки
             // «верна»/«кончился» проставляет тот, кто обошёл магазины (расширение
             // или мастер), и дублировать их здесь незачем.
@@ -23094,6 +23149,13 @@ function bind(){
       }
       priceExtBusy="открываю карточки…"; fl();
       window.postMessage({ source:"kubrdom-panel", type:"check-prices", items:items }, "*");
+    };}
+    // Тап по динамике — в карточку товара: там перечислены последние правки цены.
+    else if(a==="price-hist"){el.onclick=(ev)=>{
+      if(ev)ev.stopPropagation();
+      const pid=el.dataset.p||"";
+      if(!(expProducts||[]).find(function(x){ return x&&x.id===pid; }))return;
+      tab="works"; dbSection="mats"; expOpenId=pid; render(); window.scrollTo(0,0);
     };}
     else if(a==="price-wiz-open"){el.onclick=()=>{
       priceWizStage=String(el.dataset.n||""); priceWizIdx=0; fl();
