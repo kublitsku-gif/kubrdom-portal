@@ -13122,7 +13122,9 @@ function specMatsListHtml(pos, sh, live){
   const busyHere=(matSwapOpen||"").indexOf(pos.key+"|")===0||matAddOpen===pos.key;
   // Строка, из которой убрали ВСЁ, раскрыта сама: «материалы · 0» без списка
   // выглядит как потеря, а вернуть убранное можно только в самом списке.
-  const open=!!matsOpen[pos.key]||busyHere||(!mats.length&&off.length>0);
+  // Нашлось по материалу — список раскрыт: иначе непонятно, почему строка в
+  // выдаче, и человек открывает каждую руками.
+  const open=!!matsOpen[pos.key]||!!estFindOpen[pos.key]||busyHere||(!mats.length&&off.length>0);
   // Раскладка «материалы · работа · итого» живёт в самой строке сметы, а не в
   // шапке списка: две цифры нужны в КАЖДОЙ работе, в том числе там, где списка нет.
   if(!open)return '';
@@ -13989,6 +13991,70 @@ function estRoomPickHtml(key, cur, w){
     '<button data-a="est-pos-room" data-k="'+esc(key)+'" data-r="~" title="Вернуть комнату, которую дал расчёт" style="border:1px solid #dde6f0;background:#fff;color:#7a9aaa;border-radius:8px;padding:4px 9px;font-size:10.5px;font-weight:700;cursor:pointer">⟲ по расчёту</button>'+
   '</div>';
 }
+// ── ПОИСК ПО СМЕТЕ ──────────────────────────────────────────────────────────
+// В смете сорок строк по шести этапам, а вопрос к ней чаще всего точечный: «где
+// тут ОСП», «сколько стоит разводка». Листать ради этого шесть свёрнутых этапов
+// значит не искать вовсе. Ищем и по работе, и по МАТЕРИАЛУ: половину состава
+// дома человек помнит товаром, а не именем работы.
+//
+// Живёт на экране, в лист не пишется: поиск — это способ посмотреть, а не правка.
+let estFind="";
+let estFindOpen={};   // key → раскрыть материалы: нашлось внутри, надо показать где
+function estFindTerms(){
+  return String(estFind||"").trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+// Слова ищутся все сразу (И, а не ИЛИ): «осп 9» должно находить «ОСП 9 мм», а не
+// всё, где есть девятка. Возвращает, нашлось ли — и нашлось ли в материалах.
+function estFindHit(p, terms){
+  const name=String((p&&p.name)||"").toLowerCase()+" "+String((p&&p.room)||"").toLowerCase();
+  const mats=((p&&p.mats)||[]).map(function(m){
+    return String((m&&m.n)||"").toLowerCase()+" "+String((m&&m.store)||"").toLowerCase();
+  });
+  let byMat=false;
+  const ok=terms.every(function(t){
+    if(name.indexOf(t)>=0)return true;
+    if(mats.some(function(x){ return x.indexOf(t)>=0; })){ byMat=true; return true; }
+    return false;
+  });
+  return ok?{ mat:byMat }:null;
+}
+// Этап с одними найденными строками: суммы пересчитываем по ним же — под шапкой
+// лежит именно этот список, и чужой итог над ним читался бы как его собственный.
+function estFindStage(st, hits){
+  const keep=function(p){ return !!hits[p.key]; };
+  const pos=(st.positions||[]).filter(keep);
+  if(!pos.length)return null;
+  const money=function(list){
+    let cost=0, mats=0, labor=0, hours=0;
+    list.forEach(function(p){
+      const sp=positionSplit(p);
+      cost+=Math.round(Number(p.cost)||0); mats+=sp.mats; labor+=sp.labor;
+      hours+=Number(p.hours)||0;
+    });
+    return { cost:cost, mats:mats, labor:labor, hours:Math.round(hours*10)/10 };
+  };
+  const blocks=(st.blocks||[]).map(function(b){
+    const bp=(b.positions||[]).filter(keep);
+    return bp.length?Object.assign({}, b, { positions:bp, cost:money(bp).cost }):null;
+  }).filter(Boolean);
+  return Object.assign({}, st, money(pos), { positions:pos, blocks:blocks, found:(st.positions||[]).length });
+}
+function estFindHtml(w, hits){
+  const terms=estFindTerms();
+  const n=Object.keys(hits||{}).length;
+  const sum=(w.positions||[]).reduce(function(a,p){ return a+(hits[p.key]?Math.round(Number(p.cost)||0):0); }, 0);
+  return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:9px">'+
+    '<div style="position:relative;flex:1;min-width:0">'+
+      '<input id="est-find" data-a="est-find" value="'+esc(estFind||"")+'" placeholder="🔍 работа или материал" '+
+        'style="width:100%;box-sizing:border-box;padding:9px 30px 9px 12px;border:1.5px solid '+(terms.length?"#2980b9":"#dde6f0")+';border-radius:10px;font-size:13px;outline:none;background:#fff;color:#0d1b2e">'+
+      (terms.length?'<button data-a="est-find-clear" title="Показать всю смету" style="position:absolute;right:7px;top:50%;transform:translateY(-50%);width:22px;height:22px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:6px;cursor:pointer;font-size:11px;color:#7a9aaa;line-height:1;padding:0">✕</button>':'')+
+    '</div>'+
+    (terms.length
+      ? '<span style="font-size:11px;font-weight:700;color:'+(n?"#2980b9":"#e67e22")+';white-space:nowrap">'+
+          (n?('найдено '+n+' из '+(w.positions||[]).length+' · '+sum.toLocaleString("ru-RU")+' ₽'):'ничего не нашлось')+'</span>'
+      : '')+
+  '</div>';
+}
 function estBodyHtml(sh, types, live, actions){
   const w=works2(sh, Object.assign(specCtx(sh), { winTypes:types }));
   // Факт часов приезжает со стройки: пока объекта нет, карта пуста и в смете
@@ -14003,7 +14069,7 @@ function estBodyHtml(sh, types, live, actions){
   const canMove=canRule&&!!live;
   // Ключ позиции у листов общий («base:e_osb»), поэтому взятая строка помнит и
   // свой лист: иначе в соседнем проекте подсвечивалась бы его тёзка.
-  const moving=(canMove&&estMoveSheet===String(live.id||""))?String(estMoveKey||""):"";
+  const moving=(canMove&&estMoveSheet===String(live.id||"")&&!estFindTerms().length)?String(estMoveKey||""):"";
   let h='';
   // Деньги сверху: с них начинается любой разговор про смету, и лезть за итогом
   // в конец списка из сорока строк никто не будет.
@@ -14022,23 +14088,48 @@ function estBodyHtml(sh, types, live, actions){
       w.positions.length+' позиций · считается на лету по модели, нигде не сохраняется'+
     '</div>'+
   '</div>';
-  h+=spec2FactsHtml(w.facts);
-  h+=estPosAddHtml(sh, canRule);
-  h+=estDroppedHtml(sh, canRule);
+  // Поиск — сразу под деньгами: это первое, за чем в смету заходят, когда в ней
+  // уже сорок строк.
+  const terms=estFindTerms();
+  const finding=!!terms.length;
+  const hits={};
+  estFindOpen={};
+  if(finding)(w.positions||[]).forEach(function(p){
+    const r=estFindHit(p, terms);
+    // Нашлось внутри строки — раскрываем её материалы: иначе непонятно, почему
+    // она в списке, и человек открывает каждую руками.
+    if(r){ hits[p.key]=r; if(r.mat)estFindOpen[p.key]=1; }
+  });
+  h+=estFindHtml(w, hits);
+  // Пока идёт поиск, экран — это его результат: справки, «+ работа» и убранное
+  // отвечают на другие вопросы и только отодвигают найденное вниз.
+  if(!finding){
+    h+=spec2FactsHtml(w.facts);
+    h+=estPosAddHtml(sh, canRule);
+    h+=estDroppedHtml(sh, canRule);
+  }
+  // Переносить строки во время поиска нечего: половина списка скрыта, и место
+  // «сюда» указывало бы между строками, которых человек не видит.
+  const stages=finding
+    ? w.stages.map(function(st){ return estFindStage(st, hits); }).filter(Boolean)
+    : w.stages;
   // Работы этапами: стройка меряется этапами, по ним же идут сроки, приёмка и
   // транши — смета обязана читаться в том же разрезе.
-  if(w.stages.length){
-    h+=w.stages.map(function(st){
+  if(stages.length){
+    h+=stages.map(function(st){
       // Этап сворачивается целиком: в смете на сорок строк искать нужный этап,
       // прокручивая чужие работы, — то же самое, что искать его в простыне. Шапка
       // с итогом остаётся всегда: по этим суммам идут транши и приёмка.
-      const shut=!stageOpen[st.n];
+      // Найденное прятать внутрь свёрнутого этапа нельзя: поиск для того и нужен,
+      // чтобы не открывать этапы руками.
+      const shut=finding?false:!stageOpen[st.n];
       const mi=moving?st.positions.findIndex(function(x){ return x.key===moving; }):-1;
       return '<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
         '<div data-a="est-stage-open" data-n="'+st.n+'" style="display:flex;align-items:baseline;gap:8px;margin-bottom:'+(shut?'0':'7px')+';cursor:pointer">'+
           '<span style="width:8px;height:8px;border-radius:3px;background:'+st.color+';flex-shrink:0"></span>'+
           '<span style="flex:1;min-width:0;font-size:11px;font-weight:700;color:#0d1b2e;letter-spacing:0.4px;text-transform:uppercase">'+(shut?"▸ ":"▾ ")+esc(st.label)+
-            (shut?' <span style="font-weight:700;color:#9aabbf;text-transform:none;letter-spacing:0">· '+st.positions.length+' '+pluralRu(st.positions.length,"работа","работы","работ")+'</span>':'')+'</span>'+
+            (shut?' <span style="font-weight:700;color:#9aabbf;text-transform:none;letter-spacing:0">· '+st.positions.length+' '+pluralRu(st.positions.length,"работа","работы","работ")+'</span>':'')+
+            (finding?' <span style="font-weight:700;color:#2980b9;text-transform:none;letter-spacing:0">· '+st.positions.length+' из '+st.found+'</span>':'')+'</span>'+
           '<span style="font-size:12.5px;font-weight:800;color:#0d1b2e;white-space:nowrap">'+Math.round(st.cost).toLocaleString("ru-RU")+' ₽</span>'+
         '</div>'+
         // Подытоги этапа теми же двумя цифрами, что стоят в строках: сколько по
@@ -14222,6 +14313,11 @@ function estBodyHtml(sh, types, live, actions){
           return '<div style="font-size:12px;color:#0d1b2e;padding:4px 0;line-height:1.45"><b>'+esc(g.t)+'</b> <span style="color:#a08a6a">— '+esc(g.why)+'</span></div>';
         }).join("")+
         '<div style="font-size:10.5px;color:#a08a6a;line-height:1.45;margin-top:5px">Каждая строка — правило, которого пока нет.</div>')+
+    '</div>';
+  }
+  if(finding&&!stages.length){
+    h+='<div style="background:#fff;border:1px dashed #dde6f0;border-radius:13px;padding:16px;margin-bottom:9px;text-align:center;font-size:12px;color:#9aabbf;line-height:1.5">'+
+      'По запросу «'+esc(estFind)+'» в этой смете ничего нет.<br>Ищется и по названию работы, и по материалу.'+
     '</div>';
   }
   // Объект и договор — только по заведённому листу: из заготовки, которая нигде
@@ -23221,6 +23317,17 @@ function bind(){
       if(Object.keys(mm).length)sh.posCostMode=mm; else delete sh.posCostMode;
       scheduleSave(); fl();
     };}
+    // Поиск по смете. Перерисовываем вкладку и возвращаем курсор на место: без
+    // этого перерисовка выбивает поле из-под пальца на второй же букве.
+    else if(a==="est-find"){el.oninput=()=>{
+      const v=String(el.value||"");
+      let pos=v.length; try{ pos=el.selectionStart==null?v.length:el.selectionStart; }catch(e){}
+      estFind=v;
+      rerenderTab();
+      const n=document.getElementById("est-find");
+      if(n){ n.focus(); try{ n.setSelectionRange(pos,pos); }catch(e){} }
+    };}
+    else if(a==="est-find-clear"){el.onclick=()=>{ estFind=""; rerenderTab(); };}
     else if(a==="est-facts-open"){el.onclick=()=>{ factsOpen=!factsOpen; fl(); };}
     else if(a==="est-dropped-open"){el.onclick=()=>{ droppedOpen=!droppedOpen; fl(); };}
     else if(a==="est-gaps-open"){el.onclick=()=>{ gapsOpen=!gapsOpen; fl(); };}

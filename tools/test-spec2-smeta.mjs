@@ -1206,5 +1206,41 @@ const SHEET = {
   t.ok('группа не сжимается', /flex-shrink:0/.test(group), 'нет запрета на сжатие')
 }
 
+// ── Поиск по смете ──────────────────────────────────────────────────────────
+// Экран сметы у двух разделов ОДИН: то же самое сторожит test-projects. Здесь
+// проверяем вторую половину — что поиск работает и в опытном листе.
+{
+  t.section('Поиск по смете')
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS, estimates: EST, dbPlans: [], crmClients: [],
+    specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [],
+    contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+    buildRules: [],
+  })
+  p.run('spec2Tab="scheme";tSpec2();')
+  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+  p.run('modelFull=false;stageOpen={};spec2Tab="est";estFind="";matsOpen={};tSpec2();')
+  t.ok('поле поиска есть', p.run('tSpec2()').indexOf('data-a="est-find"') >= 0)
+
+  // По имени работы — и этап раскрывается сам, хотя все свёрнуты.
+  p.run('estFind="окн";')
+  const byName = p.run('tSpec2()')
+  t.ok('нашлась работа', /Монтаж окна/.test(byName), 'работа не найдена')
+  t.ok('чужая скрыта', !/Монтаж двери/.test(byName), 'в выдаче лишнее')
+  t.ok('счётчик находок есть', /найдено \d+ из /.test(byName))
+
+  // По материалу — с раскрытым составом.
+  p.run('estFind="наличник";')
+  const byMat = p.run('tSpec2()')
+  t.ok('нашлось по материалу', /Монтаж двери/.test(byMat), 'по материалу не ищет')
+  t.ok('и состав раскрыт', byMat.indexOf('data-a="est-mat-qty"') >= 0, 'состав не показан')
+
+  p.run('estFind="абракадабра";')
+  t.ok('пустая выдача объясняет', /в этой смете ничего нет/.test(p.run('tSpec2()')))
+  p.run('estFind="";')
+  t.ok('сброс возвращает смету', !/ничего нет/.test(p.run('tSpec2()')))
+}
+
 t.done()
 
