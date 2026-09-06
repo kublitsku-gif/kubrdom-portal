@@ -8971,6 +8971,8 @@ function expEditorHtml(p){
       <div style="font-size:10px;color:#9aabbf;margin-top:5px">Заполни — на карточке появится переключатель м² / лист</div>`:``}
       ${showMp?`<div style="display:flex;gap:8px;margin-top:8px">${expField("exp-lenper","Длина 1 хлыста, м.п.",lenPer||"")}<div style="flex:1"></div></div>
       <div style="font-size:10px;color:#9aabbf;margin-top:5px">Если продаётся хлыстами (напр. по 3 м) — появится переключатель м.п. / хлыст</div>`:``}
+      ${(showSheet||showMp)?``:`<div style="display:flex;gap:8px;margin-top:8px">${expField("exp-shopper","В одной покупке, "+saleUnit,Number(p.shopPer)>0?p.shopPer:"")}<div style="flex:1"></div></div>
+      <div style="font-size:10px;color:#9aabbf;margin-top:5px">Магазин продаёт коробкой (напр. 12 шт в комплекте) — впишите сколько. При сверке цену пишут с ценника, портал поделит сам.</div>`}
     </div>
     <div style="margin:14px 16px 16px;padding:14px 16px;background:#0d1b2e;border-radius:14px;color:#fff">
       <div style="display:flex;align-items:center;justify-content:space-between">
@@ -9050,6 +9052,7 @@ function bindExpEditor(p){
   bindText("exp-per","packPer",true);
   bindText("exp-sheetm2","sheetM2",true);
   bindText("exp-lenper","lenPer",true);
+  bindText("exp-shopper","shopPer",true);
   // «Где используется»: переход к шаблону/объекту и ручная синхронизация цены.
   el.querySelectorAll("[data-mat-goto]").forEach(function(b){b.onclick=function(){
     const v=String(b.dataset.matGoto||"").split(":"), id=v.slice(1).join(":");
@@ -13621,13 +13624,40 @@ function priceShopRows(st){
 // торгует: трубу — за хлыст 3 м, ламинат — за упаковку. У нас труба живёт в
 // метрах погонных, ламинат в квадратах. Возьмёшь ценник как есть — труба
 // подорожает втрое на ровном месте, и смета соврёт.
-function priceToOurUnit(prod, shopPrice){
+// Сколько НАШИХ единиц в одной покупке у магазина. Труба продаётся хлыстом по 3 м,
+// ламинат упаковкой по 2,2 м², клей-пена — коробкой по 12 баллонов, а в учёте у нас
+// метры, квадраты и баллоны.
+//
+// У метров и квадратов делитель уже есть (`lenPer`, `sheetM2`), а у штучного товара
+// его не было вовсе — и коробка из двенадцати баллонов уезжала в каталог как цена
+// ОДНОГО баллона: товар дорожал ровно во столько раз, во сколько магазин кладёт его
+// в коробку (ап. POLYNOR: 6 843 ₽ за коробку стали 6 843 ₽ за баллон при цене 550).
+// Поэтому есть `per` — у предложения своё, у товара общее: один продавец торгует
+// баллоном, соседний коробкой, и это разные числа при одном товаре.
+function shopPer(prod, offer){
+  const own=Number(offer&&offer.per)||0;
+  if(own>0)return own;
+  const p=Number(prod&&prod.shopPer)||0;
+  if(p>0)return p;
+  if(prod&&prod.mode==="mp"&&Number(prod.lenPer)>0)return Number(prod.lenPer);
+  if(prod&&prod.mode==="m2"&&Number(prod.sheetM2)>0)return Number(prod.sheetM2);
+  return 1;
+}
+// Ценник магазина → наша единица учёта. Правило одно и то же везде, где цену
+// вводят руками или приносит расширение: пишем то, что написано на ценнике, а
+// делит портал.
+function priceToOurUnit(prod, shopPrice, offer){
   const v=Number(shopPrice)||0;
   if(!(v>0))return 0;
-  if(prod&&prod.mode==="mp"&&Number(prod.lenPer)>0)return Math.round((v/Number(prod.lenPer))*100)/100;
-  if(prod&&prod.mode==="m2"&&Number(prod.sheetM2)>0)return Math.round((v/Number(prod.sheetM2))*100)/100;
-  // piece, pack, sheet: магазин и мы считаем одинаково — за штуку, упаковку, лист.
-  return Math.round(v*100)/100;
+  const per=shopPer(prod, offer);
+  return per>1?Math.round((v/per)*100)/100:Math.round(v*100)/100;
+}
+// Подпись к цене: «₽ за 12 шт» у коробки и «₽/шт» у штучного. Без неё непонятно,
+// какое число вводить, а это ровно то место, где ошибаются на порядок.
+function shopPerLabel(prod, offer){
+  const per=shopPer(prod, offer);
+  const unit=(EXP_MODES.find(function(x){return x.k===(prod&&prod.mode);})||EXP_MODES[0]).unit;
+  return per>1?("₽ за "+numRu(per)+" "+unit):("₽/"+unit);
 }
 
 function applyPriceReports(list){
@@ -13650,7 +13680,7 @@ function applyPriceReports(list){
       if(r.alt&&r.alt.name&&Number(r.alt.price)>0)prod.alt=Object.assign({ at:todayISO() }, r.alt);
       out.oos++;
     } else {
-      const v=priceToOurUnit(prod, r.price);
+      const v=priceToOurUnit(prod, r.price, off);
       const cur=Number(off?off.unitCost:prod.unitCost)||0;
       if(v>0&&Math.round(v*100)!==Math.round(cur*100)){
         const was=Number(prod.unitCost)||0;
@@ -13713,9 +13743,17 @@ function priceWizHtml(st){
     (/^https?:\/\//.test(url)
       ? '<a href="'+esc(url)+'" target="_blank" rel="noopener" style="display:block;text-align:center;padding:12px;margin-bottom:8px;border-radius:11px;background:#2980b9;color:#fff;font-size:13px;font-weight:700;text-decoration:none">Открыть '+esc(who)+' ↗</a>'
       : '<div style="text-align:center;padding:10px;margin-bottom:8px;border-radius:11px;background:#f5f7fa;color:#9aabbf;font-size:12px">'+esc(who)+' · ссылки нет</div>')+
-    '<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">'+
-      '<input data-a="price-wiz-price" placeholder="новая цена" inputmode="decimal" style="flex:1;min-width:0;padding:12px;border:1.5px solid #8e44ad;border-radius:11px;font-size:15px;font-weight:800;text-align:center;outline:none;background:#fff">'+
-      '<span style="font-size:13px;font-weight:700;color:#0d1b2e">₽/'+mode.unit+'</span>'+
+    '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">'+
+      '<input data-a="price-wiz-price" placeholder="цена с ценника" inputmode="decimal" style="flex:1;min-width:0;padding:12px;border:1.5px solid #8e44ad;border-radius:11px;font-size:15px;font-weight:800;text-align:center;outline:none;background:#fff">'+
+      '<span style="font-size:13px;font-weight:700;color:#0d1b2e;white-space:nowrap">'+esc(shopPerLabel(pr, o))+'</span>'+
+    '</div>'+
+    // Магазин торгует коробкой, а у нас в учёте баллон: без этого числа цена
+    // коробки уезжает в каталог как цена штуки. Стоит рядом с полем — это тот
+    // самый момент, когда человек смотрит на ценник и видит «комплект 12 шт».
+    '<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;font-size:11px;color:#7a9aaa">'+
+      '<span>в одной покупке</span>'+
+      '<input data-a="price-wiz-per" value="'+numRu(shopPer(pr, o))+'" inputmode="decimal" style="width:64px;padding:6px;border:1px solid #dde6f0;border-radius:8px;font-size:12px;font-weight:700;text-align:center;outline:none;background:#fff">'+
+      '<span>'+esc(mode.unit)+' · цену пишем как на ценнике, портал поделит</span>'+
     '</div>'+
     '<div style="display:flex;gap:6px;flex-wrap:wrap">'+
       '<button data-a="price-wiz-ok" style="'+btn+';border:1.5px solid #16a085;background:#16a085;color:#fff">✓ цена верна</button>'+
@@ -13788,13 +13826,17 @@ function priceShopHtml(st){
               ? '<a href="'+esc(o.url)+'" target="_blank" rel="noopener" style="flex:1 1 120px;font-size:10.5px;font-weight:700;color:'+(oos?"#c3cedb":"#2980b9")+';text-decoration:'+(oos?"line-through":"none")+'">'+esc(who)+' ↗</a>'
               : '<span style="flex:1 1 120px;font-size:10.5px;color:#c3cedb">'+esc(who)+' · без ссылки</span>')+
             '<span style="font-size:10.5px;color:#9aabbf;white-space:nowrap">'+(Number(o.unitCost)||0).toLocaleString("ru-RU",{maximumFractionDigits:2})+' ₽/'+mode.unit+'</span>'+
+            // Магазин торгует коробкой — это надо видеть там же, где вводят цену:
+            // иначе в поле впишут ценник коробки, а получится цена штуки.
+            (function(){ const per=shopPer(pr, offers.length?o:null);
+              return per>1?'<span title="Магазин продаёт по '+numRu(per)+' '+esc(mode.unit)+' — цену с ценника портал поделит" style="font-size:9.5px;font-weight:800;color:#8e44ad;background:#8e44ad12;border:1px solid #8e44ad33;border-radius:6px;padding:1px 6px;white-space:nowrap">\u00d7 '+numRu(per)+' '+esc(mode.unit)+'</span>':''; })()+
             // Динамика — только у карточки, из которой берётся цена: история цен
             // живёт у ТОВАРА, и приписывать её чужому предложению значит соврать.
             (act?priceTrendHtml(pr):'')+
             // Ручной ввод — на случай, когда сверку делают глазами; отметки
             // «верна»/«кончился» проставляет тот, кто обошёл магазины (расширение
             // или мастер), и дублировать их здесь незачем.
-            '<input data-a="price-shop-set" data-p="'+esc(pr.id)+'" data-o="'+esc(o.id||"")+'" placeholder="новая" inputmode="decimal" style="width:70px;padding:4px 7px;border:1px solid #8e44ad55;border-radius:7px;font-size:11px;font-weight:700;text-align:right;outline:none;background:#fff">'+
+            '<input data-a="price-shop-set" data-p="'+esc(pr.id)+'" data-o="'+esc(o.id||"")+'" placeholder="'+(shopPer(pr, offers.length?o:null)>1?"с ценника":"новая")+'" inputmode="decimal" style="width:70px;padding:4px 7px;border:1px solid #8e44ad55;border-radius:7px;font-size:11px;font-weight:700;text-align:right;outline:none;background:#fff">'+
           '</div>';
         }).join("")+
       '</div>';
@@ -23161,7 +23203,7 @@ function bind(){
       priceWizStage=String(el.dataset.n||""); priceWizIdx=0; fl();
     };}
     else if(a==="price-wiz-close"){el.onclick=()=>{ priceWizStage=""; priceWizIdx=0; fl(); };}
-    else if(a==="price-wiz-ok"||a==="price-wiz-oos"||a==="price-wiz-skip"||a==="price-wiz-price"){
+    else if(a==="price-wiz-ok"||a==="price-wiz-oos"||a==="price-wiz-skip"||a==="price-wiz-price"||a==="price-wiz-per"){
       const step=()=>{
         const sh=schemeSheet()||spec2Sheet(); if(!sh)return null;
         const w=works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes }));
@@ -23188,6 +23230,17 @@ function bind(){
         it.pr.priceCheckedAt=todayISO();
         nextCard();
       }; }
+      else if(a==="price-wiz-per"){ el.onchange=()=>{
+        const it=step(); if(!it)return;
+        const v=parseFloat(String(el.value||"").replace(/\s/g,"").replace(",","."));
+        const per=(isFinite(v)&&v>0)?v:1;
+        // У предложения своё число, у товара общее: один продавец торгует
+        // баллоном, соседний коробкой — и это разные числа при одном товаре.
+        if(it.o)it.o.per=per>1?per:0; else it.pr.shopPer=per>1?per:0;
+        if(it.o&&!it.o.per)delete it.o.per;
+        if(!it.o&&!it.pr.shopPer)delete it.pr.shopPer;
+        scheduleSave(); fl();
+      }; }
       else if(a==="price-wiz-oos"){ el.onclick=()=>{
         const it=step(); if(!it){ nextCard(); return; }
         if(it.o){ matOfferOos(it.pr, it.o.id); it.o.okAt=todayISO(); }
@@ -23197,9 +23250,11 @@ function bind(){
       }; }
       else { el.onchange=()=>{
         const it=step(); if(!it){ nextCard(); return; }
-        const v=parseFloat(String(el.value||"").replace(/\s/g,"").replace(",","."));
-        if(!isFinite(v)||v<=0){ nextCard(); return; }
+        const raw=parseFloat(String(el.value||"").replace(/\s/g,"").replace(",","."));
+        if(!isFinite(raw)||raw<=0){ nextCard(); return; }
         const pr=it.pr, who=(currentUser&&currentUser.name)||"";
+        // Цена с ценника: коробку из двенадцати баллонов портал делит сам.
+        const v=priceToOurUnit(pr, raw, it.o);
         const was=Number(pr.unitCost)||0;
         if(it.o){
           it.o.unitCost=v; it.o.okAt=todayISO(); if(it.o.oosAt)delete it.o.oosAt;
@@ -23262,8 +23317,12 @@ function bind(){
     else if(a==="price-shop-set"){el.onchange=()=>{
       const pid=el.dataset.p||"", oid=el.dataset.o||"";
       const prod=(expProducts||[]).find(function(x){ return x&&x.id===pid; }); if(!prod)return;
-      const v=parseFloat(String(el.value||"").replace(/\s/g,"").replace(",","."));
-      if(!isFinite(v)||v<=0){ fl(); return; }
+      const raw=parseFloat(String(el.value||"").replace(/\s/g,"").replace(",","."));
+      if(!isFinite(raw)||raw<=0){ fl(); return; }
+      const off0=oid?matOffers(prod).find(function(x){ return x.id===oid; }):null;
+      // Пишут то, что на ценнике: магазин торгует коробкой, хлыстом, упаковкой, а
+      // у нас в учёте баллоны, метры и квадраты. Делит портал.
+      const v=priceToOurUnit(prod, raw, off0);
       // Цену смотрели у КОНКРЕТНОГО продавца — ему её и записываем. Дальше портал
       // сам решает, чья карточка активна: платить дороже, когда рядом дешевле,
       // незачем, а вернувшийся товар снимает пометку «кончился».
@@ -23330,9 +23389,11 @@ function bind(){
         sh.priceLog=((sh.priceLog||[]).concat([{ at:todayISO(), n:n, cnt:cnt, diff:diff, by:who }])).slice(-PRICE_LOG_MAX);
       }
       scheduleSave(); fl();
-      alert(cnt
-        ? ("Обновлено позиций: "+cnt+".\nЭтап "+(diff>=0?"подорожал на ":"подешевел на ")+Math.abs(diff).toLocaleString("ru-RU")+" ₽.")
-        : "Цены этапа совпадают с каталогом — отмечено как сверенные.");
+      // Говорим только тогда, когда есть что сказать: деньги этапа поехали, а
+      // этого на экране не видно. «Ничего не изменилось» человек и так видит —
+      // список магазинов раскрылся, цены в строках прежние; модалка ради этого
+      // требует тапа и перекрывает сам список, ради которого кнопку и жали.
+      if(cnt)alert("Обновлено позиций: "+cnt+".\nЭтап "+(diff>=0?"подорожал на ":"подешевел на ")+Math.abs(diff).toLocaleString("ru-RU")+" ₽.");
     };}
     else if(a==="est-pos-stage-pick"){el.onclick=()=>{ stagePickKey=(stagePickKey===(el.dataset.k||""))?"":(el.dataset.k||""); fl(); };}
     else if(a==="est-block-open"){el.onclick=()=>{

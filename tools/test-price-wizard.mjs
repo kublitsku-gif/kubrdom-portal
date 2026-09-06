@@ -121,4 +121,36 @@ const stageOf = (p) => p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0
     p.run('tSpec2()').indexOf('data-a="price-hist"') < 0, 'чип нарисован без истории')
 }
 
+// ── Упаковка в мастере ──────────────────────────────────────────────────────
+// Ровно здесь человек смотрит на ценник «комплект 12 шт — 6 843 ₽» и вводит
+// число. Поле «в одной покупке» стоит рядом с ценой, потому что это и есть тот
+// момент, когда ошибаются на порядок.
+{
+  t.section('Упаковка в мастере сверки')
+  const p = panel()
+  const plain = () => p.run('tSpec2()').replace(/[  ]/g, ' ')
+  const stN = stageOf(p)
+  const open = p.dom.node({ a: 'price-wiz-open', n: String(stN) }); p.run('bind();'); open.onclick()
+  t.ok('поле упаковки есть', plain().indexOf('data-a="price-wiz-per"') >= 0, 'нет поля упаковки')
+  t.ok('по умолчанию одна штука', /value="1"/.test(plain()))
+  t.ok('подпись у цены — за штуку', /₽\/шт/.test(plain()), 'нет подписи единицы')
+
+  // Говорим порталу, что магазин продаёт коробкой.
+  const per = p.dom.node({ a: 'price-wiz-per' }); p.run('bind();'); per.value = '12'; per.onchange()
+  t.ok('число упаковки записано',
+    p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].shopPer') === 12,
+    JSON.stringify(p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].shopPer')))
+  t.ok('подпись сменилась на коробку', /₽ за 12 шт/.test(plain()), 'подпись не про коробку')
+
+  // Цена с ценника коробки делится на двенадцать.
+  const price = p.dom.node({ a: 'price-wiz-price' }); p.run('bind();'); price.value = '6843'; price.onchange()
+  t.ok('в каталог ушла цена штуки',
+    p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].unitCost') === 570.25,
+    String(p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].unitCost')))
+  // История хранит наши единицы — иначе «было 5 100, стало 6 843» врало бы вдвое.
+  const hist = p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].hist||[]')
+  t.ok('история в наших единицах', hist.some((h) => Math.round(Number(h.c)) === 570),
+    JSON.stringify(hist))
+}
+
 t.done()

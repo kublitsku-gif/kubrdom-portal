@@ -311,13 +311,14 @@ function panel() {
   // Цена вводится в НАШЕЙ единице: в строке рядом стоит «₽/м.п.».
   const up = p.dom.node({ a: 'price-shop-set', p: 'p_kab' })
   p.run('bind();'); up.value = '5600'; up.onchange()
+  // Цена пишется КАК НА ЦЕННИКЕ: хлыст 3 м за 240 ₽ — это 80 ₽/м.п.
   const down = p.dom.node({ a: 'price-shop-set', p: 'p_br' })
-  p.run('bind();'); down.value = '90'; down.onchange()
+  p.run('bind();'); down.value = '240'; down.onchange()
 
   const html = plain()
   t.ok('у подорожавшего — рост', /▲ \+500 ₽/.test(html), 'нет роста в строке')
   t.ok('и в процентах', /▲ \+500 ₽ · 10%/.test(html), 'нет процента')
-  t.ok('у подешевевшего — падение', /▼ −18 ₽/.test(html), 'нет падения в строке')
+  t.ok('у подешевевшего — падение', /▼ −28 ₽/.test(html), 'нет падения в строке')
   t.ok('цвета разные',
     /#e74c3c55/.test(html) && /#27ae6055/.test(html), 'оба чипа одного цвета')
   t.ok('в подсказке прежняя цена', html.indexOf('title="Было 5 100 ₽') >= 0, 'нет «было» в подсказке')
@@ -337,6 +338,46 @@ function panel() {
   // стоит столько же, сколько раньше, это враньё.
   p.run('expProducts.filter(function(x){return x.id==="p_kab";})[0].unitCost=5100;')
   t.ok('вернулась цена — ушёл и чип', !/▲ \+500 ₽/.test(plain()), 'чип остался')
+}
+
+// ── Цена с ценника: коробка, хлыст, упаковка ────────────────────────────────
+// Магазин торгует тем, чем торгует: трубу отдаёт хлыстом по 3 м, клей-пену —
+// коробкой по 12 баллонов. У нас в учёте метры и баллоны. Возьмёшь ценник как
+// есть — товар подорожает ровно во столько раз, во сколько его кладут в коробку.
+{
+  t.section('Ценник магазина в нашу единицу')
+  const p = panel()
+  const plain = () => p.run('tSpec2()').replace(/[  ]/g, ' ')
+  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
+
+  // Хлыст: делитель у метража уже есть — 240 ₽ за 3 м это 80 ₽/м.п.
+  const mp = p.dom.node({ a: 'price-shop-set', p: 'p_br' })
+  p.run('bind();'); mp.value = '240'; mp.onchange()
+  t.ok('метраж поделён по хлысту',
+    p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].unitCost') === 80,
+    String(p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].unitCost')))
+  t.ok('и в строке видно, что покупают хлыстом', /× 3 м\.п\./.test(plain()), 'нет пометки об упаковке')
+
+  // Штучный товар: своего делителя у него не было вовсе — коробка из 12 баллонов
+  // уезжала в каталог как цена ОДНОГО баллона.
+  p.run('expProducts.filter(function(x){return x.id==="p_kab";})[0].shopPer=12;')
+  const box = p.dom.node({ a: 'price-shop-set', p: 'p_kab' })
+  p.run('bind();'); box.value = '6843'; box.onchange()
+  t.ok('коробка поделена на штуки',
+    p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].unitCost') === 570.25,
+    String(p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].unitCost')))
+  const html = plain()
+  t.ok('пометка о коробке в строке', /× 12 шт/.test(html), 'нет пометки о коробке')
+  t.ok('и поле просит ценник', /placeholder="с ценника"/.test(html), 'поле не подсказывает')
+
+  // Без упаковки правило прежнее: что написали, то и записали.
+  p.run('expProducts.filter(function(x){return x.id==="p_kab";})[0].shopPer=0;')
+  const one = p.dom.node({ a: 'price-shop-set', p: 'p_kab' })
+  p.run('bind();'); one.value = '600'; one.onchange()
+  t.ok('штучный товар не делится',
+    p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].unitCost') === 600)
+  t.ok('и пометки нет', !/× 12 шт/.test(plain()))
 }
 
 t.done()
