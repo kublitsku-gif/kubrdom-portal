@@ -55,6 +55,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2, works2 } from "../src/spec2.js";
 import { priceHist, priceWas, pricePush, priceStale, refreshPrices } from "../src/prices.js";
+import { UNIT_WORDS, PACK_AS_WORD, normProduct } from "../src/catalog.js";
 import { allPositions, allPositionsRaw, addedPositions, matKeyOf, matAddKey, matAddrs, matAddrPid, matAddrSwap, migrateMatAddrs, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
   pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
   optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf, ROOM_HOUSE, roomKeyOf, positionSplit } from "../src/recipe.js";
@@ -8893,16 +8894,8 @@ function matOfferAddNew(p, o){
 // Порядок колонок у каждой таблицы свой, поэтому его НЕ требуем: имя — первая
 // текстовая колонка, цена — первое число, ссылка — то, что начинается с http,
 // единица — известное слово. Так вставка переживает и чужой прайс, и свою смету.
-const UNIT_WORDS={
-  "шт":"piece","шт.":"piece","штук":"piece","штука":"piece","штуки":"piece",
-  "м2":"m2","м²":"m2","кв.м":"m2","кв.м.":"m2","кв м":"m2","m2":"m2",
-  "м.п.":"mp","мп":"mp","м/п":"mp","пог.м":"mp","пог. м":"mp","п.м":"mp","м":"mp","м.":"mp",
-  "лист":"sheet","листов":"sheet","л":"sheet",
-  "пачка":"pack","пач":"pack","упак":"pack","упак.":"pack","уп":"pack","уп.":"pack","упаковка":"pack",
-  "рулон":"pack","бухта":"pack","мешок":"pack","коробка":"pack","компл":"pack","комплект":"pack"
-};
-// Слово покупки сохраняем как есть: рулон должен остаться рулоном (см. packWord).
-const PACK_AS_WORD={ "рулон":1,"бухта":1,"мешок":1,"коробка":1,"комплект":1,"упаковка":1,"пачка":1 };
+// Словарь единиц и слов покупки — общий с ручкой каталога (src/catalog.js):
+// вторая копия разошлась бы с первой, и «рулон» из таблицы стал бы штукой.
 function matCells(line){
   // Таб — из таблиц, точка с запятой — из выгрузок. Запятую разделителем НЕ
   // берём: она стоит внутри цен («1 250,50») и названий.
@@ -8945,13 +8938,11 @@ function parseMatRows(text){
   });
   return out;
 }
+// Карточку собирает ОБЩАЯ форма (src/catalog.js): те же поля заводит ручка
+// /api/catalog/add, и разъехаться дверям заведения товара негде.
 function productNew(o){
-  const p={ id:gid(), emoji:(o&&o.emoji)||"📦", name:String((o&&o.name)||"").trim().slice(0,160),
-    store:String((o&&o.store)||""), url:String((o&&o.url)||""), photo:"",
-    mode:(o&&o.mode)||"piece", unitCost:Math.round((Number(o&&o.cost)||0)*100)/100, qty:1,
-    priceCheckedAt:todayISO() };
-  if(!p.name)return null;
-  ["packBase","packPer","lenPer","sheetM2","shopPer","packName"].forEach(function(k){ if(o&&o[k]!=null)p[k]=o[k]; });
+  const p=normProduct(o, gid(), todayISO());
+  if(!p)return null;
   expProducts=[p].concat(expProducts||[]);
   return p;
 }

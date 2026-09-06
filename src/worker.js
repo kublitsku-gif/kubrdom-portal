@@ -16,6 +16,7 @@ import { issueText, issueCallback, issueMedia, issueReplyToAuthor } from "./boti
 import { planRequest, planFromResponse, planNormalize, PLAN_MODEL, PLAN_MAX_FILES,
   planRequestOpenAI, planFromOpenAI, PLAN_MODEL_KIMI } from "./plan-read.js";
 import { mcpFetch } from "./mcp.js";
+import { catalogFetch } from "./catalog.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
@@ -1613,6 +1614,15 @@ export default {
     // записи всей панели, а наружу торчит машинный эндпоинт. См. src/mcp.js.
     if (url.pathname === "/api/mcp") {
       try { return await mcpFetch(request, env, { getPrice }); }
+      catch (err) { return json({ success: false, error: String((err && err.message) || err) }, 500); }
+    }
+
+    // Заведение товаров в каталог — ДО авторизации и тоже под СВОИМ секретом
+    // (CATALOG_TOKEN). Единственная ручка записи наружу, и умеет она ровно одно:
+    // дописать карточку в «Базу · материалы». Ни правки, ни удаления, ни других
+    // разделов снимка — панельный токен сюда не пускают по той же причине, что и в MCP.
+    if (url.pathname === "/api/catalog/add") {
+      try { return await catalogFetch(request, env, { writeSection }); }
       catch (err) { return json({ success: false, error: String((err && err.message) || err) }, 500); }
     }
 
