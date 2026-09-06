@@ -1391,4 +1391,35 @@ function create(p, name) {
     p.q('projects[0].matAdd[' + JSON.stringify(key) + '].length') === 2)
 }
 
+// ── «30 листов» — это сколько квадратов ─────────────────────────────────────
+// Товар продаётся листами, а стены меряют квадратами. Считать в уме 30 × 3,12
+// при каждом взгляде на строку — не работа человека. Экран сметы у двух
+// разделов ОДИН: то же сторожит test-spec2-smeta.
+{
+  t.section('Пересчёт в базовую единицу')
+  const p = boot({})
+  p.set({
+    expProducts: [
+      { id: 'p_osb', name: 'ОСП 18 м²', unitCost: 710, store: 'Белка', mode: 'sheet', packBase: 'м²', packPer: 3.12 },
+      { id: 'p_tr', name: 'Труба профильная 40x40', unitCost: 193, store: 'Белка', mode: 'mp', lenPer: 3 },
+    ],
+    estimates: [{ id: 'e_osb', kind: 'house', name: 'Обшивка стен ОСП', stage: 2,
+      lines: [{ id: 'l1', pid: 'p_osb', qty: 30 }, { id: 'l2', pid: 'p_tr', qty: 12 }] }],
+    dbPlans: [], crmClients: [{ id: 'c1', name: 'Иванов' }], specSheets: [], specSheets2: [],
+    projects: [], buildRules: [], winTypes: [], objects: [], templates: [], contractDocs: [],
+    purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+  })
+  create(p, 'Дом с листами')
+  p.run('projBand="parts";')
+  const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
+  const openMats = p.dom.node({ a: 'est-mats-open', k: key }); p.run('bind();'); openMats.onclick()
+  const html = p.run('tProjects()').replace(/[  ]/g, ' ')
+
+  t.ok('листы переведены в квадраты', /= 93,6 м²/.test(html), 'нет пересчёта листов')
+  t.ok('а метраж — в хлысты', /≈ 4 хлыст/.test(html), 'нет пересчёта метража')
+  // Штучному товару переводить не во что — лишней подписи быть не должно.
+  t.ok('у штучного подписи нет', (html.match(/= \d/g) || []).length === 1,
+    JSON.stringify(html.match(/= [^<]+/g)))
+}
+
 t.done()

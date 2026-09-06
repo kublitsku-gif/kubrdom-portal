@@ -1274,5 +1274,31 @@ const SHEET = {
     p.q('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].pid') === np.id)
 }
 
+// ── «30 листов» — это сколько квадратов ─────────────────────────────────────
+// Экран сметы у двух разделов ОДИН: то же самое сторожит test-projects.
+{
+  t.section('Пересчёт в базовую единицу')
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS.concat([{ id: 'p_sheet', name: 'ОСП 18 м²', unitCost: 710,
+      store: 'Белка', mode: 'sheet', packBase: 'м²', packPer: 3.12 }]),
+    estimates: [{ id: 'e_win', kind: 'house', name: 'Монтаж окна', stage: 2, optPoint: 'win',
+      lines: [{ id: 'l1', pid: 'p_sheet', qty: 10 }] }],
+    dbPlans: [], crmClients: [], specSheets: [], specSheets2: [], winTypes: [], objects: [],
+    templates: [], contractDocs: [], purchases: [], issues: [], users: [], stock: [],
+    settings: { specMarkup: 30 }, buildRules: [],
+  })
+  p.run('spec2Tab="scheme";tSpec2();')
+  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
+  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key')
+  p.run('matsOpen[' + JSON.stringify(key) + ']=1;')
+  const html = p.run('tSpec2()').replace(/[  ]/g, ' ')
+  const qty = p.q('allPositions(spec2Sheet(), specCtx(spec2Sheet()))[0].mats[0].qty')
+  t.ok('листы переведены в квадраты',
+    html.indexOf('= ' + String(Math.round(qty * 3.12 * 100) / 100).replace('.', ',') + ' м²') >= 0,
+    'нет пересчёта: ' + JSON.stringify(html.match(/= [^<]+/g)))
+}
+
 t.done()
 

@@ -10385,6 +10385,23 @@ const SPEC_SURFACE={floor:"пол", wall:"стены", ceil:"потолок"};
 // клиенту: расхождение здесь означает, что в кабинете обещали одно, а на бумаге другое.
 // Количества показываем, закупочные цены — нет: это спецификация, а не наша калькуляция.
 function specMatUnit(m){ const md=EXP_MODES.find(function(x){return x.k===((m&&m.mode)||"piece");}); return md?md.unit:"шт"; }
+// Сколько это в базовой единице. «30 лист» ни о чём не говорит тому, кто мерил
+// стены в квадратах: считать в уме 30 × 3,12 при каждом взгляде на строку — не
+// работа человека. Число живёт в самом материале (`packPer`, `sheetM2`, `lenPer`),
+// поэтому пересчёт честный и не зависит от того, правили ли карточку каталога.
+function matAltQty(m, qty){
+  const q=Number(qty)||0;
+  if(!m||!(q>0))return "";
+  const mode=m.mode||"piece";
+  if((mode==="pack"||mode==="sheet")&&Number(m.packPer)>0){
+    return numRu(Math.round(q*Number(m.packPer)*100)/100)+" "+(m.packBase||"м²");
+  }
+  // У квадратов и метража единица учёта уже базовая — показываем, сколько это
+  // ЛИСТОВ и ХЛЫСТОВ: покупают именно их, и «≈» здесь честнее точного числа.
+  if(mode==="m2"&&Number(m.sheetM2)>0)return "≈ "+numRu(Math.ceil(q/Number(m.sheetM2)*10)/10)+" лист";
+  if(mode==="mp"&&Number(m.lenPer)>0)return "≈ "+numRu(Math.ceil(q/Number(m.lenPer)*10)/10)+" хлыст";
+  return "";
+}
 function specMatsText(p){
   return ((p&&p.mats)||[]).filter(function(m){ return (Number(m.qty)||0)>0 && String(m.n||"").trim(); })
     .map(function(m){ return m.n+" — "+numRu(Math.round((Number(m.qty)||0)*100)/100)+" "+specMatUnit(m); })
@@ -13220,6 +13237,10 @@ function specMatsListHtml(pos, sh, live){
                 ? '<input data-a="est-mat-qty" data-k="'+esc(matSwapKey(pos,m))+'" value="'+numRu(qty)+'" inputmode="decimal" title="Количество — можно поправить руками" style="width:56px;padding:2px 5px;border:1px solid '+(m.qtySet?"#8e44ad":"#dde6f0")+';border-radius:6px;font-size:10.5px;text-align:center;outline:none;color:#0d1b2e;background:#fff">'
                 : '<span>'+numRu(qty)+'</span>')+
               '<span>'+esc(unit)+'</span>'+
+              // «30 лист» — это сколько квадратов? Ответ стоит тут же, рядом с
+              // числом, а не в уме у того, кто читает смету.
+              (function(){ const alt=matAltQty(m, qty);
+                return alt?'<span title="Столько это в базовой единице товара" style="color:#5a7a9a;font-weight:700">= '+esc(alt)+'</span>':''; })()+
               (m.qtySet
                 ? '<button data-a="est-mat-qty-reset" data-k="'+esc(matSwapKey(pos,m))+'" title="Вернуть расчётное количество" style="border:none;background:transparent;color:#8e44ad;font-size:10px;font-weight:700;cursor:pointer;padding:0 2px">вручную ⟲</button>'
                 : '')+
