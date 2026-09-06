@@ -1869,6 +1869,7 @@ let dbWorks=[
   {id:"dw35",n:"Покрытие полков маслом",cost:20000,stage:"ЭТАП 3 — ЧИСТОВАЯ ОТДЕЛКА",note:"",mats:[]},
 ];
 let dbSection="mats";
+let priceShopStage="";    // этап, у которого раскрыт список магазинов для сверки
 let hoursPickKey="";       // у какой строки открыт ряд быстрого выбора часов
 // Ряд плана: целые 1..10 закрывают почти все работы, 0,5 — мелочь вроде подвесов.
 // Всё, что не сюда, вписывается в поле руками.
@@ -13112,6 +13113,14 @@ function specMatsListHtml(pos, sh, live){
                 return '<a href="'+esc(u)+'" target="_blank" rel="noopener" title="Открыть карточку товара" style="color:#2980b9;font-weight:700;text-decoration:none">'+shop+' ↗</a><span>·</span>';
               })()+
               ((Number(m.cost)||0)>0?'<span>'+Math.round(Number(m.cost)).toLocaleString("ru-RU")+' ₽/'+esc(unit)+' ×</span>':'')+
+              // «Нет в наличии» — итог живой сверки с магазином. Метка живёт у
+              // товара в каталоге, но нужна ЗДЕСЬ: закупают по строке сметы, а не
+              // по карточке, и узнать об этом на площадке — уже поздно.
+              (function(){
+                const pr=(expProducts||[]).find(function(x){ return x&&x.id===m.pid; });
+                if(!pr||!pr.oosAt)return '';
+                return '<span title="Товара не было в магазине '+esc(dayRu(pr.oosAt))+'" style="font-size:9px;font-weight:800;border-radius:5px;padding:1px 6px;background:#e74c3c15;color:#e74c3c;white-space:nowrap">нет в наличии</span>';
+              })()+
               matPriceTagHtml(pos, m, can)+
               // Количество правится руками: чертёж считает честно, но на площадке
               // бывает иначе — подрезка, запас, — и спорить с человеком незачем.
@@ -13459,6 +13468,45 @@ function dayRu(iso){
   const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso||""));
   return m?(Number(m[3])+" "+MON_RU[Number(m[2])-1]):String(iso||"");
 }
+// Список магазинов этапа для ЖИВОЙ сверки. Сверка с каталогом отвечает только на
+// вопрос «строка отстала от карточки»; но и сама карточка — вчерашняя: магазин
+// мог поднять ценник или товар кончился. Узнать это можно, лишь сходив по ссылке,
+// а Ozon и Лемана роботов не пускают (401 и редирект на антибот) — значит ходит
+// человек, а портал берёт на себя остальное: собрать ссылки, принять новую цену,
+// записать историю и пересчитать проект.
+function priceShopRows(st){
+  const byId={}; (expProducts||[]).forEach(function(x){ if(x&&x.id)byId[x.id]=x; });
+  const seen={}, out=[];
+  (st.positions||[]).forEach(function(p){
+    (p.mats||[]).forEach(function(m){
+      const pid=m&&m.pid; if(!pid||seen[pid])return;
+      const prod=byId[pid]; if(!prod)return;      // вписанному руками сверяться не с чем
+      seen[pid]=1; out.push(prod);
+    });
+  });
+  return out;
+}
+function priceShopHtml(st){
+  const rows=priceShopRows(st);
+  if(!rows.length)return '';
+  return '<div style="margin:0 0 10px;padding:10px;border:1px solid #8e44ad33;border-radius:11px;background:#8e44ad08">'+
+    '<div style="font-size:10px;font-weight:800;color:#8e44ad;letter-spacing:0.3px;margin-bottom:2px">СВЕРКА С МАГАЗИНАМИ · '+rows.length+'</div>'+
+    '<div style="font-size:10.5px;color:#7a9aaa;line-height:1.4;margin-bottom:8px">Откройте карточку, посмотрите цену и впишите её. Цена уйдёт в каталог со всей историей, и проект пересчитается сам.</div>'+
+    rows.map(function(pr){
+      const mode=EXP_MODES.find(function(x){return x.k===pr.mode;})||EXP_MODES[0];
+      const oos=!!pr.oosAt;
+      return '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 0;border-top:1px solid #eef2f7">'+
+        '<span style="flex:1 1 180px;min-width:0;font-size:11.5px;font-weight:700;color:'+(oos?"#e74c3c":"#0d1b2e")+'">'+esc(pr.name||"")+(oos?' · нет в наличии':'')+'</span>'+
+        (/^https?:\/\//.test(String(pr.url||""))
+          ? '<a href="'+esc(pr.url)+'" target="_blank" rel="noopener" style="font-size:10.5px;font-weight:700;color:#2980b9;text-decoration:none;white-space:nowrap">'+esc(pr.store||"магазин")+' ↗</a>'
+          : '<span style="font-size:10.5px;color:#c3cedb;white-space:nowrap">без ссылки</span>')+
+        '<span style="font-size:10.5px;color:#9aabbf;white-space:nowrap">сейчас '+(Number(pr.unitCost)||0).toLocaleString("ru-RU",{maximumFractionDigits:2})+' ₽/'+mode.unit+'</span>'+
+        '<input data-a="price-shop-set" data-p="'+esc(pr.id)+'" placeholder="новая" inputmode="decimal" style="width:74px;padding:4px 7px;border:1px solid #8e44ad55;border-radius:7px;font-size:11px;font-weight:700;text-align:right;outline:none;background:#fff">'+
+        '<button data-a="price-shop-oos" data-p="'+esc(pr.id)+'" title="'+(oos?"Товар снова в наличии":"Товара нет в магазине")+'" style="padding:4px 8px;border:1px solid '+(oos?"#e74c3c":"#dde6f0")+';background:'+(oos?"#e74c3c":"#fff")+';color:'+(oos?"#fff":"#8a97a6")+';border-radius:7px;font-size:10.5px;font-weight:700;cursor:pointer;white-space:nowrap">'+(oos?"вернулся":"нет в наличии")+'</button>'+
+      '</div>';
+    }).join("")+
+  '</div>';
+}
 function estStagePriceStale(st){
   const byId={}; (expProducts||[]).forEach(function(x){ if(x&&x.id)byId[x.id]=x; });
   return (st.positions||[]).some(function(p){
@@ -13624,6 +13672,9 @@ function estBodyHtml(sh, types, live, actions){
             return '<button data-a="est-stage-prices" data-n="'+st.n+'" title="'+esc(ttl)+'" style="height:24px;padding:0 8px;border:1px solid '+col+'55;background:#fff;color:'+col+';border-radius:7px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap">'+face+'</button>';
           })():'')+
         '</div>'+
+        // Список магазинов — сразу под шапкой: сверять цены идут отсюда, и
+        // прятать его внутрь свёрнутого этапа значит прятать саму задачу.
+        ((priceShopStage===String(st.n))?priceShopHtml(st):'')+
         (shut?'':estStageBody(st, moving, mi, st.positions.map(function(p, pi, arr){
           // Редактор раскрываем у ПЕРВОЙ строки этой сметы: правило по помещениям
           // даёт их несколько, и три одинаковых редактора подряд — это не выбор.
@@ -22773,6 +22824,33 @@ function bind(){
     // Цены материалов этапа — по каталогу. Правим ТОЛЬКО то, что лежит копией:
     // дописанные руками материалы. У остальных цена и так приезжает из карточки
     // товара при каждом расчёте, и «обновлять» там нечего.
+    else if(a==="price-shop-set"){el.onchange=()=>{
+      const pid=el.dataset.p||"";
+      const prod=(expProducts||[]).find(function(x){ return x&&x.id===pid; }); if(!prod)return;
+      const v=parseFloat(String(el.value||"").replace(/\s/g,"").replace(",","."));
+      if(!isFinite(v)||v<=0){ fl(); return; }
+      const was=Number(prod.unitCost)||0;
+      if(Math.round(was*100)===Math.round(v*100)){ prod.priceCheckedAt=todayISO(); scheduleSave(); fl(); return; }
+      const who=(currentUser&&currentUser.name)||"";
+      // В историю уходят ОБЕ цифры: прежняя (по ней считали смету) и новая. Иначе
+      // на вопрос «почему подорожало» ответить будет нечем.
+      pricePush(prod, was, prod.priceCheckedAt||todayISO(), who);
+      prod.unitCost=v;
+      pricePush(prod, v, todayISO(), who);
+      prod.priceCheckedAt=todayISO();
+      // Цена вернулась — значит товар в магазине есть.
+      if(prod.oosAt)delete prod.oosAt;
+      scheduleSave(); fl();
+    };}
+    else if(a==="price-shop-oos"){el.onclick=()=>{
+      const pid=el.dataset.p||"";
+      const prod=(expProducts||[]).find(function(x){ return x&&x.id===pid; }); if(!prod)return;
+      // Цену НЕ обнуляем: товар вернётся, а смета не должна «подешеветь» из-за
+      // того, что его сегодня нет на складе. Пометка — это повод найти замену.
+      if(prod.oosAt)delete prod.oosAt; else prod.oosAt=todayISO();
+      prod.priceCheckedAt=todayISO();
+      scheduleSave(); fl();
+    };}
     else if(a==="est-stage-prices"){el.onclick=()=>{
       const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
       const n=Number(el.dataset.n)||0;
@@ -22793,6 +22871,9 @@ function bind(){
       // дату — это ответ «проверено, всё совпало», — но журнал не засоряет.
       const who=(currentUser&&currentUser.name)||"";
       sh.priceOk=Object.assign({}, sh.priceOk||{}, { [n]:{ at:todayISO(), by:who } });
+      // Сверка с каталогом — только половина дела; вторая половина живёт в
+      // магазинах, поэтому список ссылок раскрываем сразу.
+      priceShopStage=(priceShopStage===String(n))?"":String(n);
       if(cnt){
         sh.matAdd=add;
         sh.priceLog=((sh.priceLog||[]).concat([{ at:todayISO(), n:n, cnt:cnt, diff:diff, by:who }])).slice(-PRICE_LOG_MAX);
