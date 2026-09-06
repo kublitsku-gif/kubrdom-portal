@@ -2305,6 +2305,8 @@ let matSwapOpen="";        // какой материал сметы сейча�
 let matAddOpen="";         // у какой строки сметы открыта форма «+ материал»
 let matOfferAdd="";        // у какого товара открыта форма «＋ магазин»
 let expAddUrl=false;       // открыта ли форма «новый товар по ссылке»
+let expAddTsv=false;       // открыта ли вставка таблицы
+let expTsvText="";         // что вставили — живёт на экране, в снимок не идёт
 let posAddOpen="";         // у какого листа открыта форма «+ работа»
 let matsOpen={};           // у каких строк сметы раскрыт список материалов
 // Этапы свёрнуты ПО УМОЛЧАНИЮ, поэтому карта про раскрытые: смета на сорок
@@ -8690,6 +8692,7 @@ function renderExpCard(containerId){
   const list=q?expProducts.filter(function(p){return (p.name||"").toLowerCase().indexOf(q)>=0||(p.store||"").toLowerCase().indexOf(q)>=0;}):expProducts;
   // Был ли фокус в поиске ДО перерисовки — чтобы не выдёргивать клавиатуру при тапе на переключатель
   const _wasSearch=document.activeElement&&document.activeElement.id==="exp-search";
+  const _wasTsv=document.activeElement&&document.activeElement.id==="ptsv-text";
   el.innerHTML=
     '<div style="position:relative;margin-bottom:12px">'+
       '<input id="exp-search" value="'+(expSearch||"").replace(/"/g,"&quot;")+'" placeholder="🔍 Поиск по названию или магазину..." style="width:100%;padding:10px 34px 10px 12px;border-radius:10px;border:1.5px solid #dde6f0;font-size:13px;outline:none;box-sizing:border-box">'+
@@ -8700,7 +8703,39 @@ function renderExpCard(containerId){
       // Товар заводят, стоя на его странице в магазине: адрес уже в буфере, и
       // печатать магазин руками после этого — работа, которую портал умеет сам.
       '<button id="exp-add-url" style="padding:11px 13px;background:#fff;border:1.5px solid #16a085;border-radius:11px;cursor:pointer;color:#16a085;font-size:13px;font-weight:700;white-space:nowrap">🔗 по ссылке</button>'+
+      // Материалы приносят таблицей — своя смета, прайс поставщика. Забивать сорок
+      // строк руками никто не будет, и они так и останутся вне каталога.
+      '<button id="exp-add-tsv" style="padding:11px 13px;background:#fff;border:1.5px solid #2980b9;border-radius:11px;cursor:pointer;color:#2980b9;font-size:13px;font-weight:700;white-space:nowrap">📋 из таблицы</button>'+
     '</div>'+
+    (expAddTsv?(function(){
+      const rows=parseMatRows(expTsvText);
+      const have={}; (expProducts||[]).forEach(function(x){ have[String(x.name||"").trim().toLowerCase()]=1; });
+      const fresh=rows.filter(function(r){ return !have[r.n.toLowerCase()]; });
+      return '<div style="margin-bottom:12px;background:#eef4fb;border:1px solid #2980b944;border-radius:11px;padding:10px 11px">'+
+        '<div style="font-size:10px;font-weight:800;color:#2980b9;letter-spacing:0.3px;margin-bottom:6px">ВСТАВЬТЕ СТРОКИ ИЗ ТАБЛИЦЫ</div>'+
+        '<textarea id="ptsv-text" rows="5" placeholder="Труба PPR 20 мм\t180\tм.п.\tЛемана\nФитинг угол 20\t45\tшт" '+
+          'style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid #c3d6ea;font-size:12px;outline:none;font-family:inherit;resize:vertical">'+esc(expTsvText||"")+'</textarea>'+
+        '<div style="font-size:10px;color:#7a9aaa;line-height:1.45;margin:6px 0">Копируйте прямо из Google Sheets или Excel — колонки в любом порядке. Имя, цена, единица (шт, м², м.п., лист, рулон), магазин и ссылка узнаются сами.</div>'+
+        // Показываем РАЗБОР до записи: в каталог уходит то, что человек увидел, а
+        // не то, что портал угадал.
+        (rows.length?'<div style="max-height:190px;overflow:auto;border:1px solid #dbe6f2;border-radius:8px;background:#fff;margin-bottom:7px">'+
+          rows.map(function(r){
+            const dup=!!have[r.n.toLowerCase()];
+            const md=EXP_MODES.find(function(x){return x.k===r.mode;})||EXP_MODES[0];
+            return '<div style="display:flex;align-items:baseline;gap:7px;padding:5px 8px;border-bottom:1px solid #f2f6fa">'+
+              '<span style="flex:1;min-width:0;font-size:11.5px;font-weight:700;color:'+(dup?"#c3cedb":"#0d1b2e")+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.n)+'</span>'+
+              (r.store?'<span style="font-size:10px;color:#9aabbf;white-space:nowrap">'+esc(r.store)+'</span>':'')+
+              '<span style="font-size:10.5px;color:#5a7a9a;white-space:nowrap">'+(r.cost||0).toLocaleString("ru-RU")+' ₽/'+esc(r.packName||md.unit)+'</span>'+
+              (dup?'<span style="font-size:9.5px;font-weight:700;color:#c3cedb;white-space:nowrap">уже есть</span>':'')+
+            '</div>';
+          }).join("")+
+        '</div>':'')+
+        '<div style="display:flex;gap:6px;align-items:center">'+
+          '<button id="ptsv-do"'+(fresh.length?'':' disabled')+' style="flex:1;padding:9px;background:'+(fresh.length?"#2980b9":"#dde6f0")+';border:none;border-radius:8px;cursor:'+(fresh.length?"pointer":"default")+';color:#fff;font-size:12.5px;font-weight:700">Завести '+fresh.length+' '+pluralRu(fresh.length,"товар","товара","товаров")+'</button>'+
+          '<button id="ptsv-cancel" style="padding:9px 13px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:12.5px">Отмена</button>'+
+        '</div>'+
+      '</div>';
+    })():'')+
     (expAddUrl?'<div style="margin-bottom:12px;background:#eefaf6;border:1px solid #16a08544;border-radius:11px;padding:10px 11px">'+
       '<div style="font-size:10px;font-weight:800;color:#16a085;letter-spacing:0.3px;margin-bottom:6px">НОВЫЙ ТОВАР ПО ССЫЛКЕ</div>'+
       '<input id="pnu-url" placeholder="вставьте ссылку из магазина" style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid #c9e3db;font-size:12px;outline:none;margin-bottom:6px">'+
@@ -8716,6 +8751,35 @@ function renderExpCard(containerId){
   if(si){ si.oninput=function(){expSearch=this.value;renderExpCard();}; if(_wasSearch){ si.focus(); const L=si.value.length; try{si.setSelectionRange(L,L);}catch(e){} } }
   const sc=document.getElementById("exp-search-clear");
   if(sc)sc.onclick=function(){expSearch="";renderExpCard();};
+  const at=document.getElementById("exp-add-tsv");
+  if(at)at.onclick=function(){ expAddTsv=!expAddTsv; if(!expAddTsv)expTsvText=""; renderExpCard(); };
+  const tv=document.getElementById("ptsv-text");
+  if(tv){
+    tv.oninput=function(){
+      const pos=this.selectionStart; expTsvText=this.value; renderExpCard();
+      const n=document.getElementById("ptsv-text");
+      if(n){ n.focus(); try{ n.setSelectionRange(pos,pos); }catch(e){} }
+    };
+    if(_wasTsv){ tv.focus(); }
+  }
+  const tc=document.getElementById("ptsv-cancel");
+  if(tc)tc.onclick=function(){ expAddTsv=false; expTsvText=""; renderExpCard(); };
+  const td=document.getElementById("ptsv-do");
+  if(td)td.onclick=function(){
+    const rows=parseMatRows(expTsvText);
+    const have={}; (expProducts||[]).forEach(function(x){ have[String(x.name||"").trim().toLowerCase()]=1; });
+    let n=0;
+    // Тёзку второй карточкой не заводим: одинаковые имена в каталоге потом не
+    // различить, а связь сметы с товаром идёт по нему же.
+    rows.forEach(function(r){
+      if(have[r.n.toLowerCase()])return;
+      const p=productNew({ name:r.n, cost:r.cost, store:r.store, url:r.url, mode:r.mode,
+        packName:r.packName||"" });
+      if(p){ have[r.n.toLowerCase()]=1; n++; }
+    });
+    expAddTsv=false; expTsvText=""; scheduleSave(); renderExpCard();
+    if(n)alert("Заведено товаров: "+n+".\nЦену, единицу и упаковку можно поправить в карточке.");
+  };
   const au=document.getElementById("exp-add-url");
   if(au)au.onclick=function(){ expAddUrl=!expAddUrl; renderExpCard(); };
   const ud=document.getElementById("pnu-do");
@@ -8821,6 +8885,66 @@ function matOfferAddNew(p, o){
 // общий на все дома, поэтому заводит его человек — но заводить должно быть
 // одинаково просто отовсюду, иначе товар так и останется снимком в одном доме:
 // без цены из базы, без истории и без сверки.
+// ── ВСТАВКА ТАБЛИЦЫ ────────────────────────────────────────────────────────
+// Материалы приносят таблицей: своя смета в Google Sheets, прайс поставщика,
+// выгрузка из Excel. Забивать сорок строк в каталог руками никто не будет — они
+// так и останутся в таблице, а портал будет считать дом по половине состава.
+//
+// Порядок колонок у каждой таблицы свой, поэтому его НЕ требуем: имя — первая
+// текстовая колонка, цена — первое число, ссылка — то, что начинается с http,
+// единица — известное слово. Так вставка переживает и чужой прайс, и свою смету.
+const UNIT_WORDS={
+  "шт":"piece","шт.":"piece","штук":"piece","штука":"piece","штуки":"piece",
+  "м2":"m2","м²":"m2","кв.м":"m2","кв.м.":"m2","кв м":"m2","m2":"m2",
+  "м.п.":"mp","мп":"mp","м/п":"mp","пог.м":"mp","пог. м":"mp","п.м":"mp","м":"mp","м.":"mp",
+  "лист":"sheet","листов":"sheet","л":"sheet",
+  "пачка":"pack","пач":"pack","упак":"pack","упак.":"pack","уп":"pack","уп.":"pack","упаковка":"pack",
+  "рулон":"pack","бухта":"pack","мешок":"pack","коробка":"pack","компл":"pack","комплект":"pack"
+};
+// Слово покупки сохраняем как есть: рулон должен остаться рулоном (см. packWord).
+const PACK_AS_WORD={ "рулон":1,"бухта":1,"мешок":1,"коробка":1,"комплект":1,"упаковка":1,"пачка":1 };
+function matCells(line){
+  // Таб — из таблиц, точка с запятой — из выгрузок. Запятую разделителем НЕ
+  // берём: она стоит внутри цен («1 250,50») и названий.
+  const raw=String(line||"");
+  const parts=(raw.indexOf("\t")>=0)?raw.split("\t"):(raw.indexOf(";")>=0?raw.split(";"):[raw]);
+  return parts.map(function(x){ return String(x||"").trim().replace(/^"|"$/g,""); });
+}
+function matNum(v){
+  const t=String(v||"").replace(/[\s\u00a0\u202f]/g,"").replace(/₽|руб\.?/gi,"").replace(",",".");
+  if(!/^\d+(\.\d+)?$/.test(t))return null;
+  const n=parseFloat(t);
+  return isFinite(n)?n:null;
+}
+function parseMatRows(text){
+  const out=[];
+  String(text||"").split(/\r?\n/).forEach(function(line){
+    const cells=matCells(line).filter(function(c){ return c!==""; });
+    if(!cells.length)return;
+    let cost=null, url="", mode="", word="", qty=null;
+    const texts=[];
+    cells.forEach(function(c){
+      if(!url&&/^https?:\/\//i.test(c)){ url=c; return; }
+      const n=matNum(c);
+      if(n!==null){ if(cost===null)cost=n; else if(qty===null)qty=n; return; }
+      const u=UNIT_WORDS[c.toLowerCase()];
+      if(u&&!mode){ mode=u; if(PACK_AS_WORD[c.toLowerCase()])word=c.toLowerCase(); return; }
+      texts.push(c);
+    });
+    // Имя — САМАЯ ДЛИННАЯ текстовая колонка, а не первая: в одних таблицах магазин
+    // стоит перед товаром, в других после, и порядок колонок мы не требуем.
+    // Названия магазинов короткие («Лемана», «Озон»), названия товаров длинные.
+    let name="", store="";
+    texts.forEach(function(c){ if(c.length>name.length){ if(name)store=store||name; name=c; } else if(!store)store=c; });
+    // Строка без имени — это разделитель или итог, а не товар. Заголовок отсекается
+    // тем же правилом: в нём нет ни цены, ни ссылки, зато есть слово «цена».
+    if(!name||name.length<2)return;
+    if(cost===null&&!url&&/цена|наимен|товар|материал|стоим/i.test(name))return;
+    out.push({ n:name.slice(0,160), cost:cost===null?0:cost, store:store.slice(0,40), url:url,
+      mode:mode||"piece", packName:word, qty:qty===null?0:qty });
+  });
+  return out;
+}
 function productNew(o){
   const p={ id:gid(), emoji:(o&&o.emoji)||"📦", name:String((o&&o.name)||"").trim().slice(0,160),
     store:String((o&&o.store)||""), url:String((o&&o.url)||""), photo:"",
@@ -13439,6 +13563,7 @@ function matAddHtml(pos){
       '<button data-a="est-mat-add-do" data-k="'+esc(pos.key)+'" style="flex:1;padding:8px;background:#16a085;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Добавить</button>'+
       '<button data-a="est-mat-add-open" data-k="" style="padding:8px 12px;background:#fff;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;color:#7a9aaa;font-size:12px">Отмена</button>'+
     '</div>'+
+
     '<div style="font-size:10px;color:#7a9aaa;line-height:1.4;margin-top:6px">Название из базы подтянет цену, единицу и магазин. Без базы товар заведётся карточкой — тогда у него будут цена, история и сверка.</div>'+
   '</div>';
 }

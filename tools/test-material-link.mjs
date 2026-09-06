@@ -154,4 +154,50 @@ const PRODUCTS = [
   t.ok('копия сохранила ссылку на каталог', m.pid === 'p_osb')
 }
 
+// ── Материалы приносят таблицей ─────────────────────────────────────────────
+// Своя смета в Google Sheets, прайс поставщика, выгрузка из Excel. Забивать
+// сорок строк в каталог руками никто не будет — они так и останутся в таблице,
+// а портал будет считать дом по половине состава. Порядок колонок у каждой
+// таблицы свой, поэтому его не требуем.
+{
+  t.section('Вставка таблицы в каталог')
+  const p = boot()
+  p.set({ expProducts: PRODUCTS.slice(), objects: [], templates: [] })
+  const rows = (txt) => p.q('parseMatRows(' + JSON.stringify(txt) + ')')
+
+  const r = rows('Труба PPR 20 мм\t180\tм.п.\tЛемана\nФитинг угол 20\t45\tшт')
+  t.ok('разобрались обе строки', r.length === 2, JSON.stringify(r))
+  t.ok('имя и цена на месте', r[0].n === 'Труба PPR 20 мм' && r[0].cost === 180, JSON.stringify(r[0]))
+  t.ok('единица узнана', r[0].mode === 'mp' && r[1].mode === 'piece')
+  t.ok('магазин узнан', r[0].store === 'Лемана')
+
+  // Колонки в любом порядке: цена перед именем, ссылка где угодно.
+  const mix = rows('1 250,50\tЛемана\thttps://lemanapro.ru/product/x/\tКран шаровой 20\tшт')
+  t.ok('порядок колонок не важен',
+    mix[0].n === 'Кран шаровой 20' && mix[0].cost === 1250.5 && /lemanapro/.test(mix[0].url),
+    JSON.stringify(mix[0]))
+
+  // Рулон остаётся рулоном: режим — «пачка», слово — своё (см. packWord).
+  const roll = rows('Лента гидроизоляционная\t560\tрулон')
+  t.ok('рулон сохраняет своё слово', roll[0].mode === 'pack' && roll[0].packName === 'рулон',
+    JSON.stringify(roll[0]))
+
+  // Шапка таблицы — не товар, пустые строки тоже.
+  const head = rows('Наименование\tЦена\tЕд.\n\nМуфта 20\t30\tшт')
+  t.ok('заголовок отброшен', head.length === 1 && head[0].n === 'Муфта 20', JSON.stringify(head))
+
+  // Второе число строки — количество: в прайсе это остаток, в своей смете — объём.
+  const qty = rows('Уголок 20\t45\tшт\t12')
+  t.ok('количество прочитано', qty[0].qty === 12, JSON.stringify(qty[0]))
+
+  // Заведение: тёзку второй карточкой не создаём — по имени идёт связь со сметой.
+  p.run('expTsvText="Труба PPR 20 мм\\t180\\tм.п.\\tЛемана\\nСаморез\\t5\\tшт";expAddTsv=true;renderExpCard();')
+  const before = p.q('expProducts.length')
+  const doIt = p.dom.node({}, 'ptsv-do'); p.run('bind();')
+  // Кнопка живёт в карточке базы, поэтому дергаем её обработчик через рендер.
+  p.run('renderExpCard();')
+  const btn = p.q('typeof document.getElementById("ptsv-do")')
+  t.ok('кнопка заведения нарисована', btn !== 'undefined', 'кнопки нет')
+}
+
 t.done()
