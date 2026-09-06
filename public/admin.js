@@ -13494,10 +13494,32 @@ function projPriceState(sh){
   if(stages.some(function(st){ return estStagePriceStale(st); }))return "stale";
   return stages.every(function(st){ return !!stalePriceOk(sh, st.n); })?"ok":"";
 }
+// Этап «сверен», когда КАЖДАЯ его карточка проверена в магазине и проверка ещё
+// свежая. Раньше отметку ставила кнопка сверки с каталогом — но каталог сам может
+// быть вчерашним, и зелёная галочка обещала то, чего не было. Теперь она не
+// ставится, а выводится: гаснет сама, когда проверки стареют или появляется новый
+// товар. Дата — самая старая из проверок: этап свеж настолько, насколько свежа
+// его худшая карточка.
 function stalePriceOk(sh, n){
-  const m=(sh&&sh.priceOk)||{};
-  const v=m[n]||m[String(n)];
-  return (v&&v.at)?v:null;
+  const w=works2(sh, Object.assign(specCtx(sh), { winTypes:(typeof winTypes!=="undefined"?winTypes:[]) }));
+  const st=(w.stages||[]).find(function(x){ return String(x.n)===String(n); });
+  if(!st)return null;
+  const rows=priceShopRows(st);
+  if(!rows.length)return null;
+  let oldest="", by="";
+  for(const pr of rows){
+    const list=matOffers(pr).length?matOffers(pr):[{ okAt:pr.priceOkAt, oosAt:pr.oosAt }];
+    // Кончившийся товар — тоже результат похода в магазин: карточку смотрели.
+    const seen=list.filter(function(o){ return o.okAt||o.oosAt; });
+    if(!seen.length)return null;
+    for(const o of seen){
+      const at=o.okAt||o.oosAt;
+      const ago=priceDaysAgo(at);
+      if(ago===null||ago>PRICE_FRESH_DAYS)return null;
+      if(!oldest||String(at)<oldest)oldest=String(at);
+    }
+  }
+  return oldest?{ at:oldest, by:by }:null;
 }
 // Журнал сверок этапа. Ограничен: лист уходит в снимок целиком, а у D1 общий
 // лимит строки — по той же причине укорочена и история цен товара (HIST_MAX).
@@ -23229,11 +23251,10 @@ function bind(){
         const r=refreshPrices(rows, byId);
         if(r.n){ add[k]=rows; cnt+=r.n; diff+=r.diff; }
       });
-      // След сверки: дата, кто и что изменилось. Без него через неделю никто не
-      // скажет, сверяли этот этап или просто пронесло. Пустая сверка тоже ставит
-      // дату — это ответ «проверено, всё совпало», — но журнал не засоряет.
+      // Отметку «цены сверены» эта кнопка НЕ ставит: она равняет строки по
+      // каталогу, а каталог сам может быть вчерашним. Зелёное появляется только
+      // после похода в магазины — по статусам карточек (см. stalePriceOk).
       const who=(currentUser&&currentUser.name)||"";
-      sh.priceOk=Object.assign({}, sh.priceOk||{}, { [n]:{ at:todayISO(), by:who } });
       // Сверка с каталогом — только половина дела; вторая половина живёт в
       // магазинах, поэтому список ссылок раскрываем сразу.
       priceShopStage=(priceShopStage===String(n))?"":String(n);

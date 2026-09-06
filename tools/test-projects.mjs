@@ -1285,10 +1285,9 @@ function create(p, name) {
   p.run('var sh=projects[0]; sh.matAdd={}; sh.matAdd[' + JSON.stringify(key) + ']=[{id:"m1",pid:"p_sock",n:"Розетка",cost:100,qty:2,mode:"piece"}];')
   t.ok('расхождение видно в списке', /цены отстали/.test(p.run('tProjects()')), 'нет отметки об отставании')
 
-  // Сверили все этапы — загорелась галочка.
-  p.run('var sh=projects[0]; sh.matAdd[' + JSON.stringify(key) + '][0].cost=300; var ok={};'
-    + 'works2(sh, Object.assign(specCtx(sh),{winTypes:winTypes})).stages.forEach(function(st){ok[st.n]={at:"2026-09-06",by:"Юрий"};});'
-    + 'sh.priceOk=ok;')
+  // Обошли магазины по всем товарам — загорелась галочка.
+  p.run('var sh=projects[0]; sh.matAdd[' + JSON.stringify(key) + '][0].cost=300;'
+    + 'expProducts.forEach(function(x){ x.priceOkAt="2026-09-06"; });')
   t.ok('после сверки — галочка', /цены сверены/.test(p.run('tProjects()')), 'нет галочки актуальности')
 }
 

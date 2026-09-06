@@ -1151,9 +1151,8 @@ const SHEET = {
   const stage = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); stage.onclick()
   t.ok('цена подтянулась из базы', p.q('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].cost') === 300)
 
-  const ok = p.q('spec2Sheet().priceOk[' + stN + ']')
-  t.ok('этап помечен сверенным', !!ok && !!ok.at, JSON.stringify(ok))
-  t.ok('и записано, кто сверял', ok && ok.by === 'Юрий', ok && ok.by)
+  t.ok('но зелёной отметки не даёт', !/цены сверены/i.test(p.run('tSpec2()')),
+    'кнопка обещает сверку с магазинами, которой не было')
 
   const log = p.q('spec2Sheet().priceLog')
   t.ok('в журнале появилась запись', Array.isArray(log) && log.length === 1, JSON.stringify(log))
@@ -1161,23 +1160,24 @@ const SHEET = {
     'позиций ' + log[0].cnt + ', разница ' + log[0].diff)
 
   const html = p.run('tSpec2()').replace(/[  ]/g, ' ')
-  t.ok('в шапке этапа загорелась галочка', /✓ цены сверены/.test(html), 'нет отметки актуальности')
   t.ok('тревоги больше нет', !/💱 цены •/.test(html))
 
-  // Повторная сверка, когда всё сошлось: не молчит, а обновляет дату отметки.
-  const at0 = p.q('spec2Sheet().priceOk[' + stN + '].at')
-  p.run('var sh=spec2Sheet(); sh.priceOk[' + stN + '].at="2020-01-01";tSpec2();')
+  // Зелёная отметка приходит только после похода в магазины — по карточкам.
+  p.run('expProducts.forEach(function(x){ x.priceOkAt="2026-09-06"; });')
+  t.ok('после обхода магазинов галочка есть',
+    /✓ цены сверены/.test(p.run('tSpec2()').replace(/[  ]/g, ' ')), 'нет отметки после сверки')
+
+  // Повторное выравнивание по каталогу, когда всё сошлось, журнал не засоряет.
   const again = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); again.onclick()
-  t.ok('дата сверки обновилась', p.q('spec2Sheet().priceOk[' + stN + '].at') === at0,
-    p.q('spec2Sheet().priceOk[' + stN + '].at'))
   t.ok('пустая сверка журнал не засоряет', p.q('spec2Sheet().priceLog.length') === 1,
     'записей: ' + p.q('spec2Sheet().priceLog.length'))
 
   // Цена в каталоге снова уехала — галочка гаснет сама, без действий человека.
   p.run('expProducts=expProducts.map(function(x){return x.id==="p_sock"?Object.assign({},x,{unitCost:900}):x;});tSpec2();')
   const html2 = p.run('tSpec2()').replace(/[  ]/g, ' ')
-  t.ok('отметка гаснет при новом расхождении', !/✓ цены сверены/.test(html2), 'галочка врёт')
-  t.ok('и снова зовёт на сверку', /💱 цены •/.test(html2))
+  const btnHtml = (html2.match(new RegExp('data-a="est-stage-prices" data-n="' + stN + '"[^>]*>[^<]*')) || [''])[0]
+  t.ok('отметка гаснет при новом расхождении', !/✓ цены сверены/.test(btnHtml), 'галочка врёт: ' + btnHtml.slice(-40))
+  t.ok('и снова зовёт на сверку', /💱 цены •/.test(btnHtml), btnHtml.slice(-40))
 }
 
 t.done()
