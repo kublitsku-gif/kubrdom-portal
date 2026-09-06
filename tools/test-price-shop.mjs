@@ -121,11 +121,10 @@ function panel() {
   const html0 = p.run('tSpec2()')
   t.ok('пока не сверяли — так и написано', /не сверял/i.test(html0), 'нет метки «не сверялось»')
   t.ok('счётчик показывает ноль из двух', /сверено 0 из 2/i.test(html0), 'нет счётчика')
-  t.ok('есть кнопка «цена верна»', html0.indexOf('data-a="price-shop-ok"') >= 0)
+  t.ok('ручных отметок в списке нет', html0.indexOf('data-a="price-shop-ok"') < 0)
 
-  // Подтвердили цену как есть — карточка зеленеет с датой.
-  const ok = p.dom.node({ a: 'price-shop-ok', p: 'p_kab', o: '' })
-  p.run('bind();'); ok.onclick()
+  // Подтверждение приходит РЕЗУЛЬТАТОМ сверки, а не тапом по списку.
+  p.run('applyPriceReports([{ id:"p_kab", ok:true, price:5100, inStock:true }])')
   t.ok('дата подтверждения записана', !!p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].priceOkAt'))
   const html1 = p.run('tSpec2()')
   t.ok('статус стал «сверено»', /сверено 6 сен|сверено сегодня/i.test(html1), 'нет свежего статуса')
@@ -208,6 +207,42 @@ function panel() {
   const histBefore = (p.q('expProducts[0].hist') || []).length
   p.run('applyPriceReports([{ id:"p_tr", ok:true, price:924, inStock:true }])')
   t.ok('повтор не плодит историю', (p.q('expProducts[0].hist') || []).length === histBefore)
+}
+
+// ── 7. Кончился — портал предлагает замену, человек только принимает ────────
+// Отмечать «верна» и «кончился» руками — работа для того, кто ходил в магазин, а
+// ходит теперь расширение. Хозяину остаётся единственное, что машина решать не
+// вправе: чем заменить то, чего больше нет.
+{
+  t.section('Замена вместо ручных отметок')
+  const p = panel()
+  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
+
+  // Сверка прошла: кабель подтверждён, брусок кончился и найдена замена.
+  p.run('applyPriceReports([{ id:"p_kab", ok:true, price:5100, inStock:true },{ id:"p_br", ok:true, inStock:false, alt:{ name:"Брусок строганый 40x50x3000 Оптима", store:"Лемана", url:"https://lemanapro.ru/product/alt/", price:120 } }])')
+
+  const html = p.run('tSpec2()')
+  t.ok('подтверждённое не требует действий', !/data-a="price-shop-ok"/.test(html), 'ручные кнопки остались')
+  t.ok('видно, что товар кончился', /кончился|нет в наличии/i.test(html))
+  t.ok('предложена замена', /Брусок строганый 40x50x3000 Оптима/.test(html), 'аналога не видно')
+  t.ok('видна цена замены', /120/.test(html))
+  t.ok('есть кнопка принять', html.indexOf('data-a="price-alt-take"') >= 0)
+  t.ok('и отказаться', html.indexOf('data-a="price-alt-drop"') >= 0)
+
+  // Приняли: замена появляется в каталоге и встаёт в смету вместо кончившегося.
+  const take = p.dom.node({ a: 'price-alt-take', p: 'p_br' })
+  p.run('bind();'); take.onclick()
+  const added = p.q('expProducts.filter(function(x){return /Оптима/.test(x.name||"");})[0]')
+  t.ok('замена заведена в каталог по нашей единице', !!added && added.unitCost === 40,
+    'цена: ' + (added && added.unitCost))
+  t.ok('со ссылкой и магазином', !!added && /lemanapro/.test(added.url) && added.store === 'Лемана')
+  t.ok('единица учёта унаследована', added && added.mode === 'mp' && added.lenPer === 3,
+    'режим: ' + (added && added.mode))
+  t.ok('в смете теперь замена', /Оптима/.test(p.run('tSpec2()')), 'смета не подхватила')
+  t.ok('старый товар остался в каталоге помеченным',
+    !!p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].oosAt'))
+  t.ok('предложение израсходовано', !p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].alt'))
 }
 
 t.done()

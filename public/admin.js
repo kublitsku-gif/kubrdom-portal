@@ -13575,6 +13575,9 @@ function applyPriceReports(list){
     if(r.inStock===false){
       if(off){ if(!off.oosAt)matOfferOos(prod, off.id); off.okAt=todayISO(); }
       else prod.oosAt=todayISO();
+      // Замену ищет тот, кто ходил в магазин. Портал её не принимает молча:
+      // чем заменить материал — решение хозяина, а не программы.
+      if(r.alt&&r.alt.name&&Number(r.alt.price)>0)prod.alt=Object.assign({ at:todayISO() }, r.alt);
       out.oos++;
     } else {
       const v=priceToOurUnit(prod, r.price);
@@ -13678,8 +13681,23 @@ function priceShopHtml(st){
       const offers=matOffers(pr);
       const list=offers.length?offers:[{ id:"", store:pr.store, seller:"", url:pr.url, unitCost:pr.unitCost, oosAt:pr.oosAt }];
       const dead=!!pr.oosAt;
+      const alt=pr.alt;
       return '<div style="padding:6px 0;border-top:1px solid #eef2f7">'+
         '<div style="font-size:11.5px;font-weight:700;color:'+(dead?"#e74c3c":"#0d1b2e")+';margin-bottom:3px">'+esc(pr.name||"")+(dead?' · нет нигде':'')+'</div>'+
+        // Единственное место, где нужен человек: чем заменить то, чего больше нет.
+        ((alt&&alt.name)?'<div style="margin:4px 0 6px;padding:8px;border:1.5px solid #16a085;border-radius:9px;background:#16a0850d">'+
+          '<div style="font-size:10px;font-weight:800;color:#16a085;letter-spacing:0.3px;margin-bottom:3px">ЗАМЕНА НАЙДЕНА</div>'+
+          '<div style="font-size:11.5px;font-weight:700;color:#0d1b2e;line-height:1.3">'+esc(alt.name)+'</div>'+
+          '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:5px">'+
+            (/^https?:\/\//.test(String(alt.url||""))?'<a href="'+esc(alt.url)+'" target="_blank" rel="noopener" style="font-size:10.5px;font-weight:700;color:#2980b9;text-decoration:none">'+esc(alt.store||"магазин")+' ↗</a>':'')+
+            (function(){ const shop=Number(alt.price)||0, our=priceToOurUnit(pr, shop);
+              const um=(EXP_MODES.find(function(x){return x.k===pr.mode;})||EXP_MODES[0]).unit;
+              return '<span style="font-size:11px;font-weight:800;color:#0d1b2e">'+shop.toLocaleString("ru-RU",{maximumFractionDigits:2})+' ₽'+
+                (our!==shop?'<span style="font-weight:600;color:#7a9aaa"> → '+our.toLocaleString("ru-RU",{maximumFractionDigits:2})+' ₽/'+um+'</span>':'')+'</span>'; })()+
+            '<button data-a="price-alt-take" data-p="'+esc(pr.id)+'" style="padding:5px 12px;border:none;background:#16a085;color:#fff;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer">принять</button>'+
+            '<button data-a="price-alt-drop" data-p="'+esc(pr.id)+'" style="padding:5px 10px;border:1px solid #dde6f0;background:#fff;color:#8a97a6;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer">не надо</button>'+
+          '</div>'+
+        '</div>':'')+
         list.map(function(o){
           const oos=!!o.oosAt, act=offers.length?(o.id===pr.offer):true;
           const who=(o.store||"магазин")+(o.seller?" · "+o.seller:"");
@@ -13691,9 +13709,10 @@ function priceShopHtml(st){
               ? '<a href="'+esc(o.url)+'" target="_blank" rel="noopener" style="flex:1 1 120px;font-size:10.5px;font-weight:700;color:'+(oos?"#c3cedb":"#2980b9")+';text-decoration:'+(oos?"line-through":"none")+'">'+esc(who)+' ↗</a>'
               : '<span style="flex:1 1 120px;font-size:10.5px;color:#c3cedb">'+esc(who)+' · без ссылки</span>')+
             '<span style="font-size:10.5px;color:#9aabbf;white-space:nowrap">'+(Number(o.unitCost)||0).toLocaleString("ru-RU",{maximumFractionDigits:2})+' ₽/'+mode.unit+'</span>'+
+            // Ручной ввод — на случай, когда сверку делают глазами; отметки
+            // «верна»/«кончился» проставляет тот, кто обошёл магазины (расширение
+            // или мастер), и дублировать их здесь незачем.
             '<input data-a="price-shop-set" data-p="'+esc(pr.id)+'" data-o="'+esc(o.id||"")+'" placeholder="новая" inputmode="decimal" style="width:70px;padding:4px 7px;border:1px solid #8e44ad55;border-radius:7px;font-size:11px;font-weight:700;text-align:right;outline:none;background:#fff">'+
-            '<button data-a="price-shop-ok" data-p="'+esc(pr.id)+'" data-o="'+esc(o.id||"")+'" title="Цена верна — подтвердить без правки" style="padding:4px 8px;border:1px solid #16a08555;background:#fff;color:#16a085;border-radius:7px;font-size:10.5px;font-weight:700;cursor:pointer;white-space:nowrap">✓ верна</button>'+
-            '<button data-a="price-shop-oos" data-p="'+esc(pr.id)+'" data-o="'+esc(o.id||"")+'" title="'+(oos?"Снова в наличии":"Здесь кончился")+'" style="padding:4px 8px;border:1px solid '+(oos?"#e74c3c":"#dde6f0")+';background:'+(oos?"#e74c3c":"#fff")+';color:'+(oos?"#fff":"#8a97a6")+';border-radius:7px;font-size:10.5px;font-weight:700;cursor:pointer;white-space:nowrap">'+(oos?"вернулся":"кончился")+'</button>'+
           '</div>';
         }).join("")+
       '</div>';
@@ -23091,6 +23110,39 @@ function bind(){
         nextCard();
       }; }
     }
+    else if(a==="price-alt-take"){el.onclick=()=>{
+      const pid=el.dataset.p||"";
+      const prod=(expProducts||[]).find(function(x){ return x&&x.id===pid; }); if(!prod||!prod.alt)return;
+      const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
+      const a=prod.alt;
+      // Замена — отдельный товар каталога: у неё своя цена, своя ссылка и своя
+      // история. Единицу учёта наследуем от заменяемого — иначе метры погонные
+      // молча превратятся в штуки и смета поедет.
+      const nw={ id:gid(), emoji:prod.emoji||"📦", name:String(a.name||"").slice(0,160),
+        store:a.store||"", url:a.url||"", photo:"", mode:prod.mode||"piece",
+        unitCost:priceToOurUnit(prod, a.price), qty:1,
+        priceOkAt:todayISO(), priceCheckedAt:todayISO() };
+      ["packPer","packBase","lenPer","sheetM2"].forEach(function(k){ if(prod[k]!=null)nw[k]=prod[k]; });
+      expProducts=[nw].concat(expProducts||[]);
+      // Ставим замену во ВСЕ строки этого дома, где стоял кончившийся товар:
+      // менять по одной — значит собрать дом из двух разных материалов.
+      const w=works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes }));
+      const sw=Object.assign({}, sh.mats||{});
+      (w.positions||[]).forEach(function(pos){
+        (pos.mats||[]).forEach(function(m){
+          if(m.pid!==pid)return;
+          sw[pos.key]=Object.assign({}, sw[pos.key]||{}, { [matKeyOf(m)]:nw.id });
+        });
+      });
+      sh.mats=sw;
+      delete prod.alt;
+      scheduleSave(); fl();
+    };}
+    else if(a==="price-alt-drop"){el.onclick=()=>{
+      const prod=(expProducts||[]).find(function(x){ return x&&x.id===(el.dataset.p||""); });
+      if(!prod)return;
+      delete prod.alt; scheduleSave(); fl();
+    };}
     else if(a==="price-shop-ok"){el.onclick=()=>{
       const pid=el.dataset.p||"", oid=el.dataset.o||"";
       const prod=(expProducts||[]).find(function(x){ return x&&x.id===pid; }); if(!prod)return;

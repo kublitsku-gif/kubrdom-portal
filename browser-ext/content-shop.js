@@ -73,12 +73,39 @@
     return /(нет в наличии|товар закончил|распрода|нет в продаже|снят с produ|временно отсутств)/.test(t);
   }
 
+  // Если товара нет — замену ищем ТУТ ЖЕ: магазин сам показывает «Похожие» под
+  // карточкой. Это надёжнее поиска по каталогу (выдача часто под антиботом) и
+  // честнее: предлагаем то, что лежит на полке рядом.
+  function collectAlts(limit) {
+    const out = [], seen = {};
+    for (const a of document.querySelectorAll('a[href*="/product/"], a[href*="/card/"]')) {
+      const href = a.href;
+      if (!href || href === location.href || seen[href]) continue;
+      const box = a.closest("article, li, div") || a;
+      const txt = (box.innerText || "").trim();
+      const m = txt.match(RUB);
+      const price = m && num(m[1]);
+      if (!price) continue;
+      const name = (a.textContent || "").trim().split("\n")[0].trim().slice(0, 120);
+      if (name.length < 10) continue;              // «Смотреть всё» — не товар
+      seen[href] = 1;
+      out.push({ name: name, url: href, price: price, store: document.title.indexOf("Лемана") >= 0 ? "Лемана" : "" });
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
   function read() {
     if (captcha()) return { ok: false, error: "магазин показал капчу", captcha: true, url: location.href };
     const r = fromLd() || fromOzon() || fromDom();
     if (!r) return { ok: false, error: "цена не найдена", url: location.href };
     if (outOfStockText()) r.inStock = false;
-    return { ok: true, price: r.price, inStock: r.inStock, src: r.src, url: location.href, title: document.title.slice(0, 120) };
+    const res = { ok: true, price: r.price, inStock: r.inStock, src: r.src, url: location.href, title: document.title.slice(0, 120) };
+    if (!r.inStock) {
+      const alts = collectAlts(3);
+      if (alts.length) { res.alt = alts[0]; res.alts = alts; }
+    }
+    return res;
   }
 
   chrome.runtime.onMessage.addListener(function (msg, _s, reply) {
