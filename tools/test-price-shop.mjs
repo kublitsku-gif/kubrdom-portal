@@ -631,4 +631,40 @@ function panel() {
     'получили: ' + p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].unitCost'))
 }
 
+// ── Товар без карточки заводится из сверки ──────────────────────────────────
+// Сверять такой материал не с чем: цена застыла в дне, когда его вписали,
+// истории нет, а обход магазинов его не видит — карточки-то нет. Сверка сама
+// показывает, чего в базе не хватает.
+{
+  t.section('Материал без карточки — завести из сверки')
+  const p = panel()
+  const plain = () => p.run('tSpec2()').replace(/[  ]/g, ' ')
+  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  // Дописываем материал, которого нет в каталоге — так их и вписывают на ходу.
+  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].positions[0].key')
+  p.run('matsOpen[' + JSON.stringify(key) + ']=1;tSpec2();')
+  const addOpen = p.dom.node({ a: 'est-mat-add-open', k: key }); p.run('bind();'); addOpen.onclick()
+  p.dom.field('mad-n', 'Хомут стяжной 300 мм'); p.dom.field('mad-qty', '50'); p.dom.field('mad-cost', '3')
+  p.dom.field('mad-url', ''); p.dom.field('mad-base', '')      // в базу НЕ заводим — вот он и без карточки
+  const addDo = p.dom.node({ a: 'est-mat-add-do', k: key }); p.run('bind();'); addDo.onclick()
+  const was = p.q('expProducts.length')
+
+  const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
+  const html = plain()
+  t.ok('сверка говорит, чего нет в базе', /НЕТ В БАЗЕ · 1/.test(html), 'блока «нет в базе» нет')
+  t.ok('и называет товар', /Хомут стяжной 300 мм/.test(html))
+  t.ok('с кнопкой завести', html.indexOf('data-a="price-card-add"') >= 0)
+
+  const mid = p.q('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].id')
+  const add = p.dom.node({ a: 'price-card-add', k: key, m: mid, n: 'Хомут стяжной 300 мм' })
+  p.run('bind();'); add.onclick()
+  t.ok('товар завёлся', p.q('expProducts.length') === was + 1)
+  const np = p.q('expProducts.filter(function(x){return /Хомут/.test(x.name||"");})[0]')
+  t.ok('с ценой из строки', np && np.unitCost === 3, JSON.stringify(np && np.unitCost))
+  t.ok('строка связана с карточкой',
+    p.q('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].pid') === np.id)
+  t.ok('и из «нет в базе» он ушёл', !/НЕТ В БАЗЕ/.test(plain()), 'остался в списке')
+  t.ok('зато попал в сверку по магазинам', /Хомут стяжной 300 мм/.test(plain()))
+}
+
 t.done()

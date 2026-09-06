@@ -2304,6 +2304,7 @@ let estWhyOpen="";         // у какой сметы раскрыт редак
 let matSwapOpen="";        // какой материал сметы сейчас меняют: "<ключ позиции>|<pid>"
 let matAddOpen="";         // у какой строки сметы открыта форма «+ материал»
 let matOfferAdd="";        // у какого товара открыта форма «＋ магазин»
+let expAddUrl=false;       // открыта ли форма «новый товар по ссылке»
 let posAddOpen="";         // у какого листа открыта форма «+ работа»
 let matsOpen={};           // у каких строк сметы раскрыт список материалов
 // Этапы свёрнуты ПО УМОЛЧАНИЮ, поэтому карта про раскрытые: смета на сорок
@@ -8678,12 +8679,43 @@ function renderExpCard(containerId){
       '<input id="exp-search" value="'+(expSearch||"").replace(/"/g,"&quot;")+'" placeholder="🔍 Поиск по названию или магазину..." style="width:100%;padding:10px 34px 10px 12px;border-radius:10px;border:1.5px solid #dde6f0;font-size:13px;outline:none;box-sizing:border-box">'+
       (expSearch?'<button id="exp-search-clear" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:22px;height:22px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:6px;cursor:pointer;font-size:11px;color:#7a9aaa">✕</button>':'')+
     '</div>'+
-    '<button id="exp-add" style="width:100%;margin-bottom:12px;padding:11px;background:#16a085;border:none;border-radius:11px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">+ Добавить товар</button>'+
+    '<div style="display:flex;gap:6px;margin-bottom:12px">'+
+      '<button id="exp-add" style="flex:1;padding:11px;background:#16a085;border:none;border-radius:11px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">+ Добавить товар</button>'+
+      // Товар заводят, стоя на его странице в магазине: адрес уже в буфере, и
+      // печатать магазин руками после этого — работа, которую портал умеет сам.
+      '<button id="exp-add-url" style="padding:11px 13px;background:#fff;border:1.5px solid #16a085;border-radius:11px;cursor:pointer;color:#16a085;font-size:13px;font-weight:700;white-space:nowrap">🔗 по ссылке</button>'+
+    '</div>'+
+    (expAddUrl?'<div style="margin-bottom:12px;background:#eefaf6;border:1px solid #16a08544;border-radius:11px;padding:10px 11px">'+
+      '<div style="font-size:10px;font-weight:800;color:#16a085;letter-spacing:0.3px;margin-bottom:6px">НОВЫЙ ТОВАР ПО ССЫЛКЕ</div>'+
+      '<input id="pnu-url" placeholder="вставьте ссылку из магазина" style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid #c9e3db;font-size:12px;outline:none;margin-bottom:6px">'+
+      '<input id="pnu-name" placeholder="название товара" style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid #c9e3db;font-size:12px;outline:none;margin-bottom:6px">'+
+      '<div style="display:flex;gap:6px">'+
+        '<input id="pnu-cost" placeholder="цена с ценника" inputmode="decimal" style="flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid #c9e3db;font-size:12px;font-weight:700;outline:none">'+
+        '<button id="pnu-do" style="padding:8px 14px;background:#16a085;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Завести</button>'+
+      '</div>'+
+      '<div style="font-size:10px;color:#7a9aaa;line-height:1.45;margin-top:6px">Магазин узнаем по ссылке. Единицу и упаковку поправите в карточке — она откроется сразу.</div>'+
+    '</div>':'')+
     (list.length?list.map(expRowHtml).join(""):'<div style="text-align:center;color:#aaa;font-size:13px;padding:24px">Ничего не найдено</div>');
   const si=document.getElementById("exp-search");
   if(si){ si.oninput=function(){expSearch=this.value;renderExpCard();}; if(_wasSearch){ si.focus(); const L=si.value.length; try{si.setSelectionRange(L,L);}catch(e){} } }
   const sc=document.getElementById("exp-search-clear");
   if(sc)sc.onclick=function(){expSearch="";renderExpCard();};
+  const au=document.getElementById("exp-add-url");
+  if(au)au.onclick=function(){ expAddUrl=!expAddUrl; renderExpCard(); };
+  const ud=document.getElementById("pnu-do");
+  if(ud)ud.onclick=function(){
+    const url=String(((document.getElementById("pnu-url")||{}).value||"")).trim();
+    const name=String(((document.getElementById("pnu-name")||{}).value||"")).trim();
+    const cost=parseFloat(String(((document.getElementById("pnu-cost")||{}).value||"")).replace(/\s/g,"").replace(",","."))||0;
+    if(!/^https?:\/\//i.test(url)){ alert("Вставьте ссылку на товар из магазина."); return; }
+    // Имя со страницы магазина сюда не приезжает — его пишет человек, и оно
+    // обязано быть названием товара, а не плашкой акции: такой товар встанет в
+    // смету дома, и найти его потом нельзя ни поиском, ни глазами.
+    if(!altNameOk(name)){ alert("Впишите название товара — по нему его будут искать в базе."); return; }
+    const p=productNew({ name:name, cost:cost, store:shopFromUrl(url), url:url });
+    if(!p)return;
+    expAddUrl=false; expOpenId=p.id; scheduleSave(); renderExpCard(); window.scrollTo(0,0);
+  };
   const ab=document.getElementById("exp-add");
   if(ab)ab.onclick=function(){
     const np={id:gid(),emoji:"📦",name:"Новый товар",store:"",url:"",photo:"",mode:"piece",unitCost:0,qty:1};
@@ -8767,6 +8799,21 @@ function matOfferAddNew(p, o){
   p.offers=matOffers(p).concat([row]);
   matOfferPick(p, row.id);
   return row;
+}
+// Завести товар в каталог. Один код на три двери: дописали материал в смету,
+// вставили ссылку из магазина, нашли в сверке материал без карточки. Каталог
+// общий на все дома, поэтому заводит его человек — но заводить должно быть
+// одинаково просто отовсюду, иначе товар так и останется снимком в одном доме:
+// без цены из базы, без истории и без сверки.
+function productNew(o){
+  const p={ id:gid(), emoji:(o&&o.emoji)||"📦", name:String((o&&o.name)||"").trim().slice(0,160),
+    store:String((o&&o.store)||""), url:String((o&&o.url)||""), photo:"",
+    mode:(o&&o.mode)||"piece", unitCost:Math.round((Number(o&&o.cost)||0)*100)/100, qty:1,
+    priceCheckedAt:todayISO() };
+  if(!p.name)return null;
+  ["packBase","packPer","lenPer","sheetM2","shopPer"].forEach(function(k){ if(o&&o[k]!=null)p[k]=o[k]; });
+  expProducts=[p].concat(expProducts||[]);
+  return p;
 }
 // Убрать магазин. Последний не убираем: товар без магазина негде купить, а цена
 // в карточке останется от него же — получится предложение-призрак.
@@ -13302,11 +13349,19 @@ function matAddHtml(pos){
       '<input id="mad-qty" placeholder="Кол-во" value="1" inputmode="decimal" style="flex:1;min-width:0;padding:7px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none">'+
       '<input id="mad-cost" placeholder="Цена ₽ (из базы)" inputmode="decimal" style="flex:2;min-width:0;padding:7px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none">'+
     '</div>'+
+    // Ссылка и магазин — только для НОВОГО товара: имя из базы приносит их само.
+    // Спрашиваем здесь, чтобы карточка родилась сразу живой, а не пустой болванкой,
+    // к которой потом надо возвращаться в базу материалов.
+    '<input id="mad-url" placeholder="Ссылка из магазина — если товара нет в базе" style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:11.5px;margin-bottom:6px;outline:none;box-sizing:border-box">'+
+    '<label style="display:flex;align-items:center;gap:6px;font-size:10.5px;color:#5a7a9a;margin-bottom:7px;cursor:pointer">'+
+      '<input id="mad-base" type="checkbox" checked style="width:15px;height:15px;accent-color:#16a085">'+
+      '<span>завести в базу, если такого товара ещё нет</span>'+
+    '</label>'+
     '<div style="display:flex;gap:6px">'+
       '<button data-a="est-mat-add-do" data-k="'+esc(pos.key)+'" style="flex:1;padding:8px;background:#16a085;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Добавить</button>'+
       '<button data-a="est-mat-add-open" data-k="" style="padding:8px 12px;background:#fff;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;color:#7a9aaa;font-size:12px">Отмена</button>'+
     '</div>'+
-    '<div style="font-size:10px;color:#7a9aaa;line-height:1.4;margin-top:6px">Название из базы подтянет цену, единицу и магазин. Материал живёт в этом доме — справочник не меняется.</div>'+
+    '<div style="font-size:10px;color:#7a9aaa;line-height:1.4;margin-top:6px">Название из базы подтянет цену, единицу и магазин. Без базы товар заведётся карточкой — тогда у него будут цена, история и сверка.</div>'+
   '</div>';
 }
 function matSwapEditor(pos, m, sh, was){
@@ -13784,6 +13839,43 @@ function priceShopRows(st){
   });
   return out;
 }
+// Материалы этапа БЕЗ карточки в каталоге. Их сверять не с чем: цена у такого
+// материала застыла в том дне, когда его вписали, истории у неё нет, а обход
+// магазинов его не видит — карточки-то нет. Поэтому сверка сама показывает, чего
+// в базе не хватает, и заводит это одним тапом: иначе товар живёт снимком в
+// одном доме, а в следующем его вписывают заново.
+function priceNoCardRows(st){
+  const byId={}; (expProducts||[]).forEach(function(x){ if(x&&x.id)byId[x.id]=x; });
+  const seen={}, out=[];
+  (st.positions||[]).forEach(function(p){
+    (p.mats||[]).forEach(function(m){
+      if(!m||m.own)return;
+      if(m.pid&&byId[m.pid])return;                 // карточка есть — не наш случай
+      const n=String(m.n||"").trim();
+      if(!n||seen[n.toLowerCase()])return;
+      seen[n.toLowerCase()]=1;
+      out.push({ n:n, cost:Number(m.cost)||0, store:String(m.store||""), url:String(m.url||""),
+        mode:m.mode||"piece", key:p.key, id:String(m.id||"") });
+    });
+  });
+  return out;
+}
+function priceNoCardHtml(st){
+  const rows=priceNoCardRows(st);
+  if(!rows.length)return '';
+  return '<div style="margin:0 0 8px;padding:8px 9px;border:1px solid #e67e2244;border-radius:10px;background:#e67e2208">'+
+    '<div style="font-size:10px;font-weight:800;color:#b9770e;letter-spacing:0.3px;margin-bottom:5px">НЕТ В БАЗЕ · '+rows.length+' — сверять не с чем</div>'+
+    rows.map(function(r){
+      return '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:3px 0">'+
+        '<span style="flex:1 1 140px;min-width:0;font-size:11.5px;font-weight:700;color:#0d1b2e">'+esc(r.n)+'</span>'+
+        '<span style="font-size:10.5px;color:#9aabbf;white-space:nowrap">'+r.cost.toLocaleString("ru-RU",{maximumFractionDigits:2})+' ₽</span>'+
+        '<button data-a="price-card-add" data-k="'+esc(r.key)+'" data-m="'+esc(r.id)+'" data-n="'+esc(r.n)+'" '+
+          'style="padding:4px 10px;border:1px solid #16a085;background:#16a085;color:#fff;border-radius:7px;font-size:10.5px;font-weight:700;cursor:pointer">завести в базу</button>'+
+      '</div>';
+    }).join("")+
+    '<div style="font-size:10px;color:#a08a6a;line-height:1.4;margin-top:4px">У карточки появятся цена из каталога, история и сверка по магазинам.</div>'+
+  '</div>';
+}
 // Отчёт от расширения. Оно обходит карточки прямо в браузере хозяина — там он
 // уже авторизован, и защита магазинов к нему не придирается, — и приносит цены
 // пачкой. Раскладываем их по каталогу так же, как если бы вводили руками: с
@@ -13995,7 +14087,9 @@ function priceWizHtml(st){
 
 function priceShopHtml(st){
   const rows=priceShopRows(st);
-  if(!rows.length)return '';
+  // Ни одной карточки, но есть что завести — панель всё равно нужна: именно в
+  // ней и живёт кнопка «завести в базу».
+  if(!rows.length&&!priceNoCardRows(st).length)return '';
   return '<div style="margin:0 0 10px;padding:10px;border:1px solid #8e44ad33;border-radius:11px;background:#8e44ad08">'+
     (function(){
       // Счётчик — ответ на «я всё проверил?»: считаем карточки, а не товары,
@@ -14025,6 +14119,7 @@ function priceShopHtml(st){
       '</div>';
     })()+
     '<div style="font-size:10.5px;color:#7a9aaa;line-height:1.4;margin-bottom:8px">Откройте карточку, посмотрите цену и впишите её. Цена уйдёт в каталог со всей историей, и проект пересчитается сам.</div>'+
+    priceNoCardHtml(st)+
     rows.map(function(pr){
       const mode=EXP_MODES.find(function(x){return x.k===pr.mode;})||EXP_MODES[0];
       // Обходим ВСЕ карточки товара: у одного продавца кончилось, у второго лежит,
@@ -23426,7 +23521,16 @@ function bind(){
       if(!name){ alert("Без названия материал не завести."); return; }
       const qv=parseFloat(String(((document.getElementById("mad-qty")||{}).value||"1")).replace(",","."));
       const cv=parseFloat(String(((document.getElementById("mad-cost")||{}).value||"")).replace(",","."));
-      const prod=expProducts.find(function(x){ return String(x.name||"").trim().toLowerCase()===name.toLowerCase(); });
+      let prod=expProducts.find(function(x){ return String(x.name||"").trim().toLowerCase()===name.toLowerCase(); });
+      // Такого товара в базе нет — заводим карточку прямо отсюда: иначе материал
+      // остаётся снимком в одном доме, без цены из каталога, без истории и без
+      // сверки, а в следующем доме его вписывают заново.
+      const url=String(((document.getElementById("mad-url")||{}).value||"")).trim();
+      const toBase=!!((document.getElementById("mad-base")||{}).checked);
+      if(!prod&&toBase){
+        prod=productNew({ name:name, cost:isFinite(cv)&&cv>=0?cv:0,
+          store:shopFromUrl(url), url:/^https?:\/\//i.test(url)?url:"" });
+      }
       // Название из базы подтягивает цену, единицу и магазин — ровно как при
       // добавлении материала в объект, чтобы не перебивать характеристики руками.
       const m={ id:gid(), pid:(prod&&prod.id)||"", n:(prod&&prod.name)||name,
@@ -23663,6 +23767,27 @@ function bind(){
     }
     // Имя замены правится руками: со страницы магазина оно приезжает вместе с
     // плашками акций, а в каталог должно попасть название товара.
+    // Материал без карточки — завести в каталог одним тапом. Дописанная руками
+    // строка после этого получает ссылку на карточку (`pid`), и дальше живёт как
+    // все: цена из базы, история, сверка по магазинам.
+    else if(a==="price-card-add"){el.onclick=()=>{
+      const posKey=el.dataset.k||"", mid=el.dataset.m||"", name=el.dataset.n||"";
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!name)return;
+      const rows=(sh.matAdd||{})[posKey]||[];
+      const row=rows.find(function(x){ return String(x.id||"")===mid; })||null;
+      const src=row||{ n:name, cost:0, store:"", url:"", mode:"piece" };
+      const p=productNew({ name:name, cost:Number(src.cost)||0, store:src.store||"",
+        url:src.url||"", mode:src.mode||"piece" });
+      if(!p){ alert("Не получилось завести товар: пустое название."); return; }
+      // Дописанную строку связываем с карточкой: иначе рядом будут жить товар и
+      // его снимок, и цену придётся править дважды.
+      if(row){
+        const map=Object.assign({}, sh.matAdd||{});
+        map[posKey]=rows.map(function(x){ return (String(x.id||"")===mid)?Object.assign({}, x, { pid:p.id }):x; });
+        sh.matAdd=map;
+      }
+      scheduleSave(); fl();
+    };}
     // Магазин по ссылке — прямо из сверки.
     else if(a==="price-offer-add"){el.onclick=()=>{
       const pid=el.dataset.p||"";

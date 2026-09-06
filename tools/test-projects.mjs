@@ -1347,4 +1347,48 @@ function create(p, name) {
     !p.q('JSON.stringify(projects[0]).indexOf("estFind")>=0'), 'поиск утёк в лист')
 }
 
+// ── Дописанный материал заводится в базу ────────────────────────────────────
+// Материал без карточки — снимок в одном доме: цена застыла в дне, когда его
+// вписали, истории у неё нет, сверка его не видит, а в следующем доме его
+// вписывают заново. Экран сметы у двух разделов ОДИН — то же сторожит
+// test-spec2-smeta.
+{
+  t.section('Материал заводится в базу из строки')
+  const p = panel()
+  create(p, 'Дом с новым товаром')
+  p.run('projBand="parts";')
+  const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
+  const openMats = p.dom.node({ a: 'est-mats-open', k: key }); p.run('bind();'); openMats.onclick()
+  const was = p.q('expProducts.length')
+
+  const addOpen = p.dom.node({ a: 'est-mat-add-open', k: key }); p.run('bind();'); addOpen.onclick()
+  t.ok('форма просит ссылку', p.run('tProjects()').indexOf('id="mad-url"') >= 0)
+  t.ok('и предлагает завести в базу', p.run('tProjects()').indexOf('id="mad-base"') >= 0)
+  p.dom.field('mad-n', 'Уголок усиленный 40х40')
+  p.dom.field('mad-qty', '2'); p.dom.field('mad-cost', '180')
+  p.dom.field('mad-url', 'https://lemanapro.ru/product/ugolok-40/')
+  p.dom.field('mad-base', true)                      // галка «завести в базу» стоит по умолчанию
+  const addDo = p.dom.node({ a: 'est-mat-add-do', k: key }); p.run('bind();'); addDo.onclick()
+
+  t.ok('товар появился в каталоге', p.q('expProducts.length') === was + 1)
+  const np = p.q('expProducts.filter(function(x){return /Уголок/.test(x.name||"");})[0]')
+  t.ok('с ценой из формы', np && np.unitCost === 180, JSON.stringify(np && np.unitCost))
+  t.ok('магазин узнан по ссылке', np && np.store === 'Лемана', JSON.stringify(np && np.store))
+  t.ok('и ссылка сохранена', np && /lemanapro/.test(np.url || ''))
+  // Строка сметы теперь ссылается на карточку, а не живёт снимком.
+  const mat = p.q('projects[0].matAdd[' + JSON.stringify(key) + '][0]')
+  t.ok('строка связана с карточкой', mat && mat.pid === np.id, JSON.stringify(mat && mat.pid))
+
+  // Галку сняли — товар в каталог не лезет: справочник общий.
+  const addOpen2 = p.dom.node({ a: 'est-mat-add-open', k: key }); p.run('bind();'); addOpen2.onclick()
+  p.run('tProjects();')
+  p.dom.field('mad-n', 'Скоба разовая'); p.dom.field('mad-qty', '1'); p.dom.field('mad-cost', '20')
+  p.dom.field('mad-url', ''); p.dom.field('mad-base', '')
+  const addDo2 = p.dom.node({ a: 'est-mat-add-do', k: key }); p.run('bind();'); addDo2.onclick()
+  t.ok('без галки каталог не растёт', p.q('expProducts.length') === was + 1,
+    'товаров: ' + p.q('expProducts.length'))
+  t.ok('а в строке материал есть',
+    p.q('projects[0].matAdd[' + JSON.stringify(key) + '].length') === 2)
+}
+
 t.done()

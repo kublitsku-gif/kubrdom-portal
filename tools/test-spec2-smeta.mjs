@@ -1242,5 +1242,37 @@ const SHEET = {
   t.ok('сброс возвращает смету', !/ничего нет/.test(p.run('tSpec2()')))
 }
 
+// ── Дописанный материал заводится в базу ────────────────────────────────────
+// Экран сметы у двух разделов ОДИН: то же самое сторожит test-projects.
+{
+  t.section('Материал заводится в базу из строки')
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS, estimates: EST, dbPlans: [], crmClients: [],
+    specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [],
+    contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+    buildRules: [],
+  })
+  p.run('spec2Tab="scheme";tSpec2();')
+  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
+  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key')
+  p.run('matsOpen[' + JSON.stringify(key) + ']=1;tSpec2();')
+  const was = p.q('expProducts.length')
+
+  const addOpen = p.dom.node({ a: 'est-mat-add-open', k: key }); p.run('bind();'); addOpen.onclick()
+  p.dom.field('mad-n', 'Уголок усиленный 40х40')
+  p.dom.field('mad-qty', '2'); p.dom.field('mad-cost', '180')
+  p.dom.field('mad-url', 'https://www.ozon.ru/product/ugolok-40/')
+  p.dom.field('mad-base', true)
+  const addDo = p.dom.node({ a: 'est-mat-add-do', k: key }); p.run('bind();'); addDo.onclick()
+
+  t.ok('товар появился в каталоге', p.q('expProducts.length') === was + 1)
+  const np = p.q('expProducts.filter(function(x){return /Уголок/.test(x.name||"");})[0]')
+  t.ok('магазин узнан по ссылке', np && np.store === 'Озон', JSON.stringify(np && np.store))
+  t.ok('строка связана с карточкой',
+    p.q('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].pid') === np.id)
+}
+
 t.done()
 
