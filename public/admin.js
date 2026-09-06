@@ -13677,10 +13677,22 @@ function priceOfferApply(prod, url, rawCost){
   prod.priceCheckedAt=todayISO();
   return { cost:cost, was:was };
 }
+// Та же КАРТОЧКА, а не тот же магазин. На маркетплейсе один кабель продают
+// несколько человек разными карточками на одном домене — по домену их было бы
+// не развести, и вторая карточка молча затирала бы первую вместе с её ценой.
+// Поэтому сравниваем адрес товара (без «?at=…&sh=…» — это метки перехода,
+// товар от них не меняется), а домен остаётся признаком магазина.
+function urlKey(url){
+  const m=/^https?:\/\/([^\/?#]+)([^?#]*)/i.exec(String(url||""));
+  if(!m)return "";
+  const host=m[1].replace(/^www\./i,"").toLowerCase();
+  const path=String(m[2]||"").replace(/\/+$/,"").toLowerCase();
+  return host+path;
+}
 function sameShopOffer(pr, url){
-  const host=String(shopFromUrl(url)||"").toLowerCase();
-  if(!host)return null;
-  return matOffers(pr).find(function(o){ return String(shopFromUrl(o.url)||"").toLowerCase()===host; })||null;
+  const key=urlKey(url);
+  if(!key)return null;
+  return matOffers(pr).find(function(o){ return urlKey(o.url)===key; })||null;
 }
 // Ряд «сравнить»: где карточка у нас уже есть — ведём в неё (● перед именем), где
 // нет — в поиск магазина. Цену смотрят в трёх местах, и открывать их руками через

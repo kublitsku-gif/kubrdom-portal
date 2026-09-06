@@ -503,15 +503,31 @@ function panel() {
     JSON.stringify(hist))
   t.ok('форма закрылась', p.q('priceOfferAdd') === '')
 
-  // Тот же магазин второй раз — это свежая цена, а не второе предложение.
+  // Та же КАРТОЧКА второй раз — это свежая цена, а не второе предложение. Метки
+  // перехода в адресе («?utm=…», «?at=…&sh=…») товар не меняют.
   const add2 = p.dom.node({ a: 'price-offer-add', p: 'p_kab' }); p.run('bind();'); add2.onclick()
   p.dom.field('pof-url', 'https://lemanapro.ru/product/kabel-vvg-100m/?utm=1')
   p.dom.field('pof-cost', '4700')
   const go2 = p.dom.node({ a: 'price-offer-do', p: 'p_kab' }); p.run('bind();'); go2.onclick()
-  t.ok('дубля магазина нет',
+  t.ok('дубля карточки нет',
     p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].offers.length') === 2)
   t.ok('а цена обновилась',
     p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].unitCost') === 4700)
+
+  // ДРУГАЯ карточка в том же магазине — второе предложение: на маркетплейсе один
+  // кабель продают несколько человек, и по домену их не развести.
+  const add4 = p.dom.node({ a: 'price-offer-add', p: 'p_kab' }); p.run('bind();'); add4.onclick()
+  p.dom.field('pof-url', 'https://www.ozon.ru/product/kabel-vvg-png-a-ls-3h1-5-3457854320/?at=1tyk&sh=kM7g')
+  p.dom.field('pof-cost', '4500')
+  const go4 = p.dom.node({ a: 'price-offer-do', p: 'p_kab' }); p.run('bind();'); go4.onclick()
+  const many = p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].offers||[]')
+  t.ok('второй продавец завёлся своей карточкой', many.length === 3,
+    JSON.stringify(many.map((o) => o.store + ':' + o.unitCost)))
+  t.ok('прежняя карточка Ozon цела',
+    many.some((o) => /kabel-1/.test(String(o.url || '')) && o.unitCost === 5100),
+    JSON.stringify(many.map((o) => o.url)))
+  t.ok('и покупаем по самой дешёвой',
+    p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].unitCost') === 4500)
 
   // Без цены не заводим: нулевое предложение стало бы самым дешёвым.
   const add3 = p.dom.node({ a: 'price-offer-add', p: 'p_br' }); p.run('bind();'); add3.onclick()
