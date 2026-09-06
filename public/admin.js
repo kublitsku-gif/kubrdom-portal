@@ -13997,6 +13997,10 @@ function estBodyHtml(sh, types, live, actions){
                     (p.costSet?'<button data-a="est-pos-cost-reset" data-k="'+esc(p.key)+'" title="Вернуть цену по материалам" style="width:28px;height:28px;border:1px solid #8e44ad33;background:#fff;color:#8e44ad;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer">⟲</button>':'');
                   })()+
                   '<span style="flex:1"></span>'+
+                  // Правые кнопки — одна группа: они про одно и то же (что сделать
+                  // со строкой). Без обёртки узкая колонка переносила их по одной, и
+                  // «✕» оказывался на отдельной строке под пустотой.
+                  '<span data-row-actions="1" style="display:flex;align-items:center;gap:5px;flex-shrink:0">'+
                   // Этап показываем ТОЛЬКО у переставленных строк: внутри «ЭТАП 1» у
                   // каждой работы стояло «Этап 1» — колонка повторяла заголовок.
                   // Остальным хватает кнопки, раскрывающей тот же выбор.
@@ -14016,6 +14020,7 @@ function estBodyHtml(sh, types, live, actions){
                         : '<button data-a="est-pos-grab" data-k="'+esc(p.key)+'" title="Переставить в этапе: возьмите строку и укажите место" style="width:28px;height:28px;background:#fff;border:1px solid #dde6f0;border-radius:7px;cursor:pointer;color:#7a9aaa;font-size:11px;font-weight:700">↕</button>')
                     : '')+
                   '<button data-a="est-pos-del" data-k="'+esc(p.key)+'" title="'+(p.added?"Удалить дописанную работу":"Убрать эту работу из дома")+'" style="width:28px;height:28px;background:#fff;border:1px solid #e74c3c44;border-radius:7px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button>'+
+                  '</span>'+
                 '</div>'
               : '<div style="font-size:12px;font-weight:700;color:#0d1b2e;margin-top:5px">'+Math.round(p.cost).toLocaleString("ru-RU")+' ₽</div>')+
             specMatsListHtml(p, sh, live)+

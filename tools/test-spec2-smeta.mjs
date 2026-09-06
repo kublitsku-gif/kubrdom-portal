@@ -1180,5 +1180,31 @@ const SHEET = {
   t.ok('и снова зовёт на сверку', /💱 цены •/.test(btnHtml), btnHtml.slice(-40))
 }
 
+// ── 12. Кнопки строки не рассыпаются ────────────────────────────────────────
+// В узкой колонке ряд действий переносится, и «✕» уезжал на отдельную строку —
+// один крестик под пустотой. Правые кнопки должны переноситься ГРУППОЙ: они про
+// одно и то же (что сделать со строкой), и рвать их посередине нельзя.
+{
+  t.section('Ряд действий строки держится вместе')
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS, estimates: EST, dbPlans: [], crmClients: [],
+    specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [],
+    contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+    buildRules: [],
+  })
+  p.run('spec2Tab="scheme";tSpec2();')
+  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
+
+  const html = p.run('tSpec2()')
+  const group = (html.match(/<span data-row-actions="1"[\s\S]*?<\/span>\s*<\/div>/) || [''])[0]
+  t.ok('правые кнопки собраны в группу', group.length > 0, 'группы нет')
+  t.ok('удаление внутри группы', group.indexOf('data-a="est-pos-del"') >= 0, 'крестик снаружи группы')
+  t.ok('и выбор этапа тоже', /data-a="est-pos-stage(-pick)?"/.test(group), 'этап снаружи группы')
+  // Группа не должна ужиматься и рваться — иначе перенос вернётся.
+  t.ok('группа не сжимается', /flex-shrink:0/.test(group), 'нет запрета на сжатие')
+}
+
 t.done()
 
