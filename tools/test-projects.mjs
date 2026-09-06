@@ -1490,4 +1490,61 @@ function create(p, name) {
     /≈ 0,5 лист/.test(p.run('tProjects()').replace(/[  ]/g, ' ')), 'умолчание сломалось')
 }
 
+// ── Комната, которой в этапе ещё нет ────────────────────────────────────────
+// Блок помещения рождается вместе с ПЕРВОЙ работой в нём, и до неё комнаты на
+// экране не существует: «добавьте зал» упирается в то, что зала нигде не видно —
+// он есть только в чертеже. Экран сметы у двух разделов ОДИН: то же самое
+// сторожит test-spec2-smeta.
+{
+  t.section('Комната добавляется в этап')
+  const p = panel([
+    { id: 'r_wall', kind: 'house', estId: 'e_osb', what: 'surface', k: 'wall', scope: 'room', qty: 1, stage: 3 },
+  ])
+  create(p, 'Дом с пустой комнатой')
+  p.run('projBand="parts";')
+  const stN = 3
+  const w = () => p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes}))')
+  const rooms = w().rooms || []
+  t.ok('у дома есть комнаты', rooms.length >= 2, 'комнат: ' + rooms.length)
+
+  // Приписываем ВСЕ работы одной комнате — остальные остаются без блока.
+  const keys = p.q('allPositions(projects[0], specCtx(projects[0])).map(function(x){return x.key;})')
+  const first = rooms[0].id
+  p.run('projects[0].posRoom=' + JSON.stringify(keys.reduce((a, k) => (a[k] = first, a), {})) + ';')
+  const st = () => p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).stages.filter(function(s){return s.n===' + stN + ';})[0]')
+  const blocks = (st() || {}).blocks || []
+  t.ok('блок остался один', blocks.length === 1, 'блоков: ' + blocks.length)
+
+  const html = p.run('tProjects()')
+  const missing = rooms.filter((r) => !blocks.some((b) => b.key === r.id))[0]
+  t.ok('пустые комнаты предложены', /ЕЩЁ КОМНАТЫ:/.test(html), 'нет ряда пустых комнат')
+  t.ok('и среди них та, которой нет в этапе',
+    html.indexOf('data-a="est-pos-add-open" data-k="' + p.q('projects[0].id') + '@' + stN + '|' + missing.id + '"') >= 0,
+    'комнаты ' + missing.name + ' в предложении нет')
+
+  // Тап заводит работу сразу в эту комнату — блок появляется вместе с ней.
+  const add = p.dom.node({ a: 'est-pos-add-open', k: p.q('projects[0].id') + '@' + stN + '|' + missing.id })
+  p.run('bind();'); add.onclick()
+  t.ok('форма раскрылась', p.run('tProjects()').indexOf('id="pad-n"') >= 0, 'нет формы работы')
+  p.dom.field('pad-n', 'Уборка после отделки'); p.dom.field('pad-cost', '3000')
+  const doIt = p.dom.node({ a: 'est-pos-add-do', k: p.q('projects[0].id') + '@' + stN + '|' + missing.id })
+  p.run('bind();'); doIt.onclick()
+
+  const after = (st() || {}).blocks || []
+  t.ok('блок комнаты появился', after.some((b) => b.key === missing.id),
+    JSON.stringify(after.map((b) => b.room)))
+  t.ok('и работа лежит в нём',
+    after.filter((b) => b.key === missing.id)[0].positions.some((x) => /Уборка/.test(x.name)))
+  // Из ряда «ещё комнаты» она ушла: блок у неё теперь есть. Смотрим именно ряд —
+  // тот же адрес есть и у «+» в шапке появившегося блока.
+  // Ряд «ещё комнаты» есть в КАЖДОМ этапе (в другом этапе этой комнаты по-прежнему
+  // нет), поэтому смотрим только на разбираемый: остальные сворачиваем.
+  p.run('stageOpen={' + stN + ':1};')
+  const tail = p.run('tProjects()')
+  const row = tail.slice(tail.indexOf('ЕЩЁ КОМНАТЫ:'))
+  t.ok('а из «ещё комнат» она ушла',
+    tail.indexOf('ЕЩЁ КОМНАТЫ:') < 0 || row.slice(0, row.indexOf('</div>')).indexOf(missing.id) < 0,
+    'комната осталась в предложении')
+}
+
 t.done()

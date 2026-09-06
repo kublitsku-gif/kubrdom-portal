@@ -14297,13 +14297,38 @@ function estRowsHtml(moving, mi, rows){
 // санузел…»), хотя бригада работает комнатой: в санузел заходят один раз.
 // Порядок строк для блоков считает общий модуль (`applyRooms`) — здесь только
 // заголовки, иначе экран читался бы комнатами, а объект собирался россыпью.
+// Комнаты дома, которых в этапе ещё НЕТ. Блок рождается вместе с первой работой,
+// и до неё комнаты на экране не существует: «добавьте зал» упиралось в то, что
+// зала нигде не видно — он есть только в чертеже. Кнопка кладёт работу сразу в
+// этот этап и в эту комнату, и блок появляется тем же рендером.
+function estRoomsMoreHtml(st, blocks, sh, w){
+  const have={}; (blocks||[]).forEach(function(b){ have[b.key]=1; });
+  const left=((w&&w.rooms)||[]).filter(function(r){ return r&&r.id&&!have[r.id]; });
+  if(!left.length)return '';
+  const tag=function(r){ return ((sh&&sh.id)||"")+"@"+st.n+"|"+r.id; };
+  return '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin:9px 0 2px">'+
+      '<span style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.3px">ЕЩЁ КОМНАТЫ:</span>'+
+      left.map(function(r){
+        const rl=roomLook(r.name, sh&&sh.kind);
+        return '<button data-a="est-pos-add-open" data-k="'+esc(tag(r))+'" title="Добавить работу в это помещение — блок появится вместе с ней" '+
+          'style="border:1px dashed '+rl.color+'66;background:'+rl.color+'0d;color:'+rl.color+';border-radius:8px;padding:4px 9px;font-size:10.5px;font-weight:700;cursor:pointer">'+
+          rl.emoji+' + '+esc(r.name||"Помещение")+'</button>';
+      }).join("")+
+    '</div>'+
+    left.map(function(r){
+      return (posAddOpen===tag(r))?estAddFormHtml(sh, tag(r), r.name||"Помещение"):'';
+    }).join("");
+}
 function estStageBody(st, moving, mi, rows, sh, w, canRule){
   const blocks=st.blocks||[];
+  // Пустых комнат в блоках нет по определению, поэтому предложить их надо отдельно
+  // — и в этапе без блоков тоже: там работа в комнату иначе вообще не попадёт.
+  const more=canRule?estRoomsMoreHtml(st, blocks, sh, w):'';
   // Этап без блоков (не чистовой) — просто список работ. Проверяем ДО режима
   // переноса: иначе взятая строка обошла бы список по пустым блокам и этап
   // остался бы на экране пустым.
-  if(!blocks.length)return estRowsHtml(moving, mi, rows);
-  if(blocks.length<2&&!moving)return estRowsHtml(moving, mi, rows);
+  if(!blocks.length)return estRowsHtml(moving, mi, rows)+more;
+  if(blocks.length<2&&!moving)return estRowsHtml(moving, mi, rows)+more;
   let base=0, h='';
   blocks.forEach(function(b){
     const from=base, to=base+b.positions.length; base=to;
@@ -14337,7 +14362,7 @@ function estStageBody(st, moving, mi, rows, sh, w, canRule){
     }
     if(inside)h+=estDropSlot(moving, to, mi);
   });
-  return h;
+  return h+more;
 }
 // «Перенести в» — ряд комнат дома. Показываем только у взятой строки: постоянный
 // ряд из пяти кнопок в каждой строке читался бы как часть сметы.
