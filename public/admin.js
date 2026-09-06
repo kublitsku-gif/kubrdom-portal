@@ -13670,7 +13670,12 @@ function priceShopHtml(st){
         // точечной правки одной строки.
         '<button data-a="price-wiz-open" data-n="'+st.n+'" style="padding:4px 10px;border:1.5px solid #8e44ad;background:#8e44ad;color:#fff;border-radius:8px;font-size:10.5px;font-weight:700;cursor:pointer">▶ мастер сверки</button>'+
         (priceExtBusy?'<span style="font-size:10.5px;font-weight:700;color:#8e44ad">'+esc(priceExtBusy)+'</span>'
-          :(priceExtReady?'<button data-a="price-ext-run" data-n="'+st.n+'" title="Расширение обойдёт карточки само" style="padding:4px 10px;border:1.5px solid #16a085;background:#16a085;color:#fff;border-radius:8px;font-size:10.5px;font-weight:700;cursor:pointer">⚡ сверить всё</button>':''))+
+          :'<button data-a="price-ext-run" data-n="'+st.n+'" title="'+(priceExtReady
+              ?"Расширение обойдёт карточки само"
+              :"Нужно расширение для браузера — покажу, как поставить")+'" style="padding:4px 10px;border:1.5px solid #16a085;background:'+(priceExtReady?"#16a085":"#fff")+';color:'+(priceExtReady?"#fff":"#16a085")+';border-radius:8px;font-size:10.5px;font-weight:700;cursor:pointer">'+
+            (priceExtReady?'⚡ сверить всё':'⚡ обойти магазины')+'</button>'+
+            (priceExtReady?'<span title="Расширение подключено" style="font-size:10px;font-weight:700;color:#16a085">расширение на связи</span>'
+                          :'<span style="font-size:10px;color:#9aabbf">расширение не найдено</span>'))+
       '</div>';
     })()+
     '<div style="font-size:10.5px;color:#7a9aaa;line-height:1.4;margin-bottom:8px">Откройте карточку, посмотрите цену и впишите её. Цена уйдёт в каталог со всей историей, и проект пересчитается сам.</div>'+
@@ -23049,6 +23054,17 @@ function bind(){
         else if(/^https?:\/\//.test(String(pr.url||"")))items.push({ id:pr.id, offerId:"", url:pr.url });
       });
       if(!items.length){ alert("В этом этапе нет карточек со ссылками — сверять нечего."); return; }
+      if(!priceExtReady){
+        // Молчаливая кнопка выглядит сломанной. Объясняем и предлагаем то, что
+        // работает прямо сейчас, — мастер.
+        alert("Автообход магазинов делает расширение для браузера.\n\nКак поставить (один раз):\n"+
+          "1. Откройте chrome://extensions (в Comet — comet://extensions)\n"+
+          "2. Включите «Режим разработчика»\n"+
+          "3. «Загрузить распакованное» → папка browser-ext из репозитория портала\n"+
+          "4. Обновите эту страницу\n\n"+
+          "Пока его нет — нажмите «▶ мастер сверки»: он проведёт по карточкам по одной.");
+        return;
+      }
       priceExtBusy="открываю карточки…"; fl();
       window.postMessage({ source:"kubrdom-panel", type:"check-prices", items:items }, "*");
     };}

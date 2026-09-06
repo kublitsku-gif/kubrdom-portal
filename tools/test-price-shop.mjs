@@ -245,4 +245,25 @@ function panel() {
   t.ok('предложение израсходовано', !p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].alt'))
 }
 
+// ── 8. Кнопка сверки видна всегда ───────────────────────────────────────────
+// Показать «не сверялось» и не показать, чем сверять, — это тупик: человек видит
+// задачу и не видит кнопки. Кнопка есть всегда; нет расширения — она объясняет,
+// как его поставить, а не прячется.
+{
+  t.section('Чем сверять — видно сразу')
+  const p = panel()
+  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
+
+  const html = p.run('tSpec2()')
+  t.ok('кнопка сверки на месте без расширения', html.indexOf('data-a="price-ext-run"') >= 0)
+  t.ok('и мастер рядом', html.indexOf('data-a="price-wiz-open"') >= 0)
+  t.ok('состояние расширения подписано', /расширение/i.test(html), 'нет упоминания расширения')
+
+  // С расширением подпись меняется на действие.
+  p.run('priceExtReady=true;')
+  const html2 = p.run('tSpec2()')
+  t.ok('с расширением зовёт сверить всё', /сверить вс|обойти/i.test(html2), 'нет призыва к действию')
+}
+
 t.done()
