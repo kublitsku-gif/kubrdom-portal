@@ -5,13 +5,13 @@ const PAUSE_MS = 700;      // пауза между карточками: мы �
 
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
-function readTab(tabId) {
+function readTab(tabId, find) {
   return new Promise(function (resolve) {
     const timer = setTimeout(function () { resolve({ ok: false, error: "не дождались карточки" }); }, WAIT_MS);
     // Скрипту нужно время подняться на новой вкладке — пробуем несколько раз.
     let n = 0;
     (function ask() {
-      chrome.tabs.sendMessage(tabId, { type: "kd-read-price" }, function (res) {
+      chrome.tabs.sendMessage(tabId, { type: "kd-read-price", find: find || "" }, function (res) {
         if (chrome.runtime.lastError || !res) {
           if (n++ > 12) { clearTimeout(timer); resolve({ ok: false, error: "страница не ответила" }); return; }
           setTimeout(ask, 900); return;
@@ -28,7 +28,7 @@ async function checkOne(item) {
   let tab;
   try {
     tab = await chrome.tabs.create({ url: item.url, active: false });
-    let res = await readTab(tab.id);
+    let res = await readTab(tab.id, item.find || "");
     // Капча — не отказ, а просьба показаться человеком. Выводим вкладку вперёд:
     // пазл проходится один раз, дальше магазин пускает и остальные карточки идут
     // сами. Молча пропустить её значило бы соврать «не сверилось».
@@ -37,13 +37,13 @@ async function checkOne(item) {
       const till = Date.now() + CAPTCHA_WAIT_MS;
       while (Date.now() < till) {
         await sleep(2500);
-        res = await readTab(tab.id);
+        res = await readTab(tab.id, item.find || "");
         if (!res || !res.captcha) break;
       }
     }
-    return Object.assign({ id: item.id, offerId: item.offerId || "", url: item.url }, res);
+    return Object.assign({ id: item.id, offerId: item.offerId || "", url: item.url, find: item.find || "" }, res);
   } catch (e) {
-    return { id: item.id, offerId: item.offerId || "", url: item.url, ok: false, error: String(e && e.message || e) };
+    return { id: item.id, offerId: item.offerId || "", url: item.url, find: item.find || "", ok: false, error: String(e && e.message || e) };
   } finally {
     if (tab && tab.id) { try { await chrome.tabs.remove(tab.id); } catch (e) {} }
   }

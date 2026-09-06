@@ -13640,6 +13640,43 @@ function shopFromUrl(url){
   const sh=PRICE_SHOPS.find(function(x){ return x.host&&x.host.test(host); });
   return sh?sh.n:host;
 }
+// Завести магазин по ссылке. Один код на две двери: ссылку вставили руками или
+// её принёс обход магазинов — правило одно, иначе «принять найденное» и «＋
+// магазин» разошлись бы в мелочах, а расходятся они всегда в деньгах.
+function priceOfferApply(prod, url, rawCost){
+  if(!prod||!/^https?:\/\//i.test(String(url||"")))return null;
+  const raw=Number(rawCost)||0;
+  if(!(raw>0))return null;
+  const cost=priceToOurUnit(prod, raw, null);
+  const was=Number(prod.unitCost)||0;
+  const who=(typeof currentUser!=="undefined"&&currentUser&&currentUser.name)||"";
+  // Тот же магазин уже заведён — это не второе предложение, а свежая цена у него
+  // же: две одинаковые карточки в списке потом не различить.
+  const same=sameShopOffer(prod, url);
+  if(same){
+    same.url=url; same.unitCost=cost; same.okAt=todayISO(); if(same.oosAt)delete same.oosAt;
+    const cur=matOffers(prod).find(function(x){ return x.id===prod.offer; });
+    const best=matOfferBest(prod);
+    if(!cur||cur.oosAt||(best&&Number(best.unitCost)<Number(cur.unitCost)))matOfferPick(prod, (best||same).id);
+    else if(cur.id===same.id)matOfferPick(prod, same.id);
+  } else {
+    const row=matOfferAddNew(prod, { store:shopFromUrl(url), url:url, unitCost:cost });
+    if(row)row.okAt=todayISO();
+    // Новый магазин активен не потому, что новый, а если он дешевле: платить
+    // дороже, когда рядом лежит дешевле, незачем.
+    const best=matOfferBest(prod);
+    if(best&&Number(best.unitCost)<Number((row||{}).unitCost||0))matOfferPick(prod, best.id);
+  }
+  if(prod.oosAt&&matOfferAlive(prod).length)delete prod.oosAt;
+  // Цена товара поехала за предложением — значит это правка цены со всей
+  // историей, а не тихая подмена.
+  if(Math.round(was*100)!==Math.round((Number(prod.unitCost)||0)*100)){
+    pricePush(prod, was, prod.priceCheckedAt||todayISO(), who);
+    pricePush(prod, Number(prod.unitCost)||0, todayISO(), who);
+  }
+  prod.priceCheckedAt=todayISO();
+  return { cost:cost, was:was };
+}
 function sameShopOffer(pr, url){
   const host=String(shopFromUrl(url)||"").toLowerCase();
   if(!host)return null;
@@ -13685,6 +13722,31 @@ function shopLinksHtml(pr, skipStore){
 // Форма «магазин по ссылке»: адрес из буфера и цена с ценника. Название магазина
 // не спрашиваем — оно в самом адресе; вводить его руками после копирования ссылки
 // значит делать работу, которую портал умеет сам.
+// Портал сходил в поиск и нашёл дешевле. Показываем ИМЯ находки: выдача магазина
+// приблизительна, «кабель 3х1,5» легко оказывается другим кабелем, и принять
+// такое молча значит собрать дом не из того. Решает человек, ссылка рядом.
+function shopAltHtml(pr){
+  const a=pr&&pr.shopAlt;
+  if(!a||!a.url)return '';
+  const mode=EXP_MODES.find(function(x){return x.k===(pr&&pr.mode);})||EXP_MODES[0];
+  const our=priceToOurUnit(pr, Number(a.price)||0, null);
+  const now=Number(pr.unitCost)||0;
+  const win=now>0?Math.round(now-our):0;
+  return '<div style="margin:4px 0 6px 8px;padding:8px 9px;border:1.5px solid #16a085;border-radius:9px;background:#16a0850d">'+
+    '<div style="display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;margin-bottom:3px">'+
+      '<span style="font-size:10px;font-weight:800;color:#16a085;letter-spacing:0.3px">НАШЛОСЬ ДЕШЕВЛЕ · '+esc(a.store||"магазин")+'</span>'+
+      (win>0?'<span style="font-size:10px;font-weight:800;color:#16a085">−'+win.toLocaleString("ru-RU")+' ₽/'+esc(mode.unit)+'</span>':'')+
+    '</div>'+
+    '<div style="font-size:11.5px;font-weight:700;color:#0d1b2e;line-height:1.3">'+esc(a.name||"")+'</div>'+
+    '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:5px">'+
+      '<a href="'+esc(a.url)+'" target="_blank" rel="noopener" style="font-size:10.5px;font-weight:700;color:#2980b9;text-decoration:none">открыть карточку ↗</a>'+
+      '<span style="font-size:11px;font-weight:800;color:#0d1b2e">'+(Number(a.price)||0).toLocaleString("ru-RU",{maximumFractionDigits:2})+' ₽'+
+        (our!==(Number(a.price)||0)?'<span style="font-weight:600;color:#7a9aaa"> → '+our.toLocaleString("ru-RU",{maximumFractionDigits:2})+' ₽/'+esc(mode.unit)+'</span>':'')+'</span>'+
+      '<button data-a="price-alt-shop-take" data-p="'+esc(pr.id)+'" style="padding:5px 12px;border:none;background:#16a085;color:#fff;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer">завести магазин</button>'+
+      '<button data-a="price-alt-shop-drop" data-p="'+esc(pr.id)+'" style="padding:5px 10px;border:1px solid #dde6f0;background:#fff;color:#8a97a6;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer">не то</button>'+
+    '</div>'+
+  '</div>';
+}
 function priceOfferFormHtml(pr){
   const mode=EXP_MODES.find(function(x){return x.k===(pr&&pr.mode);})||EXP_MODES[0];
   const per=shopPer(pr, null);
@@ -13754,9 +13816,43 @@ function shopPerLabel(prod, offer){
   return per>1?("₽ за "+numRu(per)+" "+unit):("₽/"+unit);
 }
 
+// Задания на ПОИСК товара там, где нашей карточки нет. Обход по своим карточкам
+// отвечает «сколько стоит там, где мы покупаем», а этот — «а дешевле нигде нет?».
+// Ходить в поиск по каждому товару руками никто не будет, а портал сходит.
+function priceFindItems(rows, limit){
+  const out=[];
+  (rows||[]).forEach(function(pr){
+    const name=String(pr.name||"").trim();
+    if(!name)return;
+    PRICE_SHOPS.forEach(function(sh){
+      // Есть карточка в этом магазине — искать нечего, её и так обойдут.
+      const have=matOffers(pr).some(function(o){ return sh.has.test(String(o.store||"")); })
+        ||(!matOffers(pr).length&&sh.has.test(String(pr.store||"")));
+      if(have)return;
+      out.push({ id:pr.id, offerId:"", find:name, shop:sh.k, url:sh.q+encodeURIComponent(name) });
+    });
+  });
+  return out.slice(0, limit||30);
+}
+// Находка поиска — ПРЕДЛОЖЕНИЕ, а не запись в каталог: выдача магазина
+// приблизительна, и «кабель 3х1,5» легко оказывается другим кабелем. Решает
+// человек, глядя на имя и цену.
+function priceFindTake(prod, r){
+  if(!prod||!r||!r.found)return false;
+  const f=r.found;
+  const price=Number(f.price)||0;
+  if(!/^https?:\/\//i.test(String(f.url||""))||!(price>0))return false;
+  if(!altNameOk(f.name))return false;             // плашка акции вместо имени
+  // Дороже того, что уже есть, — не новость: сверка ищет, где ДЕШЕВЛЕ.
+  const now=Number(prod.unitCost)||0;
+  if(now>0&&priceToOurUnit(prod, price, null)>=now)return false;
+  prod.shopAlt={ at:todayISO(), store:shopFromUrl(f.url)||f.store||"", name:String(f.name||"").slice(0,160),
+    url:String(f.url), price:price };
+  return true;
+}
 function applyPriceReports(list){
   const who=(currentUser&&currentUser.name)||"расширение";
-  const out={ checked:0, changed:0, oos:0, failed:0, diff:0, missing:0, captcha:0 };
+  const out={ checked:0, changed:0, oos:0, failed:0, diff:0, missing:0, captcha:0, found:0 };
   (list||[]).forEach(function(r){
     if(!r)return;
     if(!r.ok){ if(r.captcha)out.captcha++; else out.failed++; return; }
@@ -13764,6 +13860,8 @@ function applyPriceReports(list){
     // Товара нет в базе — молча заводить его нельзя: каталог общий, и правит его
     // человек. Считаем и показываем отдельной строкой.
     if(!prod){ out.missing++; return; }
+    // Отчёт поиска: не цена нашей карточки, а находка в чужом магазине.
+    if(r.find){ if(priceFindTake(prod, r))out.found=(out.found||0)+1; return; }
     const off=r.offerId?matOffers(prod).find(function(x){ return x.id===r.offerId; }):null;
     out.checked++;
     if(r.inStock===false){
@@ -13881,6 +13979,10 @@ function priceShopHtml(st){
         // Мастер — для прохода по всему списку подряд; список ниже остаётся для
         // точечной правки одной строки.
         '<button data-a="price-wiz-open" data-n="'+st.n+'" style="padding:4px 10px;border:1.5px solid #8e44ad;background:#8e44ad;color:#fff;border-radius:8px;font-size:10.5px;font-weight:700;cursor:pointer">▶ мастер сверки</button>'+
+        // Поиск по магазинам — отдельная кнопка: обход своих карточек и хождение
+        // по выдаче это разные по длине работы, и запускать их одной кнопкой
+        // значит каждый раз платить за вторую, когда просили первую.
+        (priceExtBusy?'':'<button data-a="price-ext-find" data-n="'+st.n+'" title="Поискать товары в магазинах, где нашей карточки нет" style="padding:4px 10px;border:1.5px solid #2980b9;background:#fff;color:#2980b9;border-radius:8px;font-size:10.5px;font-weight:700;cursor:pointer">🔎 найти дешевле</button>')+
         (priceExtBusy?'<span style="font-size:10.5px;font-weight:700;color:#8e44ad">'+esc(priceExtBusy)+'</span>'
           :'<button data-a="price-ext-run" data-n="'+st.n+'" title="'+(priceExtReady
               ?"Расширение обойдёт карточки само"
@@ -13902,6 +14004,7 @@ function priceShopHtml(st){
       return '<div style="padding:6px 0;border-top:1px solid #eef2f7">'+
         '<div style="font-size:11.5px;font-weight:700;color:'+(dead?"#e74c3c":"#0d1b2e")+';margin-bottom:3px">'+esc(pr.name||"")+(dead?' · нет нигде':'')+'</div>'+
         shopLinksHtml(pr)+
+        shopAltHtml(pr)+
         // Единственное место, где нужен человек: чем заменить то, чего больше нет.
         (alt?'<div style="margin:4px 0 6px;padding:8px;border:1.5px solid #16a085;border-radius:9px;background:#16a0850d">'+
           '<div style="font-size:10px;font-weight:800;color:#16a085;letter-spacing:0.3px;margin-bottom:3px">ЗАМЕНА НАЙДЕНА</div>'+
@@ -23403,6 +23506,39 @@ function bind(){
       priceExtBusy="открываю карточки…"; fl();
       window.postMessage({ source:"kubrdom-panel", type:"check-prices", items:items }, "*");
     };}
+    // Поиск товара там, где нашей карточки нет: обход по своим карточкам отвечает
+    // «сколько стоит там, где мы покупаем», а этот — «а дешевле нигде нет?».
+    else if(a==="price-ext-find"){el.onclick=()=>{
+      const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
+      const w=works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes }));
+      const st=(w.stages||[]).find(function(x){ return String(x.n)===String(el.dataset.n||""); }); if(!st)return;
+      const items=priceFindItems(priceShopRows(st));
+      if(!items.length){ alert("У всех товаров этапа карточки во всех трёх магазинах уже есть — искать нечего."); return; }
+      if(!priceExtReady){
+        alert("Поиск по магазинам делает расширение для браузера — оно ходит по выдаче вашим браузером, где магазины пускают.\n\n"+
+          "Пока его нет, ряд «сравнить» открывает поиск в магазине по имени товара, а найденное заводится кнопкой «＋ магазин».");
+        return;
+      }
+      priceExtBusy="ищу в магазинах…"; fl();
+      window.postMessage({ source:"kubrdom-panel", type:"check-prices", items:items }, "*");
+    };}
+    // Находку поиска принимает человек: выдача приблизительна, и «кабель 3х1,5»
+    // легко оказывается другим кабелем.
+    else if(a==="price-alt-shop-take"){el.onclick=()=>{
+      const pid=el.dataset.p||"";
+      const prod=(expProducts||[]).find(function(x){ return x&&x.id===pid; });
+      if(!prod||!prod.shopAlt)return;
+      const a2=prod.shopAlt;
+      if(!priceOfferApply(prod, a2.url, Number(a2.price)||0)){ alert("Не получилось завести этот магазин: нет ссылки или цены."); return; }
+      delete prod.shopAlt;
+      scheduleSave(); fl();
+    };}
+    else if(a==="price-alt-shop-drop"){el.onclick=()=>{
+      const pid=el.dataset.p||"";
+      const prod=(expProducts||[]).find(function(x){ return x&&x.id===pid; });
+      if(!prod)return;
+      delete prod.shopAlt; scheduleSave(); fl();
+    };}
     // Тап по динамике — в карточку товара: там перечислены последние правки цены.
     else if(a==="price-hist"){el.onclick=(ev)=>{
       if(ev)ev.stopPropagation();
@@ -23496,35 +23632,7 @@ function bind(){
       if(!/^https?:\/\//i.test(url)){ alert("Вставьте ссылку на товар из магазина."); return; }
       const raw=parseFloat(String(((document.getElementById("pof-cost")||{}).value||"")).replace(/\s/g,"").replace(",","."));
       if(!isFinite(raw)||raw<=0){ alert("Впишите цену с ценника: предложение без цены нечем сравнивать, а нулевое станет самым дешёвым."); return; }
-      // Цена — как на ценнике: коробку из двенадцати баллонов портал делит сам.
-      const cost=priceToOurUnit(prod, raw, null);
-      const was=Number(prod.unitCost)||0;
-      const who=(currentUser&&currentUser.name)||"";
-      // Тот же магазин уже заведён — это не второе предложение, а свежая цена у
-      // него же: две одинаковые карточки в списке потом не различить.
-      const same=sameShopOffer(prod, url);
-      if(same){
-        same.url=url; same.unitCost=cost; same.okAt=todayISO(); if(same.oosAt)delete same.oosAt;
-        const cur=matOffers(prod).find(function(x){ return x.id===prod.offer; });
-        const best=matOfferBest(prod);
-        if(!cur||cur.oosAt||(best&&Number(best.unitCost)<Number(cur.unitCost)))matOfferPick(prod, (best||same).id);
-        else if(cur.id===same.id)matOfferPick(prod, same.id);
-      } else {
-        const row=matOfferAddNew(prod, { store:shopFromUrl(url), url:url, unitCost:cost });
-        if(row)row.okAt=todayISO();
-        // Новый магазин активен не потому, что новый, а если он дешевле: платить
-        // дороже, когда рядом лежит дешевле, незачем.
-        const best=matOfferBest(prod);
-        if(best&&Number(best.unitCost)<Number((row||{}).unitCost||0))matOfferPick(prod, best.id);
-      }
-      if(prod.oosAt&&matOfferAlive(prod).length)delete prod.oosAt;
-      // Цена товара поехала за предложением — значит это правка цены со всей
-      // историей, а не тихая подмена.
-      if(Math.round(was*100)!==Math.round((Number(prod.unitCost)||0)*100)){
-        pricePush(prod, was, prod.priceCheckedAt||todayISO(), who);
-        pricePush(prod, Number(prod.unitCost)||0, todayISO(), who);
-      }
-      prod.priceCheckedAt=todayISO();
+      priceOfferApply(prod, url, raw);
       priceOfferAdd=""; scheduleSave(); fl();
     };}
     else if(a==="price-alt-name"){el.onchange=()=>{
@@ -27325,6 +27433,7 @@ window.addEventListener("message", function(ev){
     const sum=applyPriceReports(d.results||[]);
     scheduleSave(); fl();
     alert("Сверка через расширение\n\nПроверено: "+sum.checked+
+      (sum.found?"\nНашлось дешевле: "+sum.found+" (примите в списке — портал сам ничего не заводит)":"")+
       "\nЦены изменились: "+sum.changed+(sum.diff?" ("+(sum.diff>0?"+":"")+sum.diff.toLocaleString("ru-RU")+" ₽)":"")+
       "\nНет в наличии: "+sum.oos+
       (sum.captcha?"\nПоказали капчу: "+sum.captcha+" (пройдите пазл и повторите)":"")+

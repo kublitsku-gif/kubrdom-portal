@@ -78,7 +78,7 @@
   // честнее: предлагаем то, что лежит на полке рядом.
   function collectAlts(limit) {
     const out = [], seen = {};
-    for (const a of document.querySelectorAll('a[href*="/product/"], a[href*="/card/"]')) {
+    for (const a of document.querySelectorAll('a[href*="/product/"], a[href*="/card/"], a[href*="/catalogue/"]')) {
       const href = a.href;
       if (!href || href === location.href || seen[href]) continue;
       const box = a.closest("article, li, div") || a;
@@ -93,6 +93,30 @@
       if (out.length >= limit) break;
     }
     return out;
+  }
+
+  // Поиск товара по имени: портал открыл ВЫДАЧУ магазина, а не карточку. Берём
+  // первый результат, чьё имя содержит все слова запроса, — выдача сортируется
+  // по релевантности, и первое совпадение и есть ответ магазина на вопрос.
+  // Точности тут нет и быть не может, поэтому находка уходит в портал
+  // предложением: принимает её человек, глядя на имя и цену.
+  function find(query) {
+    if (captcha()) return { ok: false, error: "магазин показал капчу", captcha: true, url: location.href };
+    const terms = String(query || "").toLowerCase().split(/\s+/).filter(Boolean);
+    const all = collectAlts(12);
+    const hit = all.find(function (c) {
+      const n = String(c.name || "").toLowerCase();
+      return terms.every(function (t) { return n.indexOf(t) >= 0; });
+    }) || all.find(function (c) {
+      // Полное совпадение слов бывает не всегда: магазины переставляют слова и
+      // пишут «ВВГ-Пнг(А)». Половины слов достаточно, чтобы показать находку
+      // человеку — решать всё равно ему.
+      const n = String(c.name || "").toLowerCase();
+      const got = terms.filter(function (t) { return n.indexOf(t) >= 0; }).length;
+      return terms.length > 1 && got * 2 >= terms.length;
+    });
+    if (!hit) return { ok: true, find: true, found: null, url: location.href };
+    return { ok: true, find: true, found: hit, url: location.href };
   }
 
   function read() {
@@ -113,8 +137,11 @@
     // Карточки дорисовываются скриптами: даём странице договорить, но не ждём вечно.
     let tries = 0;
     (function attempt() {
-      const r = read();
-      if (r.ok || tries++ > 6) { reply(r); return; }
+      const r = msg.find ? find(msg.find) : read();
+      // У выдачи «пусто» — это ответ, а не полуготовая страница: ждать нечего,
+      // но пару кругов даём, пока список товаров дорисуется.
+      const done = msg.find ? (!!(r.found) || tries > 4) : r.ok;
+      if (done || tries++ > 6) { reply(r); return; }
       setTimeout(attempt, 500);
     })();
     return true;

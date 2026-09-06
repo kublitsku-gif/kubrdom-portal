@@ -521,4 +521,64 @@ function panel() {
   t.ok('без цены не заводится', !p.q('(expProducts.filter(function(x){return x.id==="p_br";})[0].offers||[]).length'))
 }
 
+// ── Портал сам находит дешевле ──────────────────────────────────────────────
+// Обход по нашим карточкам отвечает «сколько стоит там, где мы покупаем». Этот
+// заход отвечает на второй вопрос — «а дешевле нигде нет?»: портал ходит по
+// выдаче магазинов, где нашей карточки ещё нет, и приносит найденное
+// ПРЕДЛОЖЕНИЕМ. Выдача приблизительна, и «кабель 3х1,5» легко оказывается
+// другим кабелем — поэтому заводит магазин человек.
+{
+  t.section('Портал находит дешевле и предлагает')
+  const p = panel()
+  const plain = () => p.run('tSpec2()').replace(/[  ]/g, ' ')
+  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
+  t.ok('кнопка поиска есть', plain().indexOf('data-a="price-ext-find"') >= 0)
+
+  // Задания: только магазины, где нашей карточки нет.
+  const items = p.q('priceFindItems(priceShopRows(works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes})).stages[0]))')
+  t.ok('заданий столько, сколько недостающих магазинов', items.length === 4,
+    JSON.stringify(items.map((x) => x.shop)))
+  t.ok('в свой магазин не ходим', !items.some((x) => x.id === 'p_kab' && x.shop === 'ozon'),
+    'ищем там, где карточка уже есть')
+  t.ok('ищем по имени товара', items.every((x) => !!x.find && /search|text=|q=/.test(x.url)),
+    JSON.stringify(items[0]))
+
+  // Отчёт поиска: нашлось дешевле.
+  p.run('applyPriceReports([{ id:"p_kab", find:"Кабель ВВГ 3х1,5 100 м", ok:true, found:{ name:"Кабель ВВГ-Пнг(А)-LS 3х1,5 100 м", url:"https://lemanapro.ru/product/kabel-3x15/", price:4300 } }])')
+  const found = plain()
+  t.ok('находка показана', /НАШЛОСЬ ДЕШЕВЛЕ · Лемана/.test(found), 'блока находки нет')
+  t.ok('с именем — его и проверяют глазами', /Кабель ВВГ-Пнг\(А\)-LS 3х1,5 100 м/.test(found))
+  t.ok('и с выгодой', /−800 ₽\/шт/.test(found), 'выгода не посчитана')
+  t.ok('в каталог молча не легло',
+    p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].unitCost') === 5100,
+    'цена изменилась без человека')
+  t.ok('есть чем принять и чем отказаться',
+    found.indexOf('data-a="price-alt-shop-take"') >= 0 && found.indexOf('data-a="price-alt-shop-drop"') >= 0)
+
+  // Принял — магазин завёлся тем же кодом, что и вставка ссылки руками.
+  const take = p.dom.node({ a: 'price-alt-shop-take', p: 'p_kab' }); p.run('bind();'); take.onclick()
+  const offers = p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].offers||[]')
+  t.ok('магазин завёлся', offers.some((o) => o.store === 'Лемана'), JSON.stringify(offers.map((o) => o.store)))
+  t.ok('и цена стала его', p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].unitCost') === 4300)
+  t.ok('предложение израсходовано', !p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].shopAlt'))
+
+  // Дороже нынешнего — не находка: сверка ищет, где ДЕШЕВЛЕ.
+  p.run('applyPriceReports([{ id:"p_br", find:"Брусок", ok:true, found:{ name:"Брусок строганый 40x50x3000 мм", url:"https://www.ozon.ru/product/brusok-999/", price:900 } }])')
+  t.ok('дороже — не предлагаем', !p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].shopAlt'),
+    'предложили дороже')
+  // Плашка акции вместо имени — тоже не находка.
+  p.run('applyPriceReports([{ id:"p_br", find:"Брусок", ok:true, found:{ name:"10% БАЛЛАМИ", url:"https://www.ozon.ru/product/brusok-1/", price:10 } }])')
+  t.ok('плашка акции не проходит', !p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].shopAlt'))
+
+  // Не то — предложение убирается и больше не мозолит глаза.
+  p.run('applyPriceReports([{ id:"p_br", find:"Брусок", ok:true, found:{ name:"Брусок строганый 40x50x3000 мм сухой", url:"https://www.ozon.ru/product/brusok-2/", price:150 } }])')
+  t.ok('дешевле — предложено', !!p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].shopAlt'))
+  p.run('tSpec2();')
+  const drop = p.dom.node({ a: 'price-alt-shop-drop', p: 'p_br' }); p.run('bind();'); drop.onclick()
+  t.ok('отказ убирает предложение', !p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].shopAlt'))
+  t.ok('и каталог не тронут',
+    !(p.q('(expProducts.filter(function(x){return x.id==="p_br";})[0].offers||[]).length')))
+}
+
 t.done()
