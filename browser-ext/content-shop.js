@@ -36,6 +36,8 @@
   // и именно она стоит в каталоге (договорённость по каталогу КубрДома).
   function fromOzon() {
     if (!/(^|\.)ozon\.ru$/.test(location.hostname)) return null;
+    // Ozon показывает три цифры: с картой («С банками»), обычную и «с другими
+    // банками». Меньшая — это цена по Ozon Карте, по ней и закупаются.
     const box = document.querySelector('[data-widget="webPrice"]') || document.body;
     const found = [];
     for (const el of box.querySelectorAll("span,div")) {
@@ -125,7 +127,7 @@
 
   function read() {
     if (captcha()) return { ok: false, error: "магазин показал капчу", captcha: true, url: location.href };
-    const r = fromLd() || fromOzon() || fromDom();
+    const r = (/(^|\.)ozon\.ru$/.test(location.hostname) ? (fromOzon() || fromLd()) : (fromLd() || fromOzon())) || fromDom();
     if (!r) return { ok: false, error: "цена не найдена", url: location.href };
     if (outOfStockText()) r.inStock = false;
     const res = { ok: true, price: r.price, inStock: r.inStock, src: r.src, url: location.href, title: document.title.slice(0, 120) };
