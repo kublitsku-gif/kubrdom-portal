@@ -8710,6 +8710,39 @@ function matOfferPick(p, oid){
   p.unitCost=Number(o.unitCost)||0;
   return true;
 }
+// Наличие — свойство ПРЕДЛОЖЕНИЯ, а не товара. Один и тот же кабель продают
+// несколько продавцов (на Ozon это разные карточки): у одного кончился, у второго
+// лежит. Пометка на товаре целиком врала бы «купить негде», когда купить есть где.
+// Товар отсутствует, только когда кончились все предложения.
+function matOfferAlive(p){
+  return matOffers(p).filter(function(o){ return !o.oosAt; });
+}
+// Куда переключиться, когда активное кончилось: самое дешёвое из доступных.
+// Дороже — это решение снабженца, а не программы, но платить больше «по умолчанию»
+// портал не имеет права.
+function matOfferBest(p){
+  const alive=matOfferAlive(p).slice().sort(function(a,b){ return (Number(a.unitCost)||0)-(Number(b.unitCost)||0); });
+  return alive[0]||null;
+}
+function matOfferOos(p, oid){
+  const o=matOffers(p).find(function(x){ return x.id===oid; });
+  if(!p||!o)return false;
+  if(o.oosAt)delete o.oosAt; else o.oosAt=todayISO();
+  const alive=matOfferAlive(p);
+  if(!alive.length){
+    // Кончилось у всех. Цену НЕ трогаем: товар вернётся, а смета не должна
+    // подешеветь из-за пустого склада.
+    p.oosAt=todayISO();
+  } else {
+    if(p.oosAt)delete p.oosAt;
+    const cur=matOffers(p).find(function(x){ return x.id===p.offer; });
+    // Активное кончилось или его вытеснил вернувшийся дешёвый — берём лучшее живое.
+    const best=matOfferBest(p);
+    if(!cur||cur.oosAt||(best&&Number(best.unitCost)<Number(cur.unitCost)))matOfferPick(p, (best||alive[0]).id);
+  }
+  return true;
+}
+
 // Первое предложение заводится из того, что в карточке уже есть: иначе выбор
 // «другого магазина» стирал бы нынешний, и вернуться к нему было бы некуда.
 function matOfferSeed(p){
@@ -8723,7 +8756,9 @@ function matOfferSeed(p){
 function matOfferAddNew(p, o){
   if(!p)return null;
   matOfferSeed(p);
-  const row={ id:gid(), store:(o&&o.store)||"", url:(o&&o.url)||"", unitCost:Number(o&&o.unitCost)||0 };
+  // Продавец — не то же, что магазин: на Ozon один кабель продают несколько
+  // человек разными карточками, и «Озон · Озон» в списке не различить.
+  const row={ id:gid(), store:(o&&o.store)||"", seller:(o&&o.seller)||"", url:(o&&o.url)||"", unitCost:Number(o&&o.unitCost)||0 };
   p.offers=matOffers(p).concat([row]);
   matOfferPick(p, row.id);
   return row;
@@ -13494,15 +13529,26 @@ function priceShopHtml(st){
     '<div style="font-size:10.5px;color:#7a9aaa;line-height:1.4;margin-bottom:8px">Откройте карточку, посмотрите цену и впишите её. Цена уйдёт в каталог со всей историей, и проект пересчитается сам.</div>'+
     rows.map(function(pr){
       const mode=EXP_MODES.find(function(x){return x.k===pr.mode;})||EXP_MODES[0];
-      const oos=!!pr.oosAt;
-      return '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 0;border-top:1px solid #eef2f7">'+
-        '<span style="flex:1 1 180px;min-width:0;font-size:11.5px;font-weight:700;color:'+(oos?"#e74c3c":"#0d1b2e")+'">'+esc(pr.name||"")+(oos?' · нет в наличии':'')+'</span>'+
-        (/^https?:\/\//.test(String(pr.url||""))
-          ? '<a href="'+esc(pr.url)+'" target="_blank" rel="noopener" style="font-size:10.5px;font-weight:700;color:#2980b9;text-decoration:none;white-space:nowrap">'+esc(pr.store||"магазин")+' ↗</a>'
-          : '<span style="font-size:10.5px;color:#c3cedb;white-space:nowrap">без ссылки</span>')+
-        '<span style="font-size:10.5px;color:#9aabbf;white-space:nowrap">сейчас '+(Number(pr.unitCost)||0).toLocaleString("ru-RU",{maximumFractionDigits:2})+' ₽/'+mode.unit+'</span>'+
-        '<input data-a="price-shop-set" data-p="'+esc(pr.id)+'" placeholder="новая" inputmode="decimal" style="width:74px;padding:4px 7px;border:1px solid #8e44ad55;border-radius:7px;font-size:11px;font-weight:700;text-align:right;outline:none;background:#fff">'+
-        '<button data-a="price-shop-oos" data-p="'+esc(pr.id)+'" title="'+(oos?"Товар снова в наличии":"Товара нет в магазине")+'" style="padding:4px 8px;border:1px solid '+(oos?"#e74c3c":"#dde6f0")+';background:'+(oos?"#e74c3c":"#fff")+';color:'+(oos?"#fff":"#8a97a6")+';border-radius:7px;font-size:10.5px;font-weight:700;cursor:pointer;white-space:nowrap">'+(oos?"вернулся":"нет в наличии")+'</button>'+
+      // Обходим ВСЕ карточки товара: у одного продавца кончилось, у второго лежит,
+      // и узнать это можно только заглянув к каждому.
+      const offers=matOffers(pr);
+      const list=offers.length?offers:[{ id:"", store:pr.store, seller:"", url:pr.url, unitCost:pr.unitCost, oosAt:pr.oosAt }];
+      const dead=!!pr.oosAt;
+      return '<div style="padding:6px 0;border-top:1px solid #eef2f7">'+
+        '<div style="font-size:11.5px;font-weight:700;color:'+(dead?"#e74c3c":"#0d1b2e")+';margin-bottom:3px">'+esc(pr.name||"")+(dead?' · нет нигде':'')+'</div>'+
+        list.map(function(o){
+          const oos=!!o.oosAt, act=offers.length?(o.id===pr.offer):true;
+          const who=(o.store||"магазин")+(o.seller?" · "+o.seller:"");
+          return '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:2px 0 2px 8px">'+
+            (act?'<span title="Из этой карточки берётся цена" style="font-size:9px;color:#16a085">●</span>':'<span style="font-size:9px;color:#dde6f0">○</span>')+
+            (/^https?:\/\//.test(String(o.url||""))
+              ? '<a href="'+esc(o.url)+'" target="_blank" rel="noopener" style="flex:1 1 120px;font-size:10.5px;font-weight:700;color:'+(oos?"#c3cedb":"#2980b9")+';text-decoration:'+(oos?"line-through":"none")+'">'+esc(who)+' ↗</a>'
+              : '<span style="flex:1 1 120px;font-size:10.5px;color:#c3cedb">'+esc(who)+' · без ссылки</span>')+
+            '<span style="font-size:10.5px;color:#9aabbf;white-space:nowrap">'+(Number(o.unitCost)||0).toLocaleString("ru-RU",{maximumFractionDigits:2})+' ₽/'+mode.unit+'</span>'+
+            '<input data-a="price-shop-set" data-p="'+esc(pr.id)+'" data-o="'+esc(o.id||"")+'" placeholder="новая" inputmode="decimal" style="width:70px;padding:4px 7px;border:1px solid #8e44ad55;border-radius:7px;font-size:11px;font-weight:700;text-align:right;outline:none;background:#fff">'+
+            '<button data-a="price-shop-oos" data-p="'+esc(pr.id)+'" data-o="'+esc(o.id||"")+'" title="'+(oos?"Снова в наличии":"Здесь кончился")+'" style="padding:4px 8px;border:1px solid '+(oos?"#e74c3c":"#dde6f0")+';background:'+(oos?"#e74c3c":"#fff")+';color:'+(oos?"#fff":"#8a97a6")+';border-radius:7px;font-size:10.5px;font-weight:700;cursor:pointer;white-space:nowrap">'+(oos?"вернулся":"кончился")+'</button>'+
+          '</div>';
+        }).join("")+
       '</div>';
     }).join("")+
   '</div>';
@@ -22825,29 +22871,44 @@ function bind(){
     // дописанные руками материалы. У остальных цена и так приезжает из карточки
     // товара при каждом расчёте, и «обновлять» там нечего.
     else if(a==="price-shop-set"){el.onchange=()=>{
-      const pid=el.dataset.p||"";
+      const pid=el.dataset.p||"", oid=el.dataset.o||"";
       const prod=(expProducts||[]).find(function(x){ return x&&x.id===pid; }); if(!prod)return;
       const v=parseFloat(String(el.value||"").replace(/\s/g,"").replace(",","."));
       if(!isFinite(v)||v<=0){ fl(); return; }
+      // Цену смотрели у КОНКРЕТНОГО продавца — ему её и записываем. Дальше портал
+      // сам решает, чья карточка активна: платить дороже, когда рядом дешевле,
+      // незачем, а вернувшийся товар снимает пометку «кончился».
+      const off=oid?matOffers(prod).find(function(x){ return x.id===oid; }):null;
+      if(off){
+        off.unitCost=v;
+        if(off.oosAt)delete off.oosAt;
+        const best=matOfferBest(prod);
+        const cur=matOffers(prod).find(function(x){ return x.id===prod.offer; });
+        if(!cur||cur.oosAt||(best&&Number(best.unitCost)<Number(cur.unitCost)))matOfferPick(prod, (best||off).id);
+        else if(cur.id===off.id)matOfferPick(prod, off.id);
+        if(matOfferAlive(prod).length&&prod.oosAt)delete prod.oosAt;
+      }
       const was=Number(prod.unitCost)||0;
-      if(Math.round(was*100)===Math.round(v*100)){ prod.priceCheckedAt=todayISO(); scheduleSave(); fl(); return; }
+      if(!oid&&Math.round(was*100)===Math.round(v*100)){ prod.priceCheckedAt=todayISO(); scheduleSave(); fl(); return; }
       const who=(currentUser&&currentUser.name)||"";
       // В историю уходят ОБЕ цифры: прежняя (по ней считали смету) и новая. Иначе
       // на вопрос «почему подорожало» ответить будет нечем.
       pricePush(prod, was, prod.priceCheckedAt||todayISO(), who);
-      prod.unitCost=v;
-      pricePush(prod, v, todayISO(), who);
+      if(!off)prod.unitCost=v;
+      pricePush(prod, Number(prod.unitCost)||0, todayISO(), who);
       prod.priceCheckedAt=todayISO();
       // Цена вернулась — значит товар в магазине есть.
       if(prod.oosAt)delete prod.oosAt;
       scheduleSave(); fl();
     };}
     else if(a==="price-shop-oos"){el.onclick=()=>{
-      const pid=el.dataset.p||"";
+      const pid=el.dataset.p||"", oid=el.dataset.o||"";
       const prod=(expProducts||[]).find(function(x){ return x&&x.id===pid; }); if(!prod)return;
-      // Цену НЕ обнуляем: товар вернётся, а смета не должна «подешеветь» из-за
-      // того, что его сегодня нет на складе. Пометка — это повод найти замену.
-      if(prod.oosAt)delete prod.oosAt; else prod.oosAt=todayISO();
+      // Кончился у КОНКРЕТНОГО продавца: остальные карточки живут своей жизнью, и
+      // портал сам перейдёт на живую. Цену не обнуляем — товар вернётся, а смета
+      // не должна дешеветь из-за пустого склада.
+      if(oid)matOfferOos(prod, oid);
+      else if(prod.oosAt)delete prod.oosAt; else prod.oosAt=todayISO();
       prod.priceCheckedAt=todayISO();
       scheduleSave(); fl();
     };}

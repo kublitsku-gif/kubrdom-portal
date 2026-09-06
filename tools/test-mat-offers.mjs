@@ -94,4 +94,77 @@ function panel() {
   t.ok('и он остался', p.q('expProducts[0].offers').length === 1)
 }
 
+// ── Наличие живёт у ПРЕДЛОЖЕНИЯ, а не у товара ─────────────────────────────
+// Один и тот же кабель продают несколько продавцов — на Ozon это разные карточки.
+// У одного он кончился, у второго лежит. Пометка «нет в наличии» на товаре целиком
+// врёт: покупать есть где. Поэтому наличие — свойство предложения, а товар считается
+// отсутствующим, только когда кончились ВСЕ.
+{
+  t.section('Кончился у одного продавца')
+  const p = boot({})
+  p.set({
+    expProducts: [{ id: 'p1', emoji: '📦', name: 'Кабель ВВГ 3х1,5 100 м',
+      store: 'Озон', url: 'https://www.ozon.ru/product/a/', mode: 'piece', unitCost: 5100, qty: 1 }],
+    estimates: [], dbPlans: [], crmClients: [], specSheets: [], specSheets2: [], projects: [],
+    buildRules: [], winTypes: [], objects: [], templates: [], contractDocs: [], purchases: [],
+    issues: [], users: [], stock: [], settings: {},
+  })
+  // Второй продавец на том же Ozon — дороже, третий магазин — ещё дороже.
+  p.run('matOfferAddNew(expProducts[0], { store:"Озон", seller:"Кабель-Опт", url:"https://www.ozon.ru/product/b/", unitCost:5350 });')
+  p.run('matOfferAddNew(expProducts[0], { store:"Лемана", url:"https://lemanapro.ru/product/c/", unitCost:5600 });')
+  p.run('matOfferPick(expProducts[0], expProducts[0].offers[0].id);')
+  t.ok('три предложения', p.q('expProducts[0].offers.length') === 3)
+  t.ok('продавец подписан', p.q('expProducts[0].offers[1].seller') === 'Кабель-Опт')
+
+  // У первого продавца кончилось.
+  const oid = p.q('expProducts[0].offers[0].id')
+  p.run('matOfferOos(expProducts[0], ' + JSON.stringify(oid) + ');')
+  t.ok('помечено предложение', !!p.q('expProducts[0].offers[0].oosAt'))
+  t.ok('товар в целом НЕ отсутствует', !p.q('expProducts[0].oosAt'), 'товар помечен зря')
+  // Активным должно стать доступное и самое дешёвое из оставшихся.
+  t.ok('переключились на живого продавца', p.q('expProducts[0].offer') === p.q('expProducts[0].offers[1].id'))
+  t.ok('цена карточки поехала за ним', p.q('expProducts[0].unitCost') === 5350, 'цена: ' + p.q('expProducts[0].unitCost'))
+  t.ok('и ссылка тоже', /product\/b\//.test(p.q('expProducts[0].url')))
+
+  // Кончилось у всех — вот теперь товара нет.
+  p.run('matOfferOos(expProducts[0], expProducts[0].offers[1].id);')
+  p.run('matOfferOos(expProducts[0], expProducts[0].offers[2].id);')
+  t.ok('товар отсутствует, когда кончился у всех', !!p.q('expProducts[0].oosAt'))
+  // Цену не теряем: смета не должна дешеветь из-за отсутствия на складе.
+  t.ok('цена сохранилась', p.q('expProducts[0].unitCost') > 0)
+
+  // Завоз: снимаем пометку у одного — товар снова есть.
+  p.run('matOfferOos(expProducts[0], expProducts[0].offers[0].id);')
+  t.ok('вернулся — пометка товара снята', !p.q('expProducts[0].oosAt'))
+  t.ok('активным стал вернувшийся', p.q('expProducts[0].offer') === p.q('expProducts[0].offers[0].id'))
+  t.ok('цена вернулась к его цене', p.q('expProducts[0].unitCost') === 5100)
+}
+
+// ── Цена правится у того продавца, у кого смотрели ─────────────────────────
+{
+  t.section('Новая цена — конкретному продавцу')
+  const p = boot({})
+  p.set({
+    expProducts: [{ id: 'p1', emoji: '📦', name: 'Кабель ВВГ 3х1,5 100 м',
+      store: 'Озон', url: 'https://www.ozon.ru/product/a/', mode: 'piece', unitCost: 5100, qty: 1 }],
+    estimates: [], dbPlans: [], crmClients: [], specSheets: [], specSheets2: [], projects: [],
+    buildRules: [], winTypes: [], objects: [], templates: [], contractDocs: [], purchases: [],
+    issues: [], users: [], stock: [], settings: {},
+  })
+  p.run('matOfferAddNew(expProducts[0], { store:"Озон", seller:"Кабель-Опт", url:"https://www.ozon.ru/product/b/", unitCost:5350 });')
+  p.run('matOfferPick(expProducts[0], expProducts[0].offers[0].id);')   // активен первый, 5100
+  const second = p.q('expProducts[0].offers[1].id')
+
+  const inp = p.dom.node({ a: 'price-shop-set', p: 'p1', o: second })
+  p.run('bind();'); inp.value = '4900'; inp.onchange()
+  t.ok('цена ушла второму продавцу', p.q('expProducts[0].offers[1].unitCost') === 4900)
+  t.ok('первый не изменился', p.q('expProducts[0].offers[0].unitCost') === 5100)
+  // Подешевел настолько, что стал выгоднее активного — портал переходит на него:
+  // держать дорогую карточку активной, когда рядом дешевле, незачем.
+  t.ok('активным стал выгодный', p.q('expProducts[0].offer') === second)
+  t.ok('карточка показывает его цену', p.q('expProducts[0].unitCost') === 4900)
+  t.ok('и его ссылку', /product\/b\//.test(p.q('expProducts[0].url')))
+  t.ok('история записана', (p.q('expProducts[0].hist')||[]).length > 0)
+}
+
 t.done()
