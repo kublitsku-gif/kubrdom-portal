@@ -1873,6 +1873,7 @@ let priceShopStage="";
 let priceExtReady=false;  // в браузере стоит расширение сверки
 let priceExtBusy="";      // идёт обход магазинов: что показывать вместо кнопки
 let priceWizStage="";     // этап, который разбирают мастером
+let priceOfferAdd="";     // товар, у которого открыта форма «магазин по ссылке»
 let priceWizIdx=0;        // какая карточка на экране    // этап, у которого раскрыт список магазинов для сверки
 let hoursPickKey="";       // у какой строки открыт ряд быстрого выбора часов
 // Ряд плана: целые 1..10 закрывают почти все работы, 0,5 — мелочь вроде подвесов.
@@ -13624,10 +13625,26 @@ function altNameOk(n){
 // артикул у каждого магазина свой, а имя — единственное, что у нас есть общего.
 // Адреса поиска магазинные и когда-нибудь сменятся: правятся здесь, одной строкой.
 const PRICE_SHOPS=[
-  { k:"ozon",  n:"Озон",      col:"#2980b9", q:"https://www.ozon.ru/search/?text=",     has:/озон|ozon/i },
-  { k:"leman", n:"Лемана",    col:"#16a085", q:"https://lemanapro.ru/search/?q=",       has:/лемана|леруа|leman|leroy/i },
-  { k:"ym",    n:"Я.Маркет",  col:"#e67e22", q:"https://market.yandex.ru/search?text=", has:/маркет|яндекс|market/i },
+  { k:"ozon",  n:"Озон",      col:"#2980b9", q:"https://www.ozon.ru/search/?text=",     has:/озон|ozon/i,               host:/(^|\.)ozon\.ru$/i },
+  { k:"leman", n:"Лемана",    col:"#16a085", q:"https://lemanapro.ru/search/?q=",       has:/лемана|леруа|leman|leroy/i, host:/(^|\.)(lemanapro|leroymerlin)\.ru$/i },
+  { k:"ym",    n:"Я.Маркет",  col:"#e67e22", q:"https://market.yandex.ru/search?text=", has:/маркет|яндекс|market/i,     host:/(^|\.)market\.yandex\.ru$/i },
 ];
+// Магазин по ссылке. Человек стоит на странице товара, и печатать «Лемана» руками
+// после того, как он скопировал адрес, — лишняя работа: домен и так это знает.
+// Незнакомый магазин называем его же доменом, а не «магазином»: закупщик узнает
+// сайт по имени, и врать тут нечем.
+function shopFromUrl(url){
+  const m=/^https?:\/\/([^\/?#]+)/i.exec(String(url||""));
+  if(!m)return "";
+  const host=m[1].replace(/^www\./i,"").toLowerCase();
+  const sh=PRICE_SHOPS.find(function(x){ return x.host&&x.host.test(host); });
+  return sh?sh.n:host;
+}
+function sameShopOffer(pr, url){
+  const host=String(shopFromUrl(url)||"").toLowerCase();
+  if(!host)return null;
+  return matOffers(pr).find(function(o){ return String(shopFromUrl(o.url)||"").toLowerCase()===host; })||null;
+}
 // Ряд «сравнить»: где карточка у нас уже есть — ведём в неё (● перед именем), где
 // нет — в поиск магазина. Цену смотрят в трёх местах, и открывать их руками через
 // поиск каждый раз — это и есть та работа, которую портал должен снимать.
@@ -13644,15 +13661,41 @@ function shopLinksHtml(pr, skipStore){
     if(!offers.length&&sh.has.test(String(pr.store||""))&&/^https?:\/\//.test(String(pr.url||"")))return String(pr.url);
     return "";
   };
-  return '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin:0 0 4px 8px">'+
-    '<span style="font-size:9.5px;color:#9aabbf">сравнить:</span>'+
-    PRICE_SHOPS.filter(function(sh){ return !(skipStore&&sh.has.test(String(skipStore))); }).map(function(sh){
-      const own=mineUrl(sh);
-      const url=own||(sh.q+encodeURIComponent(name));
-      return '<a href="'+esc(url)+'" target="_blank" rel="noopener" title="'+(own?"Наша карточка в этом магазине":"Найти этот товар в магазине")+'" '+
-        'style="font-size:9.5px;font-weight:700;color:'+sh.col+';background:'+sh.col+'12;border:1px solid '+sh.col+'33;border-radius:6px;padding:1px 6px;text-decoration:none;white-space:nowrap">'+
-        (own?"\u25cf ":"")+esc(sh.n)+' \u2197</a>';
-    }).join("")+
+  const open=priceOfferAdd===String(pr.id||"");
+  return '<div style="margin:0 0 4px 8px">'+
+    '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">'+
+      '<span style="font-size:9.5px;color:#9aabbf">сравнить:</span>'+
+      PRICE_SHOPS.filter(function(sh){ return !(skipStore&&sh.has.test(String(skipStore))); }).map(function(sh){
+        const own=mineUrl(sh);
+        const url=own||(sh.q+encodeURIComponent(name));
+        return '<a href="'+esc(url)+'" target="_blank" rel="noopener" title="'+(own?"Наша карточка в этом магазине":"Найти этот товар в магазине")+'" '+
+          'style="font-size:9.5px;font-weight:700;color:'+sh.col+';background:'+sh.col+'12;border:1px solid '+sh.col+'33;border-radius:6px;padding:1px 6px;text-decoration:none;white-space:nowrap">'+
+          (own?"\u25cf ":"")+esc(sh.n)+' \u2197</a>';
+      }).join("")+
+      // Нашёл товар в другом магазине — заводится он ОТСЮДА. Идти за этим в базу
+      // материалов, искать там карточку и вписывать магазин руками — семь шагов
+      // и потеря места в сверке; а поход по магазинам ровно этим и заканчивается.
+      '<button data-a="price-offer-add" data-p="'+esc(pr.id||"")+'" title="Добавить магазин по ссылке" '+
+        'style="font-size:9.5px;font-weight:800;color:'+(open?"#fff":"#16a085")+';background:'+(open?"#16a085":"#16a08512")+';border:1px solid #16a08544;border-radius:6px;padding:1px 7px;cursor:pointer;white-space:nowrap">'+
+        (open?"\u2715 отмена":"\uff0b магазин")+'</button>'+
+    '</div>'+
+    (open?priceOfferFormHtml(pr):'')+
+  '</div>';
+}
+// Форма «магазин по ссылке»: адрес из буфера и цена с ценника. Название магазина
+// не спрашиваем — оно в самом адресе; вводить его руками после копирования ссылки
+// значит делать работу, которую портал умеет сам.
+function priceOfferFormHtml(pr){
+  const mode=EXP_MODES.find(function(x){return x.k===(pr&&pr.mode);})||EXP_MODES[0];
+  const per=shopPer(pr, null);
+  return '<div style="margin-top:5px;background:#eefaf6;border:1px solid #16a08544;border-radius:9px;padding:8px 9px">'+
+    '<input id="pof-url" placeholder="вставьте ссылку из магазина" style="width:100%;box-sizing:border-box;padding:7px 9px;border-radius:8px;border:1px solid #c9e3db;font-size:11.5px;outline:none;margin-bottom:6px">'+
+    '<div style="display:flex;gap:6px;align-items:center">'+
+      '<input id="pof-cost" placeholder="цена с ценника" inputmode="decimal" style="flex:1;min-width:0;padding:7px 9px;border-radius:8px;border:1px solid #c9e3db;font-size:11.5px;font-weight:700;outline:none">'+
+      '<span style="font-size:11px;font-weight:700;color:#0d1b2e;white-space:nowrap">'+esc(per>1?("₽ за "+numRu(per)+" "+mode.unit):("₽/"+mode.unit))+'</span>'+
+      '<button data-a="price-offer-do" data-p="'+esc(pr.id||"")+'" style="padding:7px 12px;background:#16a085;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:11.5px;font-weight:700;white-space:nowrap">Добавить</button>'+
+    '</div>'+
+    '<div style="font-size:9.5px;color:#7a9aaa;line-height:1.45;margin-top:5px">Магазин узнаем по ссылке. Дешевле нынешнего — портал сам перейдёт на него.</div>'+
   '</div>';
 }
 function priceShopRows(st){
@@ -23440,6 +23483,50 @@ function bind(){
     }
     // Имя замены правится руками: со страницы магазина оно приезжает вместе с
     // плашками акций, а в каталог должно попасть название товара.
+    // Магазин по ссылке — прямо из сверки.
+    else if(a==="price-offer-add"){el.onclick=()=>{
+      const pid=el.dataset.p||"";
+      priceOfferAdd=(priceOfferAdd===pid)?"":pid;
+      rerenderTab();
+    };}
+    else if(a==="price-offer-do"){el.onclick=()=>{
+      const pid=el.dataset.p||"";
+      const prod=(expProducts||[]).find(function(x){ return x&&x.id===pid; }); if(!prod)return;
+      const url=String(((document.getElementById("pof-url")||{}).value||"")).trim();
+      if(!/^https?:\/\//i.test(url)){ alert("Вставьте ссылку на товар из магазина."); return; }
+      const raw=parseFloat(String(((document.getElementById("pof-cost")||{}).value||"")).replace(/\s/g,"").replace(",","."));
+      if(!isFinite(raw)||raw<=0){ alert("Впишите цену с ценника: предложение без цены нечем сравнивать, а нулевое станет самым дешёвым."); return; }
+      // Цена — как на ценнике: коробку из двенадцати баллонов портал делит сам.
+      const cost=priceToOurUnit(prod, raw, null);
+      const was=Number(prod.unitCost)||0;
+      const who=(currentUser&&currentUser.name)||"";
+      // Тот же магазин уже заведён — это не второе предложение, а свежая цена у
+      // него же: две одинаковые карточки в списке потом не различить.
+      const same=sameShopOffer(prod, url);
+      if(same){
+        same.url=url; same.unitCost=cost; same.okAt=todayISO(); if(same.oosAt)delete same.oosAt;
+        const cur=matOffers(prod).find(function(x){ return x.id===prod.offer; });
+        const best=matOfferBest(prod);
+        if(!cur||cur.oosAt||(best&&Number(best.unitCost)<Number(cur.unitCost)))matOfferPick(prod, (best||same).id);
+        else if(cur.id===same.id)matOfferPick(prod, same.id);
+      } else {
+        const row=matOfferAddNew(prod, { store:shopFromUrl(url), url:url, unitCost:cost });
+        if(row)row.okAt=todayISO();
+        // Новый магазин активен не потому, что новый, а если он дешевле: платить
+        // дороже, когда рядом лежит дешевле, незачем.
+        const best=matOfferBest(prod);
+        if(best&&Number(best.unitCost)<Number((row||{}).unitCost||0))matOfferPick(prod, best.id);
+      }
+      if(prod.oosAt&&matOfferAlive(prod).length)delete prod.oosAt;
+      // Цена товара поехала за предложением — значит это правка цены со всей
+      // историей, а не тихая подмена.
+      if(Math.round(was*100)!==Math.round((Number(prod.unitCost)||0)*100)){
+        pricePush(prod, was, prod.priceCheckedAt||todayISO(), who);
+        pricePush(prod, Number(prod.unitCost)||0, todayISO(), who);
+      }
+      prod.priceCheckedAt=todayISO();
+      priceOfferAdd=""; scheduleSave(); fl();
+    };}
     else if(a==="price-alt-name"){el.onchange=()=>{
       const pid=el.dataset.p||"";
       const prod=(expProducts||[]).find(function(x){ return x&&x.id===pid; });

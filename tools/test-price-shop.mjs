@@ -466,4 +466,59 @@ function panel() {
   t.ok('заметное движение видно', /▲ \+202 ₽ · 4%/.test(plain()), 'нет чипа при 4%')
 }
 
+// ── Магазин заводится по ссылке ─────────────────────────────────────────────
+// Поход по магазинам ровно этим и заканчивается: нашёл товар дешевле в другом
+// месте — заведи. Идти за этим в базу материалов, искать там карточку и вписывать
+// магазин руками — семь шагов и потеря места в сверке.
+{
+  t.section('Магазин по ссылке из сверки')
+  const p = panel()
+  const plain = () => p.run('tSpec2()').replace(/[  ]/g, ' ')
+  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
+  t.ok('кнопка есть у каждого товара', plain().indexOf('data-a="price-offer-add" data-p="p_kab"') >= 0)
+
+  const add = p.dom.node({ a: 'price-offer-add', p: 'p_kab' }); p.run('bind();'); add.onclick()
+  t.ok('форма раскрылась', plain().indexOf('id="pof-url"') >= 0)
+  t.ok('и просит только ссылку и цену',
+    /вставьте ссылку из магазина/.test(plain()) && /цена с ценника/.test(plain()))
+
+  p.dom.field('pof-url', 'https://lemanapro.ru/product/kabel-vvg-100m/')
+  p.dom.field('pof-cost', '4900')
+  const go = p.dom.node({ a: 'price-offer-do', p: 'p_kab' }); p.run('bind();'); go.onclick()
+
+  const offers = p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].offers||[]')
+  t.ok('предложений стало два', offers.length === 2, JSON.stringify(offers.map((o) => o.store)))
+  t.ok('магазин узнан по ссылке', offers.some((o) => o.store === 'Лемана'),
+    JSON.stringify(offers.map((o) => o.store)))
+  t.ok('прежний магазин на месте', offers.some((o) => o.store === 'Озон'))
+  // Дешевле — значит по нему и покупаем.
+  t.ok('дешёвое стало активным',
+    p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].unitCost') === 4900)
+  t.ok('и это Лемана',
+    offers.filter((o) => o.id === p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].offer'))[0].store === 'Лемана')
+  // Цена поехала — значит это правка цены со всей историей.
+  const hist = p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].hist||[]')
+  t.ok('история записана', hist.some((h) => Number(h.c) === 5100) && hist.some((h) => Number(h.c) === 4900),
+    JSON.stringify(hist))
+  t.ok('форма закрылась', p.q('priceOfferAdd') === '')
+
+  // Тот же магазин второй раз — это свежая цена, а не второе предложение.
+  const add2 = p.dom.node({ a: 'price-offer-add', p: 'p_kab' }); p.run('bind();'); add2.onclick()
+  p.dom.field('pof-url', 'https://lemanapro.ru/product/kabel-vvg-100m/?utm=1')
+  p.dom.field('pof-cost', '4700')
+  const go2 = p.dom.node({ a: 'price-offer-do', p: 'p_kab' }); p.run('bind();'); go2.onclick()
+  t.ok('дубля магазина нет',
+    p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].offers.length') === 2)
+  t.ok('а цена обновилась',
+    p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].unitCost') === 4700)
+
+  // Без цены не заводим: нулевое предложение стало бы самым дешёвым.
+  const add3 = p.dom.node({ a: 'price-offer-add', p: 'p_br' }); p.run('bind();'); add3.onclick()
+  p.dom.field('pof-url', 'https://www.ozon.ru/product/brusok/')
+  p.dom.field('pof-cost', '')
+  const go3 = p.dom.node({ a: 'price-offer-do', p: 'p_br' }); p.run('bind();'); go3.onclick()
+  t.ok('без цены не заводится', !p.q('(expProducts.filter(function(x){return x.id==="p_br";})[0].offers||[]).length'))
+}
+
 t.done()
