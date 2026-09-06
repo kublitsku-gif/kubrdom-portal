@@ -86,8 +86,12 @@
       const m = txt.match(RUB);
       const price = m && num(m[1]);
       if (!price) continue;
-      const name = (a.textContent || "").trim().split("\n")[0].trim().slice(0, 120);
-      if (name.length < 10) continue;              // «Смотреть всё» — не товар
+      const junk = /^(\d+%|скидк|баллам|кешбэк|кэшбэк|хит|новинк|осталось|рассрочк|бесплатн|достав|акци|распродаж|смотреть|показать|подробн|реклама)/i;
+      const lines = (a.textContent || "").split("\n").map(function (x) { return x.trim(); });
+      const name = (lines.filter(function (x) {
+        return x.length >= 12 && !junk.test(x) && /[а-яёa-z]{4}/i.test(x);
+      })[0] || "").slice(0, 120);
+      if (!name) continue;                         // плашка или «Смотреть всё» — не товар
       seen[href] = 1;
       out.push({ name: name, url: href, price: price, store: document.title.indexOf("Лемана") >= 0 ? "Лемана" : "" });
       if (out.length >= limit) break;

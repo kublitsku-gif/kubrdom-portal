@@ -13862,9 +13862,21 @@ function priceFindTake(prod, r){
     url:String(f.url), price:price };
   return true;
 }
+// Во сколько раз цена может измениться, чтобы это ещё считалось подорожанием.
+// Больше — почти всегда не подорожание, а разница ЕДИНИЦ: карточка магазина про
+// комплект из 12 штук, а у нас цена за штуку (так клей-пена и «подорожала» в 12
+// раз). Машина эти случаи не различает, поэтому не решает за человека.
+const PRICE_JUMP_MAX=3;
+function priceJumpSuspect(was, now){
+  const a=Number(was)||0, b=Number(now)||0;
+  if(!(a>0)||!(b>0))return false;
+  const k=b/a;
+  return k>=PRICE_JUMP_MAX||k<=1/PRICE_JUMP_MAX;
+}
+
 function applyPriceReports(list){
   const who=(currentUser&&currentUser.name)||"расширение";
-  const out={ checked:0, changed:0, oos:0, failed:0, diff:0, missing:0, captcha:0, found:0 };
+  const out={ checked:0, changed:0, oos:0, failed:0, diff:0, missing:0, captcha:0, found:0, suspect:0 };
   (list||[]).forEach(function(r){
     if(!r)return;
     if(!r.ok){ if(r.captcha)out.captcha++; else out.failed++; return; }
@@ -13889,6 +13901,14 @@ function applyPriceReports(list){
     } else {
       const v=priceToOurUnit(prod, r.price, off);
       const cur=Number(off?off.unitCost:prod.unitCost)||0;
+      // Скачок в разы — не применяем: сначала человек скажет, комплект это или
+      // цена. Пометка живёт у товара и видна в панели сверки.
+      if(v>0&&priceJumpSuspect(cur, v)){
+        prod.suspect={ price:v, shop:Number(r.price)||0, was:cur, at:todayISO(), offerId:(off?off.id:"") };
+        out.suspect=(out.suspect||0)+1;
+        prod.priceCheckedAt=todayISO();
+        return;
+      }
       if(v>0&&Math.round(v*100)!==Math.round(cur*100)){
         const was=Number(prod.unitCost)||0;
         if(off){
@@ -14012,11 +14032,23 @@ function priceShopHtml(st){
       const offers=matOffers(pr);
       const list=offers.length?offers:[{ id:"", store:pr.store, seller:"", url:pr.url, unitCost:pr.unitCost, oosAt:pr.oosAt }];
       const dead=!!pr.oosAt;
-      const alt=pr.alt;
+      const alt=pr.alt, sus=pr.suspect;
       return '<div style="padding:6px 0;border-top:1px solid #eef2f7">'+
         '<div style="font-size:11.5px;font-weight:700;color:'+(dead?"#e74c3c":"#0d1b2e")+';margin-bottom:3px">'+esc(pr.name||"")+(dead?' · нет нигде':'')+'</div>'+
         shopLinksHtml(pr)+
         shopAltHtml(pr)+
+        // Цена уехала в разы — почти всегда это разница единиц (карточка про
+        // комплект). Показываем оба числа и спрашиваем, а не решаем сами.
+        ((sus&&sus.price)?'<div style="margin:4px 0 6px;padding:8px;border:1.5px solid #e67e22;border-radius:9px;background:#e67e220d">'+
+          '<div style="font-size:10px;font-weight:800;color:#e67e22;letter-spacing:0.3px;margin-bottom:3px">ПРОВЕРЬТЕ ЦЕНУ</div>'+
+          '<div style="font-size:11.5px;color:#0d1b2e;line-height:1.35">В магазине '+(Number(sus.shop)||0).toLocaleString("ru-RU")+' ₽ — это в '+
+            (Math.round((Number(sus.price)||0)/(Number(sus.was)||1)*10)/10)+' раза больше нашей цены '+(Number(sus.was)||0).toLocaleString("ru-RU")+' ₽. '+
+            'Обычно так выглядит комплект: на карточке несколько штук, а у нас цена за одну.</div>'+
+          '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:5px">'+
+            '<button data-a="price-suspect-take" data-p="'+esc(pr.id)+'" style="padding:5px 12px;border:none;background:#e67e22;color:#fff;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer">принять '+(Number(sus.price)||0).toLocaleString("ru-RU")+' ₽</button>'+
+            '<button data-a="price-suspect-drop" data-p="'+esc(pr.id)+'" style="padding:5px 10px;border:1px solid #dde6f0;background:#fff;color:#8a97a6;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer">оставить как было</button>'+
+          '</div>'+
+        '</div>':'')+
         // Единственное место, где нужен человек: чем заменить то, чего больше нет.
         (alt?'<div style="margin:4px 0 6px;padding:8px;border:1.5px solid #16a085;border-radius:9px;background:#16a0850d">'+
           '<div style="font-size:10px;font-weight:800;color:#16a085;letter-spacing:0.3px;margin-bottom:3px">ЗАМЕНА НАЙДЕНА</div>'+
@@ -23652,6 +23684,28 @@ function bind(){
       const prod=(expProducts||[]).find(function(x){ return x&&x.id===pid; });
       if(!prod||!prod.alt)return;
       prod.alt.name=String(el.value||"").trim().slice(0,160);
+      scheduleSave(); fl();
+    };}
+    else if(a==="price-suspect-take"){el.onclick=()=>{
+      const prod=(expProducts||[]).find(function(x){ return x&&x.id===(el.dataset.p||""); });
+      if(!prod||!prod.suspect)return;
+      const s=prod.suspect, who=(currentUser&&currentUser.name)||"";
+      const off=s.offerId?matOffers(prod).find(function(x){ return x.id===s.offerId; }):null;
+      const was=Number(prod.unitCost)||0;
+      if(off){ off.unitCost=Number(s.price)||0; off.okAt=todayISO(); matOfferPick(prod, off.id); }
+      else prod.unitCost=Number(s.price)||0;
+      pricePush(prod, was, prod.priceCheckedAt||todayISO(), who);
+      pricePush(prod, Number(prod.unitCost)||0, todayISO(), who);
+      prod.priceOkAt=todayISO(); prod.priceCheckedAt=todayISO();
+      delete prod.suspect;
+      scheduleSave(); fl();
+    };}
+    else if(a==="price-suspect-drop"){el.onclick=()=>{
+      const prod=(expProducts||[]).find(function(x){ return x&&x.id===(el.dataset.p||""); });
+      if(!prod)return;
+      // Отказались — цена остаётся прежней, но карточка считается просмотренной:
+      // в магазин ходили, решение приняли.
+      delete prod.suspect; prod.priceOkAt=todayISO(); prod.priceCheckedAt=todayISO();
       scheduleSave(); fl();
     };}
     else if(a==="price-alt-take"){el.onclick=()=>{

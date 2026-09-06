@@ -285,7 +285,7 @@ function panel() {
   t.ok('половина — ещё не отметка', !/цены сверены/i.test(p.run('tSpec2()')))
 
   // Проверили второй — вот теперь этап сверен, и дата берётся из карточек.
-  p.run('applyPriceReports([{ id:"p_br", ok:true, price:107.67, inStock:true }])')
+  p.run('applyPriceReports([{ id:"p_br", ok:true, price:323, inStock:true }])')
   const done = p.run('tSpec2()')
   t.ok('оба проверены — этап сверен', /цены сверены/i.test(done), 'отметки нет, хотя всё проверено')
   t.ok('дата настоящая', /6 сен/.test(done), 'нет даты сверки')
@@ -595,6 +595,40 @@ function panel() {
   t.ok('отказ убирает предложение', !p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].shopAlt'))
   t.ok('и каталог не тронут',
     !(p.q('(expProducts.filter(function(x){return x.id==="p_br";})[0].offers||[]).length')))
+}
+// ── 10. Абсурдная цена не применяется молча ────────────────────────────────
+// Карточка магазина бывает про КОМПЛЕКТ: у нас клей-пена за штуку 550 ₽, а на
+// Ozon та же ссылка — коробка из 12 штук за 6843 ₽. Расширение честно принесло
+// ценник, и цена в каталоге выросла в 12 раз. Машина не знает, комплект это или
+// подорожание, — поэтому такие скачки не применяются, а выносятся на решение.
+{
+  t.section('Скачок цены в разы — на проверку')
+  const p = panel()
+  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const open = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); open.onclick()
+  p.run('applyPriceReports([{ id:"p_kab", ok:true, price:61200, inStock:true }])')   // ×12
+  t.ok('цена не подменилась', p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].unitCost') === 5100,
+    'получили: ' + p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].unitCost'))
+  t.ok('карточка помечена подозрительной', !!p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].suspect'),
+    'нет пометки')
+  t.ok('сверенной не считается', !p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].priceOkAt'),
+    'помечена сверенной, хотя цена не принята')
+
+  const html = p.run('tSpec2()')
+  t.ok('в панели видно расхождение', /61 200|в 12|комплект|проверьте/i.test(html.replace(/[  ]/g, ' ')),
+    'нет предупреждения о скачке')
+  t.ok('есть кнопка принять как есть', html.indexOf('data-a="price-suspect-take"') >= 0)
+
+  // Приняли осознанно — цена встаёт, история пишется.
+  const take = p.dom.node({ a: 'price-suspect-take', p: 'p_kab' })
+  p.run('bind();'); take.onclick()
+  t.ok('после подтверждения цена принята', p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].unitCost') === 61200)
+  t.ok('пометка снята', !p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].suspect'))
+
+  // Обычное подорожание проходит без вопросов: порог только про разы.
+  p.run('applyPriceReports([{ id:"p_br", ok:true, price:390, inStock:true }])')
+  t.ok('умеренный рост применяется сразу', p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].unitCost') === 130,
+    'получили: ' + p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].unitCost'))
 }
 
 t.done()
