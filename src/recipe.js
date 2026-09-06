@@ -350,11 +350,50 @@ export function matQtyOf(sheet, key) {
 // (его и добавляли ради второй фасовки или лишней коробки), значит и адрес у
 // него отдельный.
 export function matAddKey(m) { return "+" + String((m && (m.id || m.pid)) || ""); }
-export function matKeyOf(m) {
-  if (m && m.added) return matAddKey(m);
+
+// Прежний адрес — по ТОВАРУ (и номеру повтора, если товар в смете назван дважды).
+// Так адресованы правки боевых листов, и читать их надо по-прежнему: переписывать
+// снимок ради нового формата опаснее, чем прочитать оба адреса.
+export function matLegacyKey(m) {
   const base = String((m && (m.pid || m.id)) || "");
   const ix = Number(m && m.mix) || 0;
   return ix > 1 ? base + "#" + ix : base;
+}
+
+// Адрес материала внутри строки сметы: у расчётного это id СТРОКИ СПРАВОЧНИКА
+// (`l:<lid>`), у дописанного руками — его собственный id (`+<id>`).
+//
+// Адресом расчётного был его товар, и это ломалось дважды: один товар в смете
+// может стоять двумя строками (пол и стены одной работой), а замена меняет товар
+// прямо в строке. Id строки не зависит ни от того, ни от другого — и переживает
+// перестановку строк в справочнике, чего номер повтора не умел.
+export function matKeyOf(m) {
+  if (m && m.added) return matAddKey(m);
+  if (m && m.lid) return "l:" + m.lid;
+  return matLegacyKey(m);
+}
+
+// Все адреса материала: нынешний и прежний. Читаем по первому, который что-то
+// знает; «вернуть как было» обязано снимать оба, иначе стёртая правка вернулась
+// бы прежним адресом.
+export function matAddrs(m) {
+  const now = matKeyOf(m);
+  // У дописанного руками прежний адрес уже перенесён в лист (`migrateMatAddrs`),
+  // и читать его ещё и здесь значило бы вернуть ту же коллизию: «убрать» по
+  // товару снова уносило бы и расчётную строку, и дописанную.
+  if (m && m.added) return [now];
+  const was = matLegacyKey(m);
+  return (was && was !== now) ? [now, was] : [now];
+}
+function matVal(map, m) {
+  const a = matAddrs(m), src = map || {};
+  for (let i = 0; i < a.length; i++) { if (src[a[i]] != null) return src[a[i]]; }
+  return null;
+}
+function matIn(list, m) {
+  const a = matAddrs(m), src = list || [];
+  for (let i = 0; i < a.length; i++) { if (src.indexOf(a[i]) >= 0) return true; }
+  return false;
 }
 
 // Смета справочника может назвать один товар ДВАЖДЫ («ОСП на пол» и «ОСП на
@@ -448,7 +487,7 @@ export function matOrderOf(sheet, key) {
 function sortMats(mats, order) {
   if (!Object.keys(order || {}).length) return mats;
   return mats.map(function (m, i) { return { m: m, i: i }; }).sort(function (a, b) {
-    const av = order[matKeyOf(a.m)], bv = order[matKeyOf(b.m)];
+    const av = matVal(order, a.m), bv = matVal(order, b.m);
     if (av != null && bv != null) return av - bv;
     if (av != null) return -1;          // расставленные руками идут первыми
     if (bv != null) return 1;
@@ -479,12 +518,12 @@ export function applyMatEdits(positions, sheet, products) {
     let hit = !!add.length || !!off.length || !!Object.keys(ord).length;
     const mats = (pos.mats || []).map(function (m) {
       let out = m;
-      const nid = sw[matKeyOf(m)];
+      const nid = matVal(sw, m);
       const prod = nid && prodById[nid];
       if (prod) { out = swapMat(m, prod, pos.area); hit = true; }
       // Ручное количество ставится ПОСЛЕ замены: человек правит то число, которое
       // видит на экране, а видит он уже новый товар.
-      const own = Number(q[matKeyOf(out)]);
+      const own = Number(matVal(q, out));
       if (isFinite(own) && own > 0 && own !== Number(out.qty)) {
         out = Object.assign({}, out, { qty: own, qtySet: true });
         hit = true;
@@ -508,7 +547,7 @@ export function applyMatEdits(positions, sheet, products) {
     // Убранный материал вычитается ПОСЛЕДНИМ — после замены: человек убирает то,
     // что видит на экране, а видит он уже новый товар.
     const kept = sortMats(
-      off.length ? full.filter(function (m) { return off.indexOf(matKeyOf(m)) < 0; }) : full, ord);
+      off.length ? full.filter(function (m) { return !matIn(off, m); }) : full, ord);
     const sum = kept.reduce(function (a, m) { return a + (Number(m.cost) || 0) * (Number(m.qty) || 0); }, 0);
     return Object.assign({}, pos, { mats: kept, cost: Math.round(sum * (Number(pos.factor) || 1)) });
   });

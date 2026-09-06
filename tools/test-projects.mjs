@@ -1205,4 +1205,60 @@ function create(p, name) {
     JSON.stringify([now[0].qty, !!now[0].qtySet]))
 }
 
+// ── Адрес по строке сметы: правка переживает перестановку ───────────────────
+// Адресом материала был его товар, и правка «второй строки ОСП» держалась на
+// том, что строки идут в прежнем порядке: переставь их в справочнике — и ручное
+// количество досталось бы соседней. Теперь адрес — id строки справочника.
+// Экран сметы у двух разделов ОДИН, то же самое сторожит test-spec2-smeta.
+{
+  t.section('Адрес по строке сметы')
+  const p = boot({})
+  p.set({
+    expProducts: [{ id: 'p_osb', name: 'ОСП 9 мм', unitCost: 1000, store: 'Лемана', mode: 'piece' }],
+    estimates: [{ id: 'e_osb', kind: 'house', name: 'Обшивка стен ОСП', stage: 2,
+      lines: [{ pid: 'p_osb', qty: 1 }, { pid: 'p_osb', qty: 2 }] }],
+    dbPlans: [], crmClients: [{ id: 'c1', name: 'Иванов' }], specSheets: [], specSheets2: [],
+    projects: [], buildRules: [], winTypes: [], objects: [], templates: [], contractDocs: [],
+    purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+  })
+  // Так строкам смет проставляются id при загрузке: детерминированно, чтобы две
+  // вкладки не разошлись, и только там, где их ещё нет.
+  t.ok('id проставились', p.q('ensureLineIds()') === 2)
+  t.ok('и они предсказуемы', p.q('estimates[0].lines.map(function(l){return l.id;}).join(",")')
+    === 'ln_e_osb_1,ln_e_osb_2', p.q('estimates[0].lines.map(function(l){return l.id;}).join(",")'))
+  t.ok('повтор ничего не трогает', p.q('ensureLineIds()') === 0)
+
+  create(p, 'Дом с id строк')
+  p.run('projBand="parts";')
+  const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
+  const matsOf = () => p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0].mats')
+  const openMats = p.dom.node({ a: 'est-mats-open', k: key }); p.run('bind();'); openMats.onclick()
+  const html = p.run('tProjects()')
+  t.ok('адрес на экране — по строке',
+    html.indexOf('data-a="est-mat-qty" data-k="' + key + '|l:ln_e_osb_2"') >= 0,
+    'адрес по строке не проставлен')
+
+  const qty = p.dom.node({ a: 'est-mat-qty', k: key + '|l:ln_e_osb_2' })
+  qty.value = '9'; p.run('bind();'); qty.onchange()
+  t.ok('правка легла на строку',
+    p.q('projects[0].matQty[' + JSON.stringify(key) + ']["l:ln_e_osb_2"]') === 9,
+    JSON.stringify(p.q('projects[0].matQty[' + JSON.stringify(key) + ']')))
+  t.ok('количество применилось', matsOf()[1].qty === 9, JSON.stringify(matsOf().map((m) => m.qty)))
+
+  // ГЛАВНОЕ: строки переставили местами в справочнике.
+  p.run('estimates[0].lines=[estimates[0].lines[1],estimates[0].lines[0]];')
+  const after = matsOf()
+  t.ok('правка осталась на своей строке',
+    after.filter((m) => m.lid === 'ln_e_osb_2')[0].qty === 9,
+    JSON.stringify(after.map((m) => [m.lid, m.qty])))
+  t.ok('а соседняя не тронута', after.filter((m) => m.lid === 'ln_e_osb_1')[0].qty === 1)
+
+  // «Вернуть расчётное» снимает правку целиком — и по прежнему адресу тоже.
+  p.run('projects[0].matQty[' + JSON.stringify(key) + ']["p_osb"]=4;tProjects();')
+  const reset = p.dom.node({ a: 'est-mat-qty-reset', k: key + '|l:ln_e_osb_2' })
+  p.run('bind();'); reset.onclick()
+  t.ok('правка снята', !p.q('(projects[0].matQty||{})[' + JSON.stringify(key) + ']||null'),
+    JSON.stringify(p.q('(projects[0].matQty||{})[' + JSON.stringify(key) + ']||null')))
+}
+
 t.done()

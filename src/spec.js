@@ -144,6 +144,10 @@ export function positionFor(est, ctx, prodById, qtyOverride) {
   const mats = (est.lines || []).map(function (l) {
     const p = prodById[l.pid] || {};
     const base = {
+      // Строка сметы знает СВОЙ адрес (`lid` — id строки справочника), и он
+      // переживает и замену товара, и перестановку строк: по нему в листе дома
+      // лежат замена, ручное количество, порядок и «убрать».
+      lid: l.id || "",
       pid: l.pid || "", n: p.name || "", store: p.store || "", url: p.url || "",
       cost: Number(p.unitCost) || 0, mode: p.mode || "piece",
       packBase: p.packBase, packPer: p.packPer, lenPer: p.lenPer, sheetM2: p.sheetM2,

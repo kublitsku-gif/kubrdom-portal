@@ -1073,5 +1073,50 @@ const SHEET = {
   t.ok('а первая строка своё сохранила', !now[0].qtySet, JSON.stringify([now[0].qty, !!now[0].qtySet]))
 }
 
+// ── Адрес по строке сметы ───────────────────────────────────────────────────
+// Экран сметы у двух разделов ОДИН: то же самое сторожит test-projects. Здесь
+// проверяем вторую половину — что адрес по строке справочника доехал и до
+// опытного листа и переживает перестановку строк.
+{
+  t.section('Адрес по строке сметы')
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS, estimates: [{ id: 'e_win', kind: 'house', name: 'Монтаж окна',
+      stage: 2, optPoint: 'win', lines: [{ pid: 'p_win', qty: 1 }, { pid: 'p_win', qty: 2 }] }],
+    dbPlans: [], crmClients: [], specSheets: [], specSheets2: [], winTypes: [], objects: [],
+    templates: [], contractDocs: [], purchases: [], issues: [], users: [], stock: [],
+    settings: { specMarkup: 30 }, buildRules: [],
+  })
+  t.ok('id проставились', p.q('ensureLineIds()') === 2)
+  t.ok('и они предсказуемы', p.q('estimates[0].lines.map(function(l){return l.id;}).join(",")')
+    === 'ln_e_win_1,ln_e_win_2')
+
+  p.run('spec2Tab="scheme";tSpec2();')
+  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
+  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_win";})[0].key')
+  const matsOf = () => p.q('allPositions(spec2Sheet(), specCtx(spec2Sheet())).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0].mats')
+  p.run('matsOpen[' + JSON.stringify(key) + ']=1;tSpec2();')
+  t.ok('адрес на экране — по строке',
+    p.run('tSpec2()').indexOf('data-a="est-mat-qty" data-k="' + key + '|l:ln_e_win_2"') >= 0,
+    'адрес по строке не проставлен')
+
+  // Позиция считается по раскладке (окна ×N), поэтому «как было» берём у самой
+  // строки, а не выдумываем число.
+  const wasQty = matsOf().filter((m) => m.lid === 'ln_e_win_1')[0].qty
+  const qty = p.dom.node({ a: 'est-mat-qty', k: key + '|l:ln_e_win_2' })
+  qty.value = '9'; p.run('bind();'); qty.onchange()
+  t.ok('правка легла на строку',
+    p.q('spec2Sheet().matQty[' + JSON.stringify(key) + ']["l:ln_e_win_2"]') === 9)
+
+  p.run('estimates[0].lines=[estimates[0].lines[1],estimates[0].lines[0]];')
+  const after = matsOf()
+  t.ok('правка осталась на своей строке',
+    after.filter((m) => m.lid === 'ln_e_win_2')[0].qty === 9,
+    JSON.stringify(after.map((m) => [m.lid, m.qty])))
+  t.ok('а соседняя не тронута', after.filter((m) => m.lid === 'ln_e_win_1')[0].qty === wasQty,
+    JSON.stringify(after.map((m) => [m.lid, m.qty])))
+}
+
 t.done()
 

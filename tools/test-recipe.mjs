@@ -8,7 +8,7 @@
 import { presetModel, MODEL_PRESETS } from '../src/model.js'
 import { sheetPositions } from '../src/spec.js'
 import { rulePositions, allPositions, allPositionsRaw, ruleText, ruleReady, probeSheet,
-  layerPositions, pieArea, pieCost, applyPicks, optLabelOf, optPrefixOf, applyRooms, roomKeyOf, posRoomOf, ROOM_HOUSE, applyMatEdits, matOrderOf, matKeyOf, matAddKey, matAddrPid, matAddrSwap, stampMatIx, migrateMatAddrs } from '../src/recipe.js'
+  layerPositions, pieArea, pieCost, applyPicks, optLabelOf, optPrefixOf, applyRooms, roomKeyOf, posRoomOf, ROOM_HOUSE, applyMatEdits, matOrderOf, matKeyOf, matAddKey, matAddrs, matLegacyKey, matAddrPid, matAddrSwap, stampMatIx, migrateMatAddrs } from '../src/recipe.js'
 import { modelAreas, modelTotals, applyLayers } from '../src/model.js'
 import { gaps2 } from '../src/spec2.js'
 
@@ -482,6 +482,68 @@ const R = (o) => Object.assign({ id: 'r1', kind: 'house', what: 'surface', k: 'w
   t.ok('товар из адреса читается', matAddrPid('p_osb#2') === 'p_osb' && matAddrPid('p_osb') === 'p_osb')
   t.ok('и адрес после замены собирается',
     matAddrSwap('p_osb#2', 'p_ply') === 'p_ply#2' && matAddrSwap('p_osb', 'p_ply') === 'p_ply')
+}
+
+// ── Адрес по строке справочника ─────────────────────────────────────────────
+// Адресом расчётного материала был его товар, и это ломалось дважды: один товар
+// может стоять в смете двумя строками, а замена меняет товар прямо в строке.
+// Id строки справочника не зависит ни от того, ни от другого — и переживает
+// перестановку строк, чего номер повтора не умел.
+{
+  t.section('Адрес по строке сметы')
+  const EST_ID = [{ id: 'e_two', kind: 'house', name: 'Обшивка', stage: 2,
+    lines: [{ id: 'L1', pid: 'p_osb', qty: 1 }, { id: 'L2', pid: 'p_osb', qty: 2 }] }]
+  const pos = stampMatIx(sheetPositions(probeSheet(SHEET, TYPES), EST_ID, PRODUCTS))
+    .filter((p) => p.estId === 'e_two')
+  t.ok('строка посчиталась', pos.length === 1 && pos[0].mats.length === 2,
+    JSON.stringify(pos.map((p) => (p.mats || []).length)))
+  t.ok('id строки доехал до материала', pos[0].mats[0].lid === 'L1' && pos[0].mats[1].lid === 'L2')
+  t.ok('адрес — по строке', matKeyOf(pos[0].mats[0]) === 'l:L1' && matKeyOf(pos[0].mats[1]) === 'l:L2',
+    pos[0].mats.map(matKeyOf).join(','))
+
+  // Правки адресуются строками и друг друга не задевают.
+  const q = applyMatEdits(pos, { matQty: { 'base:e_two': { 'l:L2': 9 } } }, PRODUCTS)[0]
+  t.ok('количество досталось своей строке', q.mats[1].qty === 9 && q.mats[0].qty === 1,
+    JSON.stringify(q.mats.map((m) => m.qty)))
+  const sw = applyMatEdits(pos, { mats: { 'base:e_two': { 'l:L2': 'p_tile' } } }, PRODUCTS)[0]
+  t.ok('замена — тоже своей', sw.mats[0].pid === 'p_osb' && sw.mats[1].pid === 'p_tile',
+    JSON.stringify(sw.mats.map((m) => m.pid)))
+  t.ok('и адрес замену пережил', matKeyOf(sw.mats[1]) === 'l:L2', matKeyOf(sw.mats[1]))
+
+  // ГЛАВНОЕ: строки переставили в справочнике — правка осталась на своей.
+  const swapped = [{ id: 'e_two', kind: 'house', name: 'Обшивка', stage: 2,
+    lines: [{ id: 'L2', pid: 'p_osb', qty: 2 }, { id: 'L1', pid: 'p_osb', qty: 1 }] }]
+  const after = applyMatEdits(
+    stampMatIx(sheetPositions(probeSheet(SHEET, TYPES), swapped, PRODUCTS)).filter((p) => p.estId === 'e_two'),
+    { matQty: { 'base:e_two': { 'l:L2': 9 } } }, PRODUCTS)[0]
+  const mine = after.mats.filter((m) => m.lid === 'L2')[0]
+  t.ok('правка осталась на своей строке', mine.qty === 9, JSON.stringify(after.mats.map((m) => [m.lid, m.qty])))
+  t.ok('а соседняя не тронута', after.mats.filter((m) => m.lid === 'L1')[0].qty === 1)
+}
+
+// ── Правки по прежним адресам ───────────────────────────────────────────────
+// Под старыми адресами (по товару) лежат правки боевых листов. Переписывать их
+// в снимке ради нового формата опаснее, чем прочитать оба: читаем новый, а не
+// нашли — прежний.
+{
+  t.section('Прежние адреса читаются')
+  const EST_ID = [{ id: 'e_one', kind: 'house', name: 'Обшивка', stage: 2,
+    lines: [{ id: 'L1', pid: 'p_osb', qty: 1 }] }]
+  const pos = stampMatIx(sheetPositions(probeSheet(SHEET, TYPES), EST_ID, PRODUCTS))
+    .filter((p) => p.estId === 'e_one')
+  t.ok('адреса перечислены новый-старый',
+    matAddrs(pos[0].mats[0]).join(',') === 'l:L1,p_osb', matAddrs(pos[0].mats[0]).join(','))
+  t.ok('прежний адрес считается', matLegacyKey(pos[0].mats[0]) === 'p_osb')
+
+  const old = applyMatEdits(pos, { matQty: { 'base:e_one': { p_osb: 4 } } }, PRODUCTS)[0]
+  t.ok('старое количество применилось', old.mats[0].qty === 4, String(old.mats[0].qty))
+  const oldSwap = applyMatEdits(pos, { mats: { 'base:e_one': { p_osb: 'p_tile' } } }, PRODUCTS)[0]
+  t.ok('старая замена применилась', oldSwap.mats[0].pid === 'p_tile')
+  const oldOff = applyMatEdits(pos, { matOff: { 'base:e_one': ['p_osb'] } }, PRODUCTS)[0]
+  t.ok('старое «убрать» применилось', oldOff.mats.length === 0, String(oldOff.mats.length))
+  // Новый адрес главнее: человек правил уже в новом формате.
+  const both = applyMatEdits(pos, { matQty: { 'base:e_one': { p_osb: 4, 'l:L1': 6 } } }, PRODUCTS)[0]
+  t.ok('новый адрес перебивает прежний', both.mats[0].qty === 6, String(both.mats[0].qty))
 }
 
 t.done()

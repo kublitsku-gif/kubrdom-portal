@@ -55,7 +55,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2, works2 } from "../src/spec2.js";
 import { priceHist, priceWas, pricePush, priceStale, refreshPrices } from "../src/prices.js";
-import { allPositions, allPositionsRaw, addedPositions, matKeyOf, matAddKey, matAddrPid, matAddrSwap, migrateMatAddrs, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
+import { allPositions, allPositionsRaw, addedPositions, matKeyOf, matAddKey, matAddrs, matAddrPid, matAddrSwap, migrateMatAddrs, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
   pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
   optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf, ROOM_HOUSE, roomKeyOf, positionSplit } from "../src/recipe.js";
 import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
@@ -351,6 +351,7 @@ function applyState(items){
   if (settings && settings.aiProvider === "yandex") settings = Object.assign({}, settings, { aiProvider: "yandexpro" });
   try{ normalizeWorkCosts(); }catch(e){}   // стоимость работ = сумма материалов
   try{ ensureMatPids(); }catch(e){}        // ссылка материала на карточку каталога (по имени, разово)
+  try{ ensureLineIds(); }catch(e){}        // id строкам смет: по ним адресуются правки в листах
   try{ ensureMatAddrs(); }catch(e){}       // адреса дописанных материалов: был pid, стал +id
   try{ backfillWorkRooms(); }catch(e){}    // комнаты работ из сметы по estId (шаблон → объект)
   // Имя клиента договора из привязанного CRM-клиента, если поле пустое.
@@ -8095,6 +8096,26 @@ function ensureMatPids(){
   });
   return n;
 }
+// У строки сметы должен быть свой id: по нему в листах домов адресуются замена,
+// ручное количество, порядок и «убрать», и он обязан переживать и замену товара,
+// и перестановку строк в справочнике.
+//
+// Id даётся ДЕТЕРМИНИРОВАННО (`ln_<смета>_<номер>`), а не случайно: две вкладки,
+// открытые одновременно, проставят одинаковые — иначе одна перезаписала бы
+// справочник чужими id, и правки другой повисли бы на несуществующих адресах.
+// Дальше id живёт в самой строке и от её номера уже не зависит: перестановка
+// строк ничего не переадресует. Новую строку заводит `gid()`.
+function ensureLineIds(){
+  let n=0;
+  (estimates||[]).forEach(function(e){
+    if(!e||!Array.isArray(e.lines))return;
+    e.lines.forEach(function(l,i){
+      if(!l||l.id)return;
+      l.id="ln_"+(e.id||"")+"_"+(i+1); n++;
+    });
+  });
+  return n;
+}
 // Адрес дописанного руками материала — его собственный id, а не товар: иначе
 // дописанный «ОСП 9 мм» жил по одному адресу с тем же товаром, уже посчитанным в
 // строке, и ручное количество, порядок, «убрать» и обновление цены доставались
@@ -8232,7 +8253,7 @@ function renderEstimates(){
       if(ps){ ps.oninput=function(){estPickSearch=this.value;renderEstimates();}; if(_act==="est-pick-search"){ps.focus();var L=ps.value.length;try{ps.setSelectionRange(L,L);}catch(_e){}} }
       el.querySelectorAll(".est-pick").forEach(function(c){c.onclick=function(){
         var pid=c.dataset.pid; var ln=e.lines.find(function(l){return l.pid===pid;});
-        if(ln){ln.qty=(Number(ln.qty)||0)+1;} else {e.lines.push({pid:pid,qty:1});}
+        if(ln){ln.qty=(Number(ln.qty)||0)+1;} else {e.lines.push({id:gid(),pid:pid,qty:1});}
         estPicking=false;estPickSearch="";renderEstimates();
       };});
       return;
@@ -12999,6 +13020,17 @@ function estForgetKey(sh, key){
   });
 }
 function matSwapKey(pos, m){ return pos.key+"|"+matKeyOf(m); }
+// Все адреса материала — нынешний и прежний. Правки боевых листов лежат под
+// старыми адресами (по товару), и «вернуть как было» обязано снимать оба: иначе
+// стёртая правка тут же возвращается прежним адресом.
+function matAddrsAt(sh, posKey, addr){
+  try{
+    const pos=(works2(sh, specCtx(sh)).positions||[]).find(function(x){ return x.key===posKey; });
+    const m=pos&&(pos.mats||[]).find(function(x){ return matAddrs(x).indexOf(addr)>=0; });
+    if(m)return matAddrs(m);
+  }catch(e){}
+  return [addr];
+}
 // Цена материала в строке — КОПИЯ: у дописанного руками товара она застыла в тот
 // момент, когда его вписали, а каталог с тех пор мог подорожать. Показываем обе
 // стороны: «в базе 1 200 ₽» с обновлением одним тапом (правим только копию — у
@@ -13120,20 +13152,33 @@ function specMatsListHtml(pos, sh, live){
 // Убранное остаётся на виду: «нет в этом доме» — это решение, и по строке должно
 // быть видно, что оно принято, иначе материал выглядит потерянным, а вернуть его
 // нечем. Имя берём из каталога — в листе лежит только адрес товара.
+// Имя убранного материала. Убранного в строке уже НЕТ, поэтому имя собирается по
+// адресу: дописанный руками лежит в самом листе, расчётный — строкой справочника
+// (по `lid` берём товар), а заменённый показывает тот товар, на который меняли.
+// «Материал ⟲» без названия предлагает вернуть неизвестно что.
+function matOffName(pos, sh, addr){
+  const added=matAddOf(sh, pos.key).find(function(x){ return matAddKey(x)===addr; });
+  if(added)return added.n||"материал";
+  const swapped=matSwapsOf(sh, pos.key)[addr];
+  let pid=swapped||"";
+  if(!pid&&String(addr).indexOf("l:")===0){
+    const lid=String(addr).slice(2);
+    const est=(estimates||[]).find(function(e){ return e&&e.id===pos.estId; });
+    const ln=est&&(est.lines||[]).find(function(l){ return l&&String(l.id)===lid; });
+    pid=(ln&&ln.pid)||"";
+  }
+  if(!pid)pid=matAddrPid(addr);
+  const prod=pid?(expProducts||[]).find(function(x){ return x.id===pid; }):null;
+  return (prod&&prod.name)||"материал";
+}
 function matOffHtml(pos, off, sh){
   if(!off||!off.length)return '';
-  // Адрес убранного — либо товар каталога, либо дописанный руками материал
-  // (`+id`), и имя у него лежит в самом листе: «материал ⟲» без названия
-  // предлагает вернуть неизвестно что.
-  const added=matAddOf(sh, pos.key);
   return '<div style="padding:6px 0 2px;display:flex;flex-wrap:wrap;align-items:center;gap:5px">'+
     '<span style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.3px">УБРАНО ИЗ ЭТОГО ДОМА:</span>'+
-    off.map(function(pid){
-      const prod=(expProducts||[]).find(function(x){return x.id===pid;})
-        ||added.find(function(x){return matAddKey(x)===pid;});
-      return '<button data-a="est-mat-on" data-k="'+esc(pos.key+"|"+pid)+'" title="Вернуть материал в строку" '+
+    off.map(function(addr){
+      return '<button data-a="est-mat-on" data-k="'+esc(pos.key+"|"+addr)+'" title="Вернуть материал в строку" '+
         'style="border:1px solid #dde6f0;background:#fff;border-radius:7px;padding:3px 8px;font-size:10.5px;color:#7a9aaa;cursor:pointer">'+
-        esc((prod&&(prod.name||prod.n))||"материал")+' ⟲</button>';
+        esc(matOffName(pos, sh, addr))+' ⟲</button>';
     }).join("")+
   '</div>';
 }
@@ -22959,10 +23004,12 @@ function bind(){
         sh.mats=mats;
         // Ручное количество переезжает на новый товар: человек правил ЭТУ строку,
         // а не карточку каталога.
-        // Номер повтора переезжает вместе со строкой («p_osb#2» → «p_ply#2»):
-        // иначе ручное количество второй строки того же товара досталось бы первой.
+        // Адрес по строке справочника (`l:…`) замену переживает — переносить
+        // нечего. У прежнего адреса, по товару, номер повтора переезжает вместе
+        // со строкой («p_osb#2» → «p_ply#2»): иначе ручное количество второй
+        // строки того же товара досталось бы первой.
         const q=(sh.matQty||{})[posKey];
-        if(q&&q[oldPid]!=null){
+        if(q&&q[oldPid]!=null&&String(oldPid).indexOf("l:")!==0){
           const map=Object.assign({}, sh.matQty);
           const qrow=Object.assign({}, map[posKey]);
           qrow[matAddrSwap(oldPid, prod.id)]=qrow[oldPid]; delete qrow[oldPid];
@@ -22996,7 +23043,10 @@ function bind(){
       const v=parseFloat(String(el.value).replace(",","."));
       const map=Object.assign({}, sh.matQty||{});
       const row=Object.assign({}, map[posKey]||{});
-      if(isFinite(v)&&v>0)row[pid]=v; else delete row[pid];
+      // Прежний адрес того же материала стираем: иначе он остался бы лежать в
+      // снимке и всплыл бы, как только ручное число вернут к расчётному.
+      matAddrsAt(sh, posKey, pid).forEach(function(a){ delete row[a]; });
+      if(isFinite(v)&&v>0)row[pid]=v;
       if(Object.keys(row).length)map[posKey]=row; else delete map[posKey];
       sh.matQty=map; fl();
     };}
@@ -23049,7 +23099,8 @@ function bind(){
       const posKey=k.slice(0,cut), pid=k.slice(cut+1);
       const sh=schemeSheet()||spec2Sheet(); if(!sh||!sh.matOff)return;
       const map=Object.assign({}, sh.matOff);
-      const row=(map[posKey]||[]).filter(function(x){ return String(x)!==pid; });
+      const gone=matAddrsAt(sh, posKey, pid).concat([pid]);
+      const row=(map[posKey]||[]).filter(function(x){ return gone.indexOf(String(x))<0; });
       if(row.length)map[posKey]=row; else delete map[posKey];
       if(Object.keys(map).length)sh.matOff=map; else delete sh.matOff;
       scheduleSave(); fl();
@@ -23062,7 +23113,7 @@ function bind(){
       if(!sh||!sh.matQty||!sh.matQty[posKey])return;
       const map=Object.assign({}, sh.matQty);
       const row=Object.assign({}, map[posKey]);
-      delete row[pid];
+      matAddrsAt(sh, posKey, pid).forEach(function(a){ delete row[a]; });
       if(Object.keys(row).length)map[posKey]=row; else delete map[posKey];
       sh.matQty=map; fl();
     };}
@@ -23074,11 +23125,10 @@ function bind(){
       if(!sh||!sh.mats||!sh.mats[posKey])return;
       const mats=Object.assign({}, sh.mats);
       const row=Object.assign({}, mats[posKey]);
-      // Заменённый материал ищем и по новому pid: строка уже показывает новый товар,
-      // а в замене ключом остался старый.
-      delete row[pid];
-      // В значении замены лежит голый товар, а на экране адрес со своим номером
-      // повтора — сравнивать надо товар с товаром.
+      // Замена могла быть записана и по прежнему адресу — снимаем оба.
+      matAddrsAt(sh, posKey, pid).concat([pid]).forEach(function(a){ delete row[a]; });
+      // Совсем старые листы адресовали замену товаром, а строка уже показывает
+      // новый: в значении лежит голый товар, его и сравниваем.
       Object.keys(row).forEach(function(oldPid){ if(row[oldPid]===matAddrPid(pid))delete row[oldPid]; });
       if(Object.keys(row).length)mats[posKey]=row; else delete mats[posKey];
       sh.mats=mats; matSwapOpen=""; fl();
