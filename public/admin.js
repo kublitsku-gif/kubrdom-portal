@@ -13565,8 +13565,12 @@ function priceTrend(prod){
   if(!was)return null;
   const now=Math.round(Number(prod&&prod.unitCost)||0), old=Math.round(Number(was.c)||0);
   if(!old||now===old)return null;
-  return { d:now-old, was:old, at:was.at||"", by:was.by||"",
-    pct:Math.round(Math.abs(now-old)/old*100) };
+  const d=now-old, pct=Math.round(Math.abs(d)/old*100);
+  // «▼ −2 ₽» у стеллажа за 3 458 ₽ — это не новость, а шум округления: чип на
+  // каждой карточке перестают читать, если он загорается от копеек. Показываем
+  // движение от процента, а у дорогого товара — ещё и от живых денег.
+  if(pct<1&&Math.abs(d)<100)return null;
+  return { d:d, was:old, at:was.at||"", by:was.by||"", pct:pct };
 }
 // Чип рядом с ценой. Он же и вход в историю: тап открывает карточку товара, где
 // перечислены последние правки — «▲ +550 ₽» отвечает на «что», карточка на «когда
@@ -13625,7 +13629,10 @@ const PRICE_SHOPS=[
 // Ряд «сравнить»: где карточка у нас уже есть — ведём в неё (● перед именем), где
 // нет — в поиск магазина. Цену смотрят в трёх местах, и открывать их руками через
 // поиск каждый раз — это и есть та работа, которую портал должен снимать.
-function shopLinksHtml(pr){
+// `skipStore` — магазин, который на этом экране и так открыт большой кнопкой:
+// повторять его в ряду «сравнить» значит показать две кнопки, ведущие в одно
+// место, и заставить выбирать между ними.
+function shopLinksHtml(pr, skipStore){
   const name=String(pr&&pr.name||"").trim();
   if(!name)return '';
   const offers=matOffers(pr);
@@ -13637,7 +13644,7 @@ function shopLinksHtml(pr){
   };
   return '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin:0 0 4px 8px">'+
     '<span style="font-size:9.5px;color:#9aabbf">сравнить:</span>'+
-    PRICE_SHOPS.map(function(sh){
+    PRICE_SHOPS.filter(function(sh){ return !(skipStore&&sh.has.test(String(skipStore))); }).map(function(sh){
       const own=mineUrl(sh);
       const url=own||(sh.q+encodeURIComponent(name));
       return '<a href="'+esc(url)+'" target="_blank" rel="noopener" title="'+(own?"Наша карточка в этом магазине":"Найти этот товар в магазине")+'" '+
@@ -13785,21 +13792,23 @@ function priceWizHtml(st){
       // делом должен видеть, куда она уже двигалась.
       ((!o||o.id===pr.offer)?priceTrendHtml(pr, true):'')+
     '</div>'+
-    shopLinksHtml(pr)+
+    // Ряд «сравнить» — про ДРУГИЕ магазины: тот, что открыт большой кнопкой,
+    // повторять в нём незачем — две кнопки в одно место заставляют выбирать.
+    shopLinksHtml(pr, (o?o.store:pr.store)||"")+
     (/^https?:\/\//.test(url)
       ? '<a href="'+esc(url)+'" target="_blank" rel="noopener" style="display:block;text-align:center;padding:12px;margin-bottom:8px;border-radius:11px;background:#2980b9;color:#fff;font-size:13px;font-weight:700;text-decoration:none">Открыть '+esc(who)+' ↗</a>'
       : '<div style="text-align:center;padding:10px;margin-bottom:8px;border-radius:11px;background:#f5f7fa;color:#9aabbf;font-size:12px">'+esc(who)+' · ссылки нет</div>')+
-    '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">'+
+    // Упаковка идёт ПЕРЕД ценой: это свойство покупки, и знать его надо до того,
+    // как цена введена. Ввод цены переводит на следующую карточку — поправить
+    // делитель после было бы уже негде, и цена коробки ушла бы за цену штуки.
+    '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;font-size:11px;color:#7a9aaa">'+
+      '<span>в одной покупке</span>'+
+      '<input data-a="price-wiz-per" value="'+numRu(shopPer(pr, o))+'" inputmode="decimal" style="width:56px;padding:6px;border:1px solid '+(shopPer(pr,o)>1?"#8e44ad":"#dde6f0")+';border-radius:8px;font-size:12px;font-weight:700;text-align:center;outline:none;background:#fff">'+
+      '<span>'+esc(mode.unit)+'</span>'+
+    '</div>'+
+    '<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">'+
       '<input data-a="price-wiz-price" placeholder="цена с ценника" inputmode="decimal" style="flex:1;min-width:0;padding:12px;border:1.5px solid #8e44ad;border-radius:11px;font-size:15px;font-weight:800;text-align:center;outline:none;background:#fff">'+
       '<span style="font-size:13px;font-weight:700;color:#0d1b2e;white-space:nowrap">'+esc(shopPerLabel(pr, o))+'</span>'+
-    '</div>'+
-    // Магазин торгует коробкой, а у нас в учёте баллон: без этого числа цена
-    // коробки уезжает в каталог как цена штуки. Стоит рядом с полем — это тот
-    // самый момент, когда человек смотрит на ценник и видит «комплект 12 шт».
-    '<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;font-size:11px;color:#7a9aaa">'+
-      '<span>в одной покупке</span>'+
-      '<input data-a="price-wiz-per" value="'+numRu(shopPer(pr, o))+'" inputmode="decimal" style="width:64px;padding:6px;border:1px solid #dde6f0;border-radius:8px;font-size:12px;font-weight:700;text-align:center;outline:none;background:#fff">'+
-      '<span>'+esc(mode.unit)+' · цену пишем как на ценнике, портал поделит</span>'+
     '</div>'+
     '<div style="display:flex;gap:6px;flex-wrap:wrap">'+
       '<button data-a="price-wiz-ok" style="'+btn+';border:1.5px solid #16a085;background:#16a085;color:#fff">✓ цена верна</button>'+

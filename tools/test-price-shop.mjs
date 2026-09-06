@@ -443,4 +443,27 @@ function panel() {
   t.ok('и это видно из подсказки', /title="Найти этот товар в магазине"/.test(html))
 }
 
+// ── Копейки — не динамика ───────────────────────────────────────────────────
+// «▼ −2 ₽» у стеллажа за 3 458 ₽ — это шум округления, а не новость. Чип на
+// каждой карточке перестают читать, если он загорается от копеек.
+{
+  t.section('Мелкое движение цены не показываем')
+  const p = panel()
+  const plain = () => p.run('tSpec2()').replace(/[  ]/g, ' ')
+  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
+
+  // 5 100 → 5 098: два рубля из пяти тысяч.
+  const inp = p.dom.node({ a: 'price-shop-set', p: 'p_kab' })
+  p.run('bind();'); inp.value = '5098'; inp.onchange()
+  t.ok('цена записана', p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].unitCost') === 5098)
+  t.ok('но чипа нет', plain().indexOf('data-a="price-hist"') < 0, 'чип загорелся от двух рублей')
+  t.ok('и в шапке никого не прибавилось', !/подорожало|подешевело/.test(plain()))
+
+  // Процент набрался — чип появился.
+  const up = p.dom.node({ a: 'price-shop-set', p: 'p_kab' })
+  p.run('bind();'); up.value = '5300'; up.onchange()
+  t.ok('заметное движение видно', /▲ \+202 ₽ · 4%/.test(plain()), 'нет чипа при 4%')
+}
+
 t.done()
