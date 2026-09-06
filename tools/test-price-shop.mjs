@@ -380,4 +380,67 @@ function panel() {
   t.ok('и пометки нет', !/× 12 шт/.test(plain()))
 }
 
+// ── Имя замены со страницы магазина ─────────────────────────────────────────
+// Расширение берёт имя там же, где цену, а рядом с товаром лежат плашки акций.
+// Товар с именем «10% БАЛЛАМИ» встанет в смету дома, и найти его потом нельзя
+// ни поиском, ни глазами.
+{
+  t.section('Имя замены — не плашка акции')
+  const p = panel()
+  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
+  p.run('applyPriceReports([{ id:"p_br", ok:true, inStock:false, alt:{ name:"10% БАЛЛАМИ", store:"Лемана", url:"https://lemanapro.ru/product/alt/", price:120 } }])')
+
+  const html = p.run('tSpec2()')
+  t.ok('плашка в имя не пролезла',
+    p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].alt.name') === '',
+    JSON.stringify(p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].alt')))
+  t.ok('цена и ссылка сохранены',
+    p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].alt.price') === 120
+    && /lemanapro/.test(p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].alt.url')))
+  t.ok('замена всё равно показана', html.indexOf('data-a="price-alt-take"') >= 0)
+  t.ok('и объясняет, что приехало', /плашка акции/.test(html), 'нет объяснения')
+  t.ok('имя правится прямо здесь', html.indexOf('data-a="price-alt-name" data-p="p_br"') >= 0)
+
+  // Без имени замену не принимаем: безымянный товар в смете хуже, чем его отсутствие.
+  const take = p.dom.node({ a: 'price-alt-take', p: 'p_br' }); p.run('bind();'); take.onclick()
+  t.ok('без имени не заводится', p.q('expProducts.length') === 2, 'товар всё-таки завели')
+
+  // Вписали имя руками — и всё пошло как обычно.
+  const inp = p.dom.node({ a: 'price-alt-name', p: 'p_br' })
+  p.run('bind();'); inp.value = 'Брусок строганый 40x50x3000 Оптима'; inp.onchange()
+  const take2 = p.dom.node({ a: 'price-alt-take', p: 'p_br' }); p.run('bind();'); take2.onclick()
+  const added = p.q('expProducts.filter(function(x){return /Оптима/.test(x.name||"");})[0]')
+  t.ok('с именем замена заводится', !!added && added.unitCost === 40, JSON.stringify(added && added.name))
+
+  // Настоящее имя проверка пропускает — иначе она мешала бы работать.
+  t.ok('обычное имя проходит', p.q('altNameOk("Грунтовка глубокого проникновения Bergauf TiefGrunt 10 л")') === true)
+  t.ok('и «баллон» не путается с «баллами»', p.q('altNameOk("Клей-пена POLYNOR баллон 750 мл")') === true)
+  t.ok('а «Скидка 30%» — нет', p.q('altNameOk("Скидка 30%")') === false)
+}
+
+// ── Три магазина у каждого товара ───────────────────────────────────────────
+// Цену смотрят в трёх местах, и открывать их руками через поиск каждый раз —
+// это ровно та работа, которую портал должен снимать.
+{
+  t.section('Сравнить в трёх магазинах')
+  const p = panel()
+  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
+  const html = p.run('tSpec2()')
+
+  t.ok('предложены все три', /Озон ↗/.test(html) && /Лемана ↗/.test(html) && /Я\.Маркет ↗/.test(html),
+    'магазинов меньше трёх')
+  // Где карточка у нас уже есть — ведём в неё, а не в поиск.
+  t.ok('своя карточка Ozon — прямая ссылка',
+    html.indexOf('href="https://www.ozon.ru/product/kabel-1/" target="_blank" rel="noopener" title="Наша карточка') >= 0,
+    'своя ссылка не подставлена')
+  t.ok('и помечена точкой', /● Озон ↗/.test(html))
+  // Где карточки нет — поиск по имени товара.
+  t.ok('в остальных — поиск по имени',
+    html.indexOf('https://market.yandex.ru/search?text=' + encodeURIComponent('Кабель ВВГ 3х1,5 100 м')) >= 0,
+    'поиска по имени нет')
+  t.ok('и это видно из подсказки', /title="Найти этот товар в магазине"/.test(html))
+}
+
 t.done()

@@ -13604,6 +13604,48 @@ function priceTrendSumHtml(rows){
     (sum.down.length?'<span title="'+esc(sum.down.join("\n"))+'" style="color:#27ae60;cursor:help">\u25bc подешевело '+sum.down.length+'</span>':'')+
   '</span>';
 }
+// Имя замены пришло СО СТРАНИЦЫ магазина, а там рядом с товаром лежат плашки
+// акций: «10% БАЛЛАМИ», «Скидка 30%», «Рассрочка». Такое имя в каталог пускать
+// нельзя — товар потом не найти ни поиском, ни глазами, а он уже стоит в смете
+// дома. Не уверены в имени — не заводим товар, а просим человека вписать своё.
+function altNameOk(n){
+  const v=String(n||"").trim();
+  if(v.length<8)return false;
+  if(!/[а-яёa-z]{4}/i.test(v))return false;
+  return !/^\s*(?:до\s*)?[\d.,]+\s*%|балл(ам|ов|ы)|кешб|кэшб|скидк|рассрочк|бонус|распродаж/i.test(v);
+}
+// Три магазина, по которым ходят за ценой. Ссылка — на ПОИСК по имени товара:
+// артикул у каждого магазина свой, а имя — единственное, что у нас есть общего.
+// Адреса поиска магазинные и когда-нибудь сменятся: правятся здесь, одной строкой.
+const PRICE_SHOPS=[
+  { k:"ozon",  n:"Озон",      col:"#2980b9", q:"https://www.ozon.ru/search/?text=",     has:/озон|ozon/i },
+  { k:"leman", n:"Лемана",    col:"#16a085", q:"https://lemanapro.ru/search/?q=",       has:/лемана|леруа|leman|leroy/i },
+  { k:"ym",    n:"Я.Маркет",  col:"#e67e22", q:"https://market.yandex.ru/search?text=", has:/маркет|яндекс|market/i },
+];
+// Ряд «сравнить»: где карточка у нас уже есть — ведём в неё (● перед именем), где
+// нет — в поиск магазина. Цену смотрят в трёх местах, и открывать их руками через
+// поиск каждый раз — это и есть та работа, которую портал должен снимать.
+function shopLinksHtml(pr){
+  const name=String(pr&&pr.name||"").trim();
+  if(!name)return '';
+  const offers=matOffers(pr);
+  const mineUrl=function(sh){
+    const o=offers.find(function(x){ return sh.has.test(String(x.store||"")); });
+    if(o&&/^https?:\/\//.test(String(o.url||"")))return String(o.url);
+    if(!offers.length&&sh.has.test(String(pr.store||""))&&/^https?:\/\//.test(String(pr.url||"")))return String(pr.url);
+    return "";
+  };
+  return '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin:0 0 4px 8px">'+
+    '<span style="font-size:9.5px;color:#9aabbf">сравнить:</span>'+
+    PRICE_SHOPS.map(function(sh){
+      const own=mineUrl(sh);
+      const url=own||(sh.q+encodeURIComponent(name));
+      return '<a href="'+esc(url)+'" target="_blank" rel="noopener" title="'+(own?"Наша карточка в этом магазине":"Найти этот товар в магазине")+'" '+
+        'style="font-size:9.5px;font-weight:700;color:'+sh.col+';background:'+sh.col+'12;border:1px solid '+sh.col+'33;border-radius:6px;padding:1px 6px;text-decoration:none;white-space:nowrap">'+
+        (own?"\u25cf ":"")+esc(sh.n)+' \u2197</a>';
+    }).join("")+
+  '</div>';
+}
 function priceShopRows(st){
   const byId={}; (expProducts||[]).forEach(function(x){ if(x&&x.id)byId[x.id]=x; });
   const seen={}, out=[];
@@ -13677,7 +13719,10 @@ function applyPriceReports(list){
       else prod.oosAt=todayISO();
       // Замену ищет тот, кто ходил в магазин. Портал её не принимает молча:
       // чем заменить материал — решение хозяина, а не программы.
-      if(r.alt&&r.alt.name&&Number(r.alt.price)>0)prod.alt=Object.assign({ at:todayISO() }, r.alt);
+      // Имя со страницы бывает плашкой акции — тогда цену и ссылку берём, а имя
+      // оставляем пустым: его впишет человек, глядя на карточку.
+      if(r.alt&&Number(r.alt.price)>0)prod.alt=Object.assign({ at:todayISO() }, r.alt,
+        altNameOk(r.alt.name)?{}:{ name:"", raw:String(r.alt.name||"") });
       out.oos++;
     } else {
       const v=priceToOurUnit(prod, r.price, off);
@@ -13740,6 +13785,7 @@ function priceWizHtml(st){
       // делом должен видеть, куда она уже двигалась.
       ((!o||o.id===pr.offer)?priceTrendHtml(pr, true):'')+
     '</div>'+
+    shopLinksHtml(pr)+
     (/^https?:\/\//.test(url)
       ? '<a href="'+esc(url)+'" target="_blank" rel="noopener" style="display:block;text-align:center;padding:12px;margin-bottom:8px;border-radius:11px;background:#2980b9;color:#fff;font-size:13px;font-weight:700;text-decoration:none">Открыть '+esc(who)+' ↗</a>'
       : '<div style="text-align:center;padding:10px;margin-bottom:8px;border-radius:11px;background:#f5f7fa;color:#9aabbf;font-size:12px">'+esc(who)+' · ссылки нет</div>')+
@@ -13801,10 +13847,16 @@ function priceShopHtml(st){
       const alt=pr.alt;
       return '<div style="padding:6px 0;border-top:1px solid #eef2f7">'+
         '<div style="font-size:11.5px;font-weight:700;color:'+(dead?"#e74c3c":"#0d1b2e")+';margin-bottom:3px">'+esc(pr.name||"")+(dead?' · нет нигде':'')+'</div>'+
+        shopLinksHtml(pr)+
         // Единственное место, где нужен человек: чем заменить то, чего больше нет.
-        ((alt&&alt.name)?'<div style="margin:4px 0 6px;padding:8px;border:1.5px solid #16a085;border-radius:9px;background:#16a0850d">'+
+        (alt?'<div style="margin:4px 0 6px;padding:8px;border:1.5px solid #16a085;border-radius:9px;background:#16a0850d">'+
           '<div style="font-size:10px;font-weight:800;color:#16a085;letter-spacing:0.3px;margin-bottom:3px">ЗАМЕНА НАЙДЕНА</div>'+
-          '<div style="font-size:11.5px;font-weight:700;color:#0d1b2e;line-height:1.3">'+esc(alt.name)+'</div>'+
+          // Имя правится ЗДЕСЬ: со страницы магазина оно приезжает вместе с
+          // плашками акций («10% БАЛЛАМИ»), и такой товар потом не найти ни
+          // поиском, ни глазами — а он уже стоит в смете дома.
+          '<input data-a="price-alt-name" data-p="'+esc(pr.id)+'" value="'+esc(alt.name||"")+'" placeholder="название товара — как в магазине" '+
+            'style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid '+(altNameOk(alt.name)?"#dde6f0":"#e67e22")+';border-radius:8px;font-size:11.5px;font-weight:700;color:#0d1b2e;outline:none;background:#fff">'+
+          (altNameOk(alt.name)?'':'<div style="font-size:10px;color:#e67e22;margin-top:3px;line-height:1.35">Со страницы приехало «'+esc(String(alt.raw||alt.name||"").slice(0,60))+'» — это плашка акции, а не название. Впишите название сами.</div>')+
           '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:5px">'+
             (/^https?:\/\//.test(String(alt.url||""))?'<a href="'+esc(alt.url)+'" target="_blank" rel="noopener" style="font-size:10.5px;font-weight:700;color:#2980b9;text-decoration:none">'+esc(alt.store||"магазин")+' ↗</a>':'')+
             (function(){ const shop=Number(alt.price)||0, our=priceToOurUnit(pr, shop);
@@ -23270,17 +23322,30 @@ function bind(){
         nextCard();
       }; }
     }
+    // Имя замены правится руками: со страницы магазина оно приезжает вместе с
+    // плашками акций, а в каталог должно попасть название товара.
+    else if(a==="price-alt-name"){el.onchange=()=>{
+      const pid=el.dataset.p||"";
+      const prod=(expProducts||[]).find(function(x){ return x&&x.id===pid; });
+      if(!prod||!prod.alt)return;
+      prod.alt.name=String(el.value||"").trim().slice(0,160);
+      scheduleSave(); fl();
+    };}
     else if(a==="price-alt-take"){el.onclick=()=>{
       const pid=el.dataset.p||"";
       const prod=(expProducts||[]).find(function(x){ return x&&x.id===pid; }); if(!prod||!prod.alt)return;
       const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
       const a=prod.alt;
+      // Имя со страницы магазина бывает плашкой акции. Товар с именем «10%
+      // БАЛЛАМИ» встанет в смету дома, и найти его потом нельзя — поэтому без
+      // человеческого названия замену не принимаем.
+      if(!altNameOk(a.name)){ alert("Впишите название товара — со страницы магазина приехала плашка акции, а не имя."); return; }
       // Замена — отдельный товар каталога: у неё своя цена, своя ссылка и своя
       // история. Единицу учёта наследуем от заменяемого — иначе метры погонные
       // молча превратятся в штуки и смета поедет.
-      const nw={ id:gid(), emoji:prod.emoji||"📦", name:String(a.name||"").slice(0,160),
+      const nw={ id:gid(), emoji:prod.emoji||"📦", name:String(a.name||"").trim().slice(0,160),
         store:a.store||"", url:a.url||"", photo:"", mode:prod.mode||"piece",
-        unitCost:priceToOurUnit(prod, a.price), qty:1,
+        unitCost:priceToOurUnit(prod, a.price, null), qty:1,
         priceOkAt:todayISO(), priceCheckedAt:todayISO() };
       ["packPer","packBase","lenPer","sheetM2"].forEach(function(k){ if(prod[k]!=null)nw[k]=prod[k]; });
       expProducts=[nw].concat(expProducts||[]);
