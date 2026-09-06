@@ -1869,7 +1869,9 @@ let dbWorks=[
   {id:"dw35",n:"Покрытие полков маслом",cost:20000,stage:"ЭТАП 3 — ЧИСТОВАЯ ОТДЕЛКА",note:"",mats:[]},
 ];
 let dbSection="mats";
-let priceShopStage="";    // этап, у которого раскрыт список магазинов для сверки
+let priceShopStage="";
+let priceWizStage="";     // этап, который разбирают мастером
+let priceWizIdx=0;        // какая карточка на экране    // этап, у которого раскрыт список магазинов для сверки
 let hoursPickKey="";       // у какой строки открыт ряд быстрого выбора часов
 // Ряд плана: целые 1..10 закрывают почти все работы, 0,5 — мелочь вроде подвесов.
 // Всё, что не сюда, вписывается в поле руками.
@@ -13539,6 +13541,54 @@ function priceShopRows(st){
   });
   return out;
 }
+// Мастер сверки: ОДНА карточка крупно и кнопки в палец шириной. Список из
+// семнадцати мелких полей — это не работа, а прицеливание: на телефоне мажешь
+// мимо поля и теряешь место в списке. Здесь портал сам ведёт по очереди —
+// принял цену, и сразу следующая.
+function priceWizList(st){
+  const out=[];
+  priceShopRows(st).forEach(function(pr){
+    const offers=matOffers(pr);
+    if(offers.length)offers.forEach(function(o){ out.push({ pr:pr, o:o }); });
+    else out.push({ pr:pr, o:null });
+  });
+  return out;
+}
+function priceWizHtml(st){
+  const list=priceWizList(st);
+  if(!list.length||priceWizIdx>=list.length)return '';
+  const it=list[priceWizIdx], pr=it.pr, o=it.o;
+  const mode=EXP_MODES.find(function(x){return x.k===pr.mode;})||EXP_MODES[0];
+  const url=String((o?o.url:pr.url)||"");
+  const who=((o?o.store:pr.store)||"магазин")+((o&&o.seller)?" · "+o.seller:"");
+  const cost=Number(o?o.unitCost:pr.unitCost)||0;
+  const stt=priceShopState(o||{ okAt:pr.priceOkAt, oosAt:pr.oosAt });
+  const btn='padding:12px 10px;border-radius:11px;font-size:13px;font-weight:700;cursor:pointer;flex:1 1 0;min-width:0';
+  return '<div style="position:relative;margin:0 0 12px;padding:14px;border:2px solid #8e44ad;border-radius:14px;background:#fff;box-shadow:0 6px 20px rgba(142,68,173,0.12)">'+
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'+
+      '<span style="font-size:10px;font-weight:800;color:#8e44ad;letter-spacing:0.3px">СВЕРКА · '+(priceWizIdx+1)+' из '+list.length+'</span>'+
+      '<button data-a="price-wiz-close" title="Закрыть мастер" style="border:none;background:transparent;color:#9aabbf;font-size:16px;cursor:pointer;line-height:1;padding:0 2px">✕</button>'+
+    '</div>'+
+    '<div style="font-size:15px;font-weight:800;color:#0d1b2e;line-height:1.3;margin-bottom:6px">'+esc(pr.name||"")+'</div>'+
+    '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">'+
+      '<span style="font-size:11px;font-weight:800;color:'+stt.col+'">'+stt.dot+' '+esc(stt.txt)+'</span>'+
+      '<span style="font-size:13px;font-weight:800;color:#0d1b2e">'+cost.toLocaleString("ru-RU",{maximumFractionDigits:2})+' ₽/'+mode.unit+'</span>'+
+    '</div>'+
+    (/^https?:\/\//.test(url)
+      ? '<a href="'+esc(url)+'" target="_blank" rel="noopener" style="display:block;text-align:center;padding:12px;margin-bottom:8px;border-radius:11px;background:#2980b9;color:#fff;font-size:13px;font-weight:700;text-decoration:none">Открыть '+esc(who)+' ↗</a>'
+      : '<div style="text-align:center;padding:10px;margin-bottom:8px;border-radius:11px;background:#f5f7fa;color:#9aabbf;font-size:12px">'+esc(who)+' · ссылки нет</div>')+
+    '<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">'+
+      '<input data-a="price-wiz-price" placeholder="новая цена" inputmode="decimal" style="flex:1;min-width:0;padding:12px;border:1.5px solid #8e44ad;border-radius:11px;font-size:15px;font-weight:800;text-align:center;outline:none;background:#fff">'+
+      '<span style="font-size:13px;font-weight:700;color:#0d1b2e">₽/'+mode.unit+'</span>'+
+    '</div>'+
+    '<div style="display:flex;gap:6px;flex-wrap:wrap">'+
+      '<button data-a="price-wiz-ok" style="'+btn+';border:1.5px solid #16a085;background:#16a085;color:#fff">✓ цена верна</button>'+
+      '<button data-a="price-wiz-oos" style="'+btn+';border:1.5px solid #e74c3c;background:#fff;color:#e74c3c">кончился</button>'+
+      '<button data-a="price-wiz-skip" style="'+btn+';border:1.5px solid #dde6f0;background:#fff;color:#8a97a6">пропустить</button>'+
+    '</div>'+
+  '</div>';
+}
+
 function priceShopHtml(st){
   const rows=priceShopRows(st);
   if(!rows.length)return '';
@@ -13551,7 +13601,12 @@ function priceShopHtml(st){
         const list=matOffers(pr).length?matOffers(pr):[{ okAt:pr.priceOkAt, oosAt:pr.oosAt }];
         list.forEach(function(o){ all++; const st=priceShopState(o); if(st.k==="ok"||st.k==="oos")done++; });
       });
-      return '<div style="font-size:10px;font-weight:800;color:#8e44ad;letter-spacing:0.3px;margin-bottom:2px">СВЕРКА С МАГАЗИНАМИ · сверено '+done+' из '+all+'</div>';
+      return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:2px">'+
+        '<span style="font-size:10px;font-weight:800;color:#8e44ad;letter-spacing:0.3px">СВЕРКА С МАГАЗИНАМИ · сверено '+done+' из '+all+'</span>'+
+        // Мастер — для прохода по всему списку подряд; список ниже остаётся для
+        // точечной правки одной строки.
+        '<button data-a="price-wiz-open" data-n="'+st.n+'" style="padding:4px 10px;border:1.5px solid #8e44ad;background:#8e44ad;color:#fff;border-radius:8px;font-size:10.5px;font-weight:700;cursor:pointer">▶ мастер сверки</button>'+
+      '</div>';
     })()+
     '<div style="font-size:10.5px;color:#7a9aaa;line-height:1.4;margin-bottom:8px">Откройте карточку, посмотрите цену и впишите её. Цена уйдёт в каталог со всей историей, и проект пересчитается сам.</div>'+
     rows.map(function(pr){
@@ -13750,7 +13805,8 @@ function estBodyHtml(sh, types, live, actions){
         '</div>'+
         // Список магазинов — сразу под шапкой: сверять цены идут отсюда, и
         // прятать его внутрь свёрнутого этапа значит прятать саму задачу.
-        ((priceShopStage===String(st.n))?priceShopHtml(st):'')+
+        ((priceWizStage===String(st.n))?priceWizHtml(st):'')+
+        ((priceShopStage===String(st.n)&&priceWizStage!==String(st.n))?priceShopHtml(st):'')+
         (shut?'':estStageBody(st, moving, mi, st.positions.map(function(p, pi, arr){
           // Редактор раскрываем у ПЕРВОЙ строки этой сметы: правило по помещениям
           // даёт их несколько, и три одинаковых редактора подряд — это не выбор.
@@ -22900,6 +22956,64 @@ function bind(){
     // Цены материалов этапа — по каталогу. Правим ТОЛЬКО то, что лежит копией:
     // дописанные руками материалы. У остальных цена и так приезжает из карточки
     // товара при каждом расчёте, и «обновлять» там нечего.
+    else if(a==="price-wiz-open"){el.onclick=()=>{
+      priceWizStage=String(el.dataset.n||""); priceWizIdx=0; fl();
+    };}
+    else if(a==="price-wiz-close"){el.onclick=()=>{ priceWizStage=""; priceWizIdx=0; fl(); };}
+    else if(a==="price-wiz-ok"||a==="price-wiz-oos"||a==="price-wiz-skip"||a==="price-wiz-price"){
+      const step=()=>{
+        const sh=schemeSheet()||spec2Sheet(); if(!sh)return null;
+        const w=works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes }));
+        const st=(w.stages||[]).find(function(x){ return String(x.n)===priceWizStage; }); if(!st)return null;
+        const list=priceWizList(st);
+        return list[priceWizIdx]||null;
+      };
+      // Пройденную карточку не показываем снова: мастер тем и хорош, что ведёт
+      // сам. Дошли до конца — закрываемся, а не упираемся в пустой экран.
+      const nextCard=()=>{
+        const sh=schemeSheet()||spec2Sheet();
+        const w=sh?works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes })):null;
+        const st=w?(w.stages||[]).find(function(x){ return String(x.n)===priceWizStage; }):null;
+        const n=st?priceWizList(st).length:0;
+        priceWizIdx+=1;
+        if(priceWizIdx>=n){ priceWizStage=""; priceWizIdx=0; }
+        scheduleSave(); fl();
+      };
+      if(a==="price-wiz-skip"){ el.onclick=()=>{ nextCard(); }; }
+      else if(a==="price-wiz-ok"){ el.onclick=()=>{
+        const it=step(); if(!it){ nextCard(); return; }
+        if(it.o){ it.o.okAt=todayISO(); if(it.o.oosAt)delete it.o.oosAt; if(matOfferAlive(it.pr).length&&it.pr.oosAt)delete it.pr.oosAt; }
+        else it.pr.priceOkAt=todayISO();
+        it.pr.priceCheckedAt=todayISO();
+        nextCard();
+      }; }
+      else if(a==="price-wiz-oos"){ el.onclick=()=>{
+        const it=step(); if(!it){ nextCard(); return; }
+        if(it.o){ matOfferOos(it.pr, it.o.id); it.o.okAt=todayISO(); }
+        else { it.pr.oosAt=todayISO(); it.pr.priceOkAt=todayISO(); }
+        it.pr.priceCheckedAt=todayISO();
+        nextCard();
+      }; }
+      else { el.onchange=()=>{
+        const it=step(); if(!it){ nextCard(); return; }
+        const v=parseFloat(String(el.value||"").replace(/\s/g,"").replace(",","."));
+        if(!isFinite(v)||v<=0){ nextCard(); return; }
+        const pr=it.pr, who=(currentUser&&currentUser.name)||"";
+        const was=Number(pr.unitCost)||0;
+        if(it.o){
+          it.o.unitCost=v; it.o.okAt=todayISO(); if(it.o.oosAt)delete it.o.oosAt;
+          const best=matOfferBest(pr), cur=matOffers(pr).find(function(x){ return x.id===pr.offer; });
+          if(!cur||cur.oosAt||(best&&Number(best.unitCost)<Number(cur.unitCost)))matOfferPick(pr, (best||it.o).id);
+          else if(cur.id===it.o.id)matOfferPick(pr, it.o.id);
+          if(matOfferAlive(pr).length&&pr.oosAt)delete pr.oosAt;
+        } else { pr.unitCost=v; pr.priceOkAt=todayISO(); if(pr.oosAt)delete pr.oosAt; }
+        // История — ради вопроса «почему подорожало»: обе цифры, с датой и автором.
+        pricePush(pr, was, pr.priceCheckedAt||todayISO(), who);
+        pricePush(pr, Number(pr.unitCost)||0, todayISO(), who);
+        pr.priceCheckedAt=todayISO();
+        nextCard();
+      }; }
+    }
     else if(a==="price-shop-ok"){el.onclick=()=>{
       const pid=el.dataset.p||"", oid=el.dataset.o||"";
       const prod=(expProducts||[]).find(function(x){ return x&&x.id===pid; }); if(!prod)return;
