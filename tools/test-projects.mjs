@@ -1430,4 +1430,26 @@ function create(p, name) {
   t.ok('и говорит, чего не хватает', /= \? м²/.test(gap), JSON.stringify(gap.match(/= [^<]+/g)))
 }
 
+// ── Материалы читаются блоком своей работы ──────────────────────────────────
+// Четыре работы подряд с материалами шли одной белой простынёй, и где кончается
+// состав одной и начинается состав другой, полоска в пиксель не говорила.
+// Экран сметы у двух разделов ОДИН: то же сторожит test-spec2-smeta.
+{
+  t.section('Состав работы — свой блок')
+  const p = panel(RULES)
+  create(p, 'Дом с блоками материалов')
+  p.run('projBand="parts";')
+  const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
+  const openMats = p.dom.node({ a: 'est-mats-open', k: key }); p.run('bind();'); openMats.onclick()
+  const html = p.run('tProjects()')
+
+  t.ok('у списка своя рейка слева', /border-left:3px solid #c9d6e4/.test(html), 'нет рейки')
+  t.ok('и своя подложка', /background:#f7fafc/.test(html), 'нет подложки')
+  t.ok('блок подписан', /СОСТАВ · \d/.test(html), 'нет подписи блока')
+  // Свёрнутый список никакого блока не рисует: он про раскрытые материалы.
+  const shut = p.dom.node({ a: 'est-mats-open', k: key }); p.run('bind();'); shut.onclick()
+  t.ok('свёрнутый состав блока не оставляет',
+    !/border-left:3px solid #c9d6e4/.test(p.run('tProjects()')), 'блок остался после сворачивания')
+}
+
 t.done()

@@ -1300,5 +1300,26 @@ const SHEET = {
     'нет пересчёта: ' + JSON.stringify(html.match(/= [^<]+/g)))
 }
 
+// ── Материалы читаются блоком своей работы ──────────────────────────────────
+// Экран сметы у двух разделов ОДИН: то же самое сторожит test-projects.
+{
+  t.section('Состав работы — свой блок')
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS, estimates: EST, dbPlans: [], crmClients: [],
+    specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [],
+    contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+    buildRules: [],
+  })
+  p.run('spec2Tab="scheme";tSpec2();')
+  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
+  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key')
+  p.run('matsOpen[' + JSON.stringify(key) + ']=1;')
+  const html = p.run('tSpec2()')
+  t.ok('у списка своя рейка слева', /border-left:3px solid #c9d6e4/.test(html), 'нет рейки')
+  t.ok('и подпись блока', /СОСТАВ · \d/.test(html), 'нет подписи блока')
+}
+
 t.done()
 

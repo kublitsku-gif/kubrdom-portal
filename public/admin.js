@@ -13212,7 +13212,14 @@ function specMatsListHtml(pos, sh, live){
   // где его взяли — материал принадлежит своей работе.
   const moving=(can&&matMoveSheet===String((live&&live.id)||sh.id||"")&&(matMoveKey||"").indexOf(pos.key+"|")===0)?matMoveKey:"";
   const mi=moving?mats.findIndex(function(x){ return matSwapKey(pos,x)===moving; }):-1;
-  return '<div style="margin-top:2px;border-top:1px dashed #eef2f7">'+
+  // Материалы — БЛОК, приписанный к своей работе. Раньше они шли тем же белым фоном,
+  // что и сама строка, и на экране из четырёх работ подряд было не понять, где
+  // кончаются материалы одной и начинаются другой: полоска в пиксель этого не
+  // говорит. Поэтому у списка своя подложка и рейка слева — он читается как
+  // «состав вот этой работы», а не как продолжение простыни.
+  return '<div style="margin:5px 0 2px 2px;padding:5px 9px 4px 10px;border-left:3px solid #c9d6e4;'+
+      'background:#f7fafc;border-radius:0 10px 10px 0">'+
+    '<div style="font-size:9px;font-weight:800;color:#a8b8c8;letter-spacing:0.5px;margin-bottom:2px">СОСТАВ · '+mats.length+'</div>'+
     matDropSlot(moving, 0, mi)+
     mats.map(function(m, midx){
       const unit=specMatUnit(m);
@@ -13221,7 +13228,7 @@ function specMatsListHtml(pos, sh, live){
       const open=matSwapOpen===matSwapKey(pos,m);
       const was=!!(m.swapped||sw[m.pid||""]);
       const added=!!m.added;
-      return '<div style="padding:5px 0;border-bottom:1px solid #f6f9fc">'+
+      return '<div style="padding:5px 0'+(midx<mats.length-1?';border-bottom:1px solid #eaf0f6':'')+'">'+
         '<div style="display:flex;align-items:baseline;gap:7px">'+
           '<span style="flex:1;min-width:0;font-size:11.5px;color:#0d1b2e;line-height:1.35">'+esc(m.n||"")+
             (was?' <span style="font-size:9.5px;font-weight:700;color:#8e44ad;background:#f3ecf9;border-radius:5px;padding:1px 5px">заменён</span>':'')+
