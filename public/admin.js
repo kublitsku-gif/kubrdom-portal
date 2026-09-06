@@ -13431,6 +13431,34 @@ function estDroppedHtml(sh, canRule){
 // то, из-за чего прежние стрелки и убрали.
 // Отстала ли хоть одна цена этапа от каталога. Кнопка «цены» без этого выглядела
 // бы одинаково и когда работа есть, и когда всё уже свежее.
+// Отметка «цены этапа сверены с каталогом»: дата и кто сверял. Живёт в ЛИСТЕ —
+// это факт про ЭТОТ дом, а не про справочник. Отметка не отменяет проверку:
+// если цена в каталоге снова уехала, показываем тревогу, а не вчерашнюю галочку.
+// Цены проекта одним словом: «отстали», если хоть один этап разошёлся с
+// каталогом; «сверены», если все этапы отмечены и расхождений нет. Иначе молчим:
+// проект, который никто не сверял, не должен выглядеть ни хорошим, ни плохим.
+function projPriceState(sh){
+  if(!sh)return "";
+  let stages;
+  try { stages=(works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes })).stages)||[]; }
+  catch(e){ return ""; }
+  if(!stages.length)return "";
+  if(stages.some(function(st){ return estStagePriceStale(st); }))return "stale";
+  return stages.every(function(st){ return !!stalePriceOk(sh, st.n); })?"ok":"";
+}
+function stalePriceOk(sh, n){
+  const m=(sh&&sh.priceOk)||{};
+  const v=m[n]||m[String(n)];
+  return (v&&v.at)?v:null;
+}
+// Журнал сверок этапа. Ограничен: лист уходит в снимок целиком, а у D1 общий
+// лимит строки — по той же причине укорочена и история цен товара (HIST_MAX).
+const PRICE_LOG_MAX=30;
+const MON_RU=["янв","фев","мар","апр","мая","июн","июл","авг","сен","окт","ноя","дек"];
+function dayRu(iso){
+  const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso||""));
+  return m?(Number(m[3])+" "+MON_RU[Number(m[2])-1]):String(iso||"");
+}
 function estStagePriceStale(st){
   const byId={}; (expProducts||[]).forEach(function(x){ if(x&&x.id)byId[x.id]=x; });
   return (st.positions||[]).some(function(p){
@@ -13583,7 +13611,18 @@ function estBodyHtml(sh, types, live, actions){
           // дописанные руками материалы. Кнопка подтягивает их по этапу и говорит,
           // на сколько он от этого поехал: молчаливое «готово» не отличить от
           // «нечего было делать».
-          (canRule?'<button data-a="est-stage-prices" data-n="'+st.n+'"'+(estStagePriceStale(st)?'':' disabled')+' title="Обновить цены материалов этапа по каталогу" style="height:24px;padding:0 8px;border:1px solid '+(estStagePriceStale(st)?"#8e44ad55":"#e6ecf3")+';background:#fff;color:'+(estStagePriceStale(st)?"#8e44ad":"#c9d6e4")+';border-radius:7px;font-size:10px;font-weight:700;cursor:'+(estStagePriceStale(st)?"pointer":"default")+';white-space:nowrap">💱 цены'+(estStagePriceStale(st)?' •':'')+'</button>':'')+
+          // Кнопка жмётся ВСЕГДА: сверить цены хотят и тогда, когда всё сошлось —
+          // иначе «не работает» не отличить от «нечего обновлять». Гаснет не
+          // кнопка, а тревога, а вместо неё загорается отметка со днём сверки.
+          (canRule?(function(){
+            const stale=estStagePriceStale(st), ok=stalePriceOk(sh, st.n), fresh=!stale&&!!ok;
+            const col=stale?"#8e44ad":(fresh?"#16a085":"#9aabbf");
+            const face=stale?'💱 цены •':(fresh?'✓ цены сверены '+dayRu(ok.at):'💱 цены');
+            const ttl=stale?"Обновить цены материалов этапа по каталогу"
+              :(fresh?("Цены сверены с каталогом "+dayRu(ok.at)+(ok.by?", "+ok.by:"")+". Тапните, чтобы сверить ещё раз.")
+                    :"Сверить цены материалов этапа с каталогом");
+            return '<button data-a="est-stage-prices" data-n="'+st.n+'" title="'+esc(ttl)+'" style="height:24px;padding:0 8px;border:1px solid '+col+'55;background:#fff;color:'+col+';border-radius:7px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap">'+face+'</button>';
+          })():'')+
         '</div>'+
         (shut?'':estStageBody(st, moving, mi, st.positions.map(function(p, pi, arr){
           // Редактор раскрываем у ПЕРВОЙ строки этой сметы: правило по помещениям
@@ -13832,6 +13871,10 @@ function projListHtml(){
       '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px">'+
         (projObj(p)?chip("объект","#2980b9"):chip("объекта нет","#9aabbf"))+
         (projContract(p)?chip("договор","#16a085"):chip("договора нет","#9aabbf"))+
+        // Цены: в списке проектов видно, где смета считается по вчерашнему
+        // каталогу. Иначе это выясняется на встрече с заказчиком.
+        (function(){ const v=projPriceState(p);
+          return v==="stale"?chip("цены отстали","#8e44ad"):(v==="ok"?chip("цены сверены","#16a085"):""); })()+
       '</div>'+
     '</div>';
   }).join("");
@@ -22745,9 +22788,19 @@ function bind(){
         const r=refreshPrices(rows, byId);
         if(r.n){ add[k]=rows; cnt+=r.n; diff+=r.diff; }
       });
-      if(!cnt){ alert("Цены этапа уже совпадают с каталогом."); return; }
-      sh.matAdd=add; scheduleSave(); fl();
-      alert("Обновлено позиций: "+cnt+".\nЭтап "+(diff>=0?"подорожал на ":"подешевел на ")+Math.abs(diff).toLocaleString("ru-RU")+" ₽.");
+      // След сверки: дата, кто и что изменилось. Без него через неделю никто не
+      // скажет, сверяли этот этап или просто пронесло. Пустая сверка тоже ставит
+      // дату — это ответ «проверено, всё совпало», — но журнал не засоряет.
+      const who=(currentUser&&currentUser.name)||"";
+      sh.priceOk=Object.assign({}, sh.priceOk||{}, { [n]:{ at:todayISO(), by:who } });
+      if(cnt){
+        sh.matAdd=add;
+        sh.priceLog=((sh.priceLog||[]).concat([{ at:todayISO(), n:n, cnt:cnt, diff:diff, by:who }])).slice(-PRICE_LOG_MAX);
+      }
+      scheduleSave(); fl();
+      alert(cnt
+        ? ("Обновлено позиций: "+cnt+".\nЭтап "+(diff>=0?"подорожал на ":"подешевел на ")+Math.abs(diff).toLocaleString("ru-RU")+" ₽.")
+        : "Цены этапа совпадают с каталогом — отмечено как сверенные.");
     };}
     else if(a==="est-pos-stage-pick"){el.onclick=()=>{ stagePickKey=(stagePickKey===(el.dataset.k||""))?"":(el.dataset.k||""); fl(); };}
     else if(a==="est-block-open"){el.onclick=()=>{

@@ -962,9 +962,13 @@ const SHEET = {
     p.q('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].cost') === 800)
   t.ok('справочник товаров не тронут',
     p.q('expProducts.filter(function(x){return x.id==="p_dr";})[0].unitCost') === 800)
-  t.ok('кнопка этапа погасла',
-    new RegExp('data-a="est-stage-prices" data-n="' + stN + '" disabled').test(p.run('tSpec2()')),
-    'кнопка всё ещё горит')
+  // Кнопка не гаснет: сверить цены хотят и тогда, когда всё сошлось, — иначе
+  // «не работает» неотличимо от «нечего обновлять». Гаснет не кнопка, а тревога.
+  t.ok('кнопка осталась рабочей',
+    new RegExp('data-a="est-stage-prices" data-n="' + stN + '"(?! disabled)').test(p.run('tSpec2()')),
+    'кнопку выключили')
+  t.ok('и точки-тревоги на ней больше нет',
+    !/💱 цены •/.test(p.run('tSpec2()')), 'тревога висит после обновления')
 
   // И тот же материал — кнопкой этапа, оптом.
   p.run('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].cost=300;tSpec2();')
@@ -1116,6 +1120,64 @@ const SHEET = {
     JSON.stringify(after.map((m) => [m.lid, m.qty])))
   t.ok('а соседняя не тронута', after.filter((m) => m.lid === 'ln_e_win_1')[0].qty === wasQty,
     JSON.stringify(after.map((m) => [m.lid, m.qty])))
+}
+
+// ── 12. Сверка цен: отметка актуальности и журнал ───────────────────────────
+// «Обновить цены» без следа — работа, которую нельзя предъявить: через неделю
+// никто не скажет, сверяли этот этап или нет. Поэтому сверка ставит отметку с
+// датой (в проекте загорается галочка) и пишет строку в журнал: когда, что
+// изменилось и на сколько. Кнопка при этом жмётся ВСЕГДА — «нечего обновлять»
+// это тоже ответ, и он должен быть виден.
+{
+  t.section('Сверка цен оставляет след')
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS.concat([{ id: 'p_sock', name: 'Розетка', unitCost: 300, store: 'Лемана', mode: 'piece' }]),
+    estimates: EST, dbPlans: [], crmClients: [], specSheets: [], specSheets2: [], winTypes: [],
+    objects: [], templates: [], contractDocs: [], purchases: [], issues: [],
+    users: [{ id: 'u1', name: 'Юрий', roles: ['admin'], objs: [], c: '#000', av: '👤' }],
+    stock: [], settings: { specMarkup: 30 }, buildRules: [],
+  })
+  p.run('currentUser=users[0];spec2Tab="scheme";tSpec2();')
+  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
+  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key')
+  const stN = p.q('works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes})).stages.filter(function(s){return (s.positions||[]).some(function(x){return x.key===' + JSON.stringify(key) + ';});})[0].n')
+
+  // Дописанный материал с отставшей ценой: в каталоге 300, в смете 100.
+  p.run('var sh=spec2Sheet(); sh.matAdd={}; sh.matAdd[' + JSON.stringify(key) + ']=[{id:"m1",pid:"p_sock",n:"Розетка",cost:100,qty:2,mode:"piece"}]; tSpec2();')
+  t.ok('кнопка зовёт на сверку', /💱 цены •/.test(p.run('tSpec2()')), 'нет тревоги на кнопке')
+
+  const stage = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); stage.onclick()
+  t.ok('цена подтянулась из базы', p.q('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].cost') === 300)
+
+  const ok = p.q('spec2Sheet().priceOk[' + stN + ']')
+  t.ok('этап помечен сверенным', !!ok && !!ok.at, JSON.stringify(ok))
+  t.ok('и записано, кто сверял', ok && ok.by === 'Юрий', ok && ok.by)
+
+  const log = p.q('spec2Sheet().priceLog')
+  t.ok('в журнале появилась запись', Array.isArray(log) && log.length === 1, JSON.stringify(log))
+  t.ok('в ней — что и на сколько поехало', log[0].cnt === 1 && log[0].diff === 400,
+    'позиций ' + log[0].cnt + ', разница ' + log[0].diff)
+
+  const html = p.run('tSpec2()').replace(/[  ]/g, ' ')
+  t.ok('в шапке этапа загорелась галочка', /✓ цены сверены/.test(html), 'нет отметки актуальности')
+  t.ok('тревоги больше нет', !/💱 цены •/.test(html))
+
+  // Повторная сверка, когда всё сошлось: не молчит, а обновляет дату отметки.
+  const at0 = p.q('spec2Sheet().priceOk[' + stN + '].at')
+  p.run('var sh=spec2Sheet(); sh.priceOk[' + stN + '].at="2020-01-01";tSpec2();')
+  const again = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); again.onclick()
+  t.ok('дата сверки обновилась', p.q('spec2Sheet().priceOk[' + stN + '].at') === at0,
+    p.q('spec2Sheet().priceOk[' + stN + '].at'))
+  t.ok('пустая сверка журнал не засоряет', p.q('spec2Sheet().priceLog.length') === 1,
+    'записей: ' + p.q('spec2Sheet().priceLog.length'))
+
+  // Цена в каталоге снова уехала — галочка гаснет сама, без действий человека.
+  p.run('expProducts=expProducts.map(function(x){return x.id==="p_sock"?Object.assign({},x,{unitCost:900}):x;});tSpec2();')
+  const html2 = p.run('tSpec2()').replace(/[  ]/g, ' ')
+  t.ok('отметка гаснет при новом расхождении', !/✓ цены сверены/.test(html2), 'галочка врёт')
+  t.ok('и снова зовёт на сверку', /💱 цены •/.test(html2))
 }
 
 t.done()

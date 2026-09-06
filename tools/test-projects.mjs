@@ -1060,9 +1060,13 @@ function create(p, name) {
   t.ok('правка легла в проект', p.q('projects[0].matAdd[' + JSON.stringify(key) + '][0].cost') === 300)
   t.ok('справочник товаров не тронут',
     p.q('expProducts.filter(function(x){return x.id==="p_sock";})[0].unitCost') === 300)
-  t.ok('кнопка этапа погасла',
-    new RegExp('data-a="est-stage-prices" data-n="' + stN + '" disabled').test(p.run('tProjects()')),
-    'кнопка всё ещё горит')
+  // Кнопка не гаснет: сверить цены хотят и тогда, когда всё сошлось, — иначе
+  // «не работает» неотличимо от «нечего обновлять». Гаснет не кнопка, а тревога.
+  t.ok('кнопка осталась рабочей',
+    new RegExp('data-a="est-stage-prices" data-n="' + stN + '"(?! disabled)').test(p.run('tProjects()')),
+    'кнопку выключили')
+  t.ok('и точки-тревоги на ней больше нет',
+    !/💱 цены •/.test(p.run('tProjects()')), 'тревога висит после обновления')
 
   // И тот же материал — кнопкой в самой строке.
   p.run('projects[0].matAdd[' + JSON.stringify(key) + '][0].cost=100;tProjects();')
@@ -1259,6 +1263,33 @@ function create(p, name) {
   p.run('bind();'); reset.onclick()
   t.ok('правка снята', !p.q('(projects[0].matQty||{})[' + JSON.stringify(key) + ']||null'),
     JSON.stringify(p.q('(projects[0].matQty||{})[' + JSON.stringify(key) + ']||null')))
+}
+
+// ── Цены проекта в списке ───────────────────────────────────────────────────
+// В списке проектов видно, где смета считается по вчерашнему каталогу. Иначе это
+// выясняется на встрече с заказчиком — самым дорогим способом.
+{
+  t.section('Список проектов показывает состояние цен')
+  const p = panel([{ id: 'r_w', kind: 'banya', estId: 'e_wall', what: 'surface', k: 'wall', scope: 'house', qty: 1, stage: 2 }])
+  p.run('expProducts=expProducts.concat([{id:"p_sock",name:"Розетка",unitCost:300,store:"Лемана",mode:"piece"}]);')
+  create(p, 'Дом Ивановых')
+  const key = p.q('works2(projects[0], specCtx(projects[0])).positions[0].key')
+  const stN = p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).stages.filter(function(s){return (s.positions||[]).some(function(x){return x.key===' + JSON.stringify(key) + ';});})[0].n')
+
+  // Никто не сверял — молчим: такой проект не хороший и не плохой.
+  p.run('projOpenId=null;tProjects();')
+  const html0 = p.run('tProjects()')
+  t.ok('без сверки чипа нет', !/цены сверены/.test(html0) && !/цены отстали/.test(html0))
+
+  // Цена в каталоге уехала — проект помечен.
+  p.run('var sh=projects[0]; sh.matAdd={}; sh.matAdd[' + JSON.stringify(key) + ']=[{id:"m1",pid:"p_sock",n:"Розетка",cost:100,qty:2,mode:"piece"}];')
+  t.ok('расхождение видно в списке', /цены отстали/.test(p.run('tProjects()')), 'нет отметки об отставании')
+
+  // Сверили все этапы — загорелась галочка.
+  p.run('var sh=projects[0]; sh.matAdd[' + JSON.stringify(key) + '][0].cost=300; var ok={};'
+    + 'works2(sh, Object.assign(specCtx(sh),{winTypes:winTypes})).stages.forEach(function(st){ok[st.n]={at:"2026-09-06",by:"Юрий"};});'
+    + 'sh.priceOk=ok;')
+  t.ok('после сверки — галочка', /цены сверены/.test(p.run('tProjects()')), 'нет галочки актуальности')
 }
 
 t.done()
