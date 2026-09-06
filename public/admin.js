@@ -10402,6 +10402,21 @@ function matAltQty(m, qty){
   if(mode==="mp"&&Number(m.lenPer)>0)return "≈ "+numRu(Math.ceil(q/Number(m.lenPer)*10)/10)+" хлыст";
   return "";
 }
+// Пересчёт рядом с количеством — или честное «не из чего». Если в карточке товара
+// не заполнено «1 лист = ? м²», молчать нельзя: вопрос «сколько это квадратов»
+// никуда не делся, а молчащая строка выглядит так, будто пересчёта не бывает.
+// Поэтому вместо числа — тап в карточку, где это поле и живёт.
+function matAltQtyHtml(m, qty){
+  const alt=matAltQty(m, qty);
+  if(alt)return '<span title="Столько это в базовой единице товара" style="color:#5a7a9a;font-weight:700">= '+esc(alt)+'</span>';
+  const mode=(m&&m.mode)||"piece";
+  const need=(mode==="pack"||mode==="sheet")?((m&&m.packBase)||"м²")
+    :(mode==="m2"?"лист":(mode==="mp"?"хлыст":""));
+  if(!need||!(m&&m.pid))return '';
+  return '<button data-a="est-mat-card" data-p="'+esc(m.pid)+'" '+
+    'title="В карточке товара не задано, сколько '+esc(need)+' в одной единице. Впишите — и пересчёт появится здесь." '+
+    'style="border:1px dashed #c9d6e4;background:#fff;color:#9aabbf;border-radius:5px;padding:0 5px;font-size:9.5px;font-weight:700;cursor:pointer;line-height:1.6">= ? '+esc(need)+'</button>';
+}
 function specMatsText(p){
   return ((p&&p.mats)||[]).filter(function(m){ return (Number(m.qty)||0)>0 && String(m.n||"").trim(); })
     .map(function(m){ return m.n+" — "+numRu(Math.round((Number(m.qty)||0)*100)/100)+" "+specMatUnit(m); })
@@ -13239,8 +13254,7 @@ function specMatsListHtml(pos, sh, live){
               '<span>'+esc(unit)+'</span>'+
               // «30 лист» — это сколько квадратов? Ответ стоит тут же, рядом с
               // числом, а не в уме у того, кто читает смету.
-              (function(){ const alt=matAltQty(m, qty);
-                return alt?'<span title="Столько это в базовой единице товара" style="color:#5a7a9a;font-weight:700">= '+esc(alt)+'</span>':''; })()+
+              matAltQtyHtml(m, qty)+
               (m.qtySet
                 ? '<button data-a="est-mat-qty-reset" data-k="'+esc(matSwapKey(pos,m))+'" title="Вернуть расчётное количество" style="border:none;background:transparent;color:#8e44ad;font-size:10px;font-weight:700;cursor:pointer;padding:0 2px">вручную ⟲</button>'
                 : '')+
@@ -23709,7 +23723,7 @@ function bind(){
       delete prod.shopAlt; scheduleSave(); fl();
     };}
     // Тап по динамике — в карточку товара: там перечислены последние правки цены.
-    else if(a==="price-hist"){el.onclick=(ev)=>{
+    else if(a==="price-hist"||a==="est-mat-card"){el.onclick=(ev)=>{
       if(ev)ev.stopPropagation();
       const pid=el.dataset.p||"";
       if(!(expProducts||[]).find(function(x){ return x&&x.id===pid; }))return;

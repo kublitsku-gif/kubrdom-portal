@@ -1420,6 +1420,14 @@ function create(p, name) {
   // Штучному товару переводить не во что — лишней подписи быть не должно.
   t.ok('у штучного подписи нет', (html.match(/= \d/g) || []).length === 1,
     JSON.stringify(html.match(/= [^<]+/g)))
+
+  // В карточке не заполнено «1 лист = ? м²» — молчать нельзя: вопрос никуда не
+  // делся, а молчащая строка выглядит так, будто пересчёта не бывает.
+  p.run('delete expProducts.filter(function(x){return x.id==="p_osb";})[0].packPer;')
+  const gap = p.run('tProjects()').replace(/[\u00a0\u202f]/g, ' ')
+  t.ok('без коэффициента строка зовёт в карточку',
+    gap.indexOf('data-a="est-mat-card" data-p="p_osb"') >= 0, 'нет приглашения заполнить')
+  t.ok('и говорит, чего не хватает', /= \? м²/.test(gap), JSON.stringify(gap.match(/= [^<]+/g)))
 }
 
 t.done()
