@@ -31,6 +31,31 @@
     return null;
   }
 
+  // Ozon свою разметку прячет, зато цену рисует в блоке webPrice — и рисует её
+  // ДВАЖДЫ: зелёная с Ozon Картой и обычная. Берём меньшую: закупаемся по Карте,
+  // и именно она стоит в каталоге (договорённость по каталогу КубрДома).
+  function fromOzon() {
+    if (!/(^|\.)ozon\.ru$/.test(location.hostname)) return null;
+    const box = document.querySelector('[data-widget="webPrice"]') || document.body;
+    const found = [];
+    for (const el of box.querySelectorAll("span,div")) {
+      const t = (el.textContent || "").trim();
+      if (t.length > 22) continue;                 // берём только сами ценники, не абзацы
+      const m = t.match(RUB);
+      const n = m && num(m[1]);
+      if (n) found.push(n);
+    }
+    if (!found.length) return null;
+    return { price: Math.min.apply(null, found), inStock: !outOfStockText(), src: "Ozon (цена по Карте)" };
+  }
+
+  // Капча — это не «цена не найдена», а «нас не пустили». Разница важна: в первом
+  // случае карточку надо чинить, во втором — просто пройти пазл и повторить.
+  function captcha() {
+    const t = (document.title || "") + " " + (document.body ? document.body.innerText.slice(0, 300) : "");
+    return /antibot|captcha|Сопоставьте пазл|Подтвердите, что вы не бот/i.test(t);
+  }
+
   function fromDom() {
     const sel = '[itemprop="price"],[data-qa*="price"],[data-widget="webPrice"],[class*="price" i]';
     for (const el of document.querySelectorAll(sel)) {
@@ -49,7 +74,8 @@
   }
 
   function read() {
-    const r = fromLd() || fromDom();
+    if (captcha()) return { ok: false, error: "магазин показал капчу", captcha: true, url: location.href };
+    const r = fromLd() || fromOzon() || fromDom();
     if (!r) return { ok: false, error: "цена не найдена", url: location.href };
     if (outOfStockText()) r.inStock = false;
     return { ok: true, price: r.price, inStock: r.inStock, src: r.src, url: location.href, title: document.title.slice(0, 120) };

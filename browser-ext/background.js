@@ -22,11 +22,25 @@ function readTab(tabId) {
   });
 }
 
+const CAPTCHA_WAIT_MS = 60000;   // сколько ждём, пока человек пройдёт пазл
+
 async function checkOne(item) {
   let tab;
   try {
     tab = await chrome.tabs.create({ url: item.url, active: false });
-    const res = await readTab(tab.id);
+    let res = await readTab(tab.id);
+    // Капча — не отказ, а просьба показаться человеком. Выводим вкладку вперёд:
+    // пазл проходится один раз, дальше магазин пускает и остальные карточки идут
+    // сами. Молча пропустить её значило бы соврать «не сверилось».
+    if (res && res.captcha) {
+      try { await chrome.tabs.update(tab.id, { active: true }); } catch (e) {}
+      const till = Date.now() + CAPTCHA_WAIT_MS;
+      while (Date.now() < till) {
+        await sleep(2500);
+        res = await readTab(tab.id);
+        if (!res || !res.captcha) break;
+      }
+    }
     return Object.assign({ id: item.id, offerId: item.offerId || "", url: item.url }, res);
   } catch (e) {
     return { id: item.id, offerId: item.offerId || "", url: item.url, ok: false, error: String(e && e.message || e) };

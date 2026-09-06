@@ -13547,12 +13547,25 @@ function priceShopRows(st){
 // уже авторизован, и защита магазинов к нему не придирается, — и приносит цены
 // пачкой. Раскладываем их по каталогу так же, как если бы вводили руками: с
 // историей, наличием и отметкой сверки.
+// Ценник магазина → наша единица учёта. Магазин показывает цену за то, чем
+// торгует: трубу — за хлыст 3 м, ламинат — за упаковку. У нас труба живёт в
+// метрах погонных, ламинат в квадратах. Возьмёшь ценник как есть — труба
+// подорожает втрое на ровном месте, и смета соврёт.
+function priceToOurUnit(prod, shopPrice){
+  const v=Number(shopPrice)||0;
+  if(!(v>0))return 0;
+  if(prod&&prod.mode==="mp"&&Number(prod.lenPer)>0)return Math.round((v/Number(prod.lenPer))*100)/100;
+  if(prod&&prod.mode==="m2"&&Number(prod.sheetM2)>0)return Math.round((v/Number(prod.sheetM2))*100)/100;
+  // piece, pack, sheet: магазин и мы считаем одинаково — за штуку, упаковку, лист.
+  return Math.round(v*100)/100;
+}
+
 function applyPriceReports(list){
   const who=(currentUser&&currentUser.name)||"расширение";
-  const out={ checked:0, changed:0, oos:0, failed:0, diff:0, missing:0 };
+  const out={ checked:0, changed:0, oos:0, failed:0, diff:0, missing:0, captcha:0 };
   (list||[]).forEach(function(r){
     if(!r)return;
-    if(!r.ok){ out.failed++; return; }
+    if(!r.ok){ if(r.captcha)out.captcha++; else out.failed++; return; }
     const prod=(expProducts||[]).find(function(x){ return x&&x.id===r.id; });
     // Товара нет в базе — молча заводить его нельзя: каталог общий, и правит его
     // человек. Считаем и показываем отдельной строкой.
@@ -13564,7 +13577,7 @@ function applyPriceReports(list){
       else prod.oosAt=todayISO();
       out.oos++;
     } else {
-      const v=Number(r.price)||0;
+      const v=priceToOurUnit(prod, r.price);
       const cur=Number(off?off.unitCost:prod.unitCost)||0;
       if(v>0&&Math.round(v*100)!==Math.round(cur*100)){
         const was=Number(prod.unitCost)||0;
@@ -26829,6 +26842,7 @@ window.addEventListener("message", function(ev){
     alert("Сверка через расширение\n\nПроверено: "+sum.checked+
       "\nЦены изменились: "+sum.changed+(sum.diff?" ("+(sum.diff>0?"+":"")+sum.diff.toLocaleString("ru-RU")+" ₽)":"")+
       "\nНет в наличии: "+sum.oos+
+      (sum.captcha?"\nПоказали капчу: "+sum.captcha+" (пройдите пазл и повторите)":"")+
       (sum.failed?"\nНе открылось: "+sum.failed:"")+
       (sum.missing?"\nНет в каталоге: "+sum.missing:""));
   }

@@ -173,4 +173,41 @@ function panel() {
   t.ok('чужой товар не создаётся', p.q('expProducts.length') === 2, 'товаров: ' + p.q('expProducts.length'))
 }
 
+// ── 6. Цена с ценника пересчитывается в нашу единицу ────────────────────────
+// Магазин показывает цену за то, чем торгует: трубу — за хлыст 3 м, лист — за лист.
+// А у нас труба учитывается в метрах погонных. Если взять ценник как есть, труба
+// «подорожает» втрое на ровном месте. Пересчёт делает панель: расширение приносит
+// то, что написано на ценнике, и не обязано знать про наш учёт.
+{
+  t.section('Ценник магазина → наша единица')
+  const p = boot({})
+  p.set({
+    expProducts: [
+      { id: 'p_tr', name: 'Труба 60x40x2 3 м', unitCost: 298.67, mode: 'mp', lenPer: 3, store: 'Лемана', url: 'https://lemanapro.ru/product/t/' },
+      { id: 'p_sh', name: 'ОСП 9 мм', unitCost: 710, mode: 'sheet', packPer: 3.125, packBase: 'м²', store: 'Лемана', url: 'https://lemanapro.ru/product/o/' },
+      { id: 'p_m2', name: 'Ламинат', unitCost: 1200, mode: 'm2', sheetM2: 2.4, store: 'Лемана', url: 'https://lemanapro.ru/product/l/' },
+    ],
+    estimates: [], dbPlans: [], crmClients: [], specSheets: [], specSheets2: [], winTypes: [],
+    objects: [], templates: [], contractDocs: [], purchases: [], issues: [], users: [], stock: [],
+    settings: {}, buildRules: [],
+  })
+  // Труба: на ценнике 924 ₽ за хлыст 3 м → у нас 308 ₽ за метр.
+  p.run('applyPriceReports([{ id:"p_tr", ok:true, price:924, inStock:true }])')
+  t.ok('метр погонный пересчитан', p.q('expProducts[0].unitCost') === 308,
+    'получили: ' + p.q('expProducts[0].unitCost'))
+
+  // Лист: и магазин, и мы считаем за лист — делить не на что.
+  p.run('applyPriceReports([{ id:"p_sh", ok:true, price:760, inStock:true }])')
+  t.ok('лист берётся как есть', p.q('expProducts[1].unitCost') === 760, 'получили: ' + p.q('expProducts[1].unitCost'))
+
+  // Квадратный метр: ценник за упаковку 2,4 м² → у нас за м².
+  p.run('applyPriceReports([{ id:"p_m2", ok:true, price:3120, inStock:true }])')
+  t.ok('квадратный метр пересчитан', p.q('expProducts[2].unitCost') === 1300, 'получили: ' + p.q('expProducts[2].unitCost'))
+
+  // Совпадение после пересчёта — это «цена не менялась», а не новая правка.
+  const histBefore = (p.q('expProducts[0].hist') || []).length
+  p.run('applyPriceReports([{ id:"p_tr", ok:true, price:924, inStock:true }])')
+  t.ok('повтор не плодит историю', (p.q('expProducts[0].hist') || []).length === histBefore)
+}
+
 t.done()
