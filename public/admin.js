@@ -18654,6 +18654,19 @@ function buildHandoffList(){
   });});});});
   mats=refundMats(mats, supplyHandoff);
   if(!mats.length){ alert("Никакие позиции не помечены к компенсации.\n\nПометьте пилюлей 💰 в строке или добёрите режимом «Выделить позиции»."); return; }
+  // Дом строится СЕРИЕЙ: смета посчитана на один дом, а закупать надо на всю партию.
+  // Множитель живёт у объекта (`o.seriesQty`) — серия это свойство ЭТОЙ стройки, а не
+  // портала. Один дом — колонок серии нет вовсе: пара столбцов «×1» только занимала бы
+  // ширину и заставляла искать, чем они отличаются от соседних.
+  const seriesN=Math.max(1, Math.round(Number(objs.length===1?objs[0].seriesQty:0)||1));
+  const series=seriesN>1;
+  // Количество на серию печатает ТОТ ЖЕ `qtyText`: иначе пересчёт в базовую единицу
+  // («30 лист = 93,6 м²») в колонке серии считался бы по другому правилу, чем рядом.
+  function scaleMat(m,n){
+    const c=Object.assign({},m,{qty:(Number(m.qty)||1)*n});
+    if(Array.isArray(m.breakdown))c.breakdown=m.breakdown.map(function(r){return Object.assign({},r,{n:(Number(r.n)||0)*n});});
+    return c;
+  }
   function qtyText(m){
     const lens=(Array.isArray(m.breakdown)?m.breakdown:[]).map(function(r){return {len:Number(r.len)||0,n:Number(r.n)||0};}).filter(function(r){return r.len>0&&r.n>0;}).sort(function(a,b){return b.len-a.len;});
     if(lens.length){ const tn=lens.reduce(function(a,r){return a+r.n;},0); const tm=Math.round(lens.reduce(function(a,r){return a+r.len*r.n;},0)*100)/100; return lens.map(function(r){return numRu(r.len)+' м × '+r.n+' шт';}).join(' + ')+' = '+tn+' хлыст ('+numRu(tm)+' м.п.)'; }
@@ -18671,18 +18684,28 @@ function buildHandoffList(){
     const sub=list.reduce(function(a,m){return a+(Number(m.cost)||0)*(m.qty||1);},0);
     const rows=list.map(function(m){ idx++;
       const mo=EXP_MODES.find(function(x){return x.k===(m.mode||'piece');})||EXP_MODES[0];
+      const one=Math.round((Number(m.cost)||0)*(m.qty||1));
       return '<tr><td class="c">'+idx+'</td><td><b>'+esc(m.n)+'</b>'+
         (m.note&&String(m.note).trim()?'<div class="note">'+esc(m.note)+'</div>':'')+
         (m.sn?'<div class="note">'+esc(m.sn)+'</div>':'')+
         (m.url?'<div class="lnk"><a href="'+esc(m.url)+'">'+esc(m.url)+'</a></div>':'<div class="note nolink">ссылки нет — подобрать на месте</div>')+
-        '</td><td>'+qtyText(m)+'</td><td class="r">'+(Number(m.cost)||0).toLocaleString('ru-RU')+' ₽/'+mo.unit+'</td><td class="r">'+Math.round((Number(m.cost)||0)*(m.qty||1)).toLocaleString('ru-RU')+' ₽</td><td class="c">'+(purchased[m.id]?'✔':'☐')+'</td></tr>';
+        '</td><td class="r">'+(Number(m.cost)||0).toLocaleString('ru-RU')+' ₽/'+mo.unit+'</td>'+
+        '<td>'+qtyText(m)+'</td><td class="r">'+one.toLocaleString('ru-RU')+' ₽</td>'+
+        (series?'<td class="s">'+qtyText(scaleMat(m,seriesN))+'</td><td class="r s">'+(one*seriesN).toLocaleString('ru-RU')+' ₽</td>':'')+
+        '<td class="c">'+(purchased[m.id]?'✔':'☐')+'</td></tr>';
     }).join('');
-    return '<h2>'+esc(st)+' <span class="cnt">'+list.length+' поз. · '+Math.round(sub).toLocaleString('ru-RU')+' ₽</span></h2>'+
-      '<table><thead><tr><th>№</th><th>Материал и ссылка</th><th>Объём</th><th>Цена</th><th>Сумма</th><th>✔</th></tr></thead><tbody>'+rows+'</tbody></table>';
+    return '<h2>'+esc(st)+' <span class="cnt">'+list.length+' поз. · '+Math.round(sub).toLocaleString('ru-RU')+' ₽'+(series?' · на серию '+Math.round(sub*seriesN).toLocaleString('ru-RU')+' ₽':'')+'</span></h2>'+
+      '<table><thead>'+
+        (series
+          ? '<tr><th rowspan="2">№</th><th rowspan="2">Материал и ссылка</th><th rowspan="2">Цена</th>'+
+            '<th colspan="2">На 1 дом</th><th colspan="2" class="s">На '+seriesN+' домов</th><th rowspan="2">куплено</th></tr>'+
+            '<tr><th>объём</th><th>сумма</th><th class="s">объём</th><th class="s">сумма</th></tr>'
+          : '<tr><th>№</th><th>Материал и ссылка</th><th>Цена</th><th>объём</th><th>сумма</th><th>куплено</th></tr>')+
+      '</thead><tbody>'+rows+'</tbody></table>';
   }).join('');
   const objNames=objs.map(function(o){return o.name;}).join(", ");
   const d=new Date(); const ds=String(d.getDate()).padStart(2,"0")+"."+String(d.getMonth()+1).padStart(2,"0")+"."+d.getFullYear();
-  const html='<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Материалы к закупке — '+esc(objNames||"объект")+'</title><style>'+
+  const html='<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Счёт на компенсацию — '+esc(objNames||"объект")+'</title><style>'+
     'body{font-family:-apple-system,Segoe UI,Arial,sans-serif;padding:24px;color:#1a2a3a;max-width:900px;margin:0 auto}'+
     'h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:20px 0 6px;color:#8e44ad}.cnt{font-size:12px;font-weight:400;color:#777}'+
     '.sub{font-size:13px;color:#555;margin-bottom:4px}'+
@@ -18692,18 +18715,23 @@ function buildHandoffList(){
     '.note{font-size:11px;color:#777;margin-top:3px}.nolink{color:#c0392b}'+
     '.lnk{font-size:10px;margin-top:3px;word-break:break-all}.lnk a{color:#8e44ad}'+
     '.r{text-align:right;white-space:nowrap}.c{text-align:center;color:#999}'+
+    // Колонки серии подкрашены: восемь столбцов подряд глаз не делит, а вопрос
+    // «это на один дом или на все» — первый, который задают к такой таблице.
+    '.s{background:#faf5fd}th.s{background:#f0e6f7}'+
+    '.tot-s{font-size:18px;color:#8e44ad;margin-top:2px}'+
     '.tot{font-size:16px;font-weight:800;margin-top:16px;text-align:right}.tot small{display:block;font-size:12px;font-weight:600;color:#777}'+
     '.btn{margin:14px 0;padding:10px 18px;background:#8e44ad;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer}'+
     '@media print{.btn{display:none}body{padding:0}a{color:#1a2a3a}}'+
     '</style></head><body>'+
     '<h1>🧾 Счёт на компенсацию материалов</h1>'+
     '<div class="sub">Объект: '+esc(objNames||"—")+'</div>'+
-    '<div class="sub">Дата: '+ds+' · КубрДом · позиций: '+mats.length+'</div>'+
+    '<div class="sub">Дата: '+ds+' · КубрДом · позиций: '+mats.length+(series?' · серия '+seriesN+' домов':'')+'</div>'+
     '<button class="btn" onclick="window.print()">🖨 Печать / Сохранить в PDF</button>'+
     '<div class="hint">Эти материалы закупаем и привозим мы, а стоимость по договорённости компенсирует заказчик. Ссылка ведёт на товар, по которому считали, объём — по проекту. Оплачено на дату листа: '+Math.round(rt.bought).toLocaleString('ru-RU')+' ₽, остальное закупается по ходу работ.</div>'+
     sections+
-    '<div class="tot">Итого к компенсации: '+Math.round(total).toLocaleString('ru-RU')+' ₽'+
-      '<small>из них уже оплачено '+Math.round(rt.bought).toLocaleString('ru-RU')+' ₽ на '+ds+'</small></div>'+
+    '<div class="tot">Итого на 1 дом: '+Math.round(total).toLocaleString('ru-RU')+' ₽'+
+      (series?'<div class="tot-s">Итого на '+seriesN+' домов: '+Math.round(total*seriesN).toLocaleString('ru-RU')+' ₽</div>':'')+
+      '<small>из них уже оплачено '+Math.round(rt.bought).toLocaleString('ru-RU')+' ₽ на '+ds+(series?' (по одному дому)':'')+'</small></div>'+
     '</body></html>';
   const w=window.open("","_blank");
   if(!w){ alert("Разрешите всплывающие окна для этого сайта, чтобы сформировать PDF."); return; }
@@ -19015,6 +19043,12 @@ function tSupplyDetail(sel, sortBy){
       (supplyPickMode
         ? '<div style="font-size:11px;color:#8e44ad;background:#8e44ad12;border-radius:8px;padding:7px 10px;margin-bottom:8px;line-height:1.45">Режим выделения: тап по строке кладёт её в счёт, а НЕ отмечает «куплено». Постоянную пометку ставит пилюля 💰 в строке.</div>'
         : '<div style="font-size:11px;color:#9aabbf;line-height:1.45;margin-bottom:8px">Покупаем и принимаем всё мы, как обычно. Пилюля 💰 в строке помечает, что эти деньги заказчик вернёт — по пометкам собирается счёт.</div>')+
+      // Серия: смета посчитана на один дом, а закупают на партию. Число живёт у
+      // объекта; «1» означает «серии нет» — тогда в счёте колонок серии не будет.
+      (oneObj?'<div style="display:flex;align-items:center;gap:8px;padding:8px 0 10px">'+
+        '<span style="font-size:11.5px;color:#9aabbf;flex:1;min-width:0">Домов в серии — счёт умножится на это число</span>'+
+        '<input data-a="supply-series" data-oid="'+oneObj.id+'" type="number" min="1" step="1" value="'+String(Math.max(1,Math.round(Number(oneObj.seriesQty)||1)))+'" style="width:74px;padding:7px 9px;border-radius:8px;border:1.5px solid #d0dae8;font-size:13px;font-weight:700;text-align:center;outline:none;box-sizing:border-box">'+
+      '</div>':'')+
       '<div style="display:flex;gap:6px;flex-wrap:wrap">'+
         '<button data-a="supply-pick-mode" style="flex:1;min-width:150px;padding:10px;border-radius:10px;cursor:pointer;font-size:12.5px;font-weight:700;border:1.5px solid #8e44ad;background:'+(supplyPickMode?'#8e44ad':'#fff')+';color:'+(supplyPickMode?'#fff':'#8e44ad')+'">'+(supplyPickMode?'✓ Готово, выйти':'✋ Выделить позиции')+'</button>'+
         (Object.keys(supplyHandoff).length?'<button data-a="supply-pick-clear" style="padding:10px 12px;border-radius:10px;cursor:pointer;font-size:12.5px;font-weight:700;border:1.5px solid #dde6f0;background:#fff;color:#7a9aaa">Снять разовые</button>':'')+
@@ -23312,6 +23346,18 @@ function bind(){
         if(o.id!==oid)return o;
         const no=Object.assign({},o);
         if(on)no.clientPays=true; else delete no.clientPays;
+        return no;
+      });
+      fl();
+    };}
+    // Число домов пишем по `change`, а не по `input`: перерисовка на каждой цифре
+    // выбивала бы поле из-под пальца — «19» набирается в два нажатия.
+    else if(a==="supply-series"){el.onchange=()=>{
+      const oid=el.dataset.oid, n=Math.max(1, Math.round(Number(el.value)||1));
+      objects=objects.map(function(o){
+        if(o.id!==oid)return o;
+        const no=Object.assign({},o);
+        if(n>1)no.seriesQty=n; else delete no.seriesQty;
         return no;
       });
       fl();

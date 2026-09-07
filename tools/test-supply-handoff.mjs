@@ -139,6 +139,110 @@ const nb = (x) => x.replace(/[\u00a0\u202f]/g, ' ')
   t.ok('«снять разовые» очищает выбор', Object.keys(p.q('supplyHandoff') || {}).length === 0)
 }
 
+// ── 3c. Соседний объект пилюли не получает ──────────────────────────────────
+// Договорённость про компенсацию — свойство ОДНОЙ стройки. Проверяем на двух
+// объектах сразу: в чужом ни кнопки, ни чипа быть не должно, даже когда оба
+// выбраны в снабжении и строки идут вперемешку.
+{
+  t.section('Компенсация не протекает в чужой объект')
+  const p = boot()
+  const obj = (id, name, on) => ({
+    id, name, icon: '🏠', clientPays: on || undefined, stages: [
+      { id: 's_' + id, n: 'ЭТАП 1', c: '#e67e22', works: [
+        { id: 'w_' + id, n: 'Каркас', cost: 1000, mats: [
+          { id: 'm_' + id, n: 'Брусок ' + name, cost: 100, qty: 10, store: 'Белка', mode: 'piece' },
+        ] },
+      ] },
+    ],
+  })
+  p.set({
+    expProducts: [], objects: [obj('o1', 'Мордвес 1', true), obj('o2', 'Мордвес 2', false)],
+    purchased: {}, arrived: {}, purchases: [],
+    templates: [], contractDocs: [], users: [], finTxns: [], stock: [], issues: [],
+  })
+
+  // Свой объект — кнопка есть.
+  p.run('window._supplySelected={o1:true};supplyHandoff={};supplyPickMode=false;supplyLabourOpen=false;')
+  const own = p.run('tSupplyDetail({o1:true},"stage")')
+  t.ok('в своём объекте пилюля есть', own.indexOf('data-a="supply-client" data-ids="m_o1"') >= 0)
+
+  // Соседний — ни кнопки, ни панели, ни чипа.
+  p.run('window._supplySelected={o2:true};')
+  const other = p.run('tSupplyDetail({o2:true},"stage")')
+  t.ok('в чужом объекте пилюли нет', other.indexOf('data-a="supply-client"') < 0,
+    'кнопка протекла в объект, где компенсации нет')
+  t.ok('и панели компенсации нет', other.indexOf('💰 Заказчик компенсирует') < 0)
+  t.ok('но включить предлагают и там', other.indexOf('data-a="supply-refund-on" data-oid="o2"') >= 0)
+
+  // Оба объекта разом: пилюля только у строк своего.
+  p.run('window._supplySelected={o1:true,o2:true};')
+  const both = p.run('tSupplyDetail({o1:true,o2:true},"stage")')
+  t.ok('при двух объектах пилюля только у своего',
+    both.indexOf('data-a="supply-client" data-ids="m_o1"') >= 0
+    && both.indexOf('data-a="supply-client" data-ids="m_o2"') < 0,
+    'пилюля появилась у чужой строки')
+  t.ok('переключателя объекта при двух не показываем', both.indexOf('data-a="supply-refund-on"') < 0,
+    'непонятно, для какого объекта кнопка')
+}
+
+// ── 3d. Счёт на серию домов ─────────────────────────────────────────────────
+// Смета считается на ОДИН дом, а закупают на партию. Множитель живёт у объекта:
+// серия — свойство этой стройки, а не портала. Один дом — колонок серии нет вовсе.
+{
+  t.section('Счёт умножается на серию')
+  const p = boot()
+  const grab = () => {
+    p.run('globalThis.window.open=function(){return {document:{open(){},write(h){globalThis.__cap=h;},close(){}},focus(){}};};')
+    p.run('buildHandoffList();')
+    return nb(p.q('__cap') || '')
+  }
+  p.set({
+    expProducts: [],
+    objects: [
+      { id: 'o1', name: 'Мордвес 1', icon: '🏠', clientPays: true, stages: [
+        { id: 's1', n: 'ЭТАП 1', c: '#e67e22', works: [
+          { id: 'w1', n: 'Каркас', cost: 4580, mats: [
+            { id: 'm1', n: 'Брусок 50×50', cost: 229, qty: 20, store: 'Белка', mode: 'piece', client: true, url: 'https://shop/1' },
+          ] },
+        ] },
+      ] },
+    ],
+    purchased: { m1: true }, arrived: {}, purchases: [],
+    templates: [], contractDocs: [], users: [], finTxns: [], stock: [], issues: [],
+  })
+  p.run('window._supplySelected={o1:true};supplyHandoff={};supplyPickMode=false;supplyLabourOpen=false;')
+
+  // Серия не задана — таблица прежняя, лишних столбцов нет.
+  const one = grab()
+  t.ok('без серии колонок серии нет', one.indexOf('домов</th>') < 0 && one.indexOf('На 1 дом') < 0,
+    'пустая пара столбцов «×1» только занимает ширину')
+  t.ok('но сумма на дом на месте', one.indexOf('4 580 ₽') >= 0)
+
+  // Задаём серию тем же полем, что и человек.
+  const inp = p.dom.node({ a: 'supply-series', oid: 'o1' })
+  t.ok('поле серии есть в панели', !!inp)
+  p.run('bind();'); inp.value = '19'; inp.onchange()
+  t.ok('число записано у объекта', p.q('objects[0].seriesQty') === 19)
+
+  const many = grab()
+  t.ok('шапка называет обе колонки', many.indexOf('На 1 дом') >= 0 && many.indexOf('На 19 домов') >= 0)
+  t.ok('количество умножено', /380 шт/.test(many), 'нет 20 × 19 = 380')
+  t.ok('сумма умножена', many.indexOf('87 020 ₽') >= 0, 'нет 4 580 × 19')
+  t.ok('итоги обе строки', many.indexOf('Итого на 1 дом: 4 580 ₽') >= 0
+    && many.indexOf('Итого на 19 домов: 87 020 ₽') >= 0)
+  t.ok('серия названа в шапке листа', many.indexOf('серия 19 домов') >= 0)
+
+  // Единица берётся тем же пересчётом, что и в колонке одного дома.
+  t.ok('оплаченное считается по одному дому', many.indexOf('уже оплачено 4 580 ₽') >= 0,
+    'оплатили один дом, а не серию')
+
+  // Единица — обратно, серия снята.
+  p.run('bind();')
+  const inp2 = p.dom.node({ a: 'supply-series', oid: 'o1' })
+  inp2.value = '1'; p.run('bind();'); inp2.onchange()
+  t.ok('единица убирает серию из объекта', !p.q('objects[0].seriesQty'))
+}
+
 // ── 4. Труд — не товар ──────────────────────────────────────────────────────
 // У СВОЕЙ работы «материал» — это она сама, её цена. Купить его нельзя: это
 // оплата труда, а не позиция в магазине. Флаг `own` терялся в `positionWork`,
