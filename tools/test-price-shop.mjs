@@ -127,7 +127,12 @@ function panel() {
   p.run('applyPriceReports([{ id:"p_kab", ok:true, price:5100, inStock:true }])')
   t.ok('дата подтверждения записана', !!p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].priceOkAt'))
   const html1 = p.run('tSpec2()')
-  t.ok('статус стал «сверено»', /сверено 6 сен|сверено сегодня/i.test(html1), 'нет свежего статуса')
+  // Дату спрашиваем у самой панели (`dayRu(todayISO())`), а не пишем строкой:
+  // сверка ставит СЕГОДНЯШНЕЕ число, и зашитое здесь «6 сен» делало тест
+  // бомбой замедленного действия — он краснел на следующий же день и вставал
+  // поперёк выката, потому что деплой стоит на `needs: test`.
+  const today = p.q('dayRu(todayISO())')
+  t.ok('статус стал «сверено»', html1.indexOf('сверено ' + today) >= 0, 'нет свежего статуса на ' + today)
   t.ok('счётчик поехал', /сверено 1 из 2/i.test(html1), 'счётчик не обновился')
 
   // Новая цена — тоже подтверждение: смотрели же в магазине.
@@ -288,7 +293,8 @@ function panel() {
   p.run('applyPriceReports([{ id:"p_br", ok:true, price:323, inStock:true }])')
   const done = p.run('tSpec2()')
   t.ok('оба проверены — этап сверен', /цены сверены/i.test(done), 'отметки нет, хотя всё проверено')
-  t.ok('дата настоящая', /6 сен/.test(done), 'нет даты сверки')
+  t.ok('дата настоящая', done.indexOf(p.q('dayRu(todayISO())')) >= 0,
+    'нет даты сверки ' + p.q('dayRu(todayISO())'))
 
   // Прошло время — отметка гаснет сама: цена, проверенная месяц назад, не свежая.
   p.run('expProducts.forEach(function(x){ x.priceOkAt="2026-06-01"; });')
