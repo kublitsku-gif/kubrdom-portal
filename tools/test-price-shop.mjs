@@ -429,14 +429,17 @@ function panel() {
 // Цену смотрят в трёх местах, и открывать их руками через поиск каждый раз —
 // это ровно та работа, которую портал должен снимать.
 {
-  t.section('Сравнить в трёх магазинах')
+  t.section('Сравнить по всем магазинам')
   const p = panel()
   const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
   const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
   const html = p.run('tSpec2()')
 
-  t.ok('предложены все три', /Озон ↗/.test(html) && /Лемана ПРО ↗/.test(html) && /Я\.Маркет ↗/.test(html),
-    'магазинов меньше трёх')
+  // Ряд «сравнить» показывает КАЖДЫЙ магазин из PRICE_SHOPS: пропущенный — это
+  // цена, которую никто не посмотрит.
+  const shopNames = p.q('PRICE_SHOPS.map(function(s){return s.n;})')
+  t.ok('предложены все магазины', shopNames.every((n) => html.indexOf(n + ' ↗') >= 0),
+    'нет в ряду: ' + shopNames.filter((n) => html.indexOf(n + ' ↗') < 0).join(', '))
   // Где карточка у нас уже есть — ведём в неё, а не в поиск.
   t.ok('своя карточка Ozon — прямая ссылка',
     html.indexOf('href="https://www.ozon.ru/product/kabel-1/" target="_blank" rel="noopener" title="Наша карточка') >= 0,
@@ -557,9 +560,13 @@ function panel() {
   const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
   t.ok('кнопка поиска есть', plain().indexOf('data-a="price-ext-find"') >= 0)
 
-  // Задания: только магазины, где нашей карточки нет.
+  // Задания: только магазины, где нашей карточки нет. Счёт берём от PRICE_SHOPS,
+  // а не числом: у обоих товаров ровно по одной карточке (Озон и Лемана), так что
+  // недостающих у каждого — все остальные. Прибитое число ломалось бы на каждом
+  // новом магазине, хотя правило не менялось.
+  const shopsN = p.q('PRICE_SHOPS.length')
   const items = p.q('priceFindItems(priceShopRows(works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes})).stages[0]))')
-  t.ok('заданий столько, сколько недостающих магазинов', items.length === 4,
+  t.ok('заданий столько, сколько недостающих магазинов', items.length === (shopsN - 1) * 2,
     JSON.stringify(items.map((x) => x.shop)))
   t.ok('в свой магазин не ходим', !items.some((x) => x.id === 'p_kab' && x.shop === 'ozon'),
     'ищем там, где карточка уже есть')
