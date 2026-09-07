@@ -9,7 +9,8 @@
 // Сторожим три вещи: постоянный признак живёт на материале и переживает
 // перерисовку, деньги считаются по нашей половине, а в лист заказчику уходит
 // ровно то, что показано на экране (постоянные плюс добранные разово).
-import { clientBuys, handoffMats, handoffTotals, ourMats } from '../src/supply.js'
+import { clientBuys, handoffMats, handoffTotals, ourMats, isLabour, buyMats } from '../src/supply.js'
+import { positionWork } from '../src/recipe.js'
 import { boot, reporter } from './harness/panel-vm.js'
 
 const t = reporter()
@@ -119,6 +120,95 @@ const MATS = [
   const clr = p.dom.node({ a: 'supply-pick-clear' })
   p.run('bind();'); clr.onclick()
   t.ok('«снять разовые» очищает выбор', Object.keys(p.q('supplyHandoff') || {}).length === 0)
+}
+
+// ── 4. Труд — не товар ──────────────────────────────────────────────────────
+// У СВОЕЙ работы «материал» — это она сама, её цена. Купить его нельзя: это
+// оплата труда, а не позиция в магазине. Флаг `own` терялся в `positionWork`,
+// и в снабжение работа приезжала обычной покупкой — «Сборку стеллажей»
+// предлагали купить, она ждала приёмки на склад и висела в «осталось купить».
+{
+  t.section('Своя работа не попадает в закупку')
+
+  const pos = {
+    key: 'add:a1', name: 'Сборка стеллажей', stage: 1, cost: 1000, costSet: true,
+    mats: [{ id: 'own:a1', pid: '', own: true, n: 'Сборка стеллажей', store: '', mode: 'piece', cost: 1000, qty: 1 }],
+  }
+  const w = positionWork(pos)
+  t.ok('флаг own доезжает до объекта', w.mats[0].own === true,
+    'без него снабжение не отличит труд от товара')
+  t.ok('цена работы при этом сохранена', w.cost === 1000)
+
+  t.ok('предикат читает труд', isLabour(w.mats[0]) && !isLabour({ n: 'ОСП', cost: 900 }))
+  t.ok('в закупку такая строка не идёт', buyMats(w).length === 0)
+  t.ok('а обычный материал идёт',
+    buyMats({ mats: [{ id: 'x', n: 'ОСП', cost: 900, qty: 2 }, w.mats[0]] }).length === 1)
+
+  // Экран снабжения: работа не показана и в деньги не входит.
+  const p = boot()
+  p.set({
+    expProducts: [],
+    objects: [
+      { id: 'o1', name: 'Мордвес 1', icon: '🏠', stages: [
+        { id: 's1', n: 'ЭТАП 1 — ПОДГОТОВИТЕЛЬНЫЙ', c: '#e67e22', works: [
+          { id: 'w1', n: 'Каркас', cost: 4580, mats: [
+            { id: 'm1', n: 'Брусок 50×50', cost: 229, qty: 20, store: 'Белка', mode: 'piece' },
+          ] },
+          { id: 'w2', n: 'Сборка стеллажей', cost: 1000, labor: 1000, mats: [
+            Object.assign({ id: 'm9' }, w.mats[0]),
+          ] },
+        ] },
+      ] },
+    ],
+    purchased: {}, arrived: {}, purchases: [],
+    templates: [], contractDocs: [], users: [], finTxns: [], stock: [], issues: [],
+  })
+  p.run('window._supplySelected={o1:true};supplyHandoff={};supplyPickMode=false;')
+
+  const html = p.run('tSupplyDetail({o1:true},"stage")')
+  t.ok('работы в списке закупки нет', html.indexOf('Сборка стеллажей') < 0,
+    'труд предлагают купить в магазине')
+  t.ok('материал на месте', html.indexOf('Брусок 50×50') >= 0)
+  t.ok('и деньги считаются без работы', html.indexOf((229 * 20).toLocaleString('ru-RU')) >= 0
+    && html.indexOf((229 * 20 + 1000).toLocaleString('ru-RU')) < 0,
+    'в сумму закупки затесалась оплата труда')
+
+  // Связь материала с работой — её-то как раз и надо видеть: строка закупки без
+  // работы это просто товар и число, а подо что он берётся — непонятно.
+  t.ok('у материала видно, к какой работе он относится', html.indexOf('↳ Каркас') >= 0,
+    'строка закупки не говорит, подо что берут')
+}
+
+// ── 5. Слитая строка называет все свои работы ───────────────────────────────
+{
+  t.section('Подо что берём — видно в строке')
+  const p = boot()
+  p.set({
+    expProducts: [],
+    objects: [
+      { id: 'o1', name: 'Мордвес 1', icon: '🏠', stages: [
+        { id: 's1', n: 'ЭТАП 1', c: '#e67e22', works: [
+          { id: 'w1', n: 'Каркас', cost: 4580, mats: [{ id: 'm1', n: 'Брусок 50×50', cost: 229, qty: 20, store: 'Белка', mode: 'piece' }] },
+          { id: 'w2', n: 'Обрешётка', cost: 2290, mats: [{ id: 'm2', n: 'Брусок 50×50', cost: 229, qty: 10, store: 'Белка', mode: 'piece' }] },
+        ] },
+      ] },
+    ],
+    purchased: {}, arrived: {}, purchases: [],
+    templates: [], contractDocs: [], users: [], finTxns: [], stock: [], issues: [],
+  })
+  p.run('window._supplySelected={o1:true};supplyHandoff={};supplyPickMode=false;')
+
+  // Одна позиция склеена из двух работ — обе должны быть названы, первая в строке,
+  // остальные счётчиком и в подсказке.
+  const html = p.run('tSupplyDetail({o1:true},"merge")')
+  t.ok('строка слита', html.indexOf('📦 2 позиций → 1') >= 0)
+  t.ok('первая работа названа', html.indexOf('↳ Каркас +1') >= 0, 'нет ссылки на работу')
+  t.ok('остальные — в подсказке', html.indexOf('title="Каркас, Обрешётка"') >= 0,
+    'полный список работ должен быть в title')
+
+  // Во всех трёх видах — один и тот же ответ на вопрос «подо что».
+  t.ok('вид «Этапы» тоже называет работу', p.run('tSupplyDetail({o1:true},"stage")').indexOf('↳ Каркас') >= 0)
+  t.ok('вид «Магазины» тоже', p.run('tSupplyDetail({o1:true},"store")').indexOf('↳ Каркас') >= 0)
 }
 
 t.done()

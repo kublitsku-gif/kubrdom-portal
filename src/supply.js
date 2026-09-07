@@ -56,7 +56,7 @@ export function objectSupply(obj, purchases, legacyPurchased, legacyArrived) {
   const out = { need: 0, none: 0, partial: 0, bought: 0, got: 0, spent: 0, needSum: 0 };
   (obj.stages || []).forEach(function (s) {
     (s.works || []).forEach(function (w) {
-      (w.mats || []).forEach(function (m) {
+      buyMats(w).forEach(function (m) {
         const st = needStatus(m.id, m, purchases, legacyPurchased, legacyArrived);
         const state = needState(st);
         out.need++;
@@ -169,4 +169,20 @@ export function handoffTotals(list) {
 // считаются прогресс, «куплено / осталось» и подытоги этапов.
 export function ourMats(mats) {
   return (mats || []).filter(function (m) { return !clientBuys(m); });
+}
+
+// ─── ТРУД — НЕ ТОВАР ─────────────────────────────────────────────────────────
+// У своей работы «материал» — это она сама: её имя и цена показаны одним
+// материалом с флагом `own`, чтобы деньги считались общим правилом. Купить его
+// нельзя: это оплата труда, а не позиция в магазине. Снабжение обязано его
+// пропускать — иначе «Сборка стеллажей» висит в списке закупки, ждёт приёмки на
+// склад и портит «осталось купить» суммой, которую никто не понесёт в кассу.
+//
+// Связь материала с работой при этом никуда не девается: у каждой строки закупки
+// есть своя работа (`↳ имя`), и убираем мы только псевдо-материал самой работы.
+export function isLabour(m) { return !!(m && m.own); }
+
+// Что из работы реально закупается.
+export function buyMats(w) {
+  return (((w && w.mats) || [])).filter(function (m) { return !isLabour(m); });
 }

@@ -936,6 +936,11 @@ export function positionWork(pos) {
       cost: Number(m.cost) || 0, qty: Number(m.qty) || 0, mode: m.mode || "piece",
       unitCost: Number(m.cost) || 0 };
     ["packBase", "packPer", "lenPer", "sheetM2", "packName"].forEach(function (k) { if (m[k] != null) mm[k] = m[k]; });
+    // `own` едет в стройку вместе с материалом: у СВОЕЙ работы «материал» — это она
+    // сама, её цена. Флаг терялся здесь, и в снабжение работа приезжала обычной
+    // покупкой — «Сборку стеллажей» предлагали купить в магазине. Снабжение
+    // отличает труд от товара только по нему.
+    if (m.own) mm.own = true;
     return mm;
   });
   return {

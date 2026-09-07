@@ -40,7 +40,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // версия на устройстве. По этой подписи это видно сразу.
 // Логика закупок — общая с ботом и Worker'ом (src/supply.js): статус материала должен
 // одинаково считаться в панели и в Telegram, иначе бригадир и снабженец увидят разное.
-import { needStatus, needState, objectSupply, migrateLegacy, needQty, isSelection, pendingSelections, clientBuys, handoffMats, handoffTotals, ourMats } from "../src/supply.js";
+import { needStatus, needState, objectSupply, migrateLegacy, needQty, isSelection, pendingSelections, clientBuys, handoffMats, handoffTotals, ourMats, isLabour, buyMats } from "../src/supply.js";
 // Сроки этапов — тот же общий модуль, что читают напоминания (см. src/stages.js).
 import { sheetPositions, sheetTotals, sheetIssues, optionGroups, roomArea, optionCost,
   SPEC_POINTS, pointMeta, pointTotals, roomPoints } from "../src/spec.js";
@@ -17935,7 +17935,7 @@ function tReceive(sel){
   const matsOf=function(obj){
     return obj.stages.flatMap(function(s){
       return s.works.flatMap(function(w){
-        return (w.mats||[]).map(function(m){
+        return buyMats(w).map(function(m){
           return Object.assign({},m,{wn:w.n,sn:s.n,sc:s.c,objName:obj.name,objIcon:obj.icon,objId:obj.id});
         });
       });
@@ -18093,13 +18093,13 @@ function tSupplySelect(sel){
   // Карточка объекта. Вынесена из цикла: активные и архивные рисуются одинаково,
   // но живут в разных списках (архивные — под свёрткой).
   function objCard(obj){
-    const allMats=obj.stages.flatMap(function(s){return s.works.flatMap(function(w){return(w.mats||[]).map(function(m){return Object.assign({},m,{wn:w.n});});});});
+    const allMats=obj.stages.flatMap(function(s){return s.works.flatMap(function(w){return buyMats(w).map(function(m){return Object.assign({},m,{wn:w.n});});});});
     const totalCost=allMats.reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
     // Осталось купить (не отмечено «куплено») — всего и по этапам.
     const stagesLeft=[]; let leftCost=0;
     obj.stages.forEach(function(s){
       let sLeft=0;
-      (s.works||[]).forEach(function(w){(w.mats||[]).forEach(function(m){ if(!purchased[m.id]) sLeft+=(Number(m.cost)||0)*(m.qty||1); });});
+      (s.works||[]).forEach(function(w){buyMats(w).forEach(function(m){ if(!purchased[m.id]) sLeft+=(Number(m.cost)||0)*(m.qty||1); });});
       if(sLeft>0.5){ stagesLeft.push({n:s.n, c:s.c||"#e67e22", cost:sLeft}); leftCost+=sLeft; }
     });
     const assigned=users.filter(function(u){return u.objs.includes(obj.id);});
@@ -18452,7 +18452,7 @@ function needOverBought(m){
 function objStockCandidates(obj){
   const out=[];
   ((obj&&obj.stages)||[]).forEach(function(s){(s.works||[]).forEach(function(w){
-    (w.mats||[]).forEach(function(m){
+    buyMats(w).forEach(function(m){
       const over=needOverBought(m);
       if(over>0)out.push({m:m, qty:over, work:w.n, stage:s.n});
     });
@@ -18577,7 +18577,7 @@ function buildSupplyTZ(store){
   const objs=objects.filter(function(o){return!!sel[o.id];});
   let mats=[];
   // В ТЗ попадает только то, что ещё НЕ куплено.
-  objs.forEach(function(o){(o.stages||[]).forEach(function(s){(s.works||[]).forEach(function(w){(w.mats||[]).forEach(function(m){ if((m.store||"")===store && !purchased[m.id]) mats.push(m); });});});});
+  objs.forEach(function(o){(o.stages||[]).forEach(function(s){(s.works||[]).forEach(function(w){buyMats(w).forEach(function(m){ if((m.store||"")===store && !purchased[m.id]) mats.push(m); });});});});
   if(!mats.length){ alert("Для «"+store+"» нечего закупать — всё уже куплено или нет материалов."); return; }
   const gm={};
   mats.forEach(function(m){
@@ -18636,7 +18636,7 @@ function buildHandoffList(){
   const sel=window._supplySelected||{};
   const objs=objects.filter(function(o){return !!sel[o.id];});
   let mats=[];
-  objs.forEach(function(o){(o.stages||[]).forEach(function(s){(s.works||[]).forEach(function(w){(w.mats||[]).forEach(function(m){
+  objs.forEach(function(o){(o.stages||[]).forEach(function(s){(s.works||[]).forEach(function(w){buyMats(w).forEach(function(m){
     mats.push(Object.assign({},m,{wn:w.n,sn:s.n,objName:o.name}));
   });});});});
   mats=handoffMats(mats, supplyHandoff);
@@ -18699,7 +18699,7 @@ function buildSupplyList(){
   const sel=window._supplySelected||{};
   const objs=objects.filter(function(o){return !!sel[o.id];});
   let mats=[];
-  objs.forEach(function(o){(o.stages||[]).forEach(function(s){(s.works||[]).forEach(function(w){(w.mats||[]).forEach(function(m){
+  objs.forEach(function(o){(o.stages||[]).forEach(function(s){(s.works||[]).forEach(function(w){buyMats(w).forEach(function(m){
     mats.push(Object.assign({},m,{wn:w.n,sn:s.n,objName:o.name}));
   });});});});
   const q=(supplySearch||"").trim().toLowerCase();
@@ -18834,7 +18834,7 @@ function tSupplyDetail(sel, sortBy){
   targetObjs.forEach(function(obj){
     obj.stages.forEach(function(s){
       s.works.forEach(function(w){
-        (w.mats||[]).forEach(function(m){
+        buyMats(w).forEach(function(m){
           allMats.push(Object.assign({},m,{wn:w.n,sn:s.n,sc:s.c,objName:obj.name,objIcon:obj.icon,objId:obj.id}));
         });
       });
@@ -19113,6 +19113,11 @@ function tSupplyDetail(sel, sortBy){
         '<div style="font-size:13px;font-weight:600;color:'+(allDone?'#7a9aaa':'#1a2a3a')+';text-decoration:'+(allDone?'line-through':'none')+'">'+esc(g.n)+'</div>'+
         '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:3px;align-items:center">'+
           (ids.length>1?'<span style="font-size:10px;font-weight:700;color:#e67e22;background:#e67e2212;border:1px solid #e67e2233;border-radius:5px;padding:1px 7px">📦 '+ids.length+' позиций → 1</span>':'')+
+          // Подо что берём. Без этого строка закупки — просто товар и число: куда
+          // он уйдёт и зачем нужен, из списка было не понять.
+          ((g.works||[]).length
+            ? '<span style="font-size:10px;color:#9aabbf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:190px" title="'+esc(g.works.join(", "))+'">↳ '+esc(g.works[0])+(g.works.length>1?' +'+(g.works.length-1):'')+'</span>'
+            : '')+
           (g.store?'<span style="font-size:10px;font-weight:700;background:'+sc+';color:#fff;border-radius:4px;padding:1px 6px">'+g.store+'</span>':'')+
           '<span style="font-size:10px;font-weight:700;color:#5a7a9a;background:#eef2f7;border-radius:4px;padding:1px 6px">'+mode.icon+' '+mode.unit+'</span>'+
           (g.cost>0?'<span style="font-size:11px;color:#7a9aaa">'+(Number(g.cost)||0).toLocaleString("ru-RU")+' ₽/'+mode.unit+' × '+numRu(qty)+' = <b style="color:#0d1b2e">'+lineTotal+' ₽</b></span>':'')+
@@ -19141,8 +19146,12 @@ function tSupplyDetail(sel, sortBy){
     mats.forEach(function(m){
       const nn=normMatName(m);
       const key=(m.store||"")+'|'+nn+'|'+(m.mode||"piece")+'|'+(Number(m.cost)||0);
-      if(!gm[key])gm[key]={n:nn,mode:m.mode,cost:m.cost,store:m.store,packPer:m.packPer,packBase:m.packBase,sheetM2:m.sheetM2,lenPer:m.lenPer,url:m.url,sn:m.sn,sc:m.sc,qty:0,ids:[],notes:[],bd:{}};
+      if(!gm[key])gm[key]={n:nn,mode:m.mode,cost:m.cost,store:m.store,packPer:m.packPer,packBase:m.packBase,sheetM2:m.sheetM2,lenPer:m.lenPer,url:m.url,sn:m.sn,sc:m.sc,qty:0,ids:[],notes:[],works:[],bd:{}};
       const g=gm[key]; g.qty+=(m.qty||1); g.ids.push(m.id);
+      // Работы, ради которых эту позицию берут. Строка склеена из потребностей
+      // разных работ, поэтому имён бывает несколько: снабженец должен понимать,
+      // подо что закупает, а мастер — куда это уйдёт.
+      if(m.wn&&g.works.indexOf(m.wn)<0)g.works.push(m.wn);
       if(!g.url&&m.url&&String(m.url).startsWith("http"))g.url=m.url;
       if(m.note&&String(m.note).trim()&&g.notes.indexOf(m.note)<0)g.notes.push(m.note);
       (Array.isArray(m.breakdown)?m.breakdown:[]).forEach(function(r){ const L=Number(r.len)||0,N=Number(r.n)||0; if(L>0&&N>0)g.bd[L]=(g.bd[L]||0)+N; });
