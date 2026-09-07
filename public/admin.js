@@ -40,7 +40,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // версия на устройстве. По этой подписи это видно сразу.
 // Логика закупок — общая с ботом и Worker'ом (src/supply.js): статус материала должен
 // одинаково считаться в панели и в Telegram, иначе бригадир и снабженец увидят разное.
-import { needStatus, needState, objectSupply, migrateLegacy, needQty, isSelection, pendingSelections, clientBuys, handoffMats, handoffTotals, ourMats, isLabour, buyMats, looksLikeLabour } from "../src/supply.js";
+import { needStatus, needState, objectSupply, migrateLegacy, needQty, isSelection, pendingSelections, clientPays, objClientPays, refundMats, refundTotals, isLabour, buyMats, looksLikeLabour } from "../src/supply.js";
 // Сроки этапов — тот же общий модуль, что читают напоминания (см. src/stages.js).
 import { sheetPositions, sheetTotals, sheetIssues, optionGroups, roomArea, optionCost,
   SPEC_POINTS, pointMeta, pointTotals, roomPoints } from "../src/spec.js";
@@ -18057,11 +18057,9 @@ function tReceive(sel){
           '<span style="font-size:10px;font-weight:700;color:#5a7a9a;background:#eef2f7;border-radius:4px;padding:1px 6px">'+mode.icon+' '+numRu(m.qty||1)+' '+mode.unit+'</span>'+
           (multiMode?'<span style="font-size:10px;background:#e8f0fa;color:#2a5298;border-radius:4px;padding:1px 6px">'+m.objIcon+' '+esc(m.objName)+'</span>':'')+
           '<span style="font-size:10px;color:#9aabbf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px">↳ '+esc(m.wn)+'</span>'+
-          // Бригадир должен знать, ЧТО он принимает: материал заказчика везёт он сам,
-          // и спрашивать с нас накладную по нему бессмысленно.
-          (clientBuys(m)
-            ? '<span style="font-size:10px;font-weight:700;color:#8e44ad;background:#8e44ad18;border-radius:5px;padding:1px 7px">👤 везёт заказчик</span>'
-            : (bought?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#eafaf0;border-radius:5px;padding:1px 7px">🛒 куплено</span>':''))+
+          // Про компенсацию бригадиру знать незачем: материал купили мы, везём мы,
+          // принимает он как обычно. Кто вернёт деньги — вопрос не склада.
+          (bought?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#eafaf0;border-radius:5px;padding:1px 7px">🛒 куплено</span>':'')+
         '</div>'+
       '</div>'+
     '</div>';
@@ -18639,14 +18637,14 @@ function buildSupplyTZ(store){
 // Полный список материалов объекта в PDF — «для передачи кому-то» (снабженцу/подрядчику).
 // В отличие от ТЗ: ВСЕ магазины и ВСЕ позиции (не только не купленное), со статусом «куплено»,
 // ссылками на товар и итогами куплено/осталось. Учитывает текущие фильтры (поиск/магазин/не куплено).
-// Лист заказчику: что он закупает сам. От нашего закупочного листа отличается
-// адресатом, и потому содержимым — здесь нет колонки «куплено» (её ведём мы, а не
-// он) и нет разбивки по нашим отметкам. Цены и итог есть: заказчику нужен бюджет,
-// а не только перечень. Ссылка на товар стоит в каждой строке — ради неё лист и
-// делается, покупать по нему будет он.
+// Счёт заказчику на компенсацию: материалы купили мы, деньги возвращает он.
+// От нашего закупочного листа отличается адресатом и потому содержимым — ссылка на
+// товар в каждой строке (по ней видно, за что платят), объём в базовой единице,
+// цены и итог, и отдельно сколько из этого уже оплачено: просить компенсацию за
+// непотраченное рано.
 //
-// Состав считает общий `handoffMats`: то же, что показано в плашке на экране.
-// Своя выборка здесь означала бы, что в PDF уехало не то, что человек выделил.
+// Состав считает общий `refundMats`: то же, что показано в плашке на экране. Своя
+// выборка здесь означала бы, что в счёт уехало не то, что человек выделил.
 function buildHandoffList(){
   const sel=window._supplySelected||{};
   const objs=objects.filter(function(o){return !!sel[o.id];});
@@ -18654,8 +18652,8 @@ function buildHandoffList(){
   objs.forEach(function(o){(o.stages||[]).forEach(function(s){(s.works||[]).forEach(function(w){buyMats(w).forEach(function(m){
     mats.push(Object.assign({},m,{wn:w.n,sn:s.n,objName:o.name}));
   });});});});
-  mats=handoffMats(mats, supplyHandoff);
-  if(!mats.length){ alert("Никакие позиции не помечены к закупке заказчиком.\n\nПометьте пилюлей 👤 в строке или добёрите режимом «Выделить позиции»."); return; }
+  mats=refundMats(mats, supplyHandoff);
+  if(!mats.length){ alert("Никакие позиции не помечены к компенсации.\n\nПометьте пилюлей 💰 в строке или добёрите режимом «Выделить позиции»."); return; }
   function qtyText(m){
     const lens=(Array.isArray(m.breakdown)?m.breakdown:[]).map(function(r){return {len:Number(r.len)||0,n:Number(r.n)||0};}).filter(function(r){return r.len>0&&r.n>0;}).sort(function(a,b){return b.len-a.len;});
     if(lens.length){ const tn=lens.reduce(function(a,r){return a+r.n;},0); const tm=Math.round(lens.reduce(function(a,r){return a+r.len*r.n;},0)*100)/100; return lens.map(function(r){return numRu(r.len)+' м × '+r.n+' шт';}).join(' + ')+' = '+tn+' хлыст ('+numRu(tm)+' м.п.)'; }
@@ -18665,7 +18663,8 @@ function buildHandoffList(){
   const byStore={};
   mats.forEach(function(m){ const st=m.store||"Без магазина"; (byStore[st]=byStore[st]||[]).push(m); });
   const stores=Object.keys(byStore).sort();
-  const total=handoffTotals(mats).sum;
+  const rt=refundTotals(mats, purchased);
+  const total=rt.sum;
   let idx=0;
   const sections=stores.map(function(st){
     const list=byStore[st].slice().sort(function(a,b){return (a.n||"").localeCompare(b.n||"");});
@@ -18676,7 +18675,7 @@ function buildHandoffList(){
         (m.note&&String(m.note).trim()?'<div class="note">'+esc(m.note)+'</div>':'')+
         (m.sn?'<div class="note">'+esc(m.sn)+'</div>':'')+
         (m.url?'<div class="lnk"><a href="'+esc(m.url)+'">'+esc(m.url)+'</a></div>':'<div class="note nolink">ссылки нет — подобрать на месте</div>')+
-        '</td><td>'+qtyText(m)+'</td><td class="r">'+(Number(m.cost)||0).toLocaleString('ru-RU')+' ₽/'+mo.unit+'</td><td class="r">'+Math.round((Number(m.cost)||0)*(m.qty||1)).toLocaleString('ru-RU')+' ₽</td><td class="c">☐</td></tr>';
+        '</td><td>'+qtyText(m)+'</td><td class="r">'+(Number(m.cost)||0).toLocaleString('ru-RU')+' ₽/'+mo.unit+'</td><td class="r">'+Math.round((Number(m.cost)||0)*(m.qty||1)).toLocaleString('ru-RU')+' ₽</td><td class="c">'+(purchased[m.id]?'✔':'☐')+'</td></tr>';
     }).join('');
     return '<h2>'+esc(st)+' <span class="cnt">'+list.length+' поз. · '+Math.round(sub).toLocaleString('ru-RU')+' ₽</span></h2>'+
       '<table><thead><tr><th>№</th><th>Материал и ссылка</th><th>Объём</th><th>Цена</th><th>Сумма</th><th>✔</th></tr></thead><tbody>'+rows+'</tbody></table>';
@@ -18697,14 +18696,14 @@ function buildHandoffList(){
     '.btn{margin:14px 0;padding:10px 18px;background:#8e44ad;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer}'+
     '@media print{.btn{display:none}body{padding:0}a{color:#1a2a3a}}'+
     '</style></head><body>'+
-    '<h1>🧾 Материалы к самостоятельной закупке</h1>'+
+    '<h1>🧾 Счёт на компенсацию материалов</h1>'+
     '<div class="sub">Объект: '+esc(objNames||"—")+'</div>'+
     '<div class="sub">Дата: '+ds+' · КубрДом · позиций: '+mats.length+'</div>'+
     '<button class="btn" onclick="window.print()">🖨 Печать / Сохранить в PDF</button>'+
-    '<div class="hint">Эти позиции закупает заказчик. Объёмы посчитаны по проекту, цены — ориентир на дату листа: в магазине они меняются. Ссылка ведёт на товар, по которому считали; замена на аналог того же размера и характеристик допустима — сообщите о ней до покупки.</div>'+
+    '<div class="hint">Эти материалы закупаем и привозим мы, а стоимость по договорённости компенсирует заказчик. Ссылка ведёт на товар, по которому считали, объём — по проекту. Оплачено на дату листа: '+Math.round(rt.bought).toLocaleString('ru-RU')+' ₽, остальное закупается по ходу работ.</div>'+
     sections+
-    '<div class="tot">Итого: '+Math.round(total).toLocaleString('ru-RU')+' ₽'+
-      '<small>цены на '+ds+', ориентировочно</small></div>'+
+    '<div class="tot">Итого к компенсации: '+Math.round(total).toLocaleString('ru-RU')+' ₽'+
+      '<small>из них уже оплачено '+Math.round(rt.bought).toLocaleString('ru-RU')+' ₽ на '+ds+'</small></div>'+
     '</body></html>';
   const w=window.open("","_blank");
   if(!w){ alert("Разрешите всплывающие окна для этого сайта, чтобы сформировать PDF."); return; }
@@ -18785,9 +18784,13 @@ function _labourPill(ids){
 // `m.client`, и строка уходит из НАШЕЙ закупки — из прогресса, из «осталось» и из
 // подытога этапа. Приёмку на склад не трогает: материал всё равно приедет.
 function _clientPill(ids, on){
+  // Кнопки нет вовсе, пока у объекта не включена компенсация: значок в каждой
+  // строке чужой стройки только мешает читать список.
+  const c=supplyFindMatCtx(ids[0]);
+  if(!c||!objClientPays(c.o))return "";
   return '<span data-a="supply-client" data-ids="'+ids.join(',')+'" style="font-size:10px;font-weight:700;cursor:pointer;border-radius:6px;padding:1px 8px;'+
     (on?'color:#fff;background:#8e44ad':'color:#8e44ad;background:#fff;border:1px solid #8e44ad55')+'">'+
-    (on?'👤 Заказчик':'👤 заказчику')+'</span>';
+    (on?'💰 Компенсирует':'💰 компенсирует?')+'</span>';
 }
 
 // Пилюля «на складе» для полного вида снабженца/админа: видно наличие + можно отметить.
@@ -18976,27 +18979,50 @@ function tSupplyDetail(sel, sortBy){
     '</div>';
   }
 
-  // ── ПЕРЕДАЧА ЗАКАЗЧИКУ ────────────────────────────────────────────────────
-  // Что заказчик закупает сам: постоянно помеченное плюс добранное разово.
-  // Считаем по ПОЛНОМУ списку объекта, а не по отфильтрованному: лист собирают
-  // при включённом фильтре магазина, и выгрузить надо всё помеченное, а не то,
-  // что случайно осталось на экране.
-  const hoList=handoffMats(allMatsFull, supplyHandoff);
-  const hoT=handoffTotals(hoList);
-  html+='<div style="background:#fff;border-radius:12px;border:1.5px solid '+(supplyPickMode?'#8e44ad':'#dde6f0')+';padding:12px 14px;margin-bottom:14px">'+
-    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
-      '<span style="font-size:12px;font-weight:700;color:#1a2a3a;flex:1;min-width:0">👤 Закупает заказчик</span>'+
-      '<span style="font-size:12px;font-weight:800;color:'+(hoT.count?'#8e44ad':'#9aabbf')+';white-space:nowrap">'+hoT.count+' поз. · '+Math.round(hoT.sum).toLocaleString("ru-RU")+' ₽</span>'+
-    '</div>'+
-    (supplyPickMode
-      ? '<div style="font-size:11px;color:#8e44ad;background:#8e44ad12;border-radius:8px;padding:7px 10px;margin-bottom:8px;line-height:1.45">Режим выделения: тап по строке кладёт её в лист заказчику, а НЕ отмечает «куплено». Постоянную отметку ставит пилюля 👤 в строке.</div>'
-      : '<div style="font-size:11px;color:#9aabbf;line-height:1.45;margin-bottom:8px">Пилюля 👤 в строке помечает позицию насовсем — такие уходят из нашей закупки. Разово добрать в один лист — режимом выделения.</div>')+
-    '<div style="display:flex;gap:6px;flex-wrap:wrap">'+
-      '<button data-a="supply-pick-mode" style="flex:1;min-width:150px;padding:10px;border-radius:10px;cursor:pointer;font-size:12.5px;font-weight:700;border:1.5px solid #8e44ad;background:'+(supplyPickMode?'#8e44ad':'#fff')+';color:'+(supplyPickMode?'#fff':'#8e44ad')+'">'+(supplyPickMode?'✓ Готово, выйти':'✋ Выделить позиции')+'</button>'+
-      (Object.keys(supplyHandoff).length?'<button data-a="supply-pick-clear" style="padding:10px 12px;border-radius:10px;cursor:pointer;font-size:12.5px;font-weight:700;border:1.5px solid #dde6f0;background:#fff;color:#7a9aaa">Снять разовые</button>':'')+
-    '</div>'+
-    (hoT.count?'<button data-a="supply-handoff-pdf" style="width:100%;margin-top:6px;padding:11px;border-radius:10px;border:none;cursor:pointer;font-size:13px;font-weight:700;color:#fff;background:#8e44ad">📄 Список заказчику (PDF) · '+hoT.count+' поз.</button>':'')+
-  '</div>';
+  // ── КОМПЕНСАЦИЯ ЗАКАЗЧИКОМ ────────────────────────────────────────────────
+  // Договорённость про компенсацию бывает на одной стройке из десяти, поэтому она
+  // включается У ОБЪЕКТА: пока выключена, ни кнопок в строках, ни этой панели нет —
+  // лишний значок в каждой строке чужого объекта только мешает. Переключатель
+  // показываем, когда выбран РОВНО ОДИН объект: иначе непонятно, чей он.
+  const oneObj=targetObjs.length===1?targetObjs[0]:null;
+  const payObjs=targetObjs.filter(objClientPays);
+  if(oneObj&&!objClientPays(oneObj)){
+    html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:11px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px">'+
+      '<div style="flex:1;min-width:0;font-size:11.5px;color:#9aabbf;line-height:1.45">Часть материалов на этом объекте заказчик компенсирует?</div>'+
+      '<button data-a="supply-refund-on" data-oid="'+oneObj.id+'" style="padding:8px 13px;border-radius:9px;cursor:pointer;font-size:12px;font-weight:700;border:1.5px solid #8e44ad;background:#fff;color:#8e44ad;white-space:nowrap;flex-shrink:0">💰 Включить</button>'+
+    '</div>';
+  }
+  if(payObjs.length){
+    // Считаем по ПОЛНОМУ списку объекта, а не по отфильтрованному: счёт собирают при
+    // включённом фильтре магазина, а выставить надо всё помеченное.
+    const refList=refundMats(allMatsFull.filter(function(m){return payObjs.some(function(o){return o.id===m.objId;});}), supplyHandoff);
+    const refT=refundTotals(refList, purchased);
+    html+='<div style="background:#fff;border-radius:12px;border:1.5px solid '+(supplyPickMode?'#8e44ad':'#8e44ad44')+';padding:12px 14px;margin-bottom:14px">'+
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
+        '<span style="font-size:12px;font-weight:700;color:#1a2a3a;flex:1;min-width:0">💰 Заказчик компенсирует</span>'+
+        '<span style="font-size:12px;font-weight:800;color:'+(refT.count?'#8e44ad':'#9aabbf')+';white-space:nowrap">'+refT.count+' поз. · '+Math.round(refT.sum).toLocaleString("ru-RU")+' ₽</span>'+
+      '</div>'+
+      (refT.count?'<div style="display:flex;gap:6px;margin-bottom:8px">'+
+        '<div style="flex:1;background:#8e44ad12;border:1px solid #8e44ad33;border-radius:9px;padding:7px 10px;text-align:center">'+
+          '<div style="font-size:9.5px;color:#8e44ad;font-weight:700;letter-spacing:0.3px">УЖЕ ПОТРАЧЕНО</div>'+
+          '<div style="font-size:14px;font-weight:800;color:#8e44ad">'+Math.round(refT.bought).toLocaleString("ru-RU")+' ₽</div>'+
+        '</div>'+
+        '<div style="flex:1;background:#f8fafc;border:1px solid #dde6f0;border-radius:9px;padding:7px 10px;text-align:center">'+
+          '<div style="font-size:9.5px;color:#9aabbf;font-weight:700;letter-spacing:0.3px">ЕЩЁ ПРЕДСТОИТ</div>'+
+          '<div style="font-size:14px;font-weight:800;color:#7a9aaa">'+Math.round(refT.sum-refT.bought).toLocaleString("ru-RU")+' ₽</div>'+
+        '</div>'+
+      '</div>':'')+
+      (supplyPickMode
+        ? '<div style="font-size:11px;color:#8e44ad;background:#8e44ad12;border-radius:8px;padding:7px 10px;margin-bottom:8px;line-height:1.45">Режим выделения: тап по строке кладёт её в счёт, а НЕ отмечает «куплено». Постоянную пометку ставит пилюля 💰 в строке.</div>'
+        : '<div style="font-size:11px;color:#9aabbf;line-height:1.45;margin-bottom:8px">Покупаем и принимаем всё мы, как обычно. Пилюля 💰 в строке помечает, что эти деньги заказчик вернёт — по пометкам собирается счёт.</div>')+
+      '<div style="display:flex;gap:6px;flex-wrap:wrap">'+
+        '<button data-a="supply-pick-mode" style="flex:1;min-width:150px;padding:10px;border-radius:10px;cursor:pointer;font-size:12.5px;font-weight:700;border:1.5px solid #8e44ad;background:'+(supplyPickMode?'#8e44ad':'#fff')+';color:'+(supplyPickMode?'#fff':'#8e44ad')+'">'+(supplyPickMode?'✓ Готово, выйти':'✋ Выделить позиции')+'</button>'+
+        (Object.keys(supplyHandoff).length?'<button data-a="supply-pick-clear" style="padding:10px 12px;border-radius:10px;cursor:pointer;font-size:12.5px;font-weight:700;border:1.5px solid #dde6f0;background:#fff;color:#7a9aaa">Снять разовые</button>':'')+
+        (oneObj?'<button data-a="supply-refund-off" data-oid="'+oneObj.id+'" style="padding:10px 12px;border-radius:10px;cursor:pointer;font-size:12.5px;font-weight:700;border:1.5px solid #dde6f0;background:#fff;color:#7a9aaa">Выключить</button>':'')+
+      '</div>'+
+      (refT.count?'<button data-a="supply-handoff-pdf" style="width:100%;margin-top:6px;padding:11px;border-radius:10px;border:none;cursor:pointer;font-size:13px;font-weight:700;color:#fff;background:#8e44ad">📄 Счёт на компенсацию (PDF) · '+refT.count+' поз.</button>':'')+
+    '</div>';
+  }
 
   // Полный список объекта в PDF (для передачи снабженцу/подрядчику) — всегда доступен.
   html+='<div style="margin-bottom:14px"><button data-a="supply-list" style="width:100%;padding:12px;border-radius:12px;border:1.5px solid #2980b9;cursor:pointer;font-size:13px;font-weight:700;color:#2980b9;background:#fff">📄 Скачать список для передачи (PDF)</button></div>';
@@ -19008,12 +19034,11 @@ function tSupplyDetail(sel, sortBy){
     html+='<div style="margin-bottom:14px"><button data-a="supply-tz" data-store="'+supplyStoreFilter.replace(/"/g,'&quot;')+'" style="width:100%;padding:12px;border-radius:12px;border:none;cursor:pointer;font-size:13px;font-weight:700;color:#fff;background:'+_tzc+'">📄 Сформировать ТЗ поставщику «'+esc(supplyStoreFilter)+'» (PDF)</button></div>';
   }
 
-  // Progress bar — in money. Считаем по НАШЕЙ половине: то, что закупает заказчик,
-  // не наши деньги, и висеть в «осталось купить» оно не должно — иначе снабженец
-  // каждый день видит долг, который ему нечем закрыть.
-  const mineMats=ourMats(allMats);
-  const costTotal=mineMats.reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
-  const costDone=mineMats.filter(function(m){return!!purchased[m.id];}).reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
+  // Progress bar — in money. Покупаем ВСЁ мы, поэтому в счёт входит каждая позиция:
+  // пометка «заказчик компенсирует» говорит, кто вернёт деньги, а не кто их тратит.
+  // Вычесть её отсюда значило бы спрятать закупку, которую нам всё равно делать.
+  const costTotal=allMats.reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
+  const costDone=allMats.filter(function(m){return!!purchased[m.id];}).reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
   const costLeft=costTotal-costDone;
   const pct=costTotal>0?Math.round(costDone/costTotal*100):0;
   const allDone=costTotal>0&&costLeft===0;
@@ -19071,10 +19096,9 @@ function tSupplyDetail(sel, sortBy){
 
   function matRow(m){
     const sc=STORECOL[m.store||""]||"#555";
-    // Та же логика, что в слитой строке: то, что покупает заказчик, для нас закрыто.
-    const byClient=clientBuys(m);
-    const done=byClient||!!purchased[m.id];
-    const doneCol=byClient?'#8e44ad':'#27ae60', doneBg=byClient?'#f6effa':'#f0fdf4';
+    const byClient=clientPays(m);
+    const done=!!purchased[m.id];
+    const doneCol='#27ae60', doneBg='#f0fdf4';
     const mode=EXP_MODES.find(function(x){return x.k===(m.mode||"piece");})||EXP_MODES[0];
     const conv=matConv(m);
     const idx=conv?(expView[m.id]==="1"?1:(expView[m.id]==="0"?0:conv.def)):0;
@@ -19085,7 +19109,7 @@ function tSupplyDetail(sel, sortBy){
     const lineTotal=((Number(m.cost)||0)*qty).toLocaleString("ru-RU");
     // В режиме выделения тап по строке кладёт её в передачу, а не отмечает «куплено»:
     // два смысла у одного жеста развести иначе нечем, поэтому режим виден баннером.
-    const inHo=clientBuys(m)||!!supplyHandoff[m.id];
+    const inHo=clientPays(m)||!!supplyHandoff[m.id];
     const rowA=supplyPickMode?'supply-pick':'supply-check';
     const rowBg=supplyPickMode?(inHo?'#f6effa':'#f8fafc'):(done?doneBg:'#f8fafc');
     const rowBd=supplyPickMode?(inHo?'#8e44ad':'#dde6f0'):(done?doneCol:'#dde6f0');
@@ -19105,11 +19129,10 @@ function tSupplyDetail(sel, sortBy){
           (m.cost>0?'<span style="font-size:11px;color:'+(done?'#b0c8b0':'#7a9aaa')+'">'+price.toLocaleString("ru-RU")+' ₽/'+unit+' × '+numRu(qty)+' = <b style="color:'+(done?'#b0c8b0':'#0d1b2e')+'">'+lineTotal+' ₽</b></span>':'')+
           (m.note&&!(Array.isArray(m.breakdown)&&m.breakdown.length)?'<span style="font-size:10px;color:#9aabbf;font-style:italic">'+esc(m.note)+'</span>':'')+
           (!done&&m.url?'<a href="'+m.url+'" target="_blank" style="font-size:10px;color:#fff;background:#2980b9;border-radius:4px;padding:1px 7px;text-decoration:none;font-weight:600" onclick="event.stopPropagation()">🔗 купить</a>':'')+
-          (done?(byClient
-            ? '<span style="font-size:10px;font-weight:700;color:#8e44ad;background:#8e44ad18;border-radius:6px;padding:1px 8px">✓ Покупает заказчик</span>'
-            : '<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>'):'')+
+          (done?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>':'')+
+          (byClient?'<span style="font-size:10px;font-weight:700;color:#8e44ad;background:#8e44ad18;border-radius:6px;padding:1px 8px">💰 компенсирует</span>':'')+
           _arrivedPill('data-mid="'+m.id+'"', !!arrived[m.id])+
-          _clientPill([m.id], clientBuys(m))+
+          _clientPill([m.id], clientPays(m))+
           _labourPill([m.id])+
           (matPendingChange(m.id)?MAT_PENDING_PILL:'')+
           _stockPill([m.id])+
@@ -19164,12 +19187,10 @@ function tSupplyDetail(sel, sortBy){
   function mergeRow(g){
     const sc=STORECOL[g.store||""]||"#555";
     const ids=g.ids;
-    // Позиция, которую покупает не мы, для НАС закрыта: снабженцу по ней делать
-    // нечего, и висеть неотмеченной она не должна. `purchased` при этом не трогаем —
-    // мы её не покупали, и врать в данных, чтобы починить экран, нельзя. Дальше она
-    // идёт своим ходом: бригадир принимает её на склад как обычно.
+    // Позицию покупаем МЫ — обычной галочкой «куплено». Пометка про компенсацию
+    // ничего в закупке не меняет: она про то, кто вернёт деньги, а не кто их тратит.
     const byClient=ids.length>0&&ids.every(function(id){ const mm=supplyFindMat(id); return !!(mm&&mm.client); });
-    const allDone=byClient||(ids.length>0&&ids.every(function(id){return!!purchased[id];}));
+    const allDone=ids.length>0&&ids.every(function(id){return!!purchased[id];});
     const someDone=ids.some(function(id){return!!purchased[id];});
     const mode=EXP_MODES.find(function(x){return x.k===(g.mode||"piece");})||EXP_MODES[0];
     const conv=matConv(g);
@@ -19179,8 +19200,8 @@ function tSupplyDetail(sel, sortBy){
     // из потребностей разных работ, и половинчатого выбора у неё быть не может.
     const inHo=ids.length>0&&ids.every(function(id){ const mm=supplyFindMat(id); return !!(mm&&mm.client)||!!supplyHandoff[id]; });
     const rowA=supplyPickMode?'supply-pick':'supply-stage-check';
-    const doneCol=byClient?'#8e44ad':'#27ae60', doneBg=byClient?'#f6effa':'#f0fdf4';
-    const rowBg=supplyPickMode?(inHo?'#f6effa':'#f8fafc'):(allDone?doneBg:'#f8fafc');
+    const doneCol='#27ae60';
+    const rowBg=supplyPickMode?(inHo?'#f6effa':'#f8fafc'):(allDone?'#f0fdf4':'#f8fafc');
     const rowBd=supplyPickMode?(inHo?'#8e44ad':'#dde6f0'):(allDone?doneCol:'#dde6f0');
     const boxOn=supplyPickMode?inHo:allDone, boxHalf=supplyPickMode?false:someDone;
     return '<div data-a="'+rowA+'" data-mid="'+ids[0]+'" data-ids="'+ids.join(',')+'" data-done="'+(allDone?'1':'0')+'" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;margin-bottom:6px;background:'+rowBg+';border:1.5px solid '+rowBd+';cursor:pointer">'+
@@ -19198,9 +19219,8 @@ function tSupplyDetail(sel, sortBy){
           '<span style="font-size:10px;font-weight:700;color:#5a7a9a;background:#eef2f7;border-radius:4px;padding:1px 6px">'+mode.icon+' '+mode.unit+'</span>'+
           (g.cost>0?'<span style="font-size:11px;color:#7a9aaa">'+(Number(g.cost)||0).toLocaleString("ru-RU")+' ₽/'+mode.unit+' × '+numRu(qty)+' = <b style="color:#0d1b2e">'+lineTotal+' ₽</b></span>':'')+
           (!allDone&&g.url?'<a href="'+g.url+'" target="_blank" style="font-size:10px;color:#fff;background:#2980b9;border-radius:4px;padding:1px 7px;text-decoration:none;font-weight:600" onclick="event.stopPropagation()">🔗 купить</a>':'')+
-          (allDone?(byClient
-            ? '<span style="font-size:10px;font-weight:700;color:#8e44ad;background:#8e44ad18;border-radius:6px;padding:1px 8px">✓ Покупает заказчик</span>'
-            : '<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>'):'')+
+          (allDone?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>':'')+
+          (byClient?'<span style="font-size:10px;font-weight:700;color:#8e44ad;background:#8e44ad18;border-radius:6px;padding:1px 8px">💰 компенсирует</span>':'')+
           _arrivedPill('data-ids="'+ids.join(',')+'"', ids.length>0&&ids.every(function(id){return !!arrived[id];}))+
           // Слитая строка помечается целиком: она склеена из потребностей разных
           // работ, и половина «заказчику», половина нам — это две разные строки,
@@ -19270,22 +19290,15 @@ function tSupplyDetail(sel, sortBy){
     stageNames.forEach(function(sn){
       const sm=allMats.filter(function(m){return m.sn===sn;});
       const sc=sm[0]?sm[0].sc:"#7f8c8d";
-      // Подытог этапа — тоже только НАША половина: строки заказчика в списке видны
-      // (их надо ему передать), но в «куплено / осталось» этапа не входят.
-      const smMine=ourMats(sm);
-      const stageCost=smMine.reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
-      const stageAllDone=smMine.length>0&&smMine.every(function(m){return!!purchased[m.id];});
-      const stageDoneCount=smMine.filter(function(m){return!!purchased[m.id];}).length;
-      const stageBought=smMine.filter(function(m){return!!purchased[m.id];}).reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
+      const stageCost=sm.reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
+      const stageAllDone=sm.length>0&&sm.every(function(m){return!!purchased[m.id];});
+      const stageDoneCount=sm.filter(function(m){return!!purchased[m.id];}).length;
+      const stageBought=sm.filter(function(m){return!!purchased[m.id];}).reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
       const stageLeft=stageCost-stageBought;
       const stagePct=stageCost>0?Math.round(stageBought/stageCost*100):0;
-      const safeIds=smMine.map(function(m){return m.id;}).join(',');
+      const safeIds=sm.map(function(m){return m.id;}).join(',');
       const mrows=_mergeMats(sm); // слить одинаковые материалы между объектами
-      // Закрытой считается и позиция заказчика: снабженцу по ней делать нечего,
-      // и держать её в «осталось» значит показывать долг, который не наш.
-      const mDone=mrows.filter(function(g){return g.ids.every(function(id){
-        const mm=supplyFindMat(id); return !!purchased[id]||!!(mm&&mm.client);
-      });}).length;
+      const mDone=mrows.filter(function(g){return g.ids.every(function(id){return!!purchased[id];});}).length;
       // Полностью закупленный этап сворачиваем: делать с ним больше нечего, а его
       // список на 20+ позиций отодвигает вниз то, что ещё надо купить.
       const gk="stage|"+sn;
@@ -23291,6 +23304,18 @@ function bind(){
       fl();
     };}
     else if(a==="supply-labour-open"){el.onclick=()=>{ supplyLabourOpen=!supplyLabourOpen; rerenderTab(); };}
+    // Компенсация — свойство объекта: включается там, где о ней договорились.
+    else if(a==="supply-refund-on"||a==="supply-refund-off"){el.onclick=(ev)=>{
+      ev&&ev.stopPropagation();
+      const oid=el.dataset.oid, on=(a==="supply-refund-on");
+      objects=objects.map(function(o){
+        if(o.id!==oid)return o;
+        const no=Object.assign({},o);
+        if(on)no.clientPays=true; else delete no.clientPays;
+        return no;
+      });
+      fl();
+    };}
     else if(a==="supply-pick-mode"){el.onclick=()=>{ supplyPickMode=!supplyPickMode; rerenderTab(); };}
     else if(a==="supply-pick-clear"){el.onclick=()=>{ supplyHandoff={}; rerenderTab(); };}
     else if(a==="supply-handoff-pdf"){el.onclick=(ev)=>{ ev&&ev.stopPropagation(); buildHandoffList(); };}

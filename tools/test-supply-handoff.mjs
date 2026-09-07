@@ -1,43 +1,17 @@
 #!/usr/bin/env node
-// Передача материалов заказчику: он закупает сам, мы даём объём и ссылку.
+// Компенсация заказчиком: материалы покупаем МЫ, деньги он возвращает.
 //
-// Смысл шага: пометка «закупает заказчик» — это не «куплено». Такая позиция
-// остаётся в списке (её надо передать), но уходит из НАШЕЙ закупки: из прогресса,
-// из «осталось» и из подытога этапа. Иначе снабженец каждый день видит долг,
-// который ему нечем закрыть, а процент готовности врёт про чужие покупки.
+// Смысл шага: пометка ничего в закупке не меняет — позиция целиком остаётся в
+// прогрессе, в «куплено / осталось», в подытоге этапа и в приёмке. Она отвечает на
+// другой вопрос: чьи это в итоге деньги. По пометкам собирается счёт.
 //
-// Сторожим три вещи: постоянный признак живёт на материале и переживает
-// перерисовку, деньги считаются по нашей половине, а в лист заказчику уходит
-// ровно то, что показано на экране (постоянные плюс добранные разово).
-import { clientBuys, handoffMats, handoffTotals, ourMats, isLabour, buyMats, looksLikeLabour } from '../src/supply.js'
+// Сторожим три вещи: признак не трогает закупку, кнопки нет в объектах, где
+// компенсация не включена, и в счёт уходит ровно то, что показано на экране.
+import { clientPays, objClientPays, refundMats, refundTotals, isLabour, buyMats, looksLikeLabour } from '../src/supply.js'
 import { positionWork } from '../src/recipe.js'
 import { boot, reporter } from './harness/panel-vm.js'
 
 const t = reporter()
-
-// Этап из трёх позиций: две наши, одну заказчик берёт на себя.
-function seed(p) {
-  const mat = (id, n, cost, qty, extra) => Object.assign(
-    { id, n, cost, qty, store: 'Лемана', mode: 'piece', url: 'https://lemanapro.ru/' + id }, extra || {})
-  p.set({
-    expProducts: [],
-    objects: [
-      { id: 'o1', name: 'Мордвес 1', icon: '🏠', stages: [
-        { id: 's1', n: 'ЭТАП 1 — ПОДГОТОВИТЕЛЬНЫЙ', c: '#e67e22', works: [
-          { id: 'w1', n: 'Каркас', cost: 0, mats: [
-            mat('m1', 'Брусок 50×50', 229, 20),          // наша
-            mat('m2', 'Гвозди 30 мм', 500, 2),           // наша
-            mat('m3', 'Плитка керамогранит', 1200, 30),  // заказчика
-          ] },
-        ] },
-      ] },
-    ],
-    purchased: {}, arrived: {}, purchases: [],
-    templates: [], contractDocs: [], users: [], finTxns: [], stock: [], issues: [],
-  })
-  p.run('window._supplySelected={o1:true};supplyHandoff={};supplyPickMode=false;')
-}
-
 const MATS = [
   { id: 'm1', cost: 229, qty: 20 },
   { id: 'm2', cost: 500, qty: 2 },
@@ -46,54 +20,102 @@ const MATS = [
 
 // ── 1. Общий модуль ─────────────────────────────────────────────────────────
 {
-  t.section('Кто что закупает — считает общий модуль')
-  t.ok('признак читается с материала', clientBuys(MATS[2]) && !clientBuys(MATS[0]))
-  t.ok('наша половина без позиций заказчика', ourMats(MATS).map((m) => m.id).join(',') === 'm1,m2')
+  t.section('Кто вернёт деньги — считает общий модуль')
+  t.ok('признак читается с материала', clientPays(MATS[2]) && !clientPays(MATS[0]))
+  t.ok('договорённость — свойство объекта',
+    objClientPays({ clientPays: true }) && !objClientPays({}) && !objClientPays(null))
 
-  const ho = handoffMats(MATS, {})
-  t.ok('в передачу идёт помеченное', ho.length === 1 && ho[0].id === 'm3')
-  t.ok('сумма считается ценой × количеством', handoffTotals(ho).sum === 1200 * 30,
-    String(handoffTotals(ho).sum))
+  const ref = refundMats(MATS, {})
+  t.ok('в счёт идёт помеченное', ref.length === 1 && ref[0].id === 'm3')
 
-  // Разовый добор складывается с постоянным признаком, а не заменяет его.
-  const both = handoffMats(MATS, { m1: true })
+  // «Уже потрачено» — то, что мы оплатили: просить компенсацию за непотраченное рано.
+  const t0 = refundTotals(ref, {})
+  t.ok('сумма счёта — цена × количество', t0.sum === 1200 * 30, String(t0.sum))
+  t.ok('пока не купили — потрачено ноль', t0.bought === 0)
+  const t1 = refundTotals(ref, { m3: true })
+  t.ok('после покупки попадает в потраченное', t1.bought === 1200 * 30)
+
+  // Разовый добор складывается с постоянной пометкой, а не заменяет её.
+  const both = refundMats(MATS, { m1: true })
   t.ok('разовый добор прибавляется', both.map((m) => m.id).join(',') === 'm1,m3')
-  t.ok('и попадает в сумму', handoffTotals(both).sum === 229 * 20 + 1200 * 30)
-  t.ok('пустой список — пустой итог', handoffTotals([]).count === 0 && handoffTotals([]).sum === 0)
+  t.ok('и попадает в сумму', refundTotals(both, {}).sum === 229 * 20 + 1200 * 30)
+  t.ok('пустой список — пустой итог', refundTotals([], {}).count === 0 && refundTotals([], {}).sum === 0)
 }
 
-// ── 2. Деньги заказчика — не наш долг ───────────────────────────────────────
+// Объект: две позиции, одну заказчик компенсирует. Компенсация включена.
+function seed(p, on) {
+  p.set({
+    expProducts: [],
+    objects: [
+      { id: 'o1', name: 'Мордвес 1', icon: '🏠', clientPays: on === false ? undefined : true, stages: [
+        { id: 's1', n: 'ЭТАП 1', c: '#e67e22', works: [
+          { id: 'w1', n: 'Каркас', cost: 5007, mats: [
+            { id: 'm1', n: 'Брусок 50×50', cost: 229, qty: 20, store: 'Белка', mode: 'piece', client: true },
+            { id: 'm2', n: 'Гвозди 30 мм', cost: 427, qty: 1, store: 'Озон', mode: 'piece' },
+          ] },
+        ] },
+      ] },
+    ],
+    purchased: {}, arrived: {}, purchases: [],
+    templates: [], contractDocs: [], users: [], finTxns: [], stock: [], issues: [],
+  })
+  p.run('window._supplySelected={o1:true};supplyHandoff={};supplyPickMode=false;supplyLabourOpen=false;')
+}
+const nb = (x) => x.replace(/[\u00a0\u202f]/g, ' ')
+
+// ── 2. Закупка идёт как обычно ──────────────────────────────────────────────
+// Главное отличие от прежней логики: помеченная позиция НЕ выходит из закупки.
+// Покупаем мы, значит она в общем счёте и растёт в «куплено» вместе со всеми.
 {
-  t.section('Позиция заказчика уходит из нашей закупки')
+  t.section('Помеченная позиция остаётся нашей закупкой')
   const p = boot(); seed(p)
 
-  const before = p.run('tSupplyDetail({o1:true},"stage")')
-  const all = 229 * 20 + 500 * 2 + 1200 * 30
-  t.ok('пока не помечено — в закупке весь этап', before.indexOf(all.toLocaleString('ru-RU')) >= 0,
-    'нет суммы ' + all)
+  const html = nb(p.run('tSupplyDetail({o1:true},"stage")'))
+  t.ok('вся смета в счёте', html.indexOf('из 5 007 ₽') >= 0, 'позицию вычли из закупки')
+  t.ok('этап считает обе позиции', html.indexOf('0/2 · 5 007 ₽') >= 0, 'подытог этапа урезан')
+  t.ok('строка помечена чипом', html.indexOf('💰 компенсирует') >= 0)
+  t.ok('но не выглядит закрытой', html.indexOf('✓ Покупает заказчик') < 0,
+    'позиция закрылась сама — покупать-то нам')
 
-  // Помечаем плитку как закупку заказчика — так же, как это делает тап по пилюле.
-  const pill = p.dom.node({ a: 'supply-client', ids: 'm3' })
-  t.ok('пилюля есть в строке', !!pill)
-  p.run('bind();'); pill.onclick({ stopPropagation() {} })
+  // Отмечаем куплено обычной галочкой — деньги растут нарастающе.
+  const row = p.dom.node({ a: 'supply-check', mid: 'm1' }) || p.dom.node({ a: 'supply-stage-check', mid: 'm1' })
+  p.run('bind();'); row.onclick({ stopPropagation() {} })
+  const after = nb(p.run('tSupplyDetail({o1:true},"stage")'))
+  t.ok('куплено выросло на всю позицию', after.indexOf('4 580 ₽') >= 0, 'деньги не попали в «куплено»')
+  t.ok('и осталось только наше остальное', after.indexOf('427 ₽') >= 0)
 
-  t.ok('признак записан в материал', p.q('objects[0].stages[0].works[0].mats[2].client') === true)
-  const after = p.run('tSupplyDetail({o1:true},"stage")')
-  const ours = 229 * 20 + 500 * 2
-  t.ok('в «осталось» осталась только наша половина', after.indexOf(ours.toLocaleString('ru-RU')) >= 0,
-    'нет нашей суммы ' + ours)
-  t.ok('позиция заказчика из списка НЕ пропала', after.indexOf('Плитка керамогранит') >= 0,
-    'строку заказчика надо видеть — её же передавать')
-  t.ok('плашка показывает, сколько берёт заказчик',
-    after.indexOf('👤 Закупает заказчик') >= 0 && after.indexOf((1200 * 30).toLocaleString('ru-RU')) >= 0)
-
-  // Повторный тап снимает признак — решение обратимо.
-  const pill2 = p.dom.node({ a: 'supply-client', ids: 'm3' })
-  p.run('bind();'); pill2.onclick({ stopPropagation() {} })
-  t.ok('признак снимается тем же тапом', !p.q('objects[0].stages[0].works[0].mats[2].client'))
+  // Приёмка: обычная позиция без особых пометок — купили и везём мы.
+  const rec = nb(p.run('tReceive({o1:true})'))
+  t.ok('позиция в приёмке', rec.indexOf('Брусок 50×50') >= 0)
+  t.ok('и без пометок про заказчика', rec.indexOf('везёт заказчик') < 0,
+    'кто вернёт деньги — не вопрос склада')
 }
 
-// ── 3. Разовый добор ────────────────────────────────────────────────────────
+// ── 3. Кнопка только там, где договорились ──────────────────────────────────
+{
+  t.section('Кнопка только в своём объекте')
+  const p = boot(); seed(p, false)
+
+  const off = p.run('tSupplyDetail({o1:true},"stage")')
+  t.ok('пилюли в строках нет', off.indexOf('data-a="supply-client"') < 0,
+    'значок висит в объекте, где компенсации нет')
+  t.ok('панели тоже нет', off.indexOf('Заказчик компенсирует') < 0)
+  t.ok('но включить предлагают', off.indexOf('data-a="supply-refund-on"') >= 0)
+
+  const on = p.dom.node({ a: 'supply-refund-on', oid: 'o1' })
+  p.run('bind();'); on.onclick({ stopPropagation() {} })
+  t.ok('включилось у объекта', p.q('objects[0].clientPays') === true)
+
+  const shown = p.run('tSupplyDetail({o1:true},"stage")')
+  t.ok('пилюля появилась', shown.indexOf('data-a="supply-client"') >= 0)
+  t.ok('и панель тоже', shown.indexOf('Заказчик компенсирует') >= 0)
+
+  const offBtn = p.dom.node({ a: 'supply-refund-off', oid: 'o1' })
+  p.run('bind();'); offBtn.onclick({ stopPropagation() {} })
+  t.ok('выключается обратно', !p.q('objects[0].clientPays'))
+}
+
+// ── 3b. Разовый добор ───────────────────────────────────────────────────────
 {
   t.section('Разовый добор живёт на экране')
   const p = boot(); seed(p)
@@ -101,21 +123,16 @@ const MATS = [
   p.run('bind();'); modeBtn.onclick()
   t.ok('режим включился', p.q('supplyPickMode') === true)
 
-  const html = p.run('tSupplyDetail({o1:true},"stage")')
-  t.ok('строка в режиме выделения не отмечает «куплено»',
-    html.indexOf('data-a="supply-pick" data-mid="m1"') >= 0, 'строка осталась на supply-check')
-
-  const row = p.dom.node({ a: 'supply-pick', mid: 'm1' })
+  const row = p.dom.node({ a: 'supply-pick', mid: 'm2' })
   p.run('bind();'); row.onclick()
-  t.ok('позиция добрана', p.q('supplyHandoff.m1') === true)
-  t.ok('и «куплено» при этом не поставилось', !p.q('purchased.m1'),
+  t.ok('позиция добрана', p.q('supplyHandoff.m2') === true)
+  t.ok('и «куплено» при этом не поставилось', !p.q('purchased.m2'),
     'разовый выбор не должен трогать закупку')
-  t.ok('в объект добор не записан', !p.q('objects[0].stages[0].works[0].mats[0].client'),
+  t.ok('в объект добор не записан', !p.q('objects[0].stages[0].works[0].mats[1].client'),
     'разовое решение не место в снимке')
 
-  const withPick = p.run('tSupplyDetail({o1:true},"stage")')
-  t.ok('плашка посчитала добор', withPick.indexOf('1 поз. · ' + (229 * 20).toLocaleString('ru-RU')) >= 0,
-    'нет счётчика добора')
+  const withPick = nb(p.run('tSupplyDetail({o1:true},"stage")'))
+  t.ok('счёт вырос на добранное', withPick.indexOf('2 поз. · 5 007 ₽') >= 0, 'нет счётчика добора')
 
   const clr = p.dom.node({ a: 'supply-pick-clear' })
   p.run('bind();'); clr.onclick()
@@ -274,51 +291,5 @@ const MATS = [
   t.ok('и помечает свою позицию', p.q('objects[0].stages[0].works[0].mats[0].own') === true)
 }
 
-// ── 7. Позиция заказчика закрыта для нас и идёт бригадиру ───────────────────
-// Снабженцу по ней делать нечего — висеть неотмеченной она не должна. Но
-// `purchased` не трогаем: мы её не покупали, и врать в данных, чтобы починить
-// экран, нельзя. Материал всё равно приезжает, и бригадир принимает его как
-// обычно — «кто платил» и «привезли ли» разные вопросы.
-{
-  t.section('Куплено заказчиком — и дальше на приёмку')
-  const p = boot()
-  p.set({
-    expProducts: [],
-    objects: [
-      { id: 'o1', name: 'Мордвес 1', icon: '🏠', stages: [
-        { id: 's1', n: 'ЭТАП 1', c: '#e67e22', works: [
-          { id: 'w1', n: 'Каркас', cost: 5007, mats: [
-            { id: 'm1', n: 'Брусок 50×50', cost: 229, qty: 20, store: 'Белка', mode: 'piece', client: true },
-            { id: 'm2', n: 'Гвозди 30 мм', cost: 427, qty: 1, store: 'Озон', mode: 'piece' },
-          ] },
-        ] },
-      ] },
-    ],
-    purchased: {}, arrived: {}, purchases: [],
-    templates: [], contractDocs: [], users: [], finTxns: [], stock: [], issues: [],
-  })
-  p.run('window._supplySelected={o1:true};supplyHandoff={};supplyPickMode=false;supplyLabourOpen=false;')
-
-  const nb = (x) => x.replace(/[\u00a0\u202f]/g, ' ')
-  const html = nb(p.run('tSupplyDetail({o1:true},"stage")'))
-
-  t.ok('строка закрыта и подписана', html.indexOf('✓ Покупает заказчик') >= 0,
-    'позиция заказчика висит неотмеченной')
-  t.ok('счётчик этапа считает её закрытой', /1\/2 ·/.test(html), 'этап всё ещё «0/2»')
-  t.ok('в «осталось» только наши деньги', html.indexOf('427 ₽') >= 0 && html.indexOf('5 007 ₽ из') < 0,
-    'чужие покупки попали в наш долг')
-
-  // `purchased` остаётся честным: мы её не покупали.
-  t.ok('в данных «куплено» не проставлено', !p.q('purchased.m1'),
-    'экран починили ценой вранья в данных')
-
-  // Приёмка бригадира: позиция на месте и подписана, чтобы он знал, что принимает.
-  const rec = nb(p.run('tReceive({o1:true})'))
-  t.ok('позиция дошла до приёмки', rec.indexOf('Брусок 50×50') >= 0,
-    'материал всё равно приезжает — бригадир должен его принять')
-  t.ok('и подписана «везёт заказчик»', rec.indexOf('👤 везёт заказчик') >= 0,
-    'бригадир не знает, с кого спрашивать накладную')
-  t.ok('наш материал подписан по-своему', rec.indexOf('Гвозди 30 мм') >= 0)
-}
 
 t.done()
