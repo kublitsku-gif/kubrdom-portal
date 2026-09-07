@@ -17,7 +17,7 @@ function seed(panel) {
   panel.set({
     expProducts: [
       { id: 'p_osb', name: 'ОСП 30 м²', unitCost: 710, store: 'Белка', mode: 'piece', sheetM2: 3.12 },
-      { id: 'p_gvl', name: 'ГВЛВ 10 мм', unitCost: 900, store: 'Лемана', mode: 'piece', url: 'https://lemana/gvl' },
+      { id: 'p_gvl', name: 'ГВЛВ 10 мм', unitCost: 900, store: 'Лемана ПРО', mode: 'piece', url: 'https://lemana/gvl' },
     ],
     objects: [
       { id: 'o1', name: 'Баня на Киевке', icon: '🛁', stages: [
@@ -73,7 +73,7 @@ function seed(panel) {
   p.dom.field('sem-n', 'ГВЛВ 10 мм')
   p.dom.field('sem-mode', 'piece')
   p.dom.field('sem-cost', '900')
-  p.dom.field('sem-store', 'Лемана')
+  p.dom.field('sem-store', 'Лемана ПРО')
   p.dom.field('sem-note', 'замена по проекту')
   p.dom.field('sem-q-m1', '30'); p.dom.field('sem-q-m2', '15'); p.dom.field('sem-q-m3', '10')
   const btn = p.dom.node({ a: 'supply-mat-save' })
@@ -85,7 +85,7 @@ function seed(panel) {
   t.ok('товар сменился во всех трёх работах', [m1, m2, m3].every((m) => m && m.n === 'ГВЛВ 10 мм'),
     JSON.stringify([m1 && m1.n, m2 && m2.n, m3 && m3.n]))
   t.ok('ссылка на карточку каталога переехала на новый товар', [m1, m2, m3].every((m) => m.pid === 'p_gvl'))
-  t.ok('цена и магазин разошлись по всем', [m1, m2, m3].every((m) => m.cost === 900 && m.store === 'Лемана'))
+  t.ok('цена и магазин разошлись по всем', [m1, m2, m3].every((m) => m.cost === 900 && m.store === 'Лемана ПРО'))
   t.ok('количество у каждой своё', m1.qty === 30 && m2.qty === 15 && m3.qty === 10, JSON.stringify([m1.qty, m2.qty, m3.qty]))
   t.ok('фасовка предшественника снята', [m1, m2, m3].every((m) => m.sheetM2 == null))
   t.ok('ссылка нового товара подтянулась', [m1, m2, m3].every((m) => m.url === 'https://lemana/gvl'))

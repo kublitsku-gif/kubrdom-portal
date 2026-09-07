@@ -32,7 +32,7 @@ function panel() {
   t.ok('и кнопка «＋ магазин»', card.indexOf('data-mat-offer-add') >= 0)
 
   // Добавляем Леману: 3 836 ₽.
-  p.run('matOfferAddNew(expProducts[0], { store:"Лемана", url:"https://lemanapro.ru/product/x/", unitCost:3836 });')
+  p.run('matOfferAddNew(expProducts[0], { store:"Лемана ПРО", url:"https://lemanapro.ru/product/x/", unitCost:3836 });')
 
   const prod = p.q('expProducts[0]')
   t.ok('магазинов стало два', (prod.offers || []).length === 2, JSON.stringify(prod.offers))
@@ -41,12 +41,12 @@ function panel() {
     (prod.offers || []).some((o) => o.store === 'Яндекс Маркет' && o.unitCost === 3460),
     JSON.stringify(prod.offers))
   // Добавили — им и покупаем: цена товара стала ценой нового магазина.
-  t.ok('активна цена нового магазина', prod.unitCost === 3836 && prod.store === 'Лемана',
+  t.ok('активна цена нового магазина', prod.unitCost === 3836 && prod.store === 'Лемана ПРО',
     prod.store + ' ' + prod.unitCost)
   t.ok('и ссылка его же', /lemanapro/.test(prod.url), prod.url)
   // На экране видно оба и отмечен активный.
   const both = p.run('expEditorHtml(expProducts[0])')
-  t.ok('оба магазина в карточке', /Лемана/.test(both) && /Яндекс Маркет/.test(both))
+  t.ok('оба магазина в карточке', /Лемана ПРО/.test(both) && /Яндекс Маркет/.test(both))
   // Пробел в цене — узкий неразрывный из toLocaleString, поэтому ищем по цифрам.
   t.ok('и цены обоих', /3.836/.test(both) && /3.460/.test(both), 'нет цен')
 }
@@ -58,10 +58,10 @@ function panel() {
   t.section('Переключение магазина')
   const p = panel()
   p.run('matOfferSeed(expProducts[0]);' +
-    'expProducts[0].offers=expProducts[0].offers.concat([{id:"o2",store:"Лемана",url:"https://lemanapro.ru/x/",unitCost:3836}]);')
+    'expProducts[0].offers=expProducts[0].offers.concat([{id:"o2",store:"Лемана ПРО",url:"https://lemanapro.ru/x/",unitCost:3836}]);')
   const first = p.q('expProducts[0].offers[0].id')
   p.run('matOfferPick(expProducts[0], "o2");')
-  t.ok('выбрали Леману', p.q('expProducts[0].unitCost') === 3836 && p.q('expProducts[0].store') === 'Лемана')
+  t.ok('выбрали Леману', p.q('expProducts[0].unitCost') === 3836 && p.q('expProducts[0].store') === 'Лемана ПРО')
   p.run('matOfferPick(expProducts[0], ' + JSON.stringify(first) + ');')
   t.ok('вернулись на Маркет', p.q('expProducts[0].unitCost') === 3460 && p.q('expProducts[0].store') === 'Яндекс Маркет')
   t.ok('и ссылка вернулась', /market\.yandex/.test(p.q('expProducts[0].url')))
@@ -79,7 +79,7 @@ function panel() {
 {
   t.section('Убрать магазин')
   const p = panel()
-  p.run('matOfferAddNew(expProducts[0], { store:"Лемана", url:"https://lemanapro.ru/x/", unitCost:3836 });')
+  p.run('matOfferAddNew(expProducts[0], { store:"Лемана ПРО", url:"https://lemanapro.ru/x/", unitCost:3836 });')
   const first = p.q('expProducts[0].offers[0].id')
   const second = p.q('expProducts[0].offers[1].id')
   t.ok('активен второй', p.q('expProducts[0].offer') === second)
@@ -111,7 +111,7 @@ function panel() {
   })
   // Второй продавец на том же Ozon — дороже, третий магазин — ещё дороже.
   p.run('matOfferAddNew(expProducts[0], { store:"Озон", seller:"Кабель-Опт", url:"https://www.ozon.ru/product/b/", unitCost:5350 });')
-  p.run('matOfferAddNew(expProducts[0], { store:"Лемана", url:"https://lemanapro.ru/product/c/", unitCost:5600 });')
+  p.run('matOfferAddNew(expProducts[0], { store:"Лемана ПРО", url:"https://lemanapro.ru/product/c/", unitCost:5600 });')
   p.run('matOfferPick(expProducts[0], expProducts[0].offers[0].id);')
   t.ok('три предложения', p.q('expProducts[0].offers.length') === 3)
   t.ok('продавец подписан', p.q('expProducts[0].offers[1].seller') === 'Кабель-Опт')

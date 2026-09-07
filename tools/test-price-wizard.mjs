@@ -12,9 +12,9 @@ const t = reporter()
 const PRODUCTS = [
   { id: 'p_kab', name: 'Кабель ВВГ 3х1,5 100 м', unitCost: 5100, store: 'Озон',
     url: 'https://www.ozon.ru/product/kabel/', mode: 'piece' },
-  { id: 'p_br', name: 'Брусок строганый 40x50x3000', unitCost: 107.67, store: 'Лемана',
+  { id: 'p_br', name: 'Брусок строганый 40x50x3000', unitCost: 107.67, store: 'Лемана ПРО',
     url: 'https://lemanapro.ru/product/brusok/', mode: 'mp', lenPer: 3 },
-  { id: 'p_pv', name: 'Подвес прямой 60x27', unitCost: 8, store: 'Лемана',
+  { id: 'p_pv', name: 'Подвес прямой 60x27', unitCost: 8, store: 'Лемана ПРО',
     url: 'https://lemanapro.ru/product/podves/', mode: 'piece' },
 ]
 const EST = [{ id: 'e_el', kind: 'house', name: 'Разводка электрики', stage: 2,
@@ -172,7 +172,7 @@ const stageOf = (p) => p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0
   // кнопки в одно место заставляют выбирать между ними.
   t.ok('открыт Озон большой кнопкой', /Открыть Озон ↗/.test(html))
   t.ok('и в ряду сравнения его нет', !/>Озон ↗<|● Озон ↗/.test(html), 'Озон продублирован')
-  t.ok('а другие магазины предложены', /Лемана ↗/.test(html) && /Я\.Маркет ↗/.test(html))
+  t.ok('а другие магазины предложены', /Лемана ПРО ↗/.test(html) && /Я\.Маркет ↗/.test(html))
 }
 
 t.done()

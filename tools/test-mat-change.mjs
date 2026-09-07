@@ -11,8 +11,8 @@ const t = reporter()
 
 const PRODUCTS = [
   { id: 'p_osb', name: 'ОСП 30 м²', unitCost: 710, store: 'Белка', mode: 'piece', sheetM2: 3.12 },
-  { id: 'p_gvl', name: 'ГВЛВ 10 мм', unitCost: 1200, store: 'Лемана', mode: 'piece' },
-  { id: 'p_cheap', name: 'ОСП эконом', unitCost: 600, store: 'Лемана', mode: 'piece' },
+  { id: 'p_gvl', name: 'ГВЛВ 10 мм', unitCost: 1200, store: 'Лемана ПРО', mode: 'piece' },
+  { id: 'p_cheap', name: 'ОСП эконом', unitCost: 600, store: 'Лемана ПРО', mode: 'piece' },
 ]
 
 // Снабженец: согласовывать сам себе не может — именно для него порог и написан.
@@ -210,8 +210,8 @@ function fill(p, { name, cost, qty = {}, reason = '', payer = 'company' }) {
   p.set({
     expProducts: [
       { id: 'p1', name: 'ОСП 30 м²', unitCost: 710, store: 'Белка', mode: 'piece' },
-      { id: 'p2', name: 'Труба профильная 60x40x2 мм 3 м', unitCost: 298.67, store: 'Лемана', mode: 'mp', lenPer: 3 },
-      { id: 'p3', name: 'Плитка Маттоне', unitCost: 1086, store: 'Лемана', mode: 'pack', packPer: 0.96, packBase: 'м²' },
+      { id: 'p2', name: 'Труба профильная 60x40x2 мм 3 м', unitCost: 298.67, store: 'Лемана ПРО', mode: 'mp', lenPer: 3 },
+      { id: 'p3', name: 'Плитка Маттоне', unitCost: 1086, store: 'Лемана ПРО', mode: 'pack', packPer: 0.96, packBase: 'м²' },
       { id: 'p4', name: 'Без цены', unitCost: 0, store: '', mode: 'piece' },
     ],
     estimates: [], dbPlans: [], crmClients: [], specSheets: [], specSheets2: [], winTypes: [],
@@ -224,7 +224,7 @@ function fill(p, { name, cost, qty = {}, reason = '', payer = 'company' }) {
   // Единица — та, в которой товар продают: труба в метрах, плитка в пачках.
   t.ok('метры погонные — своей единицей', /label="298,67 ₽\/м\.п\./.test(html), html)
   t.ok('пачка — своей', /label="1 086 ₽\/пачка/.test(html), html)
-  t.ok('магазин подсказан рядом', /· Белка/.test(html) && /· Лемана/.test(html))
+  t.ok('магазин подсказан рядом', /· Белка/.test(html) && /· Лемана ПРО/.test(html))
   // У товара без цены подсказка не врёт «0 ₽» — там просто нечего показать.
   t.ok('без цены — без ценника', !/label="0 ₽/.test(html), html)
 

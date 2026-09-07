@@ -10,7 +10,7 @@ import { boot, reporter } from './harness/panel-vm.js'
 const t = reporter()
 
 const PRODUCTS = [
-  { id: 'p_osb', name: 'ОСП 9 мм', unitCost: 1000, store: 'Лемана', mode: 'm2' },
+  { id: 'p_osb', name: 'ОСП 9 мм', unitCost: 1000, store: 'Лемана ПРО', mode: 'm2' },
   { id: 'p_sock', name: 'Розетка', unitCost: 300, store: 'Белка', mode: 'piece' },
 ]
 const EST = [
@@ -610,7 +610,7 @@ function create(p, name) {
   t.section('Ссылка на товар')
   const p = boot({})
   p.set({
-    expProducts: [{ id: 'p_osb', name: 'ОСП 9 мм', unitCost: 1000, store: 'Лемана', mode: 'm2',
+    expProducts: [{ id: 'p_osb', name: 'ОСП 9 мм', unitCost: 1000, store: 'Лемана ПРО', mode: 'm2',
       url: 'https://lemanapro.ru/product/osp-9/' },
       { id: 'p_nail', name: 'Гвозди', unitCost: 300, store: 'Белка', mode: 'piece' }],
     estimates: [{ id: 'e_osb', kind: 'house', name: 'Обшивка стен ОСП', stage: 2,
@@ -626,7 +626,7 @@ function create(p, name) {
   const html = p.run('tProjects()')
   t.ok('магазин со ссылкой кликабелен',
     html.indexOf('href="https://lemanapro.ru/product/osp-9/"') >= 0, 'ссылки нет в разметке')
-  t.ok('и открывается в новой вкладке', /target="_blank"[^>]*>Лемана|Лемана[^<]*↗/.test(html))
+  t.ok('и открывается в новой вкладке', /target="_blank"[^>]*>Лемана ПРО|Лемана ПРО[^<]*↗/.test(html))
   // Ссылки нет — остаётся просто именем магазина, врать нечем.
   t.ok('магазин без ссылки остался текстом', /Белка ·/.test(html), 'ожидали простой текст')
   t.ok('и ложной ссылки не появилось', (html.match(/↗/g) || []).length === 1,
@@ -1167,8 +1167,8 @@ function create(p, name) {
   t.section('Один товар дважды в смете')
   const p = boot({})
   p.set({
-    expProducts: [{ id: 'p_osb', name: 'ОСП 9 мм', unitCost: 1000, store: 'Лемана', mode: 'piece' },
-      { id: 'p_ply', name: 'Фанера 4 мм', unitCost: 700, store: 'Лемана', mode: 'piece' }],
+    expProducts: [{ id: 'p_osb', name: 'ОСП 9 мм', unitCost: 1000, store: 'Лемана ПРО', mode: 'piece' },
+      { id: 'p_ply', name: 'Фанера 4 мм', unitCost: 700, store: 'Лемана ПРО', mode: 'piece' }],
     estimates: [{ id: 'e_osb', kind: 'house', name: 'Обшивка стен ОСП', stage: 2,
       lines: [{ pid: 'p_osb', qty: 1 }, { pid: 'p_osb', qty: 2 }] }],
     dbPlans: [], crmClients: [{ id: 'c1', name: 'Иванов' }], specSheets: [], specSheets2: [],
@@ -1218,7 +1218,7 @@ function create(p, name) {
   t.section('Адрес по строке сметы')
   const p = boot({})
   p.set({
-    expProducts: [{ id: 'p_osb', name: 'ОСП 9 мм', unitCost: 1000, store: 'Лемана', mode: 'piece' }],
+    expProducts: [{ id: 'p_osb', name: 'ОСП 9 мм', unitCost: 1000, store: 'Лемана ПРО', mode: 'piece' }],
     estimates: [{ id: 'e_osb', kind: 'house', name: 'Обшивка стен ОСП', stage: 2,
       lines: [{ pid: 'p_osb', qty: 1 }, { pid: 'p_osb', qty: 2 }] }],
     dbPlans: [], crmClients: [{ id: 'c1', name: 'Иванов' }], specSheets: [], specSheets2: [],
@@ -1271,7 +1271,7 @@ function create(p, name) {
 {
   t.section('Список проектов показывает состояние цен')
   const p = panel([{ id: 'r_w', kind: 'banya', estId: 'e_wall', what: 'surface', k: 'wall', scope: 'house', qty: 1, stage: 2 }])
-  p.run('expProducts=expProducts.concat([{id:"p_sock",name:"Розетка",unitCost:300,store:"Лемана",mode:"piece"}]);')
+  p.run('expProducts=expProducts.concat([{id:"p_sock",name:"Розетка",unitCost:300,store:"Лемана ПРО",mode:"piece"}]);')
   create(p, 'Дом Ивановых')
   const key = p.q('works2(projects[0], specCtx(projects[0])).positions[0].key')
   const stN = p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).stages.filter(function(s){return (s.positions||[]).some(function(x){return x.key===' + JSON.stringify(key) + ';});})[0].n')
@@ -1373,7 +1373,7 @@ function create(p, name) {
   t.ok('товар появился в каталоге', p.q('expProducts.length') === was + 1)
   const np = p.q('expProducts.filter(function(x){return /Уголок/.test(x.name||"");})[0]')
   t.ok('с ценой из формы', np && np.unitCost === 180, JSON.stringify(np && np.unitCost))
-  t.ok('магазин узнан по ссылке', np && np.store === 'Лемана', JSON.stringify(np && np.store))
+  t.ok('магазин узнан по ссылке', np && np.store === 'Лемана ПРО', JSON.stringify(np && np.store))
   t.ok('и ссылка сохранена', np && /lemanapro/.test(np.url || ''))
   // Строка сметы теперь ссылается на карточку, а не живёт снимком.
   const mat = p.q('projects[0].matAdd[' + JSON.stringify(key) + '][0]')
@@ -1461,9 +1461,9 @@ function create(p, name) {
   const p = boot({})
   p.set({
     expProducts: [
-      { id: 'p_film', name: 'Пароизоляция', unitCost: 20, store: 'Лемана', mode: 'm2',
+      { id: 'p_film', name: 'Пароизоляция', unitCost: 20, store: 'Лемана ПРО', mode: 'm2',
         sheetM2: 60, packName: 'рулон' },
-      { id: 'p_wool', name: 'Утеплитель', unitCost: 1081, store: 'Лемана', mode: 'pack',
+      { id: 'p_wool', name: 'Утеплитель', unitCost: 1081, store: 'Лемана ПРО', mode: 'pack',
         packBase: 'м²', packPer: 6, packName: 'мешок' },
     ],
     estimates: [{ id: 'e_w', kind: 'house', name: 'Пароизоляция стен', stage: 2,

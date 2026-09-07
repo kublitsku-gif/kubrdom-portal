@@ -3,7 +3,7 @@
 //
 // Сверка с каталогом отвечает на вопрос «строка отстала от карточки?». Но цена
 // в самой карточке — вчерашняя: магазин мог поднять ценник или товар кончился.
-// Узнать это можно только сходив по ссылке, а магазины (Ozon, Лемана) роботов
+// Узнать это можно только сходив по ссылке, а магазины (Ozon, Лемана ПРО) роботов
 // не пускают — 401 и редирект на антибот. Поэтому ходит человек, а портал берёт
 // на себя всё остальное: собрать список ссылок этапа, принять новую цену,
 // записать историю и пересчитать проект.
@@ -14,7 +14,7 @@ const t = reporter()
 const PRODUCTS = [
   { id: 'p_kab', name: 'Кабель ВВГ 3х1,5 100 м', unitCost: 5100, store: 'Озон',
     url: 'https://www.ozon.ru/product/kabel-1/', mode: 'piece' },
-  { id: 'p_br', name: 'Брусок строганый 40x50x3000', unitCost: 107.67, store: 'Лемана',
+  { id: 'p_br', name: 'Брусок строганый 40x50x3000', unitCost: 107.67, store: 'Лемана ПРО',
     url: 'https://lemanapro.ru/product/brusok-2/', mode: 'mp', lenPer: 3 },
 ]
 const EST = [{ id: 'e_el', kind: 'house', name: 'Разводка электрики', stage: 2,
@@ -187,9 +187,9 @@ function panel() {
   const p = boot({})
   p.set({
     expProducts: [
-      { id: 'p_tr', name: 'Труба 60x40x2 3 м', unitCost: 298.67, mode: 'mp', lenPer: 3, store: 'Лемана', url: 'https://lemanapro.ru/product/t/' },
-      { id: 'p_sh', name: 'ОСП 9 мм', unitCost: 710, mode: 'sheet', packPer: 3.125, packBase: 'м²', store: 'Лемана', url: 'https://lemanapro.ru/product/o/' },
-      { id: 'p_m2', name: 'Ламинат', unitCost: 1200, mode: 'm2', sheetM2: 2.4, store: 'Лемана', url: 'https://lemanapro.ru/product/l/' },
+      { id: 'p_tr', name: 'Труба 60x40x2 3 м', unitCost: 298.67, mode: 'mp', lenPer: 3, store: 'Лемана ПРО', url: 'https://lemanapro.ru/product/t/' },
+      { id: 'p_sh', name: 'ОСП 9 мм', unitCost: 710, mode: 'sheet', packPer: 3.125, packBase: 'м²', store: 'Лемана ПРО', url: 'https://lemanapro.ru/product/o/' },
+      { id: 'p_m2', name: 'Ламинат', unitCost: 1200, mode: 'm2', sheetM2: 2.4, store: 'Лемана ПРО', url: 'https://lemanapro.ru/product/l/' },
     ],
     estimates: [], dbPlans: [], crmClients: [], specSheets: [], specSheets2: [], winTypes: [],
     objects: [], templates: [], contractDocs: [], purchases: [], issues: [], users: [], stock: [],
@@ -225,7 +225,7 @@ function panel() {
   const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
 
   // Сверка прошла: кабель подтверждён, брусок кончился и найдена замена.
-  p.run('applyPriceReports([{ id:"p_kab", ok:true, price:5100, inStock:true },{ id:"p_br", ok:true, inStock:false, alt:{ name:"Брусок строганый 40x50x3000 Оптима", store:"Лемана", url:"https://lemanapro.ru/product/alt/", price:120 } }])')
+  p.run('applyPriceReports([{ id:"p_kab", ok:true, price:5100, inStock:true },{ id:"p_br", ok:true, inStock:false, alt:{ name:"Брусок строганый 40x50x3000 Оптима", store:"Лемана ПРО", url:"https://lemanapro.ru/product/alt/", price:120 } }])')
 
   const html = p.run('tSpec2()')
   t.ok('подтверждённое не требует действий', !/data-a="price-shop-ok"/.test(html), 'ручные кнопки остались')
@@ -241,7 +241,7 @@ function panel() {
   const added = p.q('expProducts.filter(function(x){return /Оптима/.test(x.name||"");})[0]')
   t.ok('замена заведена в каталог по нашей единице', !!added && added.unitCost === 40,
     'цена: ' + (added && added.unitCost))
-  t.ok('со ссылкой и магазином', !!added && /lemanapro/.test(added.url) && added.store === 'Лемана')
+  t.ok('со ссылкой и магазином', !!added && /lemanapro/.test(added.url) && added.store === 'Лемана ПРО')
   t.ok('единица учёта унаследована', added && added.mode === 'mp' && added.lenPer === 3,
     'режим: ' + (added && added.mode))
   t.ok('в смете теперь замена', /Оптима/.test(p.run('tSpec2()')), 'смета не подхватила')
@@ -395,7 +395,7 @@ function panel() {
   const p = panel()
   const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
   const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
-  p.run('applyPriceReports([{ id:"p_br", ok:true, inStock:false, alt:{ name:"10% БАЛЛАМИ", store:"Лемана", url:"https://lemanapro.ru/product/alt/", price:120 } }])')
+  p.run('applyPriceReports([{ id:"p_br", ok:true, inStock:false, alt:{ name:"10% БАЛЛАМИ", store:"Лемана ПРО", url:"https://lemanapro.ru/product/alt/", price:120 } }])')
 
   const html = p.run('tSpec2()')
   t.ok('плашка в имя не пролезла',
@@ -435,7 +435,7 @@ function panel() {
   const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
   const html = p.run('tSpec2()')
 
-  t.ok('предложены все три', /Озон ↗/.test(html) && /Лемана ↗/.test(html) && /Я\.Маркет ↗/.test(html),
+  t.ok('предложены все три', /Озон ↗/.test(html) && /Лемана ПРО ↗/.test(html) && /Я\.Маркет ↗/.test(html),
     'магазинов меньше трёх')
   // Где карточка у нас уже есть — ведём в неё, а не в поиск.
   t.ok('своя карточка Ozon — прямая ссылка',
@@ -495,14 +495,14 @@ function panel() {
 
   const offers = p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].offers||[]')
   t.ok('предложений стало два', offers.length === 2, JSON.stringify(offers.map((o) => o.store)))
-  t.ok('магазин узнан по ссылке', offers.some((o) => o.store === 'Лемана'),
+  t.ok('магазин узнан по ссылке', offers.some((o) => o.store === 'Лемана ПРО'),
     JSON.stringify(offers.map((o) => o.store)))
   t.ok('прежний магазин на месте', offers.some((o) => o.store === 'Озон'))
   // Дешевле — значит по нему и покупаем.
   t.ok('дешёвое стало активным',
     p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].unitCost') === 4900)
-  t.ok('и это Лемана',
-    offers.filter((o) => o.id === p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].offer'))[0].store === 'Лемана')
+  t.ok('и это Лемана ПРО',
+    offers.filter((o) => o.id === p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].offer'))[0].store === 'Лемана ПРО')
   // Цена поехала — значит это правка цены со всей историей.
   const hist = p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].hist||[]')
   t.ok('история записана', hist.some((h) => Number(h.c) === 5100) && hist.some((h) => Number(h.c) === 4900),
@@ -569,7 +569,7 @@ function panel() {
   // Отчёт поиска: нашлось дешевле.
   p.run('applyPriceReports([{ id:"p_kab", find:"Кабель ВВГ 3х1,5 100 м", ok:true, found:{ name:"Кабель ВВГ-Пнг(А)-LS 3х1,5 100 м", url:"https://lemanapro.ru/product/kabel-3x15/", price:4300 } }])')
   const found = plain()
-  t.ok('находка показана', /НАШЛОСЬ ДЕШЕВЛЕ · Лемана/.test(found), 'блока находки нет')
+  t.ok('находка показана', /НАШЛОСЬ ДЕШЕВЛЕ · Лемана ПРО/.test(found), 'блока находки нет')
   t.ok('с именем — его и проверяют глазами', /Кабель ВВГ-Пнг\(А\)-LS 3х1,5 100 м/.test(found))
   t.ok('и с выгодой', /−800 ₽\/шт/.test(found), 'выгода не посчитана')
   t.ok('в каталог молча не легло',
@@ -581,7 +581,7 @@ function panel() {
   // Принял — магазин завёлся тем же кодом, что и вставка ссылки руками.
   const take = p.dom.node({ a: 'price-alt-shop-take', p: 'p_kab' }); p.run('bind();'); take.onclick()
   const offers = p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].offers||[]')
-  t.ok('магазин завёлся', offers.some((o) => o.store === 'Лемана'), JSON.stringify(offers.map((o) => o.store)))
+  t.ok('магазин завёлся', offers.some((o) => o.store === 'Лемана ПРО'), JSON.stringify(offers.map((o) => o.store)))
   t.ok('и цена стала его', p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].unitCost') === 4300)
   t.ok('предложение израсходовано', !p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].shopAlt'))
 
