@@ -1547,4 +1547,46 @@ function create(p, name) {
     'комната осталась в предложении')
 }
 
+// ── Деньги проекта = его состав ──────────────────────────────────────────────
+// Полоса «Деньги» и полоса «Состав» обязаны называть ОДНУ цифру: по «Деньгам»
+// заводится договор, по «Составу» собирается объект. Разъедься они — договор
+// подписан на одну сумму, а строят по другой, и находится это на приёмке этапа.
+//
+// Ломалось это дважды и по-разному, поэтому проверок две. Проект живёт в своей
+// коллекции (`projects`), и `specIs2` его не узнавал — «Деньги» уходили в боевой
+// `sheetTotals(sh, …)` мимо модели, правил, пирогов и правок листа. А сам
+// `totals2` при пустых правилах уходил туда же коротким путём — и терял пироги,
+// дописанные руками работы и правки листа уже у любого дома.
+{
+  t.section('Деньги проекта считаются его же составом')
+
+  const withRules = panel(RULES)
+  create(withRules)
+  const wr = 'works2(projects[0], specCtx(projects[0]))'
+  t.ok('с правилами: себестоимость та же',
+    withRules.q('specTot(projects[0]).cost') === withRules.q(wr + '.cost') && withRules.q(wr + '.cost') > 0,
+    withRules.q('specTot(projects[0]).cost') + ' / ' + withRules.q(wr + '.cost'))
+  t.ok('с правилами: цена клиенту та же',
+    withRules.q('specTot(projects[0]).price') === withRules.q(wr + '.price'))
+  t.ok('и позиций поровну',
+    withRules.q('specTot(projects[0]).count') === withRules.q(wr + '.positions.length'))
+
+  // Дом без единого правила — обычный дом, и дописанная в него руками работа
+  // обязана попасть в обе полосы: короткий путь её не видел.
+  const plain = panel()
+  create(plain)
+  const pr = 'works2(projects[0], specCtx(projects[0]))'
+  const before = plain.q('specTot(projects[0]).cost')
+  plain.run('projects[0].posAdd=[{id:"a1", name:"Вывоз мусора", cost:5000, stage:2}];')
+  t.ok('без правил: дописанная работа попала в состав',
+    plain.q(pr + '.cost') === before + 5000, String(plain.q(pr + '.cost')) + ' было ' + before)
+  t.ok('и в деньги тоже',
+    plain.q('specTot(projects[0]).cost') === plain.q(pr + '.cost'),
+    plain.q('specTot(projects[0]).cost') + ' / ' + plain.q(pr + '.cost'))
+
+  // Договор берёт цену оттуда же — это и есть цена расхождения.
+  t.ok('договор завёлся бы на сумму состава',
+    plain.q('specTot(projects[0]).price') === plain.q(pr + '.price'))
+}
+
 t.done()

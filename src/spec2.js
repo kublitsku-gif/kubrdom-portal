@@ -15,7 +15,7 @@
 //     другая, и находится это в лучшем случае на приёмке этапа. Понадобится своя
 //     цена — её место здесь, в totals2, осознанной развилкой.
 
-import { sheetTotals, pointTotals, pointMeta } from "./spec.js";
+import { pointTotals, pointMeta } from "./spec.js";
 import { modelIssues, modelAreas, modelTotals } from "./model.js";
 import { allPositions, allPositionsRaw, probeSheet, positionWhy, roomKeyOf, positionSplit, PIE_SOURCES, pieCost } from "./recipe.js";
 export { positionSplit } from "./recipe.js";
@@ -31,11 +31,17 @@ export { probeSheet, positionWhy };
 // формул означала бы, что клиенту называют одну цену, а в договор и объект уходит
 // другая, и находится это в лучшем случае на приёмке этапа.
 //
-// Отличие одно и осознанное: сюда входят позиции, которые дали ПРАВИЛА. Без них
-// договор заводился бы на сумму, которой на экране никто не видел.
+// Список позиций — ВСЕГДА `allPositions`, тот же, что показывает смета (`works2`) и
+// которым собирается объект (`specBuildStages`). Раньше при пустых правилах цена
+// уходила коротким путём в `sheetTotals(probeSheet(…))`, и это была не экономия, а
+// вторая правда о доме: короткий путь не видит пирогов, дописанных руками работ и
+// правок листа (замен материалов, ручного количества, «убрать», вариантов, цены
+// бригаде). Дом без единого правила — обычный дом, и его цена обязана сходиться с
+// его же составом, иначе договор заводится на сумму, которой на экране не было.
+// Без правил и пирогов `allPositions` и сводится к `sheetPositions(probe)`, так что
+// короткий путь ничего и не экономил.
 export function totals2(sheet, ctx) {
   const c = ctx || {};
-  if (!c.rules || !c.rules.length) return sheetTotals(probeSheet(sheet, c.winTypes), c.estimates, c.products);
   const pos = allPositions(sheet, c);
   const cost = pos.reduce(function (a, p) { return a + (Number(p.cost) || 0); }, 0);
   const markup = Number(sheet && sheet.markup);

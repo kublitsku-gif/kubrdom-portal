@@ -1372,5 +1372,38 @@ const SHEET = {
   t.ok('комната названа', html.indexOf(String(rooms[0].name || '')) >= 0)
 }
 
-t.done()
+// ── Деньги опытного листа = его состав ──────────────────────────────────────
+// Тот же сторож, что в «Проектах»: экран сметы у двух разделов один, и правило
+// «показали одну цену — собрали то же самое» обязано держаться в обоих.
+//
+// Здесь ловится вторая половина поломки: `totals2` при пустых правилах уходил
+// коротким путём в `sheetTotals(probeSheet(…))` и терял пироги, дописанные руками
+// работы и правки листа. Дом без единого правила — обычный дом.
+{
+  t.section('Деньги листа считаются его же составом')
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS, estimates: EST, dbPlans: [], crmClients: [],
+    specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [],
+    contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+    buildRules: [],
+  })
+  p.run('spec2Tab="scheme";tSpec2();')
+  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+  p.run('modelFull=false;spec2Tab="est";tSpec2();')
 
+  const w = 'works2(spec2Sheet(), specCtx(spec2Sheet()))'
+  t.ok('себестоимость та же', p.q('specTot(spec2Sheet()).cost') === p.q(w + '.cost') && p.q(w + '.cost') > 0,
+    p.q('specTot(spec2Sheet()).cost') + ' / ' + p.q(w + '.cost'))
+  t.ok('цена клиенту та же', p.q('specTot(spec2Sheet()).price') === p.q(w + '.price'))
+
+  // Дописанная руками работа — ровно то, чего короткий путь не видел.
+  const before = p.q('specTot(spec2Sheet()).cost')
+  p.run('spec2Sheet().posAdd=[{id:"a1", name:"Вывоз мусора", cost:5000, stage:2}];')
+  t.ok('дописанная работа попала в состав', p.q(w + '.cost') === before + 5000,
+    String(p.q(w + '.cost')) + ' было ' + before)
+  t.ok('и в деньги тоже', p.q('specTot(spec2Sheet()).cost') === p.q(w + '.cost'),
+    p.q('specTot(spec2Sheet()).cost') + ' / ' + p.q(w + '.cost'))
+}
+
+t.done()

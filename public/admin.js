@@ -10521,7 +10521,15 @@ function specCtx(sh){
   return { estimates:estimates, products:expProducts, winTypes:winTypes,
     stages:EST_STAGES, rules: war?[]:(buildRules||[]), pies: !war };
 }
-function specTot(sh){ return specIs2(sh)?totals2(sh, specCtx(sh)):sheetTotals(sh, estimates, expProducts); }
+// Деньги проекта считаются ТЕМ ЖЕ, ЧЕМ ЕГО СОСТАВ. Проект живёт в своей коллекции
+// (`projects`), и `specIs2` его не узнаёт — по этой развилке «Деньги» уходили в
+// боевой `sheetTotals(sh, …)` и теряли всё, из чего собран показанный состав:
+// характеристики из модели (`probeSheet`), позиции правил, пироги, дописанные
+// руками работы и правки листа, а обязательную строку, заменённую правилом,
+// считали второй раз. На экране была одна себестоимость, в договоре другая, а
+// объект собирался по третьей — по `allPositions`. Спрашивать надо обе коллекции,
+// как это делает `specIssuesOf` ниже.
+function specTot(sh){ return (specIs2(sh)||specIsProject(sh))?totals2(sh, specCtx(sh)):sheetTotals(sh, estimates, expProducts); }
 function specIssuesOf(sh){ return (specIs2(sh)||specIsProject(sh))?issues2(sh, winTypes):sheetIssues(sh, estimates, expProducts); }
 const SPEC_SURFACE={floor:"пол", wall:"стены", ceil:"потолок"};
 // Что физически входит в позицию. Одна формулировка на экран продавца и на печать
