@@ -18882,7 +18882,9 @@ function supplyCostSection(label,rows,total,clickable){
   return h;
 }
 function tSupplyDetail(sel, sortBy){
-  const STORECOL={"Озон":"#005bff","Белка":"#d68910","pechki.su":"#c0392b","Егорьевск":"#8e44ad","Лемана":"#e30613","Авито":"#00aaff","Нижний Новгород":"#27ae60"};
+  // Цвет тот же, что в общем `SC`: две карты цветов на один магазин — это чип
+  // одного цвета в снабжении и другого в сверке, и человек считает их разными.
+  const STORECOL={"Озон":"#005bff","Белка":"#d68910","pechki.su":"#c0392b","Егорьевск":"#8e44ad","Лемана ПРО":"#e30613","Лемана":"#e30613","Петрович":"#e8552d","Авито":"#00aaff","Нижний Новгород":"#27ae60"};
   const sortBy2=sortBy||"stage";
   const multiMode=Object.values(sel).filter(Boolean).length>1;
   const targetObjs=objects.filter(function(o){return!!sel[o.id];});
