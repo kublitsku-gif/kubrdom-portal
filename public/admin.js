@@ -18057,7 +18057,11 @@ function tReceive(sel){
           '<span style="font-size:10px;font-weight:700;color:#5a7a9a;background:#eef2f7;border-radius:4px;padding:1px 6px">'+mode.icon+' '+numRu(m.qty||1)+' '+mode.unit+'</span>'+
           (multiMode?'<span style="font-size:10px;background:#e8f0fa;color:#2a5298;border-radius:4px;padding:1px 6px">'+m.objIcon+' '+esc(m.objName)+'</span>':'')+
           '<span style="font-size:10px;color:#9aabbf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px">↳ '+esc(m.wn)+'</span>'+
-          (bought?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#eafaf0;border-radius:5px;padding:1px 7px">🛒 куплено</span>':'')+
+          // Бригадир должен знать, ЧТО он принимает: материал заказчика везёт он сам,
+          // и спрашивать с нас накладную по нему бессмысленно.
+          (clientBuys(m)
+            ? '<span style="font-size:10px;font-weight:700;color:#8e44ad;background:#8e44ad18;border-radius:5px;padding:1px 7px">👤 везёт заказчик</span>'
+            : (bought?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#eafaf0;border-radius:5px;padding:1px 7px">🛒 куплено</span>':''))+
         '</div>'+
       '</div>'+
     '</div>';
@@ -19067,7 +19071,10 @@ function tSupplyDetail(sel, sortBy){
 
   function matRow(m){
     const sc=STORECOL[m.store||""]||"#555";
-    const done=!!purchased[m.id];
+    // Та же логика, что в слитой строке: то, что покупает заказчик, для нас закрыто.
+    const byClient=clientBuys(m);
+    const done=byClient||!!purchased[m.id];
+    const doneCol=byClient?'#8e44ad':'#27ae60', doneBg=byClient?'#f6effa':'#f0fdf4';
     const mode=EXP_MODES.find(function(x){return x.k===(m.mode||"piece");})||EXP_MODES[0];
     const conv=matConv(m);
     const idx=conv?(expView[m.id]==="1"?1:(expView[m.id]==="0"?0:conv.def)):0;
@@ -19080,8 +19087,8 @@ function tSupplyDetail(sel, sortBy){
     // два смысла у одного жеста развести иначе нечем, поэтому режим виден баннером.
     const inHo=clientBuys(m)||!!supplyHandoff[m.id];
     const rowA=supplyPickMode?'supply-pick':'supply-check';
-    const rowBg=supplyPickMode?(inHo?'#f6effa':'#f8fafc'):(done?'#f0fdf4':'#f8fafc');
-    const rowBd=supplyPickMode?(inHo?'#8e44ad':'#dde6f0'):(done?'#27ae60':'#dde6f0');
+    const rowBg=supplyPickMode?(inHo?'#f6effa':'#f8fafc'):(done?doneBg:'#f8fafc');
+    const rowBd=supplyPickMode?(inHo?'#8e44ad':'#dde6f0'):(done?doneCol:'#dde6f0');
     return '<div data-a="'+rowA+'" data-mid="'+m.id+'" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;margin-bottom:6px;background:'+rowBg+';border:1.5px solid '+rowBd+';cursor:pointer;transition:all 0.15s">'+
       '<div style="flex-shrink:0;margin-top:1px">'+
         '<div style="width:22px;height:22px;border-radius:6px;border:2px solid '+(supplyPickMode?(inHo?'#8e44ad':'#c8d8e8'):(done?'#27ae60':'#c8d8e8'))+';background:'+(supplyPickMode?(inHo?'#8e44ad':'#fff'):(done?'#27ae60':'#fff'))+';display:flex;align-items:center;justify-content:center;transition:all 0.15s">'+
@@ -19098,7 +19105,9 @@ function tSupplyDetail(sel, sortBy){
           (m.cost>0?'<span style="font-size:11px;color:'+(done?'#b0c8b0':'#7a9aaa')+'">'+price.toLocaleString("ru-RU")+' ₽/'+unit+' × '+numRu(qty)+' = <b style="color:'+(done?'#b0c8b0':'#0d1b2e')+'">'+lineTotal+' ₽</b></span>':'')+
           (m.note&&!(Array.isArray(m.breakdown)&&m.breakdown.length)?'<span style="font-size:10px;color:#9aabbf;font-style:italic">'+esc(m.note)+'</span>':'')+
           (!done&&m.url?'<a href="'+m.url+'" target="_blank" style="font-size:10px;color:#fff;background:#2980b9;border-radius:4px;padding:1px 7px;text-decoration:none;font-weight:600" onclick="event.stopPropagation()">🔗 купить</a>':'')+
-          (done?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>':'')+
+          (done?(byClient
+            ? '<span style="font-size:10px;font-weight:700;color:#8e44ad;background:#8e44ad18;border-radius:6px;padding:1px 8px">✓ Покупает заказчик</span>'
+            : '<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>'):'')+
           _arrivedPill('data-mid="'+m.id+'"', !!arrived[m.id])+
           _clientPill([m.id], clientBuys(m))+
           _labourPill([m.id])+
@@ -19155,7 +19164,12 @@ function tSupplyDetail(sel, sortBy){
   function mergeRow(g){
     const sc=STORECOL[g.store||""]||"#555";
     const ids=g.ids;
-    const allDone=ids.length>0&&ids.every(function(id){return!!purchased[id];});
+    // Позиция, которую покупает не мы, для НАС закрыта: снабженцу по ней делать
+    // нечего, и висеть неотмеченной она не должна. `purchased` при этом не трогаем —
+    // мы её не покупали, и врать в данных, чтобы починить экран, нельзя. Дальше она
+    // идёт своим ходом: бригадир принимает её на склад как обычно.
+    const byClient=ids.length>0&&ids.every(function(id){ const mm=supplyFindMat(id); return !!(mm&&mm.client); });
+    const allDone=byClient||(ids.length>0&&ids.every(function(id){return!!purchased[id];}));
     const someDone=ids.some(function(id){return!!purchased[id];});
     const mode=EXP_MODES.find(function(x){return x.k===(g.mode||"piece");})||EXP_MODES[0];
     const conv=matConv(g);
@@ -19165,11 +19179,12 @@ function tSupplyDetail(sel, sortBy){
     // из потребностей разных работ, и половинчатого выбора у неё быть не может.
     const inHo=ids.length>0&&ids.every(function(id){ const mm=supplyFindMat(id); return !!(mm&&mm.client)||!!supplyHandoff[id]; });
     const rowA=supplyPickMode?'supply-pick':'supply-stage-check';
-    const rowBg=supplyPickMode?(inHo?'#f6effa':'#f8fafc'):(allDone?'#f0fdf4':'#f8fafc');
-    const rowBd=supplyPickMode?(inHo?'#8e44ad':'#dde6f0'):(allDone?'#27ae60':'#dde6f0');
+    const doneCol=byClient?'#8e44ad':'#27ae60', doneBg=byClient?'#f6effa':'#f0fdf4';
+    const rowBg=supplyPickMode?(inHo?'#f6effa':'#f8fafc'):(allDone?doneBg:'#f8fafc');
+    const rowBd=supplyPickMode?(inHo?'#8e44ad':'#dde6f0'):(allDone?doneCol:'#dde6f0');
     const boxOn=supplyPickMode?inHo:allDone, boxHalf=supplyPickMode?false:someDone;
     return '<div data-a="'+rowA+'" data-mid="'+ids[0]+'" data-ids="'+ids.join(',')+'" data-done="'+(allDone?'1':'0')+'" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;margin-bottom:6px;background:'+rowBg+';border:1.5px solid '+rowBd+';cursor:pointer">'+
-      '<div style="flex-shrink:0;margin-top:1px"><div style="width:22px;height:22px;border-radius:6px;border:2px solid '+(boxOn?(supplyPickMode?'#8e44ad':'#27ae60'):boxHalf?'#e67e22':'#c8d8e8')+';background:'+(boxOn?(supplyPickMode?'#8e44ad':'#27ae60'):boxHalf?'#e67e2233':'#fff')+';display:flex;align-items:center;justify-content:center">'+(boxOn?'<span style="color:#fff;font-size:13px;font-weight:700;line-height:1">✓</span>':boxHalf?'<span style="color:#e67e22;font-size:13px;font-weight:800;line-height:1">–</span>':'')+'</div></div>'+
+      '<div style="flex-shrink:0;margin-top:1px"><div style="width:22px;height:22px;border-radius:6px;border:2px solid '+(boxOn?(supplyPickMode?'#8e44ad':doneCol):boxHalf?'#e67e22':'#c8d8e8')+';background:'+(boxOn?(supplyPickMode?'#8e44ad':doneCol):boxHalf?'#e67e2233':'#fff')+';display:flex;align-items:center;justify-content:center">'+(boxOn?'<span style="color:#fff;font-size:13px;font-weight:700;line-height:1">✓</span>':boxHalf?'<span style="color:#e67e22;font-size:13px;font-weight:800;line-height:1">–</span>':'')+'</div></div>'+
       '<div style="flex:1;min-width:0">'+
         '<div style="font-size:13px;font-weight:600;color:'+(allDone?'#7a9aaa':'#1a2a3a')+';text-decoration:'+(allDone?'line-through':'none')+'">'+esc(g.n)+'</div>'+
         '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:3px;align-items:center">'+
@@ -19183,7 +19198,9 @@ function tSupplyDetail(sel, sortBy){
           '<span style="font-size:10px;font-weight:700;color:#5a7a9a;background:#eef2f7;border-radius:4px;padding:1px 6px">'+mode.icon+' '+mode.unit+'</span>'+
           (g.cost>0?'<span style="font-size:11px;color:#7a9aaa">'+(Number(g.cost)||0).toLocaleString("ru-RU")+' ₽/'+mode.unit+' × '+numRu(qty)+' = <b style="color:#0d1b2e">'+lineTotal+' ₽</b></span>':'')+
           (!allDone&&g.url?'<a href="'+g.url+'" target="_blank" style="font-size:10px;color:#fff;background:#2980b9;border-radius:4px;padding:1px 7px;text-decoration:none;font-weight:600" onclick="event.stopPropagation()">🔗 купить</a>':'')+
-          (allDone?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>':'')+
+          (allDone?(byClient
+            ? '<span style="font-size:10px;font-weight:700;color:#8e44ad;background:#8e44ad18;border-radius:6px;padding:1px 8px">✓ Покупает заказчик</span>'
+            : '<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>'):'')+
           _arrivedPill('data-ids="'+ids.join(',')+'"', ids.length>0&&ids.every(function(id){return !!arrived[id];}))+
           // Слитая строка помечается целиком: она склеена из потребностей разных
           // работ, и половина «заказчику», половина нам — это две разные строки,
@@ -19264,7 +19281,11 @@ function tSupplyDetail(sel, sortBy){
       const stagePct=stageCost>0?Math.round(stageBought/stageCost*100):0;
       const safeIds=smMine.map(function(m){return m.id;}).join(',');
       const mrows=_mergeMats(sm); // слить одинаковые материалы между объектами
-      const mDone=mrows.filter(function(g){return g.ids.every(function(id){return!!purchased[id];});}).length;
+      // Закрытой считается и позиция заказчика: снабженцу по ней делать нечего,
+      // и держать её в «осталось» значит показывать долг, который не наш.
+      const mDone=mrows.filter(function(g){return g.ids.every(function(id){
+        const mm=supplyFindMat(id); return !!purchased[id]||!!(mm&&mm.client);
+      });}).length;
       // Полностью закупленный этап сворачиваем: делать с ним больше нечего, а его
       // список на 20+ позиций отодвигает вниз то, что ещё надо купить.
       const gk="stage|"+sn;
