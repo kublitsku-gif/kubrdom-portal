@@ -73,7 +73,7 @@ const nb = (x) => x.replace(/[\u00a0\u202f]/g, ' ')
   const html = nb(p.run('tSupplyDetail({o1:true},"stage")'))
   t.ok('вся смета в счёте', html.indexOf('из 5 007 ₽') >= 0, 'позицию вычли из закупки')
   t.ok('этап считает обе позиции', html.indexOf('0/2 · 5 007 ₽') >= 0, 'подытог этапа урезан')
-  t.ok('строка помечена чипом', html.indexOf('💰 компенсирует') >= 0)
+  t.ok('строка помечена чипом', html.indexOf('💰 платит заказчик') >= 0)
   t.ok('но не выглядит закрытой', html.indexOf('✓ Покупает заказчик') < 0,
     'позиция закрылась сама — покупать-то нам')
 
@@ -99,7 +99,7 @@ const nb = (x) => x.replace(/[\u00a0\u202f]/g, ' ')
   const off = p.run('tSupplyDetail({o1:true},"stage")')
   t.ok('пилюли в строках нет', off.indexOf('data-a="supply-client"') < 0,
     'значок висит в объекте, где компенсации нет')
-  t.ok('панели тоже нет', off.indexOf('Заказчик компенсирует') < 0)
+  t.ok('панели тоже нет', off.indexOf('Оплата заказчиком') < 0)
   t.ok('но включить предлагают', off.indexOf('data-a="supply-refund-on"') >= 0)
 
   const on = p.dom.node({ a: 'supply-refund-on', oid: 'o1' })
@@ -108,7 +108,7 @@ const nb = (x) => x.replace(/[\u00a0\u202f]/g, ' ')
 
   const shown = p.run('tSupplyDetail({o1:true},"stage")')
   t.ok('пилюля появилась', shown.indexOf('data-a="supply-client"') >= 0)
-  t.ok('и панель тоже', shown.indexOf('Заказчик компенсирует') >= 0)
+  t.ok('и панель тоже', shown.indexOf('Оплата заказчиком') >= 0)
 
   const offBtn = p.dom.node({ a: 'supply-refund-off', oid: 'o1' })
   p.run('bind();'); offBtn.onclick({ stopPropagation() {} })
@@ -171,7 +171,7 @@ const nb = (x) => x.replace(/[\u00a0\u202f]/g, ' ')
   const other = p.run('tSupplyDetail({o2:true},"stage")')
   t.ok('в чужом объекте пилюли нет', other.indexOf('data-a="supply-client"') < 0,
     'кнопка протекла в объект, где компенсации нет')
-  t.ok('и панели компенсации нет', other.indexOf('💰 Заказчик компенсирует') < 0)
+  t.ok('и панели компенсации нет', other.indexOf('💰 Оплата заказчиком') < 0)
   t.ok('но включить предлагают и там', other.indexOf('data-a="supply-refund-on" data-oid="o2"') >= 0)
 
   // Оба объекта разом: пилюля только у строк своего.
@@ -233,7 +233,7 @@ const nb = (x) => x.replace(/[\u00a0\u202f]/g, ' ')
   t.ok('серия названа в шапке листа', many.indexOf('серия 19 домов') >= 0)
 
   // Единица берётся тем же пересчётом, что и в колонке одного дома.
-  t.ok('оплаченное считается по одному дому', many.indexOf('уже оплачено 4 580 ₽') >= 0,
+  t.ok('оплаченное считается по одному дому', many.indexOf('уже закуплено 4 580 ₽') >= 0,
     'оплатили один дом, а не серию')
 
   // Единица — обратно, серия снята.

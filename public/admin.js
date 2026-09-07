@@ -18057,7 +18057,7 @@ function tReceive(sel){
           '<span style="font-size:10px;font-weight:700;color:#5a7a9a;background:#eef2f7;border-radius:4px;padding:1px 6px">'+mode.icon+' '+numRu(m.qty||1)+' '+mode.unit+'</span>'+
           (multiMode?'<span style="font-size:10px;background:#e8f0fa;color:#2a5298;border-radius:4px;padding:1px 6px">'+m.objIcon+' '+esc(m.objName)+'</span>':'')+
           '<span style="font-size:10px;color:#9aabbf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px">↳ '+esc(m.wn)+'</span>'+
-          // Про компенсацию бригадиру знать незачем: материал купили мы, везём мы,
+          // Про оплату заказчиком бригадиру знать незачем: материал купили мы, везём мы,
           // принимает он как обычно. Кто вернёт деньги — вопрос не склада.
           (bought?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#eafaf0;border-radius:5px;padding:1px 7px">🛒 куплено</span>':'')+
         '</div>'+
@@ -18637,10 +18637,10 @@ function buildSupplyTZ(store){
 // Полный список материалов объекта в PDF — «для передачи кому-то» (снабженцу/подрядчику).
 // В отличие от ТЗ: ВСЕ магазины и ВСЕ позиции (не только не купленное), со статусом «куплено»,
 // ссылками на товар и итогами куплено/осталось. Учитывает текущие фильтры (поиск/магазин/не куплено).
-// Счёт заказчику на компенсацию: материалы купили мы, деньги возвращает он.
+// Счёт заказчику на оплату материалов: покупаем и везём мы, платит за них он.
 // От нашего закупочного листа отличается адресатом и потому содержимым — ссылка на
 // товар в каждой строке (по ней видно, за что платят), объём в базовой единице,
-// цены и итог, и отдельно сколько из этого уже оплачено: просить компенсацию за
+// цены и итог, и отдельно сколько из этого уже закуплено: выставлять счёт за
 // непотраченное рано.
 //
 // Состав считает общий `refundMats`: то же, что показано в плашке на экране. Своя
@@ -18653,7 +18653,7 @@ function buildHandoffList(){
     mats.push(Object.assign({},m,{wn:w.n,sn:s.n,objName:o.name}));
   });});});});
   mats=refundMats(mats, supplyHandoff);
-  if(!mats.length){ alert("Никакие позиции не помечены к компенсации.\n\nПометьте пилюлей 💰 в строке или добёрите режимом «Выделить позиции»."); return; }
+  if(!mats.length){ alert("Никакие позиции не помечены к оплате заказчиком.\n\nПометьте пилюлей 💰 в строке или добёрите режимом «Выделить позиции»."); return; }
   // Дом строится СЕРИЕЙ: смета посчитана на один дом, а закупать надо на всю партию.
   // Множитель живёт у объекта (`o.seriesQty`) — серия это свойство ЭТОЙ стройки, а не
   // портала. Один дом — колонок серии нет вовсе: пара столбцов «×1» только занимала бы
@@ -18705,7 +18705,7 @@ function buildHandoffList(){
   }).join('');
   const objNames=objs.map(function(o){return o.name;}).join(", ");
   const d=new Date(); const ds=String(d.getDate()).padStart(2,"0")+"."+String(d.getMonth()+1).padStart(2,"0")+"."+d.getFullYear();
-  const html='<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Счёт на компенсацию — '+esc(objNames||"объект")+'</title><style>'+
+  const html='<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Счёт на оплату материалов — '+esc(objNames||"объект")+'</title><style>'+
     'body{font-family:-apple-system,Segoe UI,Arial,sans-serif;padding:24px;color:#1a2a3a;max-width:900px;margin:0 auto}'+
     'h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:20px 0 6px;color:#8e44ad}.cnt{font-size:12px;font-weight:400;color:#777}'+
     '.sub{font-size:13px;color:#555;margin-bottom:4px}'+
@@ -18723,15 +18723,15 @@ function buildHandoffList(){
     '.btn{margin:14px 0;padding:10px 18px;background:#8e44ad;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer}'+
     '@media print{.btn{display:none}body{padding:0}a{color:#1a2a3a}}'+
     '</style></head><body>'+
-    '<h1>🧾 Счёт на компенсацию материалов</h1>'+
+    '<h1>🧾 Счёт на оплату материалов</h1>'+
     '<div class="sub">Объект: '+esc(objNames||"—")+'</div>'+
     '<div class="sub">Дата: '+ds+' · КубрДом · позиций: '+mats.length+(series?' · серия '+seriesN+' домов':'')+'</div>'+
     '<button class="btn" onclick="window.print()">🖨 Печать / Сохранить в PDF</button>'+
-    '<div class="hint">Эти материалы закупаем и привозим мы, а стоимость по договорённости компенсирует заказчик. Ссылка ведёт на товар, по которому считали, объём — по проекту. Оплачено на дату листа: '+Math.round(rt.bought).toLocaleString('ru-RU')+' ₽, остальное закупается по ходу работ.</div>'+
+    '<div class="hint">Эти материалы закупаем и привозим мы, а их стоимость по договорённости оплачивает заказчик. Ссылка ведёт на товар, по которому считали, объём — по проекту. Закуплено на дату листа: '+Math.round(rt.bought).toLocaleString('ru-RU')+' ₽, остальное закупается по ходу работ.</div>'+
     sections+
     '<div class="tot">Итого на 1 дом: '+Math.round(total).toLocaleString('ru-RU')+' ₽'+
       (series?'<div class="tot-s">Итого на '+seriesN+' домов: '+Math.round(total*seriesN).toLocaleString('ru-RU')+' ₽</div>':'')+
-      '<small>из них уже оплачено '+Math.round(rt.bought).toLocaleString('ru-RU')+' ₽ на '+ds+(series?' (по одному дому)':'')+'</small></div>'+
+      '<small>из них уже закуплено '+Math.round(rt.bought).toLocaleString('ru-RU')+' ₽ на '+ds+(series?' (по одному дому)':'')+'</small></div>'+
     '</body></html>';
   const w=window.open("","_blank");
   if(!w){ alert("Разрешите всплывающие окна для этого сайта, чтобы сформировать PDF."); return; }
@@ -18812,13 +18812,13 @@ function _labourPill(ids){
 // `m.client`, и строка уходит из НАШЕЙ закупки — из прогресса, из «осталось» и из
 // подытога этапа. Приёмку на склад не трогает: материал всё равно приедет.
 function _clientPill(ids, on){
-  // Кнопки нет вовсе, пока у объекта не включена компенсация: значок в каждой
+  // Кнопки нет вовсе, пока у объекта не включена оплата заказчиком: значок в каждой
   // строке чужой стройки только мешает читать список.
   const c=supplyFindMatCtx(ids[0]);
   if(!c||!objClientPays(c.o))return "";
   return '<span data-a="supply-client" data-ids="'+ids.join(',')+'" style="font-size:10px;font-weight:700;cursor:pointer;border-radius:6px;padding:1px 8px;'+
     (on?'color:#fff;background:#8e44ad':'color:#8e44ad;background:#fff;border:1px solid #8e44ad55')+'">'+
-    (on?'💰 Компенсирует':'💰 компенсирует?')+'</span>';
+    (on?'💰 Платит заказчик':'💰 платит заказчик?')+'</span>';
 }
 
 // Пилюля «на складе» для полного вида снабженца/админа: видно наличие + можно отметить.
@@ -19007,8 +19007,8 @@ function tSupplyDetail(sel, sortBy){
     '</div>';
   }
 
-  // ── КОМПЕНСАЦИЯ ЗАКАЗЧИКОМ ────────────────────────────────────────────────
-  // Договорённость про компенсацию бывает на одной стройке из десяти, поэтому она
+  // ── ОПЛАТА ЗАКАЗЧИКОМ ────────────────────────────────────────────────
+  // Договорённость про оплату бывает на одной стройке из десяти, поэтому она
   // включается У ОБЪЕКТА: пока выключена, ни кнопок в строках, ни этой панели нет —
   // лишний значок в каждой строке чужого объекта только мешает. Переключатель
   // показываем, когда выбран РОВНО ОДИН объект: иначе непонятно, чей он.
@@ -19016,7 +19016,7 @@ function tSupplyDetail(sel, sortBy){
   const payObjs=targetObjs.filter(objClientPays);
   if(oneObj&&!objClientPays(oneObj)){
     html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:11px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px">'+
-      '<div style="flex:1;min-width:0;font-size:11.5px;color:#9aabbf;line-height:1.45">Часть материалов на этом объекте заказчик компенсирует?</div>'+
+      '<div style="flex:1;min-width:0;font-size:11.5px;color:#9aabbf;line-height:1.45">Часть материалов на этом объекте оплачивает заказчик?</div>'+
       '<button data-a="supply-refund-on" data-oid="'+oneObj.id+'" style="padding:8px 13px;border-radius:9px;cursor:pointer;font-size:12px;font-weight:700;border:1.5px solid #8e44ad;background:#fff;color:#8e44ad;white-space:nowrap;flex-shrink:0">💰 Включить</button>'+
     '</div>';
   }
@@ -19027,7 +19027,7 @@ function tSupplyDetail(sel, sortBy){
     const refT=refundTotals(refList, purchased);
     html+='<div style="background:#fff;border-radius:12px;border:1.5px solid '+(supplyPickMode?'#8e44ad':'#8e44ad44')+';padding:12px 14px;margin-bottom:14px">'+
       '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
-        '<span style="font-size:12px;font-weight:700;color:#1a2a3a;flex:1;min-width:0">💰 Заказчик компенсирует</span>'+
+        '<span style="font-size:12px;font-weight:700;color:#1a2a3a;flex:1;min-width:0">💰 Оплата заказчиком</span>'+
         '<span style="font-size:12px;font-weight:800;color:'+(refT.count?'#8e44ad':'#9aabbf')+';white-space:nowrap">'+refT.count+' поз. · '+Math.round(refT.sum).toLocaleString("ru-RU")+' ₽</span>'+
       '</div>'+
       (refT.count?'<div style="display:flex;gap:6px;margin-bottom:8px">'+
@@ -19042,7 +19042,7 @@ function tSupplyDetail(sel, sortBy){
       '</div>':'')+
       (supplyPickMode
         ? '<div style="font-size:11px;color:#8e44ad;background:#8e44ad12;border-radius:8px;padding:7px 10px;margin-bottom:8px;line-height:1.45">Режим выделения: тап по строке кладёт её в счёт, а НЕ отмечает «куплено». Постоянную пометку ставит пилюля 💰 в строке.</div>'
-        : '<div style="font-size:11px;color:#9aabbf;line-height:1.45;margin-bottom:8px">Покупаем и принимаем всё мы, как обычно. Пилюля 💰 в строке помечает, что эти деньги заказчик вернёт — по пометкам собирается счёт.</div>')+
+        : '<div style="font-size:11px;color:#9aabbf;line-height:1.45;margin-bottom:8px">Покупаем и принимаем всё мы, как обычно. Пилюля 💰 в строке помечает, что эти материалы оплачивает заказчик — по пометкам собирается счёт.</div>')+
       // Серия: смета посчитана на один дом, а закупают на партию. Число живёт у
       // объекта; «1» означает «серии нет» — тогда в счёте колонок серии не будет.
       (oneObj?'<div style="display:flex;align-items:center;gap:8px;padding:8px 0 10px">'+
@@ -19054,7 +19054,7 @@ function tSupplyDetail(sel, sortBy){
         (Object.keys(supplyHandoff).length?'<button data-a="supply-pick-clear" style="padding:10px 12px;border-radius:10px;cursor:pointer;font-size:12.5px;font-weight:700;border:1.5px solid #dde6f0;background:#fff;color:#7a9aaa">Снять разовые</button>':'')+
         (oneObj?'<button data-a="supply-refund-off" data-oid="'+oneObj.id+'" style="padding:10px 12px;border-radius:10px;cursor:pointer;font-size:12.5px;font-weight:700;border:1.5px solid #dde6f0;background:#fff;color:#7a9aaa">Выключить</button>':'')+
       '</div>'+
-      (refT.count?'<button data-a="supply-handoff-pdf" style="width:100%;margin-top:6px;padding:11px;border-radius:10px;border:none;cursor:pointer;font-size:13px;font-weight:700;color:#fff;background:#8e44ad">📄 Счёт на компенсацию (PDF) · '+refT.count+' поз.</button>':'')+
+      (refT.count?'<button data-a="supply-handoff-pdf" style="width:100%;margin-top:6px;padding:11px;border-radius:10px;border:none;cursor:pointer;font-size:13px;font-weight:700;color:#fff;background:#8e44ad">📄 Счёт на оплату (PDF) · '+refT.count+' поз.</button>':'')+
     '</div>';
   }
 
@@ -19069,7 +19069,7 @@ function tSupplyDetail(sel, sortBy){
   }
 
   // Progress bar — in money. Покупаем ВСЁ мы, поэтому в счёт входит каждая позиция:
-  // пометка «заказчик компенсирует» говорит, кто вернёт деньги, а не кто их тратит.
+  // пометка «платит заказчик» говорит, чьи это деньги, а не кто ходит в магазин.
   // Вычесть её отсюда значило бы спрятать закупку, которую нам всё равно делать.
   const costTotal=allMats.reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
   const costDone=allMats.filter(function(m){return!!purchased[m.id];}).reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
@@ -19164,7 +19164,7 @@ function tSupplyDetail(sel, sortBy){
           (m.note&&!(Array.isArray(m.breakdown)&&m.breakdown.length)?'<span style="font-size:10px;color:#9aabbf;font-style:italic">'+esc(m.note)+'</span>':'')+
           (!done&&m.url?'<a href="'+m.url+'" target="_blank" style="font-size:10px;color:#fff;background:#2980b9;border-radius:4px;padding:1px 7px;text-decoration:none;font-weight:600" onclick="event.stopPropagation()">🔗 купить</a>':'')+
           (done?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>':'')+
-          (byClient?'<span style="font-size:10px;font-weight:700;color:#8e44ad;background:#8e44ad18;border-radius:6px;padding:1px 8px">💰 компенсирует</span>':'')+
+          (byClient?'<span style="font-size:10px;font-weight:700;color:#8e44ad;background:#8e44ad18;border-radius:6px;padding:1px 8px">💰 платит заказчик</span>':'')+
           _arrivedPill('data-mid="'+m.id+'"', !!arrived[m.id])+
           _clientPill([m.id], clientPays(m))+
           _labourPill([m.id])+
@@ -19221,7 +19221,7 @@ function tSupplyDetail(sel, sortBy){
   function mergeRow(g){
     const sc=STORECOL[g.store||""]||"#555";
     const ids=g.ids;
-    // Позицию покупаем МЫ — обычной галочкой «куплено». Пометка про компенсацию
+    // Позицию покупаем МЫ — обычной галочкой «куплено». Пометка про оплату
     // ничего в закупке не меняет: она про то, кто вернёт деньги, а не кто их тратит.
     const byClient=ids.length>0&&ids.every(function(id){ const mm=supplyFindMat(id); return !!(mm&&mm.client); });
     const allDone=ids.length>0&&ids.every(function(id){return!!purchased[id];});
@@ -19254,7 +19254,7 @@ function tSupplyDetail(sel, sortBy){
           (g.cost>0?'<span style="font-size:11px;color:#7a9aaa">'+(Number(g.cost)||0).toLocaleString("ru-RU")+' ₽/'+mode.unit+' × '+numRu(qty)+' = <b style="color:#0d1b2e">'+lineTotal+' ₽</b></span>':'')+
           (!allDone&&g.url?'<a href="'+g.url+'" target="_blank" style="font-size:10px;color:#fff;background:#2980b9;border-radius:4px;padding:1px 7px;text-decoration:none;font-weight:600" onclick="event.stopPropagation()">🔗 купить</a>':'')+
           (allDone?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>':'')+
-          (byClient?'<span style="font-size:10px;font-weight:700;color:#8e44ad;background:#8e44ad18;border-radius:6px;padding:1px 8px">💰 компенсирует</span>':'')+
+          (byClient?'<span style="font-size:10px;font-weight:700;color:#8e44ad;background:#8e44ad18;border-radius:6px;padding:1px 8px">💰 платит заказчик</span>':'')+
           _arrivedPill('data-ids="'+ids.join(',')+'"', ids.length>0&&ids.every(function(id){return !!arrived[id];}))+
           // Слитая строка помечается целиком: она склеена из потребностей разных
           // работ, и половина «заказчику», половина нам — это две разные строки,
@@ -23338,7 +23338,7 @@ function bind(){
       fl();
     };}
     else if(a==="supply-labour-open"){el.onclick=()=>{ supplyLabourOpen=!supplyLabourOpen; rerenderTab(); };}
-    // Компенсация — свойство объекта: включается там, где о ней договорились.
+    // Оплата заказчиком — свойство объекта: включается там, где о ней договорились.
     else if(a==="supply-refund-on"||a==="supply-refund-off"){el.onclick=(ev)=>{
       ev&&ev.stopPropagation();
       const oid=el.dataset.oid, on=(a==="supply-refund-on");
