@@ -9,7 +9,7 @@
 // Сторожим три вещи: постоянный признак живёт на материале и переживает
 // перерисовку, деньги считаются по нашей половине, а в лист заказчику уходит
 // ровно то, что показано на экране (постоянные плюс добранные разово).
-import { clientBuys, handoffMats, handoffTotals, ourMats, isLabour, buyMats } from '../src/supply.js'
+import { clientBuys, handoffMats, handoffTotals, ourMats, isLabour, buyMats, looksLikeLabour } from '../src/supply.js'
 import { positionWork } from '../src/recipe.js'
 import { boot, reporter } from './harness/panel-vm.js'
 
@@ -209,6 +209,69 @@ const MATS = [
   // Во всех трёх видах — один и тот же ответ на вопрос «подо что».
   t.ok('вид «Этапы» тоже называет работу', p.run('tSupplyDetail({o1:true},"stage")').indexOf('↳ Каркас') >= 0)
   t.ok('вид «Магазины» тоже', p.run('tSupplyDetail({o1:true},"store")').indexOf('↳ Каркас') >= 0)
+}
+
+// ── 6. Старые объекты: портал предлагает, решает человек ────────────────────
+// Объект, собранный до появления флага `own`, его не несёт, и вручную помечать
+// полсотни строк никто не будет. Схлопывать автоматически нельзя: ошибка здесь
+// прячет из закупки настоящий материал — отказ хуже исходного. Поэтому подсказка,
+// а убранное остаётся на виду с возвратом одним тапом.
+{
+  t.section('Работа в старом объекте: подсказка и возврат')
+
+  t.ok('признаки работы: нет карточки, одна штука, имя = имя работы',
+    looksLikeLabour({ n: 'Монтаж пола', wn: 'Монтаж пола', qty: 1, cost: 5000 }))
+  t.ok('товар под подсказку не попадает',
+    !looksLikeLabour({ n: 'Брусок', wn: 'Каркас', qty: 20, cost: 229 }))
+  t.ok('товар из каталога — тем более',
+    !looksLikeLabour({ n: 'ОСП', wn: 'ОСП', qty: 1, pid: 'p_osb', cost: 900 }))
+  t.ok('уже помеченное не предлагаем второй раз',
+    !looksLikeLabour({ n: 'Монтаж пола', wn: 'Монтаж пола', qty: 1, own: true }))
+
+  const p = boot()
+  p.set({
+    expProducts: [],
+    objects: [
+      { id: 'o1', name: 'Мордвес 1', icon: '🏠', stages: [
+        { id: 's1', n: 'ЭТАП 1', c: '#e67e22', works: [
+          { id: 'w1', n: 'Каркас', cost: 4580, mats: [{ id: 'm1', n: 'Брусок 50×50', cost: 229, qty: 20, store: 'Белка', mode: 'piece' }] },
+          { id: 'w2', n: 'Монтаж чернового пола', cost: 5000, mats: [{ id: 'm2', n: 'Монтаж чернового пола', cost: 5000, qty: 1, mode: 'piece' }] },
+        ] },
+      ] },
+    ],
+    purchased: {}, arrived: {}, purchases: [],
+    templates: [], contractDocs: [], users: [], finTxns: [], stock: [], issues: [],
+  })
+  p.run('window._supplySelected={o1:true};supplyHandoff={};supplyPickMode=false;supplyLabourOpen=false;')
+  p.run('globalThis.confirm=function(){return true;};')
+
+  const before = p.run('tSupplyDetail({o1:true},"stage")')
+  t.ok('портал предлагает убрать', before.indexOf('Похоже на работы') >= 0, 'нет подсказки')
+  t.ok('но сам не убирает', before.indexOf('Монтаж чернового пола') >= 0,
+    'схлопнул без спроса — так нельзя')
+
+  const go = p.dom.node({ a: 'supply-labour-all', ids: 'm2' })
+  p.run('bind();'); go.onclick({ stopPropagation() {} })
+  t.ok('после согласия флаг записан', p.q('objects[0].stages[0].works[1].mats[0].own') === true)
+  t.ok('товар не задет', !p.q('objects[0].stages[0].works[0].mats[0].own'))
+
+  const after = p.run('tSupplyDetail({o1:true},"stage")')
+  t.ok('подсказка ушла', after.indexOf('Похоже на работы') < 0)
+  t.ok('убранное осталось на виду', after.indexOf('Не покупаем — это работы') >= 0,
+    'исчезнувший материал не отличить от потерянного')
+
+  p.run('supplyLabourOpen=true;')
+  const opened = p.run('tSupplyDetail({o1:true},"stage")')
+  t.ok('в списке видно, к какой работе относилось', opened.indexOf('↳ Монтаж чернового пола') >= 0)
+  const back = p.dom.node({ a: 'supply-labour-back', ids: 'm2' })
+  p.run('bind();'); back.onclick({ stopPropagation() {} })
+  t.ok('возврат одним тапом', !p.q('objects[0].stages[0].works[1].mats[0].own'))
+
+  // Пилюля в строке — тот же механизм для одной позиции.
+  const pill = p.dom.node({ a: 'supply-labour', ids: 'm1' })
+  t.ok('пилюля «это работа» есть в строке', !!pill)
+  p.run('bind();'); pill.onclick({ stopPropagation() {} })
+  t.ok('и помечает свою позицию', p.q('objects[0].stages[0].works[0].mats[0].own') === true)
 }
 
 t.done()

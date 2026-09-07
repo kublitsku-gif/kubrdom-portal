@@ -40,7 +40,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // версия на устройстве. По этой подписи это видно сразу.
 // Логика закупок — общая с ботом и Worker'ом (src/supply.js): статус материала должен
 // одинаково считаться в панели и в Telegram, иначе бригадир и снабженец увидят разное.
-import { needStatus, needState, objectSupply, migrateLegacy, needQty, isSelection, pendingSelections, clientBuys, handoffMats, handoffTotals, ourMats, isLabour, buyMats } from "../src/supply.js";
+import { needStatus, needState, objectSupply, migrateLegacy, needQty, isSelection, pendingSelections, clientBuys, handoffMats, handoffTotals, ourMats, isLabour, buyMats, looksLikeLabour } from "../src/supply.js";
 // Сроки этапов — тот же общий модуль, что читают напоминания (см. src/stages.js).
 import { sheetPositions, sheetTotals, sheetIssues, optionGroups, roomArea, optionCost,
   SPEC_POINTS, pointMeta, pointTotals, roomPoints } from "../src/spec.js";
@@ -2434,6 +2434,7 @@ let supplyHideDone=false; // показывать только не куплен
 // осталась в объекте навсегда.
 let supplyHandoff={};
 let supplyPickMode=false; // включён режим «выделить для передачи»
+let supplyLabourOpen=false; // раскрыт список «не покупаем — это работы»
 let supplyArchOpen=false; // список выбора: раскрыта ли свёртка «Архив» (завершённые объекты)
 // Структура затрат свёрнута по умолчанию: снабженцу в первую очередь нужен список
 // закупки, а разбивка по магазинам и этапам — справка, за которой лезут осознанно.
@@ -18769,6 +18770,13 @@ function buildSupplyList(){
   if(!w){ alert("Разрешите всплывающие окна для этого сайта, чтобы сформировать PDF."); return; }
   w.document.open(); w.document.write(html); w.document.close(); w.focus();
 }
+// Пилюля «это работа». Ставит `own` на материал — строка уходит из закупки совсем.
+// Ошибиться не страшно: убранное остаётся на виду отдельным списком с возвратом
+// одним тапом, потому что исчезнувший материал не отличить от потерянного.
+function _labourPill(ids){
+  return '<span data-a="supply-labour" data-ids="'+ids.join(',')+'" style="font-size:10px;font-weight:700;cursor:pointer;border-radius:6px;padding:1px 8px;color:#c0392b;background:#fff;border:1px solid #c0392b55">🔨 это работа</span>';
+}
+
 // Пилюля «закупает заказчик». Постоянное решение по позиции: тап переключает
 // `m.client`, и строка уходит из НАШЕЙ закупки — из прогресса, из «осталось» и из
 // подытога этапа. Приёмку на склад не трогает: материал всё равно приедет.
@@ -18840,10 +18848,15 @@ function tSupplyDetail(sel, sortBy){
   const multiMode=Object.values(sel).filter(Boolean).length>1;
   const targetObjs=objects.filter(function(o){return!!sel[o.id];});
 
-  let allMats=[];
+  let allMats=[], labourMats=[];
   targetObjs.forEach(function(obj){
     obj.stages.forEach(function(s){
       s.works.forEach(function(w){
+        // Помеченные работой собираем отдельно: в закупке им не место, но исчезнуть
+        // совсем они не должны — убранное остаётся на виду с возвратом одним тапом.
+        (w.mats||[]).filter(isLabour).forEach(function(m){
+          labourMats.push(Object.assign({},m,{wn:w.n,sn:s.n,objName:obj.name}));
+        });
         buyMats(w).forEach(function(m){
           allMats.push(Object.assign({},m,{wn:w.n,sn:s.n,sc:s.c,objName:obj.name,objIcon:obj.icon,objId:obj.id}));
         });
@@ -18921,6 +18934,43 @@ function tSupplyDetail(sel, sortBy){
     '</div>';
   });
   html+='</div>';
+
+  // ── ТРУД МИМО ЗАКУПКИ ─────────────────────────────────────────────────────
+  // Объекты, собранные до появления флага `own`, его не несут, и вручную помечать
+  // полсотни строк никто не будет. Схлопывать автоматически нельзя — ошибка здесь
+  // прячет из закупки настоящий материал, а это отказ хуже исходного. Поэтому
+  // портал ПРЕДЛАГАЕТ, а решает человек: тот же приём, что у «Собрать в группу».
+  const labourHint=allMatsFull.filter(looksLikeLabour);
+  if(labourHint.length){
+    const hintSum=labourHint.reduce(function(a,m){return a+(Number(m.cost)||0)*(m.qty||1);},0);
+    html+='<div style="background:#fff;border-radius:12px;border:1.5px solid #c0392b44;padding:12px 14px;margin-bottom:14px">'+
+      '<div style="font-size:12px;font-weight:700;color:#c0392b;margin-bottom:5px">🔨 Похоже на работы, а не на покупки</div>'+
+      '<div style="font-size:11.5px;color:#7a5a58;line-height:1.5;margin-bottom:9px">'+
+        '<b>'+labourHint.length+' поз.</b> на <b>'+Math.round(hintSum).toLocaleString("ru-RU")+' ₽</b>: у них нет карточки в базе, количество одно, а имя совпадает с именем самой работы. Это цена работы, её не покупают в магазине. Проверьте и уберите из закупки — вернуть можно по одной.'+
+      '</div>'+
+      '<div style="font-size:10.5px;color:#9aabbf;line-height:1.5;margin-bottom:9px">'+esc(labourHint.slice(0,4).map(function(m){return m.n;}).join(" · "))+(labourHint.length>4?' · ещё '+(labourHint.length-4):'')+'</div>'+
+      '<button data-a="supply-labour-all" data-ids="'+labourHint.map(function(m){return m.id;}).join(',')+'" style="width:100%;padding:10px;border-radius:10px;border:none;cursor:pointer;font-size:12.5px;font-weight:700;color:#fff;background:#c0392b">Убрать из закупки '+labourHint.length+' поз.</button>'+
+    '</div>';
+  }
+  if(labourMats.length){
+    const labSum=labourMats.reduce(function(a,m){return a+(Number(m.cost)||0)*(m.qty||1);},0);
+    html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;margin-bottom:14px;overflow:hidden">'+
+      '<div data-a="supply-labour-open" style="display:flex;align-items:center;gap:8px;padding:11px 14px;cursor:pointer;user-select:none">'+
+        '<span style="font-size:10px;color:#9aabbf;transition:transform 0.15s;transform:rotate('+(supplyLabourOpen?'90':'0')+'deg)">▶</span>'+
+        '<span style="font-size:12px;font-weight:700;color:#1a2a3a;flex:1;min-width:0">🔨 Не покупаем — это работы</span>'+
+        '<span style="font-size:12px;font-weight:800;color:#9aabbf;white-space:nowrap">'+labourMats.length+' поз. · '+Math.round(labSum).toLocaleString("ru-RU")+' ₽</span>'+
+      '</div>'+
+      (supplyLabourOpen?'<div style="padding:0 12px 10px">'+labourMats.map(function(m){
+        return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:9px;background:#f8fafc;border:1px solid #eef2f7;margin-bottom:5px">'+
+          '<div style="flex:1;min-width:0">'+
+            '<div style="font-size:12.5px;font-weight:600;color:#7a9aaa">'+esc(m.n)+'</div>'+
+            '<div style="font-size:10px;color:#9aabbf;margin-top:2px">↳ '+esc(m.wn||"")+' · '+Math.round((Number(m.cost)||0)*(m.qty||1)).toLocaleString("ru-RU")+' ₽</div>'+
+          '</div>'+
+          '<span data-a="supply-labour-back" data-ids="'+m.id+'" style="font-size:10px;font-weight:700;cursor:pointer;border-radius:6px;padding:3px 9px;color:#2980b9;background:#fff;border:1px solid #2980b955;flex-shrink:0">↩ вернуть</span>'+
+        '</div>';
+      }).join('')+'</div>':'')+
+    '</div>';
+  }
 
   // ── ПЕРЕДАЧА ЗАКАЗЧИКУ ────────────────────────────────────────────────────
   // Что заказчик закупает сам: постоянно помеченное плюс добранное разово.
@@ -19051,6 +19101,7 @@ function tSupplyDetail(sel, sortBy){
           (done?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>':'')+
           _arrivedPill('data-mid="'+m.id+'"', !!arrived[m.id])+
           _clientPill([m.id], clientBuys(m))+
+          _labourPill([m.id])+
           (matPendingChange(m.id)?MAT_PENDING_PILL:'')+
           _stockPill([m.id])+
           _selPill(m)+
@@ -19138,6 +19189,7 @@ function tSupplyDetail(sel, sortBy){
           // работ, и половина «заказчику», половина нам — это две разные строки,
           // а не одна с половинчатой отметкой.
           _clientPill(ids, ids.length>0&&ids.every(function(id){ const mm=supplyFindMat(id); return !!(mm&&mm.client); }))+
+          _labourPill(ids)+
           (ids.some(function(id){return !!matPendingChange(id);})?MAT_PENDING_PILL:'')+
           _stockPill(ids)+
           // Слитая строка правится целиком: одна замена вместо обхода всех работ,
@@ -23182,6 +23234,42 @@ function bind(){
       free.forEach(function(id){ if(allOn)delete supplyHandoff[id]; else supplyHandoff[id]=true; });
       rerenderTab();
     };}
+    // «Это работа» / «вернуть в закупку» — один обработчик: пишем `own` в материал.
+    else if(a==="supply-labour"||a==="supply-labour-back"){el.onclick=(ev)=>{
+      ev&&ev.stopPropagation();
+      const ids=(el.dataset.ids||"").split(',').filter(Boolean);
+      if(!ids.length)return;
+      const back=(a==="supply-labour-back");
+      objects=objects.map(function(o){ return Object.assign({},o,{ stages:(o.stages||[]).map(function(st){
+        return Object.assign({},st,{ works:(st.works||[]).map(function(w){
+          if(!(w.mats||[]).some(function(m){return ids.indexOf(m.id)>=0;}))return w;
+          return Object.assign({},w,{ mats:w.mats.map(function(m){
+            if(ids.indexOf(m.id)<0)return m;
+            const nm=Object.assign({},m);
+            if(back)delete nm.own; else nm.own=true;
+            return nm;
+          })});
+        })});
+      })}); });
+      fl();
+    };}
+    // Принять подсказку разом: пометить работами всё, что на неё похоже.
+    else if(a==="supply-labour-all"){el.onclick=(ev)=>{
+      ev&&ev.stopPropagation();
+      const ids=(el.dataset.ids||"").split(',').filter(Boolean);
+      if(!ids.length)return;
+      if(!confirm("Пометить работами "+ids.length+" поз.?\n\nОни уйдут из закупки. Вернуть можно по одной — списком «не покупаем» внизу."))return;
+      objects=objects.map(function(o){ return Object.assign({},o,{ stages:(o.stages||[]).map(function(st){
+        return Object.assign({},st,{ works:(st.works||[]).map(function(w){
+          if(!(w.mats||[]).some(function(m){return ids.indexOf(m.id)>=0;}))return w;
+          return Object.assign({},w,{ mats:w.mats.map(function(m){
+            return ids.indexOf(m.id)<0?m:Object.assign({},m,{own:true});
+          })});
+        })});
+      })}); });
+      fl();
+    };}
+    else if(a==="supply-labour-open"){el.onclick=()=>{ supplyLabourOpen=!supplyLabourOpen; rerenderTab(); };}
     else if(a==="supply-pick-mode"){el.onclick=()=>{ supplyPickMode=!supplyPickMode; rerenderTab(); };}
     else if(a==="supply-pick-clear"){el.onclick=()=>{ supplyHandoff={}; rerenderTab(); };}
     else if(a==="supply-handoff-pdf"){el.onclick=(ev)=>{ ev&&ev.stopPropagation(); buildHandoffList(); };}
