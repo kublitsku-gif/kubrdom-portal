@@ -18727,7 +18727,7 @@ function buildHandoffList(){
     '<div class="sub">Объект: '+esc(objNames||"—")+'</div>'+
     '<div class="sub">Дата: '+ds+' · КубрДом · позиций: '+mats.length+(series?' · серия '+seriesN+' домов':'')+'</div>'+
     '<button class="btn" onclick="window.print()">🖨 Печать / Сохранить в PDF</button>'+
-    '<div class="hint">Эти материалы закупаем и привозим мы, а их стоимость по договорённости оплачивает заказчик. Ссылка ведёт на товар, по которому считали, объём — по проекту. Закуплено на дату листа: '+Math.round(rt.bought).toLocaleString('ru-RU')+' ₽, остальное закупается по ходу работ.</div>'+
+    '<div class="hint">Стоимость этих материалов по договорённости оплачивает заказчик. Ссылка ведёт на товар, по которому считали, объём — по проекту. Закуплено на дату листа: '+Math.round(rt.bought).toLocaleString('ru-RU')+' ₽, остальное закупается по ходу работ.</div>'+
     sections+
     '<div class="tot">Итого на 1 дом: '+Math.round(total).toLocaleString('ru-RU')+' ₽'+
       (series?'<div class="tot-s">Итого на '+seriesN+' домов: '+Math.round(total*seriesN).toLocaleString('ru-RU')+' ₽</div>':'')+
