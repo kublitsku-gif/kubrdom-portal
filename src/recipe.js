@@ -31,10 +31,11 @@ export const RULE_WHATS = [
   { k: "part",    n: "на каждую перегородку",  need: "" },
   { k: "house",   n: "один раз на дом",        need: "" },
 ];
-export const RULE_SURFACES = [["floor", "пол"], ["wall", "стены"], ["ceil", "потолок"]];
+export const RULE_SURFACES = [["floor", "пол"], ["wall", "стены"], ["ceil", "потолок"],
+  ["wallceil", "стены + потолок"]];
 export const RULE_SCOPES = [["room", "по каждому помещению"], ["house", "на весь дом"]];
 
-const SURFACE_N = { floor: "пол", wall: "стены", ceil: "потолок" };
+const SURFACE_N = { floor: "пол", wall: "стены", ceil: "потолок", wallceil: "стены и потолок" };
 
 function whatMeta(k) { return RULE_WHATS.find(function (x) { return x.k === k; }) || RULE_WHATS[0]; }
 
@@ -97,6 +98,31 @@ export function ruleReady(rule) {
   if (need === "surface" && !SURFACE_N[r.k]) return "не выбрана поверхность";
   if (need === "point" && !r.k) return "не выбрана точка";
   return "";
+}
+
+// Сколько квадратов даст каждая поверхность при ЭТОМ правиле — числа для кнопок
+// выбора и для проверки глазами. Считаем тем же roomArea/roomMatch, которым потом
+// соберётся смета: цифра на кнопке обязана совпасть с той, что уедет в дом,
+// иначе кнопка обещает одно, а строка приносит другое.
+export function ruleAreas(sheet, rule, winTypes) {
+  const probe = probeSheet(sheet, winTypes);
+  const specs = probe.specs || {};
+  const H = Number(specs.height) || 0;
+  const all = specs.rooms || [];
+  const rooms = all.map(function (rm) {
+    return {
+      id: rm.id || "", name: rm.name || "",
+      floor: roomArea(rm, H, "floor"), wall: roomArea(rm, H, "wall"),
+      ceil: roomArea(rm, H, "ceil"), wallceil: roomArea(rm, H, "wallceil"),
+      match: roomMatch(rule, rm),
+    };
+  });
+  const hit = rooms.filter(function (rm) { return rm.match; });
+  const sum = function (k) {
+    return Math.round(hit.reduce(function (a, rm) { return a + (Number(rm[k]) || 0); }, 0) * 100) / 100;
+  };
+  return { rooms: rooms, matched: hit.length,
+    floor: sum("floor"), wall: sum("wall"), ceil: sum("ceil"), wallceil: sum("wallceil") };
 }
 
 function roomMatch(rule, room) {

@@ -63,10 +63,15 @@ export function roomArea(room, height, surface) {
   const h = Number(height) || 0;
   const w = Number(room && room.w) || 0, l = Number(room && room.l) || 0;
   const floor = (w || l) ? Math.round(w * l * 100) / 100 : (Number(room && room.floor) || 0);
-  if (surface === "wall") {
+  const wall = function () {
     const len = Number(room && room.wallLen);
     return (len || len === 0) && room.wallLen !== "" ? Math.round(len * h * 100) / 100 : (Number(room && room.wall) || 0);
-  }
+  };
+  if (surface === "wall") return wall();
+  // «Стены и потолок» — одна поверхность, а не две работы: красят, обшивают и
+  // шпаклюют их одним заходом и по одной цене за квадрат, и разбивать это на две
+  // строки значит просить человека сложить их обратно в голове.
+  if (surface === "wallceil") return Math.round((wall() + floor) * 100) / 100;
   return floor;   // floor и ceil — одна и та же площадь
 }
 

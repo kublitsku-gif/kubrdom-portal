@@ -7,7 +7,7 @@
 // список из справочника и список из правил складываются, а не подменяют друг друга.
 import { presetModel, MODEL_PRESETS } from '../src/model.js'
 import { sheetPositions } from '../src/spec.js'
-import { rulePositions, allPositions, allPositionsRaw, ruleText, ruleReady, probeSheet,
+import { rulePositions, allPositions, allPositionsRaw, ruleText, ruleReady, ruleAreas, probeSheet,
   layerPositions, pieArea, pieCost, applyPicks, optLabelOf, optPrefixOf, applyRooms, roomKeyOf, posRoomOf, ROOM_HOUSE, applyMatEdits, matOrderOf, matKeyOf, matAddKey, matAddrs, matLegacyKey, matAddrPid, matAddrSwap, stampMatIx, migrateMatAddrs } from '../src/recipe.js'
 import { modelAreas, modelTotals, applyLayers } from '../src/model.js'
 import { gaps2 } from '../src/spec2.js'
@@ -76,6 +76,41 @@ const R = (o) => Object.assign({ id: 'r1', kind: 'house', what: 'surface', k: 'w
   const floor = run([R({ estId: 'e_tile', k: 'floor', scope: 'house' })])
   t.ok('пол меряется полом', floor[0].area === rooms.reduce((a, r) => a + r.floor, 0))
   t.ok('этап берётся из сметы', floor[0].stage === 3)
+
+  // Стены и потолок красят одним заходом и по одной цене за квадрат: это одна
+  // поверхность, а не две работы, которые человек потом складывает в голове.
+  const wc = run([R({ estId: 'e_osb', k: 'wallceil', scope: 'house' })])
+  const walls = run([R({ estId: 'e_osb', k: 'wall', scope: 'house' })])
+  const ceils = run([R({ estId: 'e_osb', k: 'ceil', scope: 'house' })])
+  t.ok('«стены + потолок» — одна строка', wc.length === 1)
+  t.ok('и площадь равна сумме двух',
+    Math.abs(wc[0].area - (walls[0].area + ceils[0].area)) < 0.05,
+    wc[0].area + ' vs ' + (walls[0].area + ceils[0].area))
+  t.ok('материал считается по этой же площади', wc[0].mats[0].qty === wc[0].area)
+  t.ok('и правило считается настроенным', ruleReady(R({ estId: 'e_osb', k: 'wallceil' })) === '')
+  t.ok('в объяснении сказано, чем меряли', /стены и потолок [\d,]+ м²/.test(wc[0].why))
+  t.ok('и в подписи правила тоже', /стены и потолок/.test(ruleText(R({ estId: 'e_osb', k: 'wallceil', scope: 'house' }))))
+}
+
+// ── Объёмы для кнопок выбора ────────────────────────────────────────────────
+// Кнопка «пол · 25,26 м²» обязана обещать ровно то число, которое потом уедет в
+// смету: считается оно тем же roomArea, что и позиции правила.
+{
+  t.section('Объёмы под кнопками')
+  const A = ruleAreas(SHEET, R({ estId: 'e_osb' }), TYPES)
+  t.ok('перечислены все помещения', A.rooms.length === rooms.length, 'помещений: ' + A.rooms.length)
+  t.ok('пол сходится с расчётом', Math.abs(A.floor - rooms.reduce((a, r) => a + r.floor, 0)) < 0.05)
+  t.ok('стены сходятся с правилом',
+    Math.abs(A.wall - run([R({ estId: 'e_osb', scope: 'house' })])[0].area) < 0.05)
+  t.ok('«стены + потолок» — сумма двух', Math.abs(A.wallceil - (A.wall + A.ceil)) < 0.05)
+
+  // Фильтр по помещению отбирает и числа: выбрали санузел — на кнопке его квадраты.
+  const one = ruleAreas(SHEET, R({ estId: 'e_osb', room: 'Санузел' }), TYPES)
+  const san = A.rooms.find((r) => r.name === 'Санузел')
+  t.ok('фильтр оставил одно помещение', one.matched === 1, 'совпало: ' + one.matched)
+  t.ok('и число на кнопке — его собственное', Math.abs(one.wall - san.wall) < 0.05)
+  t.ok('у каждого помещения свои квадраты', A.rooms.every((r) => r.floor > 0 && r.ceil === r.floor))
+  t.ok('и видно, какие попали под фильтр', one.rooms.filter((r) => r.match).length === 1)
 }
 
 // ── 2. Точки раскладки ──────────────────────────────────────────────────────

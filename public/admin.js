@@ -56,7 +56,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
 import { totals2, issues2, works2 } from "../src/spec2.js";
 import { priceHist, priceWas, pricePush, priceStale, refreshPrices } from "../src/prices.js";
 import { UNIT_WORDS, PACK_AS_WORD, normProduct } from "../src/catalog.js";
-import { allPositions, allPositionsRaw, addedPositions, matKeyOf, matAddKey, matAddrs, matAddrPid, matAddrSwap, migrateMatAddrs, rulePositions, positionWork, ruleText, ruleReady, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
+import { allPositions, allPositionsRaw, addedPositions, matKeyOf, matAddKey, matAddrs, matAddrPid, matAddrSwap, migrateMatAddrs, rulePositions, positionWork, ruleText, ruleReady, ruleAreas, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
   pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
   optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf, ROOM_HOUSE, roomKeyOf, positionSplit } from "../src/recipe.js";
 import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
@@ -64,7 +64,7 @@ import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
-const APP_BUILD = "2026-09-09.6";
+const APP_BUILD = "2026-09-09.7";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -13347,6 +13347,64 @@ function ruleChips(a, list, cur, extra){
     }).join("")+
   '</div>';
 }
+// Кнопки выбора с ЧИСЛАМИ этого дома: «пол · 25,26 м²» вместо просто «пол».
+// Правило — это вопрос «чем меряется работа», и ответ на него проверяется одним
+// числом; без него человек выбирает вслепую и сверяет уже по итогу в рублях.
+// Числа берутся тем же расчётом, что потом соберёт смету (ruleAreas → roomArea),
+// поэтому кнопка не может пообещать одно, а строка принести другое.
+function ruleAreaChips(sh, cur, act, extra){
+  const A=ruleAreas(sh, cur, winTypes);
+  return '<div style="display:flex;flex-wrap:wrap;gap:4px">'+
+    RULE_SURFACES.map(function(x){
+      const on=String(cur.k||"")===String(x[0]);
+      const v=Number(A[x[0]])||0;
+      return '<button data-a="'+act+'" data-f="k" data-v="'+esc(x[0])+'"'+(extra||"")+' style="border:1.5px solid '+(on?RULE_COL:"#dde6f0")+';background:'+(on?RULE_COL:"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:8px;padding:5px 9px;font-size:11px;font-weight:700;cursor:pointer;line-height:1.25;text-align:left">'+
+        esc(x[1])+
+        '<span style="display:block;font-size:9.5px;font-weight:700;opacity:.85">'+(v>0?numRu(v)+' м²':'нет в чертеже')+'</span>'+
+      '</button>';
+    }).join("")+
+  '</div>';
+}
+// Помещения — кнопками, а не «частью имени» руками. Имя помещения живёт в модели,
+// и печатать его по памяти значит однажды напечатать «санузел» там, где на чертеже
+// «Санузел 1», и молча получить ноль строк. У каждой кнопки — её собственный объём
+// по выбранной поверхности: видно, что именно уедет в смету.
+function ruleRoomChips(sh, cur, act, extra){
+  const A=ruleAreas(sh, Object.assign({}, cur, { room:"" }), winTypes);
+  const k=String(cur.k||"floor");
+  const chip=function(val, name, v, on){
+    return '<button data-a="'+act+'" data-f="room" data-v="'+esc(val)+'"'+(extra||"")+' style="border:1.5px solid '+(on?RULE_COL:"#dde6f0")+';background:'+(on?RULE_COL:"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:8px;padding:5px 9px;font-size:11px;font-weight:700;cursor:pointer;line-height:1.25;text-align:left">'+
+      esc(name)+(v==null?'':'<span style="display:block;font-size:9.5px;font-weight:700;opacity:.85">'+(v>0?numRu(v)+' м²':'—')+'</span>')+
+    '</button>';
+  };
+  const room=String(cur.room||"").trim();
+  const all=(A.rooms||[]).reduce(function(a,rm){ return a+(Number(rm[k])||0); },0);
+  return '<div style="display:flex;flex-wrap:wrap;gap:4px">'+
+    chip("", "все помещения", Math.round(all*100)/100, !room)+
+    (A.rooms||[]).map(function(rm){
+      return chip(rm.name||"", rm.name||"Помещение", Number(rm[k])||0,
+        !!room&&String(rm.name||"").toLowerCase().indexOf(room.toLowerCase())>=0);
+    }).join("")+
+  '</div>';
+}
+// Что правило даёт ПРЯМО СЕЙЧАС: сколько строк, сколько квадратов и на сколько
+// денег. Иначе правило проверяется только глазами по всей смете — а собирают его
+// как раз потому, что смотреть сорок строк никто не будет.
+function ruleGotHtml(sh, r){
+  const bad=ruleReady(r);
+  if(bad)return '<div style="font-size:11px;font-weight:700;color:#c0392b;margin-top:8px">⚠ '+esc(bad)+'</div>';
+  const got=rulePositions(sh, [r], estimates, expProducts, winTypes);
+  const sum=got.reduce(function(a,x){ return a+(Number(x.cost)||0); },0);
+  const area=Math.round(got.reduce(function(a,x){ return a+(Number(x.area)||0); },0)*100)/100;
+  return '<div style="margin-top:8px;background:#fff;border:1px solid #e2d4ee;border-radius:9px;padding:7px 9px;font-size:11px;color:#5a7a9a;line-height:1.5">'+
+    '<b style="color:#0d1b2e">'+got.length+'</b> '+pluralRu(got.length,"строка","строки","строк")+
+    (area>0?' · <b style="color:#0d1b2e">'+numRu(area)+' м²</b>':'')+
+    ' · <b style="color:#0d1b2e">'+Math.round(sum).toLocaleString("ru-RU")+' ₽</b>'+
+    (got.length?'<div style="font-size:10px;color:#9aabbf;margin-top:3px">'+
+      esc(got.slice(0,4).map(function(x){ return (x.room||"весь дом")+(x.area>0?" "+numRu(x.area)+" м²":""); }).join(" · "))+
+      (got.length>4?" · …":"")+'</div>':'')+
+  '</div>';
+}
 function ruleLab(t){ return '<div style="font-size:9.5px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin:8px 0 4px">'+t+'</div>'; }
 function ruleSet(id, fn){
   buildRules=(buildRules||[]).map(function(r){
@@ -13397,13 +13455,16 @@ function spec2RulesHtml(built, sh, pr){
       '</select>'+
       ruleLab("ЧЕМ МЕРЯЕТСЯ")+
       ruleChips("rule-what", RULE_WHATS.map(function(x){return [x.k,x.n];}), r.what||"surface", ' data-id="'+r.id+'"');
-    if(need==="surface")c+=ruleLab("ПОВЕРХНОСТЬ")+ruleChips("rule-k", RULE_SURFACES, r.k||"", ' data-id="'+r.id+'"');
+    if(need==="surface")c+=ruleLab("ПОВЕРХНОСТЬ — ОБЪЁМ ЭТОГО ДОМА")+ruleAreaChips(probe, r, "rule-k", ' data-id="'+r.id+'"');
     if(need==="point")c+=ruleLab("ТОЧКА РАСКЛАДКИ")+ruleChips("rule-k", SPEC_POINTS.map(function(pt){return [pt.k, pt.emoji+" "+pt.n];}), r.k||"", ' data-id="'+r.id+'"');
     if(need)c+=ruleLab("СЧИТАТЬ")+ruleChips("rule-scope", RULE_SCOPES, r.scope||"room", ' data-id="'+r.id+'"');
+    const rrooms=(ruleAreas(probe, Object.assign({}, r, { room:"" }), built.winTypes).rooms||[]);
+    if(need==="surface"&&rrooms.length)c+=ruleLab("В КАКИХ ПОМЕЩЕНИЯХ")+ruleRoomChips(probe, r, "rule-room-pick", ' data-id="'+r.id+'"');
     c+='<div style="display:flex;gap:6px;margin-top:8px">'+
-        '<div style="flex:1;min-width:0">'+ruleLab("ТОЛЬКО В ПОМЕЩЕНИЯХ (ЧАСТЬ ИМЕНИ)")+
-          '<input data-a="rule-room" data-id="'+r.id+'" value="'+esc(r.room||"")+'" placeholder="все помещения" style="width:100%;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box">'+
-        '</div>'+
+        (rrooms.length&&need==="surface"?''
+          : '<div style="flex:1;min-width:0">'+ruleLab("ТОЛЬКО В ПОМЕЩЕНИЯХ (ЧАСТЬ ИМЕНИ)")+
+            '<input data-a="rule-room" data-id="'+r.id+'" value="'+esc(r.room||"")+'" placeholder="все помещения" style="width:100%;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box">'+
+          '</div>')+
         '<div style="width:92px;flex-shrink:0">'+ruleLab("МНОЖИТЕЛЬ")+
           '<input data-a="rule-qty" data-id="'+r.id+'" type="number" step="0.1" min="0.1" value="'+String(Number(r.qty)||1)+'" style="width:100%;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box">'+
         '</div>'+
@@ -13838,19 +13899,23 @@ function estWhyEditor(p, sh){
   let h='<div style="background:#faf7fd;border:1px solid #e2d4ee;border-radius:11px;padding:10px 11px;margin-top:7px">'+
     '<div style="font-size:9.5px;font-weight:700;color:'+RULE_COL+';letter-spacing:0.5px;margin-bottom:6px">ЧЕМ МЕРЯЕТСЯ ЭТА СТРОКА</div>'+
     chips("what", RULE_WHATS.map(function(x){return [x.k,x.n];}), cur.what||"house");
-  if(need==="surface")h+=ruleLab("ПОВЕРХНОСТЬ")+chips("k", RULE_SURFACES, cur.k||"");
+  if(need==="surface")h+=ruleLab("ПОВЕРХНОСТЬ — ОБЪЁМ ЭТОГО ДОМА")+ruleAreaChips(sh, cur, "est-rule-set", ' data-est="'+p.estId+'"');
   if(need==="point")h+=ruleLab("ТОЧКА РАСКЛАДКИ")+chips("k", SPEC_POINTS.map(function(pt){return [pt.k, pt.emoji+" "+pt.n];}), cur.k||"");
   if(need)h+=ruleLab("СЧИТАТЬ")+chips("scope", RULE_SCOPES, cur.scope||"room");
+  const rooms=(ruleAreas(sh, Object.assign({}, cur, { room:"" }), winTypes).rooms||[]);
+  if(need==="surface"&&rooms.length)h+=ruleLab("В КАКИХ ПОМЕЩЕНИЯХ")+ruleRoomChips(sh, cur, "est-rule-set", ' data-est="'+p.estId+'"');
   h+='<div style="display:flex;gap:6px;margin-top:8px">'+
-      '<div style="flex:1;min-width:0">'+ruleLab("ТОЛЬКО В ПОМЕЩЕНИЯХ (ЧАСТЬ ИМЕНИ)")+
-        '<input data-a="est-rule-room" data-est="'+p.estId+'" value="'+esc(cur.room||"")+'" placeholder="все помещения" style="width:100%;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box">'+
-      '</div>'+
+      (rooms.length&&need==="surface"?''
+        : '<div style="flex:1;min-width:0">'+ruleLab("ТОЛЬКО В ПОМЕЩЕНИЯХ (ЧАСТЬ ИМЕНИ)")+
+          '<input data-a="est-rule-room" data-est="'+p.estId+'" value="'+esc(cur.room||"")+'" placeholder="все помещения" style="width:100%;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box">'+
+        '</div>')+
       '<div style="width:92px;flex-shrink:0">'+ruleLab("МНОЖИТЕЛЬ")+
         '<input data-a="est-rule-qty" data-est="'+p.estId+'" type="number" step="0.1" min="0.1" value="'+String(Number(cur.qty)||1)+'" style="width:100%;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box">'+
       '</div>'+
     '</div>'+
     ruleLab("ЭТАП")+
     chips("stage", [["0","из сметы"]].concat(EST_STAGES.map(function(st){return [String(st.n), st.short];})), String(Number(cur.stage)||0))+
+    (r?ruleGotHtml(sh, r):'')+
     optEditorHtml(p, sh)+
     '<div style="display:flex;gap:6px;margin-top:9px;flex-wrap:wrap">'+
       (r?'<button data-a="est-rule-del" data-est="'+p.estId+'" style="padding:7px 11px;background:#fff;border:1px solid #f0d5d0;border-radius:8px;cursor:pointer;color:#c0392b;font-size:11px;font-weight:700">Убрать правило</button>':'')+
@@ -25623,6 +25688,7 @@ function bind(){
     else if(a==="rule-est"){el.onchange=()=>{ ruleSet(el.dataset.id, function(r){ r.estId=el.value||""; }); };}
     // Имя помещения и множитель пишем по `change`, а не по `input`: перерисовка
     // на каждой букве выбивала бы поле из-под пальца.
+    else if(a==="rule-room-pick"){el.onclick=()=>{ ruleSet(el.dataset.id, function(r){ r.room=el.dataset.v||""; }); };}
     else if(a==="rule-room"){el.onchange=()=>{ ruleSet(el.dataset.id, function(r){ r.room=el.value||""; }); };}
     else if(a==="rule-qty"){el.onchange=()=>{ ruleSet(el.dataset.id, function(r){ const v=parseFloat(String(el.value).replace(",",".")); r.qty=(isFinite(v)&&v>0)?v:1; }); };}
     else if(a==="spec2-print"){el.onclick=()=>{ buildSchemePrint(); };}

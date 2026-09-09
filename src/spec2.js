@@ -240,7 +240,13 @@ export function gaps2(sheet, ctx) {
   const A = modelAreas(probe.model, winTypes || []);
   [["floor", A.total.floor], ["wall", A.total.wallNet], ["ceil", A.total.ceil]].forEach(function (pair) {
     if (!(pair[1] > 0)) return;
-    if (pos.some(function (p) { return p.surface === pair[0] && p.area > 0; })) return;
+    // «Стены + потолок» считает обе поверхности сразу — иначе пропуском объявится
+    // то, что как раз посчитано.
+    if (pos.some(function (p) {
+      if (!(p.area > 0)) return false;
+      if (p.surface === pair[0]) return true;
+      return p.surface === "wallceil" && (pair[0] === "wall" || pair[0] === "ceil");
+    })) return;
     out.push({ kind: "surface", k: pair[0], t: SURFACE2[pair[0]] + " " + num2(pair[1]) + " м²",
       why: "ни одна позиция этим не меряется" });
   });

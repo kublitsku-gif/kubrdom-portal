@@ -1138,6 +1138,48 @@ function create(p, name) {
     new RegExp('материалы ' + st.mats.toLocaleString('ru-RU').replace(/[\u00a0\u202f]/g, ' ') + ' ₽ · работа 12 000 ₽').test(plain()))
 }
 
+// ── Правило в строке: выбор с объёмами ──────────────────────────────────────
+// «Чем меряется эта строка» — вопрос, ответ на который проверяется одним числом.
+// Кнопки без чисел заставляют выбирать вслепую и сверять уже по итогу в рублях.
+{
+  t.section('Правило с объёмами')
+  const p = panel(RULES)
+  create(p, 'Дом с правилом')
+  p.run('projBand="parts";')
+  const key = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.estId==="e_osb";})[0].key')
+  const est = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.estId==="e_osb";})[0].estId')
+  openRow(p, key)
+  p.run('estWhyOpen=' + JSON.stringify(est) + ';')
+  const html = p.run('tProjects()')
+  t.ok('редактор правила раскрыт', /ЧЕМ МЕРЯЕТСЯ ЭТА СТРОКА/.test(html))
+  t.ok('поверхности предлагаются с объёмом дома', /ПОВЕРХНОСТЬ — ОБЪЁМ ЭТОГО ДОМА/.test(html))
+  t.ok('и «стены + потолок» среди них', /data-v="wallceil"/.test(html))
+  t.ok('на кнопках стоят квадраты', /data-a="est-rule-set" data-f="k"[^>]*>[^<]*<span[^>]*>[\d,]+ м²/.test(html),
+    'нет чисел на кнопках')
+  // Помещения — кнопками: имя живёт в модели, и печатать его по памяти значит
+  // однажды напечатать не то и молча получить ноль строк.
+  t.ok('помещения предлагаются кнопками', /В КАКИХ ПОМЕЩЕНИЯХ/.test(html))
+  t.ok('и «все помещения» среди них', /data-a="est-rule-set" data-f="room" data-v=""/.test(html))
+  t.ok('поля «часть имени» больше нет', html.indexOf('data-a="est-rule-room"') < 0)
+
+  // Выбор помещения кнопкой — и предпросмотр показывает, что получится.
+  const rooms = p.q('ruleAreas(projects[0], {room:""}, winTypes).rooms.map(function(r){return r.name;})')
+  t.ok('в доме есть помещения', rooms.length >= 2, JSON.stringify(rooms))
+  const pick = p.dom.node({ a: 'est-rule-set', est: est, f: 'room', v: rooms[0] })
+  p.run('bind();'); pick.onclick()
+  t.ok('фильтр помещения записан в правило',
+    p.q('buildRules.filter(function(r){return r.estId===' + JSON.stringify(est) + ';})[0].room') === rooms[0])
+  const after = p.run('tProjects()')
+  t.ok('предпросмотр говорит, сколько получится', /строк[аи]?<\/b>|<b[^>]*>\d+<\/b> строк/.test(after), 'нет предпросмотра')
+  const kb = p.dom.node({ a: 'est-rule-set', est: est, f: 'k', v: 'wallceil' })
+  p.run('bind();'); kb.onclick()
+  t.ok('поверхность записана', p.q('buildRules.filter(function(r){return r.estId===' + JSON.stringify(est) + ';})[0].k') === 'wallceil')
+  const got = p.q('rulePositions(projects[0], buildRules.filter(function(r){return r.estId===' + JSON.stringify(est) + ';}), estimates, expProducts, winTypes)')
+  t.ok('и смета посчиталась по стенам с потолком', got.length === 1 && got[0].area > 0, JSON.stringify(got.map((x) => x.area)))
+  t.ok('число совпало с обещанным на кнопке',
+    Math.abs(got[0].area - p.q('ruleAreas(projects[0], {room:' + JSON.stringify(rooms[0]) + '}, winTypes).wallceil')) < 0.05)
+}
+
 // ── Фильтры и выбор нескольких работ ────────────────────────────────────────
 // К смете ходят не только с вопросом «где эта работа»: что дописано руками, где
 // не назначена оплата бригаде. И правка бывает одна на десять строк — десять
