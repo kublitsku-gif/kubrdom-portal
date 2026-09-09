@@ -1140,6 +1140,11 @@ export function openingCounts(model, winTypes) {
 export function modelToSpecs(model, winTypes) {
   const m = model || {};
   const counts = openingCounts(m, winTypes);
+  // Площадь проёмов помещения нужна смете: по «стенам без проёмов» красят и
+  // обшивают. Берём её у modelAreas, а не считаем второй раз здесь: два места,
+  // считающие окна, однажды посчитают их по-разному.
+  const ops = {};
+  modelAreas(m, winTypes).rooms.forEach(function (r) { ops[r.id] = r.openings; });
   return {
     height: Math.round((Number(m.h) || 0) / 10) / 100,
     rooms: modelRooms(m).map(function (r) {
@@ -1154,6 +1159,7 @@ export function modelToSpecs(model, winTypes) {
         l: Math.round(r.finL / 10) / 100,
         floor: r.area,
         wallLen: r.wallLen,
+        openings: Number(ops[r.id]) || 0,
       };
     }),
     openings: [],

@@ -31,11 +31,16 @@ export const RULE_WHATS = [
   { k: "part",    n: "на каждую перегородку",  need: "" },
   { k: "house",   n: "один раз на дом",        need: "" },
 ];
+// Стены двумя числами: полная (обрешётка и утеплитель идут и за окном) и без
+// проёмов (красят и обшивают только стену). Одно число врало бы одному из двух
+// расчётов, а какому — зависит от материала.
 export const RULE_SURFACES = [["floor", "пол"], ["wall", "стены"], ["ceil", "потолок"],
-  ["wallceil", "стены + потолок"]];
+  ["wallceil", "стены + потолок"], ["wallnet", "стены без проёмов"],
+  ["wallnetceil", "стены без проёмов + потолок"]];
 export const RULE_SCOPES = [["room", "по каждому помещению"], ["house", "на весь дом"]];
 
-const SURFACE_N = { floor: "пол", wall: "стены", ceil: "потолок", wallceil: "стены и потолок" };
+const SURFACE_N = { floor: "пол", wall: "стены", ceil: "потолок", wallceil: "стены и потолок",
+  wallnet: "стены без проёмов", wallnetceil: "стены без проёмов и потолок" };
 
 function whatMeta(k) { return RULE_WHATS.find(function (x) { return x.k === k; }) || RULE_WHATS[0]; }
 
@@ -114,6 +119,7 @@ export function ruleAreas(sheet, rule, winTypes) {
       id: rm.id || "", name: rm.name || "",
       floor: roomArea(rm, H, "floor"), wall: roomArea(rm, H, "wall"),
       ceil: roomArea(rm, H, "ceil"), wallceil: roomArea(rm, H, "wallceil"),
+      wallnet: roomArea(rm, H, "wallnet"), wallnetceil: roomArea(rm, H, "wallnetceil"),
       match: roomMatch(rule, rm),
     };
   });
@@ -122,7 +128,8 @@ export function ruleAreas(sheet, rule, winTypes) {
     return Math.round(hit.reduce(function (a, rm) { return a + (Number(rm[k]) || 0); }, 0) * 100) / 100;
   };
   return { rooms: rooms, matched: hit.length,
-    floor: sum("floor"), wall: sum("wall"), ceil: sum("ceil"), wallceil: sum("wallceil") };
+    floor: sum("floor"), wall: sum("wall"), ceil: sum("ceil"), wallceil: sum("wallceil"),
+    wallnet: sum("wallnet"), wallnetceil: sum("wallnetceil") };
 }
 
 function roomMatch(rule, room) {

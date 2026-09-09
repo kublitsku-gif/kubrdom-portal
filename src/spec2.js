@@ -245,7 +245,9 @@ export function gaps2(sheet, ctx) {
     if (pos.some(function (p) {
       if (!(p.area > 0)) return false;
       if (p.surface === pair[0]) return true;
-      return p.surface === "wallceil" && (pair[0] === "wall" || pair[0] === "ceil");
+      if (pair[0] === "wall") return p.surface === "wallnet" || p.surface === "wallceil" || p.surface === "wallnetceil";
+      if (pair[0] === "ceil") return p.surface === "wallceil" || p.surface === "wallnetceil";
+      return false;
     })) return;
     out.push({ kind: "surface", k: pair[0], t: SURFACE2[pair[0]] + " " + num2(pair[1]) + " м²",
       why: "ни одна позиция этим не меряется" });

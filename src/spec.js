@@ -67,7 +67,13 @@ export function roomArea(room, height, surface) {
     const len = Number(room && room.wallLen);
     return (len || len === 0) && room.wallLen !== "" ? Math.round(len * h * 100) / 100 : (Number(room && room.wall) || 0);
   };
+  // Проёмы вычитаем ТОЛЬКО там, где их площадь известна (лист из модели). У листа,
+  // заполненного руками, её нет — и «без проёмов» честно равно полной площади, а не
+  // молча уменьшенной на ноль-которого-нет.
+  const net = function () { return Math.max(0, Math.round((wall() - (Number(room && room.openings) || 0)) * 100) / 100); };
   if (surface === "wall") return wall();
+  if (surface === "wallnet") return net();
+  if (surface === "wallnetceil") return Math.round((net() + floor) * 100) / 100;
   // «Стены и потолок» — одна поверхность, а не две работы: красят, обшивают и
   // шпаклюют их одним заходом и по одной цене за квадрат, и разбивать это на две
   // строки значит просить человека сложить их обратно в голове.

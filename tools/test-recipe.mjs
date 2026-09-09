@@ -92,6 +92,36 @@ const R = (o) => Object.assign({ id: 'r1', kind: 'house', what: 'surface', k: 'w
   t.ok('и в подписи правила тоже', /стены и потолок/.test(ruleText(R({ estId: 'e_osb', k: 'wallceil', scope: 'house' }))))
 }
 
+// ── Стены без проёмов ───────────────────────────────────────────────────────
+// Полная стена и стена за вычетом окон — два разных расчёта: по первой считают
+// обрешётку и утеплитель (они идут и за окном), по второй красят и обшивают.
+{
+  t.section('Стены без проёмов')
+  const gross = run([R({ estId: 'e_osb', k: 'wall', scope: 'house' })])[0]
+  const net = run([R({ estId: 'e_osb', k: 'wallnet', scope: 'house' })])[0]
+  const areas = modelAreas(model, TYPES)
+  t.ok('проёмы в доме есть', areas.total.openings > 0, 'проёмов: ' + areas.total.openings)
+  t.ok('чистая стена меньше полной', net.area < gross.area, gross.area + ' → ' + net.area)
+  t.ok('и ровно на площадь проёмов',
+    Math.abs(gross.area - net.area - areas.total.openings) < 0.2,
+    'разница ' + (gross.area - net.area) + ' против ' + areas.total.openings)
+  t.ok('сходится с числом из справки «откуда числа»',
+    Math.abs(net.area - areas.total.wallNet) < 0.2, net.area + ' vs ' + areas.total.wallNet)
+  const nc = run([R({ estId: 'e_osb', k: 'wallnetceil', scope: 'house' })])[0]
+  const ceil = run([R({ estId: 'e_osb', k: 'ceil', scope: 'house' })])[0]
+  t.ok('«без проёмов + потолок» — сумма двух',
+    Math.abs(nc.area - (net.area + ceil.area)) < 0.05, nc.area + ' vs ' + (net.area + ceil.area))
+  t.ok('и объяснение называет поверхность', /стены без проёмов [\d,]+ м²/.test(net.why), net.why)
+
+  // Лист, заполненный руками: площади проёмов там нет, и «без проёмов» не должно
+  // молча уменьшать стену на ноль-которого-нет.
+  const hand = { id: 'h', kind: 'house', markup: 0,
+    specs: { height: 2.5, rooms: [{ id: 'r1', name: 'Комната', w: 3, l: 4, wallLen: 14 }], openings: [] },
+    rooms: {}, global: {}, qty: {} }
+  const hp = rulePositions(hand, [R({ estId: 'e_osb', k: 'wallnet', scope: 'house' })], EST, PRODUCTS, TYPES)
+  t.ok('без модели чистая стена равна полной', hp.length === 1 && hp[0].area === 14 * 2.5, JSON.stringify(hp.map((x) => x.area)))
+}
+
 // ── Объёмы для кнопок выбора ────────────────────────────────────────────────
 // Кнопка «пол · 25,26 м²» обязана обещать ровно то число, которое потом уедет в
 // смету: считается оно тем же roomArea, что и позиции правила.
@@ -103,6 +133,8 @@ const R = (o) => Object.assign({ id: 'r1', kind: 'house', what: 'surface', k: 'w
   t.ok('стены сходятся с правилом',
     Math.abs(A.wall - run([R({ estId: 'e_osb', scope: 'house' })])[0].area) < 0.05)
   t.ok('«стены + потолок» — сумма двух', Math.abs(A.wallceil - (A.wall + A.ceil)) < 0.05)
+  t.ok('«без проёмов» тоже посчитано', A.wallnet > 0 && A.wallnet <= A.wall, A.wallnet + ' / ' + A.wall)
+  t.ok('и «без проёмов + потолок» сходится', Math.abs(A.wallnetceil - (A.wallnet + A.ceil)) < 0.05)
 
   // Фильтр по помещению отбирает и числа: выбрали санузел — на кнопке его квадраты.
   const one = ruleAreas(SHEET, R({ estId: 'e_osb', room: 'Санузел' }), TYPES)
