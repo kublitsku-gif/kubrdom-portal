@@ -211,14 +211,19 @@ const sum = (a) => a.reduce((x, y) => x + y, 0)
 
   const win1 = sc.openings.find((o) => o.mark === 'О-1')
   ok('у окна две трубы', win1.frame === true && win1.jambs.length === 2, JSON.stringify(win1.jambs))
-  ok('труба 40×40', win1.jambs.every((j) => j.w === 40 && j.h === 40))
+  ok('труба 60×40: 40 по фасаду, 60 наружу', win1.jambs.every((j) => j.w === 40 && j.h === 60),
+    JSON.stringify(win1.jambs))
   ok('зазор до изделия 20 мм с обеих сторон',
     win1.x - (win1.jambs[0].x + 40) === 20 && win1.jambs[1].x - (win1.x + win1.w) === 20,
     JSON.stringify([win1.x, win1.w, win1.jambs[0].x, win1.jambs[1].x]))
   ok('и проём выходит шире изделия на 120',
     (win1.jambs[1].x + 40) - win1.jambs[0].x === win1.width + 120)
-  ok('труба стоит в толще стены',
-    win1.jambs.every((j) => j.y >= win1.y && j.y + j.h <= win1.y + win1.h), JSON.stringify(win1.jambs))
+  // Труба варится СНАРУЖИ листа, и на плане она обязана лежать ЗА обводом стены.
+  // Нарисованная в толще — как было, пока усиление заводили внутрь, — она сказала бы
+  // бригаде варить с той стороны, где теперь идёт сплошной ППУ.
+  ok('и лежит снаружи, за обводом стены',
+    win1.jambs.every((j) => (win1.side === 'n' ? j.y + j.h <= win1.y : j.y >= win1.y + win1.h)),
+    JSON.stringify([win1.side, win1.y, win1.h, win1.jambs]))
 
   const door = sc.openings.find((o) => o.mark === 'Д-1')
   ok('у входной двери усиление тоже есть', door.frame === true && door.jambs.length === 2)
@@ -248,6 +253,11 @@ const sum = (a) => a.reduce((x, y) => x + y, 0)
   const endOn = modelScheme(on, winTypes).openings.find((o) => o.side === 'e')
   ok('у торцевого проёма трубы разнесены по ширине контейнера',
     endOn.jambs[0].y + 40 + 20 === endOn.y && endOn.jambs[1].y === endOn.y + endOn.h + 20,
+    JSON.stringify(endOn.jambs))
+  // В торце вылет ложится вдоль длины дома, а не поперёк: сторона у трубы одна и та
+  // же, меняется только то, куда смотрит наружная грань стены.
+  ok('и вынесены за торец наружу',
+    endOn.jambs.every((j) => j.w === 60 && j.h === 40 && j.x === endOn.x + endOn.w),
     JSON.stringify(endOn.jambs))
 }
 
