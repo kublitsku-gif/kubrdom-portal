@@ -32,6 +32,13 @@ function panel(rules) {
   return p
 }
 
+// Управление строки живёт под тапом по её шапке: сорок строк, у каждой поле,
+// часы и четыре кнопки, читаются как панель приборов, а не как смета. Тестам
+// нужны сами кнопки, поэтому раскрываем строку — сам тап сторожит своя проверка.
+function openRow(p, key) {
+  p.run('estRowOpen=' + JSON.stringify(key) + ';')
+}
+
 // Создание так, как это делает человек: имя → заготовка → «Создать».
 function create(p, name) {
   p.run('tab="projects";projOpenId=null;tProjects();')
@@ -387,10 +394,19 @@ function create(p, name) {
   const p = panel(RULES)
   create(p, 'Дом с лишней работой')
   p.run('projBand="parts";')
-  const before = p.run('tProjects()')
+  const shutRow = p.run('tProjects()')
   const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
   const cost0 = p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost')
+  // Свёрнутая строка — это имя, итог и чипы: ни поля, ни кнопок.
+  t.ok('у свёрнутой строки кнопок нет', shutRow.indexOf('data-a="est-pos-del"') < 0)
+  t.ok('и поля цены тоже', shutRow.indexOf('data-a="est-pos-cost"') < 0)
+  const tap = p.dom.node({ a: 'est-row-open', k: key }); p.run('bind();'); tap.onclick({ target: {} })
+  const before = p.run('tProjects()')
+  t.ok('тап по строке раскрывает управление', p.q('estRowOpen') === key)
   t.ok('у работы есть крестик', before.indexOf('data-a="est-pos-del"') >= 0)
+  p.run('bind();'); tap.onclick({ target: {} })
+  t.ok('повторный тап сворачивает', p.q('estRowOpen') === '')
+  openRow(p, key)
   // Имя работы едет в самой кнопке: спрашивать «убрать работу?» без имени — это
   // спрашивать про ту ли строку человек попал пальцем.
   t.ok('крестик знает имя работы', /data-a="est-pos-del" data-k="[^"]*" data-n="[^"]+"/.test(before))
@@ -507,6 +523,7 @@ function create(p, name) {
   const was = p.q('allPositions(projects[0], specCtx(projects[0]))[0].stage')
   // Внутри «ЭТАП 1» у каждой строки стояло «Этап 1» — колонка повторяла заголовок.
   // Выбор прячется за кнопкой ⇅ и раскрывается тапом; у переставленных он виден сам.
+  openRow(p, key)
   t.ok('пока этап не менян — только кнопка', p.run('tProjects()').indexOf('data-a="est-pos-stage-pick"') >= 0
     && p.run('tProjects()').indexOf('data-a="est-pos-stage"') < 0)
   const pick = p.dom.node({ a: 'est-pos-stage-pick', k: key }); p.run('bind();'); pick.onclick()
@@ -605,6 +622,7 @@ function create(p, name) {
   const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
   const was = p.q('allPositions(projects[0], specCtx(projects[0]))[0].cost')
   const total0 = p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost')
+  openRow(p, key)
   t.ok('цена правится в строке', p.run('tProjects()').indexOf('data-a="est-pos-cost"') >= 0)
 
   const inp = p.dom.node({ a: 'est-pos-cost', k: key })
@@ -833,7 +851,7 @@ function create(p, name) {
   p.run('bind();'); head.onclick()
   const shut = p.run('tProjects()')
   t.ok('работы блока спрятались',
-    (shut.match(/data-a="est-pos-del"/g) || []).length === (html.match(/data-a="est-pos-del"/g) || []).length - 2)
+    (shut.match(/data-pos-row=/g) || []).length === (html.match(/data-pos-row=/g) || []).length - 2)
   t.ok('а итог блока остался', shut.indexOf(Math.round(blocks[0].cost).toLocaleString('ru-RU')) >= 0)
   t.ok('деньги не изменились', Math.round(st().cost) === blocks.reduce((a, b) => a + b.cost, 0))
   p.run('bind();'); head.onclick()
@@ -1014,6 +1032,7 @@ function create(p, name) {
 
   // Цена своей работы правится В ПОЛЕ: она лежит в самой строке, а не отметкой
   // поверх расчёта, и раньше поле оставалось пустым при живой цене.
+  openRow(p, key)
   const ownField = () => (p.run('tProjects()').match(new RegExp('id="pc-' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"[^>]*')) || [''])[0]
   t.ok('цена своей работы стоит в поле', /value="500"/.test(ownField()), ownField().slice(0, 140))
   const setOwn = p.dom.node({ a: 'est-pos-cost', k: key })
@@ -1044,6 +1063,7 @@ function create(p, name) {
   // Поле в шапке — это цена БРИГАДЕ, и пока её не назначили, оно пустое с
   // подсказкой: подставленный туда итог строки читался как «работа стоит столько
   // же, сколько всё», и вносить оплату было некуда.
+  openRow(p, key)
   const fieldHtml = () => (p.run('tProjects()').match(/data-a="est-pos-cost"[^>]*/) || [''])[0]
   t.ok('поле цены пустое', /value=""/.test(fieldHtml()), fieldHtml().slice(0, 120))
   t.ok('и подписано «работа»', /placeholder="работа"/.test(fieldHtml()))
@@ -1096,6 +1116,11 @@ function create(p, name) {
   create(p, 'Дом с длинным именем')
   p.run('estimates=estimates.concat([{id:"e_long",kind:"house",name:"Монтаж подвесов для обрешётки к стенам",stage:1,lines:[{pid:"p_osb",qty:2}]}]);')
   p.run('projBand="parts";')
+  const shutHtml = p.run('tProjects()')
+  // Свёрнутая строка — имя, итог и чипы: назначенные цифры подписью, а не полем.
+  t.ok('в свёрнутой строке полей нет', shutHtml.indexOf('data-a="est-pos-cost"') < 0)
+  t.ok('и ручка переноса на месте', shutHtml.indexOf('data-a="est-pos-drag"') >= 0)
+  openRow(p, p.q('allPositions(projects[0], specCtx(projects[0]))[0].key'))
   const html = p.run('tProjects()')
   t.ok('имя не длиннее двух строк', /-webkit-line-clamp:2/.test(html))
   t.ok('и полное имя в подсказке', /title="Монтаж подвесов для обрешётки к стенам"/.test(html))

@@ -13,6 +13,12 @@ import { boot, reporter } from './harness/panel-vm.js'
 
 const t = reporter()
 
+// Управление строки раскрывается тапом по её шапке: сорок строк с полем, часами
+// и четырьмя кнопками читаются как панель приборов. Тестам нужны сами кнопки.
+function openRow(p, key) {
+  p.run('estRowOpen=' + JSON.stringify(key) + ';')
+}
+
 let seq = 0
 const gid = () => 'id' + (++seq)
 
@@ -772,6 +778,7 @@ const SHEET = {
   t.ok('работа появилась', !!own() && own().cost === 500)
   const key = own().key
   p.run('matsOpen[' + JSON.stringify(key) + ']=1;')
+  openRow(p, key)
   const html = p.run('tSpec2()')
   t.ok('фантомной строки материала нет', html.indexOf('data-a="est-mat-off" data-k="' + key + '|"') < 0)
   t.ok('крестик работы на месте', html.indexOf('data-a="est-pos-del" data-k="' + key + '"') >= 0)
@@ -797,6 +804,7 @@ const SHEET = {
   t.ok('раскладка есть в каждой строке', /материалы [\d ]+ ₽ · работа [\d ]+ ₽/.test(plain()), 'нет раскладки')
 
   const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key')
+  openRow(p, key)
   const fieldHtml = () => (p.run('tSpec2()').match(/data-a="est-pos-cost"[^>]*/) || [''])[0]
   t.ok('поле цены пустое и подписано «работа»',
     /value=""/.test(fieldHtml()) && /placeholder="работа"/.test(fieldHtml()), fieldHtml().slice(0, 120))
@@ -850,6 +858,7 @@ const SHEET = {
   p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
 
   const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key')
+  openRow(p, key)
   const html = p.run('tSpec2()')
   t.ok('у работы есть поле часов', html.indexOf('data-a="est-pos-hours"') >= 0)
   t.ok('и оно подписано часами', /placeholder="ч"/.test(html) || /план, ч/.test(html), 'нет подписи')
@@ -893,6 +902,7 @@ const SHEET = {
   p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
   const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key')
 
+  openRow(p, key)
   t.ok('пока не тапнули — ряда нет', p.run('tSpec2()').indexOf('data-a="est-pos-hours-set"') < 0)
 
   const inp = p.dom.node({ a: 'est-pos-hours', k: key })
@@ -942,7 +952,7 @@ const SHEET = {
   t.ok('чистовой по-прежнему делится', s3 && s3.blocks.length >= 2, 'блоков: ' + (s3 && s3.blocks.length))
   // Строки при этом никуда не деваются — пропасть работам нельзя.
   const html = p.run('tSpec2()')
-  t.ok('работы чернового видны', (html.match(/data-a="est-pos-del"/g) || []).length >=
+  t.ok('работы чернового видны', (html.match(/data-pos-row=/g) || []).length >=
     (s2.positions.length + s3.positions.length), 'строк меньше, чем позиций')
   t.ok('сумма этапа сходится со строками',
     s2.cost === s2.positions.reduce((a, x) => a + x.cost, 0))
@@ -1229,6 +1239,7 @@ const SHEET = {
   const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
   p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
 
+  openRow(p, p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key'))
   const html = p.run('tSpec2()')
   const group = (html.match(/<span data-row-actions="1"[\s\S]*?<\/span>\s*<\/div>/) || [''])[0]
   t.ok('правые кнопки собраны в группу', group.length > 0, 'группы нет')

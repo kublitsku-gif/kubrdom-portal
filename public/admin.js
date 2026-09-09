@@ -64,7 +64,7 @@ import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
-const APP_BUILD = "2026-09-09.2";
+const APP_BUILD = "2026-09-09.3";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -2322,6 +2322,8 @@ let matsOpen={};           // у каких строк сметы раскрыт
 // тот, в который пришёл. Развёрнутые сразу все читались как простыня.
 let stageOpen={};          // какие этапы раскрыты целиком
 let roomPickKey="";        // у какой строки раскрыт ряд «перенести в помещение»
+let estRowOpen="";         // у какой строки сметы раскрыто управление
+let dragEndAt=0;           // когда закончился перенос: тот же тап не должен её раскрыть
 let blockShut={};          // какие блоки помещений свёрнуты: "<этап>|<ключ комнаты>"
 // Справки над сметой свёрнуты по умолчанию: экран открывают ради сметы, а
 // объёмы и убранное — это контекст, к которому обращаются, когда он нужен.
@@ -13639,6 +13641,27 @@ function matOffHtml(pos, off, sh){
     }).join("")+
   '</div>';
 }
+// Назначенные цифры строки — подписью, а не полем. Пустая рамка «работа ₽» в
+// каждой из сорока строк читается как незаполненная форма, будто смета не
+// готова, — а не назначенная бригаде цена это норма. Поля живут в управлении,
+// которое раскрывается тапом по строке; здесь только то, что уже решено.
+function estPosSetChips(p, sh, fact){
+  const chip=function(col, bg, txt){
+    return '<span style="background:'+bg+';color:'+col+';border-radius:7px;padding:2px 7px;font-size:10.5px;font-weight:700;white-space:nowrap">'+esc(txt)+'</span>';
+  };
+  const out=[];
+  const sp=positionSplit(p);
+  if(p.own||p.costSet){
+    const all=p.costSet&&p.costMode!=="labor";
+    const sum=p.own?sp.labor:Math.round(all?p.cost:(Number(p.labor)||0));
+    out.push(chip("#8e44ad","#f3ecf9",(all?"под ключ ":"работа ")+Math.round(sum).toLocaleString("ru-RU")+" ₽"));
+  }
+  const hv=Number(((sh&&sh.posHours)||{})[p.key])||0;
+  if(hv>0)out.push(chip("#2980b9","#eef6ff","план "+numRu(hv)+" ч"));
+  const f=factOfPos(fact, p);
+  if(f>0)out.push(chip("#16a085","#e8f6f3","факт "+numRu(f)+" ч"));
+  return out.join("");
+}
 // Ручка переноса материала — тот же жест, что у работ: тянут, а не «берут».
 function matDragBtn(key){
   return '<button data-a="est-mat-drag" data-k="'+esc(key)+'" title="Перетащите, чтобы переставить материал в строке" '+
@@ -14636,6 +14659,7 @@ function dragRow(el, ev, rowKey, grpKey, done){
     document.removeEventListener("pointercancel", up);
     if(slot.parentNode)slot.parentNode.removeChild(slot);
     row.style.display="";
+    dragEndAt=Date.now();
     done(others[at]?String(others[at].dataset[rowKey]||""):"");
   };
   document.addEventListener("pointermove", move);
@@ -14708,7 +14732,9 @@ function estStageBody(st, rows, sh, w, canRule){
     // Каждое помещение своим цветом: этап из четырёх комнат одинаковыми серыми
     // шапками читается как одна простыня — глаз не цепляется за границу блока.
     const rl=roomLook(b.room, sh&&sh.kind);
-    h+='<div style="display:flex;align-items:center;gap:5px;margin:8px 0 2px;padding:4px 8px;background:'+rl.color+'12;border:1px solid '+rl.color+'2e;border-left:3px solid '+rl.color+';border-radius:8px">'+
+    // Липнет следом за шапкой этапа: в этапе из четырёх комнат «где я» — это
+    // пара «этап + помещение», и терять из виду вторую половину так же плохо.
+    h+='<div style="position:sticky;top:30px;z-index:2;display:flex;align-items:center;gap:5px;margin:8px 0 2px;padding:4px 8px;background:'+rl.color+'12;border:1px solid '+rl.color+'2e;border-left:3px solid '+rl.color+';border-radius:8px;backdrop-filter:blur(6px)">'+
         '<span style="flex-shrink:0;font-size:11px;line-height:1">'+rl.emoji+'</span>'+
         '<span data-a="est-block-open" data-b="'+esc(id)+'" style="flex:1;min-width:0;font-size:10.5px;font-weight:800;color:'+rl.color+';letter-spacing:0.4px;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;padding:3px 0">'+
           (shut?"▸ ":"▾ ")+esc(b.room||"Общее по дому")+
@@ -14872,7 +14898,9 @@ function estBodyHtml(sh, types, live, actions){
       // чтобы не открывать этапы руками.
       const shut=finding?false:!stageOpen[st.n];
       return '<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
-        '<div data-a="est-stage-open" data-n="'+st.n+'" style="display:flex;align-items:baseline;gap:8px;margin-bottom:'+(shut?'0':'7px')+';cursor:pointer">'+
+        // Шапка липнет к верху: в этапе на сорок строк через полэкрана уже не
+        // видно, в каком этапе смотришь, а по этапам идут сроки и транши.
+        '<div data-a="est-stage-open" data-n="'+st.n+'" style="position:sticky;top:0;z-index:3;background:#fff;display:flex;align-items:baseline;gap:8px;padding:4px 0;margin-bottom:'+(shut?'0':'4px')+';cursor:pointer">'+
           '<span style="width:8px;height:8px;border-radius:3px;background:'+st.color+';flex-shrink:0"></span>'+
           '<span style="flex:1;min-width:0;font-size:11px;font-weight:700;color:#0d1b2e;letter-spacing:0.4px;text-transform:uppercase">'+(shut?"▸ ":"▾ ")+esc(st.label)+
             (shut?' <span style="font-weight:700;color:#9aabbf;text-transform:none;letter-spacing:0">· '+st.positions.length+' '+pluralRu(st.positions.length,"работа","работы","работ")+'</span>':'')+
@@ -14922,17 +14950,25 @@ function estBodyHtml(sh, types, live, actions){
           // Помещение — часть адреса: список режется на блоки по комнатам, и
           // строка, брошенная в чужой блок, вернулась бы обратно тем же рендером.
           const addr=' data-pos-row="'+esc(p.key)+'" data-pos-grp="'+esc(st.n+"|"+roomKeyOf(p))+'"';
+          const rowOpen=canRule&&estRowOpen===p.key;
+          const canDrag=canMove&&arr.length>1;
           return ''+
             // Строка читается сверху вниз: имя и итог — чипы — управление. Раньше
             // всё стояло в один ряд, и на узкой колонке имя сжималось до одного
             // слова в строку: поле, чип, итог, ⠿, этап и ✕ не сжимаются. Строки
             // разделяет воздух, а не полоска: сорок работ, слепленных линиями в
             // один пиксель, читаются как простыня.
-            '<div'+addr+' style="padding:12px 0">'+
+            '<div'+addr+' style="padding:12px 0'+(rowOpen?';background:#fbfcfe':'')+'">'+
             // Имя во всю ширину и не длиннее двух строк (полное — в подсказке):
             // одно наименование на пол-экрана прятало соседние работы. Итог прижат
             // к правому краю, у всех строк он встаёт в одну колонку.
-            '<div style="display:flex;align-items:baseline;gap:10px">'+
+            // Ручка переноса — СЛЕВА, у имени: её ищут там (так во всех списках), а
+            // справа она стояла вплотную к красному ✕ — промах пальцем между
+            // «переставить» и «убрать» самый дорогой из возможных.
+            // Тап по шапке раскрывает управление: семь постоянных кнопок в каждой
+            // из сорока строк — это уже не смета, а панель приборов.
+            '<div data-a="est-row-open" data-k="'+esc(p.key)+'" style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">'+
+              (canDrag?estDragBtn(p.key):'')+
               '<span title="'+esc(p.name)+'" style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#0d1b2e;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+esc(p.name)+
                 (p.added?' <span style="font-size:9.5px;font-weight:700;color:#16a085;background:#e8f6f3;border-radius:5px;padding:1px 5px">дописана</span>':'')+'</span>'+
               '<span style="font-size:13px;font-weight:800;color:#0d1b2e;white-space:nowrap">'+Math.round(p.cost).toLocaleString("ru-RU")+' ₽</span>'+
@@ -14947,10 +14983,11 @@ function estBodyHtml(sh, types, live, actions){
                 ? '<button data-a="est-why" data-est="'+p.estId+'" title="Чем меряется эта строка" style="background:'+(open?RULE_COL:"#eef6ff")+';color:'+(open?"#fff":"#2980b9")+';border:none;border-radius:7px;padding:3px 8px;font-size:10.5px;font-weight:700;cursor:pointer">'+esc(p.why)+' ⚙</button>'
                 : '<span style="background:#eef6ff;color:#2980b9;border-radius:7px;padding:2px 7px;font-size:10.5px;font-weight:700">'+esc(p.why)+'</span>')+
               estSplitHtml(p, matsShown(p).length, !!matsOpen[p.key])+
+              (rowOpen?'':estPosSetChips(p, sh, fact))+
             '</div>'+
             // Ряд управления — своей строкой, кнопки одного размера (28 px), и всё,
             // что двигает строку, прижато к правому краю.
-            (canRule
+            (canRule&&rowOpen
               ? '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:7px">'+
                   (function(){
                     // Поле — это цена БРИГАДЕ за работу. У СВОЕЙ работы её цена и
@@ -15013,11 +15050,10 @@ function estBodyHtml(sh, types, live, actions){
                   (canMove
                     ? '<button data-a="est-pos-room-pick" data-k="'+esc(p.key)+'" title="Приписать работу к помещению" style="width:28px;height:28px;background:'+(roomPickKey===p.key?RULE_COL:"#fff")+';border:1px solid '+(roomPickKey===p.key?RULE_COL:"#dde6f0")+';border-radius:7px;cursor:pointer;color:'+(roomPickKey===p.key?"#fff":"#7a9aaa")+';font-size:11px">⌂</button>'
                     : '')+
-                  (canMove&&arr.length>1?estDragBtn(p.key):'')+
                   '<button data-a="est-pos-del" data-k="'+esc(p.key)+'" data-n="'+esc(p.name||"")+'" title="'+(p.added?"Удалить дописанную работу":"Убрать эту работу из дома")+'" style="width:28px;height:28px;background:#fff;border:1px solid #e74c3c44;border-radius:7px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button>'+
                   '</span>'+
                 '</div>'
-              : '<div style="font-size:12px;font-weight:700;color:#0d1b2e;margin-top:5px">'+Math.round(p.cost).toLocaleString("ru-RU")+' ₽</div>')+
+              : '')+
             ((canMove&&roomPickKey===p.key)?estRoomPickHtml(p.key, roomKeyOf(p), w):'')+
             specMatsListHtml(p, sh, live)+
             (open?estWhyEditor(p, sh):'')+
@@ -24831,6 +24867,18 @@ function bind(){
     else if(a==="est-pos-drag"){el.onpointerdown=(ev)=>{
       const key=el.dataset.k||""; if(!key)return;
       dragRow(el, ev, "posRow", "posGrp", function(before){ estPosPutBefore(key, before); });
+    };}
+    // Тап по шапке строки раскрывает её управление. Раскрыта одна: два ряда
+    // кнопок подряд — это уже не «что сделать с этой работой», а список кнопок.
+    else if(a==="est-row-open"){el.onclick=(ev)=>{
+      // Перенос заканчивается кликом по той же шапке — иначе каждая перестановка
+      // ещё и раскрывала бы строку.
+      if(Date.now()-dragEndAt<400)return;
+      if(ev&&ev.target&&ev.target.closest&&ev.target.closest('[data-a="est-pos-drag"]'))return;
+      const key=el.dataset.k||"";
+      estRowOpen=(estRowOpen===key)?"":key;
+      roomPickKey=""; stagePickKey=""; hoursPickKey="";
+      fl();
     };}
     else if(a==="est-pos-room-pick"){el.onclick=()=>{
       const key=el.dataset.k||"";
