@@ -2321,8 +2321,7 @@ let matsOpen={};           // у каких строк сметы раскрыт
 // строк открывается оглавлением — этапы с суммами, — и человек разворачивает
 // тот, в который пришёл. Развёрнутые сразу все читались как простыня.
 let stageOpen={};          // какие этапы раскрыты целиком
-let estMoveKey="";         // какую строку сметы сейчас переносят внутри этапа
-let estMoveSheet="";       // и в каком листе: ключ позиции у листов общий
+let roomPickKey="";        // у какой строки раскрыт ряд «перенести в помещение»
 let blockShut={};          // какие блоки помещений свёрнуты: "<этап>|<ключ комнаты>"
 let matMoveKey="";         // какой материал сейчас переносят: "<ключ позиции>|<адрес>"
 let matMoveSheet="";       // и в каком листе
@@ -14563,21 +14562,46 @@ function estStagePriceStale(st){
     return (p.mats||[]).some(function(m){ return priceStale(m, byId[m.pid]); });
   });
 }
-function estStepBtn(key, dir, off){
-  return '<button data-a="est-pos-step" data-k="'+esc(key)+'" data-d="'+dir+'"'+(off?' disabled':'')+
-    ' title="'+(dir<0?"Выше на одну строку":"Ниже на одну строку")+'" style="width:28px;height:28px;background:#fff;border:1px solid '+(off?"#e6ecf3":RULE_COL+"66")+';border-radius:7px;cursor:'+(off?"default":"pointer")+';color:'+(off?"#dde6f0":RULE_COL)+';font-size:11px;font-weight:700;line-height:1;padding:0">'+(dir<0?"↑":"↓")+'</button>';
+// Строку переносят пальцем — за ручку, а не тапом «взял → укажи место». Ручка,
+// а не вся строка: список листают тем же пальцем, и строка, которая уезжает от
+// прокрутки, — это не перенос, а ловушка. touch-action на ней снят, иначе жест
+// заберёт себе прокрутка страницы.
+function estDragBtn(key){
+  return '<button data-a="est-pos-drag" data-k="'+esc(key)+'" title="Перетащите, чтобы переставить работу в этапе" '+
+    'style="width:28px;height:28px;background:#fff;border:1px solid #dde6f0;border-radius:7px;cursor:grab;'+
+    'color:#7a9aaa;font-size:13px;font-weight:700;line-height:1;padding:0;touch-action:none">⠿</button>';
 }
-function estDropSlot(key, j, mi){
-  if(mi<0||j===mi||j===mi+1)return '';
-  return '<div data-a="est-pos-drop" data-k="'+esc(key)+'" data-i="'+j+'" title="Поставить работу сюда" '+
-    'style="margin:3px 0;padding:5px 0;border:1px dashed '+RULE_COL+'88;border-radius:8px;background:'+RULE_COL+'0d;'+
-    'text-align:center;font-size:10.5px;font-weight:700;color:'+RULE_COL+';cursor:pointer;line-height:1.2">сюда</div>';
+function estRowsHtml(rows){
+  return rows.join("");
 }
-function estRowsHtml(moving, mi, rows){
-  if(mi<0)return rows.join("");
-  let out=estDropSlot(moving, 0, mi);
-  rows.forEach(function(r, i){ out+=r+estDropSlot(moving, i+1, mi); });
-  return out;
+// Ближайшая строка сметы над этим узлом: ручка переноса живёт внутри строки, а
+// двигать надо строку целиком.
+function estPosRowOf(el){
+  let n=el;
+  while(n&&(!n.dataset||!n.dataset.posRow))n=n.parentNode;
+  return (n&&n.dataset&&n.dataset.posRow)?n:null;
+}
+// Ставит работу перед указанной строкой (пустой адрес — последней в помещении).
+// Порядок берём ТОТ, что на экране: он уже с учётом прежних перестановок, и
+// считать его заново другим кодом значит завести второй порядок. Пишем порядок
+// всего этапа, а не одну строку: соседи разъезжаются от той же перестановки.
+function estPosPutBefore(key, beforeKey){
+  const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return false;
+  const w=works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes }));
+  const st=(w.stages||[]).find(function(s){ return s.positions.some(function(x){ return x.key===key; }); });
+  if(!st)return false;
+  const was=st.positions.map(function(x){ return x.key; });
+  const keys=was.slice();
+  const i=keys.indexOf(key);
+  if(i<0)return false;
+  keys.splice(i, 1);
+  const j=beforeKey?keys.indexOf(beforeKey):-1;
+  keys.splice(j<0?keys.length:j, 0, key);
+  // Строку вернули туда же, откуда взяли: сохранять и перерисовывать нечего.
+  if(keys.join("\u0000")===was.join("\u0000"))return false;
+  const map=Object.assign({}, sh.posOrder||{});
+  keys.forEach(function(k,n){ map[k]=n; });
+  sh.posOrder=map; scheduleSave(); fl(); return true;
 }
 // Этап читается ПОМЕЩЕНИЯМИ: «Санузел — стены, пол, потолок», следом «Зал».
 // Правило по помещениям даёт строку на каждую комнату, и без блоков этап выглядит
@@ -14607,16 +14631,14 @@ function estRoomsMoreHtml(st, blocks, sh, w){
       return (posAddOpen===tag(r))?estAddFormHtml(sh, tag(r), r.name||"Помещение"):'';
     }).join("");
 }
-function estStageBody(st, moving, mi, rows, sh, w, canRule){
+function estStageBody(st, rows, sh, w, canRule){
   const blocks=st.blocks||[];
   // Пустых комнат в блоках нет по определению, поэтому предложить их надо отдельно
   // — и в этапе без блоков тоже: там работа в комнату иначе вообще не попадёт.
   const more=canRule?estRoomsMoreHtml(st, blocks, sh, w):'';
-  // Этап без блоков (не чистовой) — просто список работ. Проверяем ДО режима
-  // переноса: иначе взятая строка обошла бы список по пустым блокам и этап
-  // остался бы на экране пустым.
-  if(!blocks.length)return estRowsHtml(moving, mi, rows)+more;
-  if(blocks.length<2&&!moving)return estRowsHtml(moving, mi, rows)+more;
+  // Этап без блоков (не чистовой) — просто список работ.
+  if(!blocks.length)return estRowsHtml(rows)+more;
+  if(blocks.length<2)return estRowsHtml(rows)+more;
   let base=0, h='';
   blocks.forEach(function(b){
     const from=base, to=base+b.positions.length; base=to;
@@ -14639,21 +14661,14 @@ function estStageBody(st, moving, mi, rows, sh, w, canRule){
       '</div>';
     if(posAddOpen===((sh&&sh.id)||"")+"@"+st.n+"|"+b.key)h+=estAddFormHtml(sh, ((sh&&sh.id)||"")+"@"+st.n+"|"+b.key, b.room||"Общее по дому");
     if(shut)return;
-    const inside=mi>=from&&mi<to;
-    // Взятую строку можно не только переставить, но и отдать другой комнате:
-    // расчёт знает комнату лишь там, где по ней считал, а делают работу всё равно
-    // в санузле. Комнаты перечисляем ВСЕ, включая пустые: блока у них ещё нет.
-    if(inside)h+=estRoomPickHtml(moving, b.key, w);
-    for(let i=from;i<to;i++){
-      if(inside)h+=estDropSlot(moving, i, mi);
-      h+=rows[i];
-    }
-    if(inside)h+=estDropSlot(moving, to, mi);
+    for(let i=from;i<to;i++)h+=rows[i];
   });
   return h+more;
 }
-// «Перенести в» — ряд комнат дома. Показываем только у взятой строки: постоянный
-// ряд из пяти кнопок в каждой строке читался бы как часть сметы.
+// «Перенести в» — ряд комнат дома. Раскрывается кнопкой у строки: постоянный
+// ряд из пяти кнопок в каждой строке читался бы как часть сметы. Комнату работе
+// назначают руками — расчёт знает её лишь там, где по ней считал, а делают работу
+// всё равно в санузле. Комнаты перечисляем ВСЕ, включая пустые: блока у них ещё нет.
 function estRoomPickHtml(key, cur, w){
   const rooms=(w&&w.rooms)||[];
   const chip=function(rk, name){
@@ -14742,9 +14757,6 @@ function estBodyHtml(sh, types, live, actions){
   // Переставлять есть смысл только там, где порядок кому-то записывается: у
   // заготовки листа нет, и взятая на ней строка повисла бы поднятой навсегда.
   const canMove=canRule&&!!live;
-  // Ключ позиции у листов общий («base:e_osb»), поэтому взятая строка помнит и
-  // свой лист: иначе в соседнем проекте подсвечивалась бы его тёзка.
-  const moving=(canMove&&estMoveSheet===String(live.id||"")&&!estFindTerms().length)?String(estMoveKey||""):"";
   let h='';
   // Деньги сверху: с них начинается любой разговор про смету, и лезть за итогом
   // в конец списка из сорока строк никто не будет.
@@ -14783,8 +14795,8 @@ function estBodyHtml(sh, types, live, actions){
     h+=estPosAddHtml(sh, canRule);
     h+=estDroppedHtml(sh, canRule);
   }
-  // Переносить строки во время поиска нечего: половина списка скрыта, и место
-  // «сюда» указывало бы между строками, которых человек не видит.
+  // Переносить строки во время поиска нечего: половина списка скрыта, и ручка
+  // переноса ставила бы работу между строками, которых человек не видит.
   const stages=finding
     ? w.stages.map(function(st){ return estFindStage(st, hits); }).filter(Boolean)
     : w.stages;
@@ -14798,7 +14810,6 @@ function estBodyHtml(sh, types, live, actions){
       // Найденное прятать внутрь свёрнутого этапа нельзя: поиск для того и нужен,
       // чтобы не открывать этапы руками.
       const shut=finding?false:!stageOpen[st.n];
-      const mi=moving?st.positions.findIndex(function(x){ return x.key===moving; }):-1;
       return '<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
         '<div data-a="est-stage-open" data-n="'+st.n+'" style="display:flex;align-items:baseline;gap:8px;margin-bottom:'+(shut?'0':'7px')+';cursor:pointer">'+
           '<span style="width:8px;height:8px;border-radius:3px;background:'+st.color+';flex-shrink:0"></span>'+
@@ -14839,20 +14850,24 @@ function estBodyHtml(sh, types, live, actions){
         // прятать его внутрь свёрнутого этапа значит прятать саму задачу.
         ((priceWizStage===String(st.n))?priceWizHtml(st):'')+
         ((priceShopStage===String(st.n)&&priceWizStage!==String(st.n))?priceShopHtml(st):'')+
-        (shut?'':estStageBody(st, moving, mi, st.positions.map(function(p, pi, arr){
+        (shut?'':estStageBody(st, st.positions.map(function(p, pi, arr){
           // Редактор раскрываем у ПЕРВОЙ строки этой сметы: правило по помещениям
           // даёт их несколько, и три одинаковых редактора подряд — это не выбор.
           const first=seen[p.estId]!==true; if(p.estId)seen[p.estId]=true;
           const open=canRule&&first&&p.estId&&estWhyOpen===p.estId;
-          const held=p.key===moving;
+          // Адрес строки в разметке: перенос ищет соседей по DOM, а не по индексу
+          // в списке — на экране между работами стоят шапки помещений и раскрытые
+          // редакторы, и «следующий элемент» не равен «следующей работе».
+          // Помещение — часть адреса: список режется на блоки по комнатам, и
+          // строка, брошенная в чужой блок, вернулась бы обратно тем же рендером.
+          const addr=' data-pos-row="'+esc(p.key)+'" data-pos-grp="'+esc(st.n+"|"+roomKeyOf(p))+'"';
           return ''+
             // Строка читается сверху вниз: имя и итог — чипы — управление. Раньше
             // всё стояло в один ряд, и на узкой колонке имя сжималось до одного
-            // слова в строку: поле, чип, итог, ↕, этап и ✕ не сжимаются. Строки
+            // слова в строку: поле, чип, итог, ⠿, этап и ✕ не сжимаются. Строки
             // разделяет воздух, а не полоска: сорок работ, слепленных линиями в
             // один пиксель, читаются как простыня.
-            '<div style="padding:'+(held?'9px 10px':'12px 0')+(held?';background:'+RULE_COL+'0d;border:1px solid '+RULE_COL+'55;border-radius:9px':'')+'">'+
-            (held?'<div style="font-size:10px;font-weight:700;color:'+RULE_COL+';letter-spacing:0.4px;margin-bottom:4px">ПЕРЕНОШУ — УКАЖИТЕ МЕСТО «СЮДА»</div>':'')+
+            '<div'+addr+' style="padding:12px 0">'+
             // Имя во всю ширину и не длиннее двух строк (полное — в подсказке):
             // одно наименование на пол-экрана прятало соседние работы. Итог прижат
             // к правому краю, у всех строк он встаёт в одну колонку.
@@ -14932,17 +14947,17 @@ function estBodyHtml(sh, types, live, actions){
                       '</select>'+
                       (p.stageSet?'<button data-a="est-pos-stage-reset" data-k="'+esc(p.key)+'" title="Вернуть этап из справочника" style="width:28px;height:28px;border:1px solid #8e44ad33;background:#fff;color:#8e44ad;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer">⟲</button>':'')
                     : '<button data-a="est-pos-stage-pick" data-k="'+esc(p.key)+'" title="Переставить работу в другой этап" style="width:28px;height:28px;border:1px solid #dde6f0;background:#fff;color:#7a9aaa;border-radius:7px;font-size:11px;cursor:pointer">⇅</button>')+
-                  (canMove&&arr.length>1
-                    ? (p.key===moving
-                        ? estStepBtn(p.key, -1, pi<=0||roomKeyOf(arr[pi-1])!==roomKeyOf(p))+
-                          estStepBtn(p.key, 1, pi>=arr.length-1||roomKeyOf(arr[pi+1])!==roomKeyOf(p))+
-                          '<button data-a="est-pos-grab" data-k="'+esc(p.key)+'" title="Положить строку обратно" style="width:28px;height:28px;background:'+RULE_COL+';border:1px solid '+RULE_COL+';border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">✕</button>'
-                        : '<button data-a="est-pos-grab" data-k="'+esc(p.key)+'" title="Переставить в этапе: возьмите строку и укажите место" style="width:28px;height:28px;background:#fff;border:1px solid #dde6f0;border-radius:7px;cursor:pointer;color:#7a9aaa;font-size:11px;font-weight:700">↕</button>')
+                  // Комната у работы своя: расчёт знает её лишь там, где по ней
+                  // считал. Ряд комнат раскрывается кнопкой — так же, как этап и часы.
+                  (canMove
+                    ? '<button data-a="est-pos-room-pick" data-k="'+esc(p.key)+'" title="Приписать работу к помещению" style="width:28px;height:28px;background:'+(roomPickKey===p.key?RULE_COL:"#fff")+';border:1px solid '+(roomPickKey===p.key?RULE_COL:"#dde6f0")+';border-radius:7px;cursor:pointer;color:'+(roomPickKey===p.key?"#fff":"#7a9aaa")+';font-size:11px">⌂</button>'
                     : '')+
-                  '<button data-a="est-pos-del" data-k="'+esc(p.key)+'" title="'+(p.added?"Удалить дописанную работу":"Убрать эту работу из дома")+'" style="width:28px;height:28px;background:#fff;border:1px solid #e74c3c44;border-radius:7px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button>'+
+                  (canMove&&arr.length>1?estDragBtn(p.key):'')+
+                  '<button data-a="est-pos-del" data-k="'+esc(p.key)+'" data-n="'+esc(p.name||"")+'" title="'+(p.added?"Удалить дописанную работу":"Убрать эту работу из дома")+'" style="width:28px;height:28px;background:#fff;border:1px solid #e74c3c44;border-radius:7px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button>'+
                   '</span>'+
                 '</div>'
               : '<div style="font-size:12px;font-weight:700;color:#0d1b2e;margin-top:5px">'+Math.round(p.cost).toLocaleString("ru-RU")+' ₽</div>')+
+            ((canMove&&roomPickKey===p.key)?estRoomPickHtml(p.key, roomKeyOf(p), w):'')+
             specMatsListHtml(p, sh, live)+
             (open?estWhyEditor(p, sh):'')+
           '</div>';
@@ -24752,54 +24767,64 @@ function bind(){
       if(map[k])delete map[k]; else map[k]=1;
       matsOpen=map; fl();
     };}
-    // Взять строку. Повторный тап — положить обратно: взятая и никуда не
-    // поставленная работа не должна держать экран в режиме переноса.
-    else if(a==="est-pos-grab"){el.onclick=()=>{
+    // Перенос строки — пальцем: взяли за ручку, повели, отпустили. Пока ведут,
+    // fl() не зовём: перерисовка уносит узел с захваченным указателем, и жест
+    // обрывается на первом же движении. Поэтому двигаем не список, а место в нём:
+    // саму строку прячем, а под пальцем едет пустая рамка «сюда».
+    else if(a==="est-pos-drag"){el.onpointerdown=(ev)=>{
+      const key=el.dataset.k||""; if(!key)return;
+      const row=estPosRowOf(el); if(!row||!row.parentNode)return;
+      // Соседи — работы ТОГО ЖЕ помещения: список режется на блоки по комнатам,
+      // и строка, брошенная в чужой блок, вернулась бы обратно тем же рендером.
+      const grp=row.dataset.posGrp||"";
+      const kin=Array.prototype.slice.call(row.parentNode.children).filter(function(x){
+        return x.dataset&&x.dataset.posRow&&x.dataset.posGrp===grp;
+      });
+      const others=kin.filter(function(x){ return x!==row; });
+      if(!others.length)return;
+      ev.preventDefault();
+      try{ el.setPointerCapture(ev.pointerId); }catch(e){}
+      const box=row.getBoundingClientRect();
+      const slot=document.createElement("div");
+      slot.textContent="сюда";
+      slot.style.cssText="height:"+Math.max(Math.round(box.height),28)+"px;margin:3px 0;display:flex;"+
+        "align-items:center;justify-content:center;border:2px dashed "+RULE_COL+";border-radius:9px;"+
+        "background:"+RULE_COL+"14;font-size:10.5px;font-weight:700;color:"+RULE_COL;
+      row.parentNode.insertBefore(slot, row);
+      row.style.display="none";
+      let at=kin.indexOf(row), edge=0, live=true;
+      // Край экрана листает сам: этап бывает длиннее экрана, а палец уже занят
+      // строкой и прокрутить страницу им нечем.
+      const roll=function(){ if(!live)return; if(edge)window.scrollBy(0, edge); requestAnimationFrame(roll); };
+      requestAnimationFrame(roll);
+      const move=function(e){
+        const y=e.clientY;
+        let j=others.length;
+        for(let n=0;n<others.length;n++){
+          const b=others[n].getBoundingClientRect();
+          if(y<b.top+b.height/2){ j=n; break; }
+        }
+        at=j;
+        row.parentNode.insertBefore(slot, others[j]||null);
+        const h=window.innerHeight||0;
+        edge=(y<90)?-14:((h&&y>h-90)?14:0);
+      };
+      const up=function(){
+        live=false;
+        document.removeEventListener("pointermove", move);
+        document.removeEventListener("pointerup", up);
+        document.removeEventListener("pointercancel", up);
+        if(slot.parentNode)slot.parentNode.removeChild(slot);
+        row.style.display="";
+        estPosPutBefore(key, others[at]?String(others[at].dataset.posRow||""):"");
+      };
+      document.addEventListener("pointermove", move);
+      document.addEventListener("pointerup", up);
+      document.addEventListener("pointercancel", up);
+    };}
+    else if(a==="est-pos-room-pick"){el.onclick=()=>{
       const key=el.dataset.k||"";
-      const sh=schemeSheet()||spec2Sheet();
-      estMoveKey=(estMoveKey===key)?"":key;
-      estMoveSheet=estMoveKey?String((sh&&sh.id)||""):"";
-      fl();
-    };}
-    // Шаг на одну строку внутри своего помещения. Соседа из чужой комнаты не
-    // трогаем: группировка вернула бы строку обратно тем же рендером.
-    else if(a==="est-pos-step"){el.onclick=()=>{
-      const key=el.dataset.k||"", dir=Number(el.dataset.d)||0;
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!key||!dir)return;
-      const w=works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes }));
-      const st=(w.stages||[]).find(function(s){ return s.positions.some(function(x){ return x.key===key; }); });
-      if(!st)return;
-      const list=st.positions;
-      const i=list.findIndex(function(x){ return x.key===key; });
-      const j=i+dir;
-      if(i<0||j<0||j>=list.length)return;
-      if(roomKeyOf(list[j])!==roomKeyOf(list[i]))return;
-      const keys=list.map(function(x){ return x.key; });
-      keys.splice(j, 0, keys.splice(i, 1)[0]);
-      const map=Object.assign({}, sh.posOrder||{});
-      keys.forEach(function(k,n){ map[k]=n; });
-      // Строку НЕ отпускаем: шагов подряд обычно несколько, а отпущенная строка
-      // заставляла бы брать её заново на каждый шаг.
-      sh.posOrder=map; scheduleSave(); fl();
-    };}
-    else if(a==="est-pos-drop"){el.onclick=()=>{
-      const key=el.dataset.k||"", j=Number(el.dataset.i);
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!key||!isFinite(j)){ estMoveKey=""; estMoveSheet=""; fl(); return; }
-      // Порядок берём ТОТ, что на экране: он уже с учётом прежних перестановок,
-      // и считать его заново другим кодом значит получить второй порядок.
-      const w=works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes }));
-      const st=(w.stages||[]).find(function(s){ return s.positions.some(function(x){ return x.key===key; }); });
-      if(!st){ estMoveKey=""; estMoveSheet=""; fl(); return; }
-      const keys=st.positions.map(function(x){ return x.key; });
-      const i=keys.indexOf(key);
-      if(i<0){ estMoveKey=""; estMoveSheet=""; fl(); return; }
-      // Место указано МЕЖДУ строками, которые человек видит, — то есть вместе с
-      // самой переносимой. Убрали её — всё, что стояло ниже, поднялось на одну.
-      keys.splice(i, 1);
-      keys.splice(j>i?j-1:j, 0, key);
-      const map=Object.assign({}, sh.posOrder||{});
-      keys.forEach(function(k,n){ map[k]=n; });
-      sh.posOrder=map; estMoveKey=""; estMoveSheet=""; scheduleSave(); fl();
+      roomPickKey=(roomPickKey===key)?"":key; fl();
     };}
     else if(a==="est-pos-stage"){el.onchange=()=>{
       const key=el.dataset.k||"";
@@ -24855,7 +24880,7 @@ function bind(){
       const map=Object.assign({}, sh.posRoom||{});
       if(to==="~")delete map[key]; else map[key]=to||ROOM_HOUSE;
       if(Object.keys(map).length)sh.posRoom=map; else delete sh.posRoom;
-      estMoveKey=""; estMoveSheet=""; scheduleSave(); fl();
+      roomPickKey=""; scheduleSave(); fl();
     };}
     // Имя помещения правится прямо над его работами — а живёт в модели: то же имя
     // стоит на чертеже и в площадях, и второй копии у него быть не должно.
@@ -24873,15 +24898,20 @@ function bind(){
       const key=el.dataset.k||"";
       const sh=schemeSheet()||spec2Sheet();
       if(!sh||!key)return;
+      // Спрашиваем перед удалением: ✕ стоит в ряду с переносом и этапом, и
+      // промах пальцем по соседней кнопке снимал работу из дома молча.
+      const nm=el.dataset.n?" «"+el.dataset.n+"»":"";
       // Дописанную работу удаляем насовсем: возвращать её незачем — она и так
       // появилась руками, а «убрано» про строки справочника.
       if(key.indexOf("add:")===0){
+        if(!confirm("Удалить дописанную работу"+nm+"? Она пропадёт совсем — вернуть можно будет только заново."))return;
         const id=key.slice(4);
         const rest=(sh.posAdd||[]).filter(function(x){ return String(x.id)!==id; });
         if(rest.length)sh.posAdd=rest; else delete sh.posAdd;
         estForgetKey(sh, key);
         scheduleSave(); fl(); return;
       }
+      if(!confirm("Убрать работу"+nm+" из этого дома? Её видно в «Убрано из этого дома», оттуда же можно вернуть."))return;
       // Выключаем строку в ЭТОМ листе, не трогая правило и справочник: они общие
       // на все дома, а решение «здесь этой работы нет» — про один дом.
       sh.posOff=Object.assign({}, sh.posOff||{}, { [key]:1 });

@@ -391,6 +391,22 @@ function create(p, name) {
   const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
   const cost0 = p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost')
   t.ok('у работы есть крестик', before.indexOf('data-a="est-pos-del"') >= 0)
+  // Имя работы едет в самой кнопке: спрашивать «убрать работу?» без имени — это
+  // спрашивать про ту ли строку человек попал пальцем.
+  t.ok('крестик знает имя работы', /data-a="est-pos-del" data-k="[^"]*" data-n="[^"]+"/.test(before))
+
+  // Крестик стоит вплотную к переносу и этапу, поэтому спрашиваем. Передумал —
+  // работа остаётся в доме.
+  const no = panel(RULES)
+  no.run('confirm=function(){return false;};')
+  create(no, 'Дом с лишней работой')
+  no.run('projBand="parts";')
+  const nokey = no.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
+  const nodel = no.dom.node({ a: 'est-pos-del', k: nokey, n: 'Работа' })
+  no.run('bind();'); nodel.onclick()
+  t.ok('отказ оставляет работу в доме',
+    no.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(nokey) + ';}).length') === 1)
+  t.ok('и в листе ничего не записано', !no.q('projects[0].posOff'))
 
   const del = p.dom.node({ a: 'est-pos-del', k: key })
   p.run('bind();'); del.onclick()
@@ -534,70 +550,36 @@ function create(p, name) {
   const before = stageKeys()
   t.ok('в этапе две работы', before.length === 2, JSON.stringify(before))
   const idle = p.run('tProjects()')
-  t.ok('работу можно взять', idle.indexOf('data-a="est-pos-grab"') >= 0)
-  t.ok('пока не взяли — мест «сюда» нет', idle.indexOf('data-a="est-pos-drop"') < 0)
+  t.ok('у работы есть ручка переноса', idle.indexOf('data-a="est-pos-drag"') >= 0)
+  t.ok('мест «сюда» в списке нет', idle.indexOf('data-a="est-pos-drop"') < 0)
+  t.ok('и стрелок тоже нет', idle.indexOf('data-a="est-pos-step"') < 0)
+  // Строка знает свой адрес: перенос ищет соседей по разметке, а не по индексу —
+  // между работами стоят шапки помещений и раскрытые редакторы.
+  t.ok('у строки есть адрес', idle.indexOf('data-pos-row="' + before[0] + '"') >= 0)
+  t.ok('и помещение в адресе', /data-pos-grp="2\|/.test(idle))
+  t.ok('ручка не перехватывается прокруткой', /data-a="est-pos-drag"[^>]*touch-action:none/.test(idle))
 
-  // Взял — указал место: место во всю ширину строки, а не стрелка в 20 пикселей.
-  const grab = p.dom.node({ a: 'est-pos-grab', k: before[0] })
-  p.run('bind();'); grab.onclick()
-  const held = p.run('tProjects()')
-  t.ok('места появились', held.indexOf('data-a="est-pos-drop"') >= 0)
-  t.ok('и видно, какую строку несём', /ПЕРЕНОШУ/.test(held))
-  t.ok('взятая строка мест вокруг себя не показывает',
-    (held.match(/data-a="est-pos-drop"/g) || []).length === 1, String((held.match(/data-a="est-pos-drop"/g) || []).length))
-  t.ok('пока ничего не переставилось', stageKeys().join(',') === before.join(','))
-
-  const slot = p.dom.node({ a: 'est-pos-drop', k: before[0], i: '2' })
-  p.run('bind();'); slot.onclick()
+  // Сам жест — браузерный, поэтому проверяем то, чем он заканчивается: работу
+  // ставят перед той строкой, на которую её принесли.
+  t.ok('строка встала перед соседкой',
+    p.q('estPosPutBefore(' + JSON.stringify(before[1]) + ',' + JSON.stringify(before[0]) + ')') === true)
   const after = stageKeys()
-  t.ok('работа встала на указанное место', after.join(',') === before.slice().reverse().join(','),
+  t.ok('порядок поменялся', after.join(',') === before.slice().reverse().join(','),
     before.join(',') + ' → ' + after.join(','))
-  t.ok('и строку отпустили', p.q('estMoveKey') === '')
   // Порядок хранится в листе — справочник общий на все дома.
   t.ok('порядок записан в лист', !!p.q('projects[0].posOrder'))
   t.ok('справочник не тронут', p.q('estimates.length') === 2)
 
-  const grab2 = p.dom.node({ a: 'est-pos-grab', k: before[0] })
-  p.run('bind();'); grab2.onclick()
-  const slot2 = p.dom.node({ a: 'est-pos-drop', k: before[0], i: '0' })
-  p.run('bind();'); slot2.onclick()
-  t.ok('и возвращается обратно', stageKeys().join(',') === before.join(','), stageKeys().join(','))
-
-  // Далеко строку несут местом «сюда», а на соседнюю позицию быстрее тапнуть
-  // стрелкой — и строка остаётся взятой, потому что шагов обычно несколько.
-  t.ok('до взятия стрелок нет', p.run('tProjects()').indexOf('data-a="est-pos-step"') < 0)
-  const grabS = p.dom.node({ a: 'est-pos-grab', k: before[0] })
-  p.run('bind();'); grabS.onclick()
-  const withSteps = p.run('tProjects()')
-  t.ok('у взятой строки две стрелки', (withSteps.match(/data-a="est-pos-step"/g) || []).length === 2)
-  t.ok('вверх у первой строки отключена', /data-a="est-pos-step" data-k="[^"]*" data-d="-1" disabled/.test(withSteps))
-  const step = p.dom.node({ a: 'est-pos-step', k: before[0], d: '1' })
-  p.run('bind();'); step.onclick()
-  t.ok('шаг вниз переставил строку', stageKeys().join(',') === before.slice().reverse().join(','),
-    stageKeys().join(','))
-  t.ok('и строка осталась взятой', p.q('estMoveKey') === before[0])
-  const stepUp = p.dom.node({ a: 'est-pos-step', k: before[0], d: '-1' })
-  p.run('bind();'); stepUp.onclick()
-  t.ok('шаг вверх вернул на место', stageKeys().join(',') === before.join(','))
-  const cancel = p.dom.node({ a: 'est-pos-grab', k: before[0] })
-  p.run('bind();'); cancel.onclick()
-
-  // Передумал — тот же тап кладёт строку обратно, а не оставляет экран в режиме переноса.
-  const grab3 = p.dom.node({ a: 'est-pos-grab', k: before[0] })
-  p.run('bind();'); grab3.onclick()
-  t.ok('строка взята', p.q('estMoveKey') === before[0])
-  p.run('bind();'); grab3.onclick()
-  t.ok('повторный тап отменяет перенос', p.q('estMoveKey') === '')
-  t.ok('и порядок не поехал', stageKeys().join(',') === before.join(','))
-
-  // Ключ позиции у листов общий, поэтому взятая строка помнит и свой лист:
-  // иначе в соседнем проекте подсвечивалась бы его тёзка.
-  const grab4 = p.dom.node({ a: 'est-pos-grab', k: before[0] })
-  p.run('bind();'); grab4.onclick()
-  t.ok('строка помнит свой лист', p.q('estMoveSheet') === p.q('projects[0].id'))
-  create(p, 'Соседний дом')
-  p.run('projBand="parts";')
-  t.ok('в соседнем проекте ничего не взято', !/ПЕРЕНОШУ/.test(p.run('tProjects()')))
+  // Пустой адрес — «последней в этом помещении»: так заканчивается бросок ниже
+  // всех соседей, где строки, перед которой встать, уже нет.
+  t.ok('без адреса строка уходит вниз',
+    p.q('estPosPutBefore(' + JSON.stringify(before[1]) + ', "")') === true &&
+    stageKeys().join(',') === before.join(','), stageKeys().join(','))
+  // Бросок на своё же место — не перестановка: сохранять и перерисовывать нечего.
+  t.ok('перенос на место ничего не меняет',
+    p.q('estPosPutBefore(' + JSON.stringify(before[1]) + ', "")') === false &&
+    stageKeys().join(',') === before.join(','))
+  t.ok('чужой ключ переносить нечего', p.q('estPosPutBefore("нет такой", "")') === false)
 
   // Этапы местами не меняются: по ним идут сроки и приёмка, а перестановка —
   // только внутри своего этапа.
@@ -888,9 +870,10 @@ function create(p, name) {
   const house = st().blocks.filter((b) => !b.key)[0]
   t.ok('обязательная работа висит в общем по дому', !!house && house.positions.length >= 1, layout())
 
-  // Взял строку — появились не только места «сюда», но и комнаты.
+  // Комнаты раскрывает кнопка у самой строки — постоянный ряд из пяти кнопок в
+  // каждой работе читался бы как часть сметы.
   const key = house.positions[0].key
-  const grab = p.dom.node({ a: 'est-pos-grab', k: key }); p.run('bind();'); grab.onclick()
+  const pick = p.dom.node({ a: 'est-pos-room-pick', k: key }); p.run('bind();'); pick.onclick()
   const held = p.run('tProjects()')
   t.ok('предложено перенести в комнату', /ПЕРЕНЕСТИ В/.test(held))
   t.ok('и комнаты перечислены', (held.match(/data-a="est-pos-room"/g) || []).length >= 3)
@@ -901,7 +884,7 @@ function create(p, name) {
     st().blocks.filter((b) => b.key === room.id)[0].positions.some((x) => x.key === key), layout())
   t.ok('приписка лежит в листе', p.q('projects[0].posRoom[' + JSON.stringify(key) + ']') === room.id)
   t.ok('справочник не тронут', p.q('estimates.length') === 3)
-  t.ok('строку отпустили', p.q('estMoveKey') === '')
+  t.ok('ряд комнат закрылся', p.q('roomPickKey') === '')
   t.ok('деньги дома не изменились',
     W().cost === p.q('allPositions(projects[0], specCtx(projects[0])).reduce(function(a,x){return a+x.cost;},0)'))
 
@@ -927,7 +910,7 @@ function create(p, name) {
   t.ok('работа удалена', !st().positions.some((x) => x.name === 'Затирка швов'))
 
   // «По расчёту» возвращает работу туда, где её посчитали.
-  const grab2 = p.dom.node({ a: 'est-pos-grab', k: key }); p.run('bind();'); grab2.onclick()
+  const pick2 = p.dom.node({ a: 'est-pos-room-pick', k: key }); p.run('bind();'); pick2.onclick()
   const undo = p.dom.node({ a: 'est-pos-room', k: key, r: '~' }); p.run('bind();'); undo.onclick()
   t.ok('работа вернулась в общее по дому',
     st().blocks.filter((b) => !b.key)[0].positions.some((x) => x.key === key), layout())
