@@ -654,7 +654,9 @@ function create(p, name) {
   const was = p.q('allPositions(projects[0], specCtx(projects[0]))[0].cost')
   const total0 = p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost')
   openRow(p, key)
-  t.ok('цена правится в строке', p.run('tProjects()').indexOf('data-a="est-pos-cost"') >= 0)
+  // Поля цены в строке больше нет: работа считается по часам и ставке, а второе
+  // поле для того же числа означало бы два ответа на один вопрос.
+  t.ok('поля цены в строке нет', p.run('tProjects()').indexOf('data-a="est-pos-cost"') < 0)
 
   const inp = p.dom.node({ a: 'est-pos-cost', k: key })
   inp.value = '25000'
@@ -670,6 +672,11 @@ function create(p, name) {
   t.ok('материалы никуда не делись', (now.mats || []).length > 0)
   t.ok('справочник не тронут', p.q('estimates.length') === 2)
   t.ok('в строке видно обе половины', /работа <\/span><span[^>]*>25[\s\u00a0]000 ₽/.test(p.run('tProjects()')))
+  // Цену, назначенную руками до нормы-часа, видно в строке и снимает одна кнопка:
+  // спрятать поле и оставить такую строку без выхода — запереть её цифру навсегда.
+  const shown = p.run('tProjects()')
+  t.ok('назначенная цена показана в строке', /работа 25[\s\u00a0\u202f]000 ₽/.test(shown), 'нет плашки с ценой')
+  t.ok('и её можно снять', shown.indexOf('data-a="est-pos-cost-reset"') >= 0)
 
   // В стройку уходит и цена, и её половина: объект пересчитывает себя по `labor`.
   const work = p.q('positionWork(allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0])')
@@ -1091,20 +1098,18 @@ function create(p, name) {
   const plain = () => p.run('tProjects()').replace(/<[^>]*>/g, '').replace(/[\u00a0\u202f]/g, ' ')
   const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
   const cost0 = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0].cost')
-  // Поле в шапке — это цена БРИГАДЕ, и пока её не назначили, оно пустое с
-  // подсказкой: подставленный туда итог строки читался как «работа стоит столько
-  // же, сколько всё», и вносить оплату было некуда.
+  // Работа бригаде считается по часам и ставке; пока ни того, ни другого нет —
+  // она нулевая, а не «столько же, сколько вся строка».
   openRow(p, key)
   const fieldHtml = () => (p.run('tProjects()').match(/data-a="est-pos-cost"[^>]*/) || [''])[0]
-  t.ok('поле цены пустое', /value=""/.test(fieldHtml()), fieldHtml().slice(0, 120))
-  t.ok('и подписано «работа»', /placeholder="работа"/.test(fieldHtml()))
+  t.ok('поля цены у обычной строки нет', fieldHtml() === '', fieldHtml().slice(0, 120))
   t.ok('без цены бригаде работа нулевая',
     new RegExp('материалы ' + cost0.toLocaleString('ru-RU').replace(/[\u00a0\u202f]/g, ' ') + ' ₽ · работа 0 ₽').test(plain()), 'нет раскладки')
 
   const inp = p.dom.node({ a: 'est-pos-cost', k: key })
   p.run('bind();'); inp.value = '12000'; inp.onchange()
   t.ok('цена бригаде встала в «работу»', /· работа 12 000 ₽/.test(plain()), 'нет цены работы')
-  t.ok('и в поле стоит она же, а не итог', /value="12000"/.test(fieldHtml()), fieldHtml().slice(0, 120))
+  t.ok('и видна в строке плашкой', /работа 12[\s\u00a0\u202f]000 ₽/.test(p.run('tProjects()')))
   t.ok('и материалы остались своей цифрой',
     new RegExp('материалы ' + cost0.toLocaleString('ru-RU').replace(/[\u00a0\u202f]/g, ' ') + ' ₽ · работа 12 000').test(plain()))
 
@@ -1124,8 +1129,9 @@ function create(p, name) {
   // Итог строки — крупной цифрой рядом с полем, чип режима стоит всегда.
   t.ok('итог строки виден в шапке',
     /font-size:13px;font-weight:800[^>]*white-space:nowrap">[\d\s\u00a0]+ ₽/.test(p.run('tProjects()')))
-  t.ok('чип «за работу / под ключ» есть и без назначенной цены',
-    p.run('tProjects()').indexOf('data-a="est-pos-cost-mode"') >= 0)
+  // Переключателя «под ключ» в строке тоже нет — назначать цену там больше нечем.
+  t.ok('переключателя режима цены в строке нет',
+    p.run('tProjects()').indexOf('data-a="est-pos-cost-mode"') < 0)
   // Крестик работы красный, крестик материала приглушён: рядом стоящие одинаковые
   // стирали всю работу вместо одного материала.
   p.run('matsOpen[' + JSON.stringify(key) + ']=1;')

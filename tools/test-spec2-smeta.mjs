@@ -806,8 +806,8 @@ const SHEET = {
   const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key')
   openRow(p, key)
   const fieldHtml = () => (p.run('tSpec2()').match(/data-a="est-pos-cost"[^>]*/) || [''])[0]
-  t.ok('поле цены пустое и подписано «работа»',
-    /value=""/.test(fieldHtml()) && /placeholder="работа"/.test(fieldHtml()), fieldHtml().slice(0, 120))
+  // Поля цены у обычной строки нет: работа считается по часам и норма-часу.
+  t.ok('поля цены в строке нет', fieldHtml() === '', fieldHtml().slice(0, 120))
   const inp = p.dom.node({ a: 'est-pos-cost', k: key })
   p.run('bind();'); inp.value = '7000'; inp.onchange()
   t.ok('цена бригаде видна отдельно', /· работа 7 000 ₽/.test(plain()))
@@ -828,8 +828,8 @@ const SHEET = {
   const html2 = p.run('tSpec2()')
   t.ok('итог строки виден в шапке',
     /font-size:13px;font-weight:800[^>]*white-space:nowrap">[\d\s\u00a0]+ ₽/.test(html2))
-  t.ok('«работа» в раскладке ведёт в поле цены', html2.indexOf('data-a="est-pos-cost-focus"') >= 0)
-  t.ok('чип режима стоит всегда', html2.indexOf('data-a="est-pos-cost-mode"') >= 0)
+  t.ok('«работа» в раскладке ведёт к часам', html2.indexOf('data-a="est-pos-cost-focus"') >= 0)
+  t.ok('переключателя режима цены нет', html2.indexOf('data-a="est-pos-cost-mode"') < 0)
   // Строка читается сверху вниз: имя и итог — чипы — управление.
   t.ok('имя не длиннее двух строк', /-webkit-line-clamp:2/.test(html2))
   t.ok('этап спрятан за кнопкой', html2.indexOf('data-a="est-pos-stage-pick"') >= 0)

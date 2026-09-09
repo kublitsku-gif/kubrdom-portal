@@ -64,7 +64,7 @@ import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
-const APP_BUILD = "2026-09-09.9";
+const APP_BUILD = "2026-09-09.10";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -13772,7 +13772,7 @@ function estNormHtml(p, sh){
     ? ' × '+Math.round(rate).toLocaleString("ru-RU")+' ₽ = <b style="color:#0d1b2e">'+Math.round((Number(p.hours)||0)*rate).toLocaleString("ru-RU")+' ₽</b>'
     : ' · <span style="color:#c0392b">норма-час не задан</span>';
   return '<div style="flex-basis:100%;background:#f7fafc;border:1px solid #e6ecf3;border-radius:9px;padding:7px 9px;margin-top:2px">'+
-    '<div style="font-size:10.5px;color:#5a7a9a;line-height:1.5">'+line+(p.costSet?' · <span style="color:#8e44ad">цена назначена руками, расчёт не применяется</span>':money)+'</div>'+
+    '<div style="font-size:10.5px;color:#5a7a9a;line-height:1.5">'+line+(p.costSet?' · <span style="color:#8e44ad">цена назначена руками — снимите её кнопкой ⟲, и работа посчитается по часам</span>':money)+'</div>'+
     '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;align-items:center">'+
       '<span style="font-size:9.5px;font-weight:700;color:#9aabbf;letter-spacing:0.4px">СЛОЖНЕЕ ОБЫЧНОГО ЗДЕСЬ</span>'+
       POS_K.map(function(x){
@@ -13860,7 +13860,7 @@ function estSplitHtml(pos, count, open){
       '<span style="'+(sp.mats?on:dim)+'">'+money(sp.mats)+'</span>'+
     '</button>'+
     '<span style="'+dim+'"> · </span>'+
-    '<button data-a="est-pos-cost-focus" data-k="'+esc(pos.key)+'" title="Вписать оплату бригаде" style="border:none;background:transparent;padding:2px 0;font-size:11px;cursor:pointer">'+
+    '<button data-a="est-pos-cost-focus" data-k="'+esc(pos.key)+'" title="Открыть строку: работа считается по часам и норма-часу" style="border:none;background:transparent;padding:2px 0;font-size:11px;cursor:pointer">'+
       '<span style="'+dim+'">работа </span>'+
       '<span style="'+(sp.labor?on:dim)+'">'+money(sp.labor)+'</span>'+
     '</button>'+
@@ -15340,15 +15340,18 @@ function estBodyHtml(sh, types, live, actions){
             (canRule&&rowOpen
               ? '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:7px">'+
                   (function(){
-                    // Поле — это цена БРИГАДЕ за работу. У СВОЕЙ работы её цена и
-                    // есть эта цифра (она лежит в самой строке, а не в `posCost`),
-                    // поэтому поле показывает её же.
+                    // Цену бригаде в строке больше не вбивают: работа считается по
+                    // часам и ставке, и второе поле для того же числа означало бы
+                    // два ответа на один вопрос. Осталось поле у СВОЕЙ работы: у неё
+                    // цена и есть смысл строки (она лежит в самой строке, а не в
+                    // `posCost`), нормы у неё нет и взяться ей неоткуда.
                     const sp=positionSplit(p);
-                    const shown=p.own?sp.labor:(p.costSet?Math.round(p.costMode==="labor"?(Number(p.labor)||0):p.cost):"");
-                    const set=p.own||p.costSet;
+                    const shown=p.own?sp.labor:"";
                     const all=p.costSet&&p.costMode!=="labor";
-                    return '<input id="pc-'+esc(p.key)+'" data-a="est-pos-cost" data-k="'+esc(p.key)+'" value="'+shown+'" placeholder="работа" inputmode="numeric" title="'+(all?"Подряд под ключ — материалы уже в этой цене":"Сколько платим бригаде за эту работу — материалы считаются сверху")+'" style="width:86px;height:28px;padding:0 7px;border:1px solid '+(set?"#8e44ad":"#dde6f0")+';border-radius:7px;font-size:12px;font-weight:700;text-align:right;outline:none;color:'+(set?"#8e44ad":"#0d1b2e")+';background:#fff;box-sizing:border-box">'+
-                    '<span style="font-size:12px;font-weight:700;color:#0d1b2e">₽</span>'+
+                    return (p.own
+                      ? '<input id="pc-'+esc(p.key)+'" data-a="est-pos-cost" data-k="'+esc(p.key)+'" value="'+shown+'" placeholder="работа" inputmode="numeric" title="Цена своей работы — её и платим" style="width:86px;height:28px;padding:0 7px;border:1px solid #8e44ad;border-radius:7px;font-size:12px;font-weight:700;text-align:right;outline:none;color:#8e44ad;background:#fff;box-sizing:border-box">'+
+                        '<span style="font-size:12px;font-weight:700;color:#0d1b2e">₽</span>'
+                      : '')+
                     // План в человеко-часах — рядом с деньгами: сколько платим уже
                     // видно, а сколько это времени — нет, а по нему считают сроки.
                     // Факт часов ведут на объекте, здесь только план.
@@ -15370,14 +15373,15 @@ function estBodyHtml(sh, types, live, actions){
                       '<button data-a="est-pos-hours-set" data-k="'+esc(p.key)+'" data-h="0" title="Убрать план" style="min-width:34px;padding:5px 8px;border-radius:7px;border:1.5px solid #dde6f0;background:#fff;color:#9aabbf;font-size:11.5px;font-weight:700;cursor:pointer">✕</button>'+
                       '<span style="font-size:10.5px;color:#9aabbf;align-self:center;margin-left:2px">или впишите в поле</span>'+
                     '</div>':'')+
-                    // Смысл цифры: оплата бригаде (материалы сверху) или подряд под
-                    // ключ (материалы уже в ней). «За работу» — обычный случай, ему
-                    // хватает значка; словом говорим про исключение.
-                    (p.own?''
-                      : all
-                      ? '<button data-a="est-pos-cost-mode" data-k="'+esc(p.key)+'" title="Подряд под ключ — материалы уже в этой цене. Тап: оплата работы" style="height:28px;padding:0 8px;border:1px solid #8e44ad55;background:#f6f2fa;color:#8e44ad;border-radius:7px;font-size:9.5px;font-weight:800;cursor:pointer;white-space:nowrap">под ключ ⇄</button>'
-                      : '<button data-a="est-pos-cost-mode" data-k="'+esc(p.key)+'" title="Оплата работы — материалы считаются сверху. Тап: подряд под ключ" style="width:28px;height:28px;border:1px solid #dde6f0;background:#fff;color:#9aabbf;border-radius:7px;font-size:11px;cursor:pointer">⇄</button>')+
-                    (p.costSet?'<button data-a="est-pos-cost-reset" data-k="'+esc(p.key)+'" title="Вернуть цену по материалам" style="width:28px;height:28px;border:1px solid #8e44ad33;background:#fff;color:#8e44ad;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer">⟲</button>':'');
+                    // Цены, назначенные руками ДО нормы-часа, никуда не делись: их
+                    // видно в строке и снимает одна кнопка. Спрятать поле и оставить
+                    // такую строку без выхода значило бы запереть её цифру навсегда.
+                    ((!p.own&&p.costSet)
+                      ? '<span style="display:flex;align-items:center;gap:5px;background:#f6f2fa;border:1px solid #8e44ad33;border-radius:7px;padding:0 4px 0 8px;height:28px">'+
+                          '<span style="font-size:11px;font-weight:700;color:#8e44ad;white-space:nowrap">'+(all?"под ключ ":"работа ")+Math.round(all?p.cost:(Number(p.labor)||0)).toLocaleString("ru-RU")+' ₽</span>'+
+                          '<button data-a="est-pos-cost-reset" data-k="'+esc(p.key)+'" title="Снять назначенную руками цену — работа снова посчитается по часам и ставке" style="width:22px;height:22px;border:1px solid #8e44ad33;background:#fff;color:#8e44ad;border-radius:6px;font-size:10px;font-weight:700;cursor:pointer;padding:0">⟲</button>'+
+                        '</span>'
+                      : '');
                   })()+
                   // Откуда взялись часы и деньги: формула целиком, теми же числами,
                   // которыми считалось. Число, про которое непонятно, как оно вышло,
@@ -24818,9 +24822,14 @@ function bind(){
       if(!((sh.posCostMode||{})[key]))sh.posCostMode=Object.assign({}, sh.posCostMode||{}, { [key]:"labor" });
       scheduleSave(); fl();
     };}
+    // «работа» в раскладке ведёт туда, где эта цифра берётся. Раньше это было поле
+    // цены; теперь работа считается по часам, поэтому раскрываем строку — там и
+    // часы, и коэффициент, и вся формула.
     else if(a==="est-pos-cost-focus"){el.onclick=()=>{
-      const f=document.getElementById("pc-"+(el.dataset.k||""));
-      if(f&&f.focus){ f.focus(); if(f.select)f.select(); }
+      const key=el.dataset.k||"";
+      const f=document.getElementById("pc-"+key);
+      if(f&&f.focus){ f.focus(); if(f.select)f.select(); return; }
+      estRowOpen=key; fl();
     };}
     else if(a==="est-pos-cost-mode"){el.onclick=()=>{
       const key=el.dataset.k||"";
