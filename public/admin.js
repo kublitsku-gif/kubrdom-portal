@@ -64,7 +64,7 @@ import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
-const APP_BUILD = "2026-09-09.3";
+const APP_BUILD = "2026-09-09.4";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -14612,12 +14612,14 @@ function estRowsHtml(rows){
 // материал — в чужую работу; и там и там список собран группами, и брошенная
 // мимо строка вернулась бы обратно тем же рендером.
 // done(адрес соседа, перед которым встали; пустой — встали последним).
+// onZone(dataset шапки) — необязательное: бросок на заголовок этапа или
+// помещения переносит строку туда целиком, а не двигает её среди соседей.
 function dragRowOf(el, rowKey){
   let n=el;
   while(n&&(!n.dataset||!n.dataset[rowKey]))n=n.parentNode;
   return (n&&n.dataset&&n.dataset[rowKey])?n:null;
 }
-function dragRow(el, ev, rowKey, grpKey, done){
+function dragRow(el, ev, rowKey, grpKey, done, onZone){
   const row=dragRowOf(el, rowKey); if(!row||!row.parentNode)return;
   const grp=row.dataset[grpKey]||"";
   const kin=Array.prototype.slice.call(row.parentNode.children).filter(function(x){
@@ -14635,20 +14637,44 @@ function dragRow(el, ev, rowKey, grpKey, done){
     "background:"+RULE_COL+"14;font-size:10.5px;font-weight:700;color:"+RULE_COL;
   row.parentNode.insertBefore(slot, row);
   row.style.display="none";
-  let at=kin.indexOf(row), edge=0, live=true;
+  let at=kin.indexOf(row), edge=0, live=true, zone=null;
+  // Пока ведут пальцем — страница не листается сама: touch-action у строки снят
+  // не был (её тянут долгим тапом, а не за ручку), и без этого жест уехал бы
+  // вместе с прокруткой.
+  const hold=function(e){ e.preventDefault(); };
+  document.addEventListener("touchmove", hold, { passive:false });
+  const lit=function(z){
+    if(zone===z)return;
+    if(zone){ zone.style.outline=""; zone.style.outlineOffset=""; }
+    zone=z;
+    if(zone){ zone.style.outline="2px dashed "+RULE_COL; zone.style.outlineOffset="2px"; }
+    slot.style.display=zone?"none":"flex";
+  };
   // Край экрана листает сам: список бывает длиннее экрана, а палец уже занят
   // строкой и прокрутить страницу им нечем.
   const roll=function(){ if(!live)return; if(edge)window.scrollBy(0, edge); requestAnimationFrame(roll); };
   requestAnimationFrame(roll);
   const move=function(e){
     const y=e.clientY;
+    // Шапка под пальцем — это адрес «в этот этап» или «в это помещение». Своя
+    // же шапка адресом не считается: перенос в то место, где строка и стоит,
+    // ничего не значит, а подсветка обещала бы обратное.
+    if(onZone){
+      const over=document.elementFromPoint(e.clientX, y);
+      const z=(over&&over.closest)?over.closest("[data-drop-stage]"):null;
+      const same=z&&(String(z.dataset.dropStage||"")+"|"+String(z.dataset.dropRoom||""))===grp;
+      lit((z&&!same)?z:null);
+      if(zone)return;
+    }
     let j=others.length;
     for(let n=0;n<others.length;n++){
       const b=others[n].getBoundingClientRect();
       if(y<b.top+b.height/2){ j=n; break; }
     }
     at=j;
-    row.parentNode.insertBefore(slot, others[j]||null);
+    // Ниже последней строки — сразу за ней, а не в конец списка: после строк идут
+    // «ещё комнаты» и «+ материал», и место переноса уезжало под них.
+    row.parentNode.insertBefore(slot, others[j]||others[others.length-1].nextSibling);
     const h=window.innerHeight||0;
     edge=(y<90)?-14:((h&&y>h-90)?14:0);
   };
@@ -14657,14 +14683,40 @@ function dragRow(el, ev, rowKey, grpKey, done){
     document.removeEventListener("pointermove", move);
     document.removeEventListener("pointerup", up);
     document.removeEventListener("pointercancel", up);
+    document.removeEventListener("touchmove", hold);
+    const drop=zone; lit(null);
     if(slot.parentNode)slot.parentNode.removeChild(slot);
     row.style.display="";
     dragEndAt=Date.now();
-    done(others[at]?String(others[at].dataset[rowKey]||""):"");
+    if(drop&&onZone)onZone(drop.dataset);
+    else done(others[at]?String(others[at].dataset[rowKey]||""):"");
   };
   document.addEventListener("pointermove", move);
   document.addEventListener("pointerup", up);
   document.addEventListener("pointercancel", up);
+}
+function estPosDrag(el, ev, key){
+  dragRow(el, ev, "posRow", "posGrp",
+    function(before){ estPosPutBefore(key, before); },
+    function(z){ estPosDropZone(key, z); });
+}
+// Бросок на шапку: адресом служит не соседняя строка, а сам заголовок — «эту
+// работу в чистовые» или «в санузел». Тем же жестом, что и перестановка: этап и
+// помещение — это тоже «где стоит работа», а не отдельная настройка.
+// Помещение приходит вместе со своим этапом: блок комнаты живёт внутри этапа, и
+// переносить в него, оставляя работу в чужом этапе, значит показать её не там.
+function estPosDropZone(key, z){
+  const sh=schemeSheet()||spec2Sheet(); if(!sh||!key||!z)return false;
+  const stage=Number(z.dropStage);
+  let did=false;
+  if(isFinite(stage)&&stage>0){
+    sh.posStage=Object.assign({}, sh.posStage||{}, { [key]:stage }); did=true;
+  }
+  if(z.dropRoom!==undefined){
+    sh.posRoom=Object.assign({}, sh.posRoom||{}, { [key]:z.dropRoom||ROOM_HOUSE }); did=true;
+  }
+  if(!did)return false;
+  scheduleSave(); fl(); return true;
 }
 // Ставит работу перед указанной строкой (пустой адрес — последней в помещении).
 // Порядок берём ТОТ, что на экране: он уже с учётом прежних перестановок, и
@@ -14734,7 +14786,7 @@ function estStageBody(st, rows, sh, w, canRule){
     const rl=roomLook(b.room, sh&&sh.kind);
     // Липнет следом за шапкой этапа: в этапе из четырёх комнат «где я» — это
     // пара «этап + помещение», и терять из виду вторую половину так же плохо.
-    h+='<div style="position:sticky;top:30px;z-index:2;display:flex;align-items:center;gap:5px;margin:8px 0 2px;padding:4px 8px;background:'+rl.color+'12;border:1px solid '+rl.color+'2e;border-left:3px solid '+rl.color+';border-radius:8px;backdrop-filter:blur(6px)">'+
+    h+='<div data-drop-stage="'+st.n+'" data-drop-room="'+esc(b.key)+'" style="position:sticky;top:30px;z-index:2;display:flex;align-items:center;gap:5px;margin:8px 0 2px;padding:4px 8px;background:'+rl.color+'12;border:1px solid '+rl.color+'2e;border-left:3px solid '+rl.color+';border-radius:8px;backdrop-filter:blur(6px)">'+
         '<span style="flex-shrink:0;font-size:11px;line-height:1">'+rl.emoji+'</span>'+
         '<span data-a="est-block-open" data-b="'+esc(id)+'" style="flex:1;min-width:0;font-size:10.5px;font-weight:800;color:'+rl.color+';letter-spacing:0.4px;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;padding:3px 0">'+
           (shut?"▸ ":"▾ ")+esc(b.room||"Общее по дому")+
@@ -14900,7 +14952,7 @@ function estBodyHtml(sh, types, live, actions){
       return '<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
         // Шапка липнет к верху: в этапе на сорок строк через полэкрана уже не
         // видно, в каком этапе смотришь, а по этапам идут сроки и транши.
-        '<div data-a="est-stage-open" data-n="'+st.n+'" style="position:sticky;top:0;z-index:3;background:#fff;display:flex;align-items:baseline;gap:8px;padding:4px 0;margin-bottom:'+(shut?'0':'4px')+';cursor:pointer">'+
+        '<div data-a="est-stage-open" data-n="'+st.n+'" data-drop-stage="'+st.n+'" style="position:sticky;top:0;z-index:3;background:#fff;display:flex;align-items:baseline;gap:8px;padding:4px 0;margin-bottom:'+(shut?'0':'4px')+';cursor:pointer">'+
           '<span style="width:8px;height:8px;border-radius:3px;background:'+st.color+';flex-shrink:0"></span>'+
           '<span style="flex:1;min-width:0;font-size:11px;font-weight:700;color:#0d1b2e;letter-spacing:0.4px;text-transform:uppercase">'+(shut?"▸ ":"▾ ")+esc(st.label)+
             (shut?' <span style="font-weight:700;color:#9aabbf;text-transform:none;letter-spacing:0">· '+st.positions.length+' '+pluralRu(st.positions.length,"работа","работы","работ")+'</span>':'')+
@@ -14949,7 +15001,7 @@ function estBodyHtml(sh, types, live, actions){
           // редакторы, и «следующий элемент» не равен «следующей работе».
           // Помещение — часть адреса: список режется на блоки по комнатам, и
           // строка, брошенная в чужой блок, вернулась бы обратно тем же рендером.
-          const addr=' data-pos-row="'+esc(p.key)+'" data-pos-grp="'+esc(st.n+"|"+roomKeyOf(p))+'"';
+          const addr=' data-a="est-row-hold" data-pos-row="'+esc(p.key)+'" data-pos-grp="'+esc(st.n+"|"+roomKeyOf(p))+'"';
           const rowOpen=canRule&&estRowOpen===p.key;
           const canDrag=canMove&&arr.length>1;
           return ''+
@@ -24866,7 +24918,38 @@ function bind(){
     };}
     else if(a==="est-pos-drag"){el.onpointerdown=(ev)=>{
       const key=el.dataset.k||""; if(!key)return;
-      dragRow(el, ev, "posRow", "posGrp", function(before){ estPosPutBefore(key, before); });
+      estPosDrag(el, ev, key);
+    };}
+    // Длинный тап по строке — та же ручка, только целиться не надо: 28 px это
+    // половина пальца, а на планшете смету листают именно им. Короткий тап
+    // по-прежнему раскрывает строку, поэтому ждём удержания и отменяемся на
+    // первом же движении — иначе прокрутка списка превращалась бы в перенос.
+    else if(a==="est-row-hold"){el.onpointerdown=(ev)=>{
+      const key=el.dataset.posRow||"";
+      // Ручки нет — переставлять нечего (одна строка в помещении, заготовка,
+      // поиск): длинный тап там ничего не значит.
+      if(!key||!el.querySelector('[data-a="est-pos-drag"]'))return;
+      if(ev&&ev.target&&ev.target.closest&&ev.target.closest("button,input,select,textarea,a"))return;
+      const x0=ev.clientX, y0=ev.clientY;
+      let t=null;
+      const off=function(){
+        if(t){ clearTimeout(t); t=null; }
+        document.removeEventListener("pointermove", watch);
+        document.removeEventListener("pointerup", off);
+        document.removeEventListener("pointercancel", off);
+      };
+      const watch=function(e){
+        if(Math.abs(e.clientX-x0)<10&&Math.abs(e.clientY-y0)<10)return;
+        off();                                   // повели раньше времени — это прокрутка
+      };
+      t=setTimeout(function(){
+        t=null; off();
+        try{ if(navigator.vibrate)navigator.vibrate(10); }catch(e){}
+        estPosDrag(el, ev, key);
+      }, 420);
+      document.addEventListener("pointermove", watch);
+      document.addEventListener("pointerup", off);
+      document.addEventListener("pointercancel", off);
     };}
     // Тап по шапке строки раскрывает её управление. Раскрыта одна: два ряда
     // кнопок подряд — это уже не «что сделать с этой работой», а список кнопок.

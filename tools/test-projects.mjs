@@ -598,6 +598,28 @@ function create(p, name) {
     stageKeys().join(',') === before.join(','))
   t.ok('чужой ключ переносить нечего', p.q('estPosPutBefore("нет такой", "")') === false)
 
+  // Шапки этапа и помещения — адреса броска: «эту работу в чистовые» тем же
+  // жестом, что и перестановка, а не отдельным выпадающим списком.
+  const marks = p.run('tProjects()')
+  t.ok('строка ждёт длинного тапа', marks.indexOf('data-a="est-row-hold"') >= 0)
+  t.ok('шапка этапа — адрес броска', /data-a="est-stage-open" data-n="2" data-drop-stage="2"/.test(marks))
+  t.ok('работа уехала в другой этап',
+    p.q('estPosDropZone(' + JSON.stringify(before[0]) + ', {dropStage:"3"})') === true &&
+    p.q('projects[0].posStage[' + JSON.stringify(before[0]) + ']') === 3)
+  t.ok('и в смете она в третьем этапе',
+    p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).positions.filter(function(x){return x.key===' + JSON.stringify(before[0]) + ';})[0].stage') === 3)
+  // Помещение приезжает вместе со своим этапом: блок комнаты живёт внутри этапа.
+  t.ok('бросок на помещение переносит и этап, и комнату',
+    p.q('estPosDropZone(' + JSON.stringify(before[0]) + ', {dropStage:"2", dropRoom:"r1"})') === true &&
+    p.q('projects[0].posRoom[' + JSON.stringify(before[0]) + ']') === 'r1' &&
+    p.q('projects[0].posStage[' + JSON.stringify(before[0]) + ']') === 2)
+  t.ok('пустой адрес — «общее по дому»',
+    p.q('estPosDropZone(' + JSON.stringify(before[0]) + ', {dropStage:"2", dropRoom:""})') === true &&
+    p.q('projects[0].posRoom[' + JSON.stringify(before[0]) + ']') === '-')
+  t.ok('без адреса бросок ничего не делает', p.q('estPosDropZone(' + JSON.stringify(before[0]) + ', {})') === false)
+  // Возвращаем как было — дальше секция сторожит порядок этапов.
+  p.run('delete projects[0].posStage; delete projects[0].posRoom;')
+
   // Этапы местами не меняются: по ним идут сроки и приёмка, а перестановка —
   // только внутри своего этапа.
   const stages = p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).stages.map(function(s){return s.n;})')
