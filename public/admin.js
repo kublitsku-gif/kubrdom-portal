@@ -14893,6 +14893,12 @@ function projTot(p){ return specTot(p); }
 function projAreas(p){ return p&&p.model?modelAreas(p.model, winTypes):null; }
 function projObj(p){ return p&&p.objId?objects.find(function(o){return o.id===p.objId;}):null; }
 function projContract(p){ return p&&p.contractId?contractDocs.find(function(c){return c.id===p.contractId;}):null; }
+// Удалить проект может только админ. Проект — это чертёж, состав и цена дома, по
+// которым уже могли завести объект и договор: снабженец или продавец, зашедший в
+// чужой проект, не должен уносить дом одним тапом. Право спрашивается ДВА раза —
+// при рисовании кнопки и в обработчике: экран мог быть нарисован до смены
+// пользователя, и решает тот, кто действует, а не тот, кто рисовал.
+function canDropProject(){ return !!(currentUser&&currentUser.roles.includes("admin")); }
 
 function projNewFormHtml(){
   const n=projNew||{};
@@ -15079,8 +15085,13 @@ function projCardHtml(p){
   }
   else if(projBand==="money")h+=projMoneyHtml(p);
   else h+=projBuildHtml(p);
+  // Под сметой красной кнопки «удалить» нет: её правят каждый день, и промах пальцем
+  // не должен стоить дома. Не админу вместо кнопки — строка: пропавшая кнопка читается
+  // как поломка, а «нельзя» — как ответ.
   if(projBand!=="parts"){
-    h+='<button data-a="proj-del" data-id="'+p.id+'" style="width:100%;padding:9px;background:#fff;border:1px solid #f0d5d0;border-radius:10px;cursor:pointer;color:#c0392b;font-size:11.5px;margin-bottom:20px">Удалить проект</button>';
+    h+=canDropProject()
+      ? '<button data-a="proj-del" data-id="'+p.id+'" style="width:100%;padding:9px;background:#fff;border:1px solid #f0d5d0;border-radius:10px;cursor:pointer;color:#c0392b;font-size:11.5px;margin-bottom:20px">Удалить проект</button>'
+      : '<div style="font-size:10.5px;color:#9aabbf;line-height:1.5;margin-bottom:20px">Удалить проект может только администратор.</div>';
   }
   return h;
 }
@@ -25029,10 +25040,13 @@ function bind(){
     else if(a==="proj-open-obj"){el.onclick=()=>{ tab="assign"; openObject=el.dataset.oid; render(); window.scrollTo(0,0); };}
     else if(a==="proj-del"){el.onclick=()=>{
       const p=proj(el.dataset.id); if(!p)return;
+      // Право проверяет обработчик, а не только рендер: кнопка могла остаться на
+      // экране, нарисованном до смены пользователя.
+      if(!canDropProject()){ alert("Удалить проект может только администратор."); return; }
       // Объект и договор живут своей жизнью — удаление проекта их не трогает,
       // но сказать об этом надо: иначе «удалил проект» читается как «удалил всё».
       const tail=(p.objId||p.contractId)?"\n\nОбъект и договор по нему останутся — их удаляют в своих вкладках.":"";
-      if(!confirm("Удалить проект «"+(p.name||"")+"»?"+tail))return;
+      if(!confirm("Удалить проект «"+(p.name||"")+"»?\n\nЧертёж, состав и наценка удалятся — это действие необратимо."+tail))return;
       specDrop(p.id); projOpenId=null; fl();
     };}
     else if(a==="rule-add"){el.onclick=()=>{

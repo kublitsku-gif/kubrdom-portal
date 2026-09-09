@@ -21,8 +21,8 @@ const RULES = [
   { id: 'r_wall', kind: 'house', estId: 'e_osb', what: 'surface', k: 'wall', scope: 'room', qty: 1, stage: 0 },
 ]
 
-function panel(rules) {
-  const p = boot({})
+function panel(rules, opts) {
+  const p = boot(opts || {})
   p.set({
     expProducts: PRODUCTS, estimates: EST, dbPlans: [], crmClients: [{ id: 'c1', name: 'Иванов' }],
     specSheets: [], specSheets2: [], projects: [], buildRules: rules || [],
@@ -158,7 +158,41 @@ function create(p, name) {
   t.ok('договор остался', p.q('contractDocs.length') === 1)
 }
 
-// ── 5. Чужие разделы не задеты ──────────────────────────────────────────────
+// ── 5. Удаление: подтверждение и только админ ───────────────────────────────
+{
+  t.section('Проект удаляет только админ и только с подтверждением')
+
+  // Отказ в диалоге — это отказ: проект остаётся целиком.
+  const no = panel(RULES, { confirm: false })
+  create(no)
+  const noId = no.q('projects[0].id')
+  const delNo = no.dom.node({ a: 'proj-del', id: noId })
+  no.run('projBand="money";tProjects();bind();')
+  delNo.onclick()
+  t.ok('«отмена» проект не удаляет', no.q('projects.length') === 1)
+
+  const p = panel(RULES)
+  create(p)
+  const id = p.q('projects[0].id')
+  const del = p.dom.node({ a: 'proj-del', id: id })
+  p.run('projBand="money";tProjects();bind();')
+  t.ok('админ видит кнопку', p.run('projBand="money";tProjects()').indexOf('data-a="proj-del"') >= 0)
+
+  // Снабженец в чужом проекте кнопки не видит — но и обработчик его не слушает:
+  // экран мог быть нарисован до смены пользователя.
+  p.run('currentUser.roles=["supply"];')
+  const asSupply = p.run('projBand="money";tProjects()')
+  t.ok('не админ кнопки не видит', asSupply.indexOf('data-a="proj-del"') < 0)
+  t.ok('и знает почему', /только администратор/.test(asSupply))
+  del.onclick()
+  t.ok('не админ проект не удалил', p.q('projects.length') === 1)
+
+  p.run('currentUser.roles=["admin"];projBand="money";tProjects();bind();')
+  del.onclick()
+  t.ok('админ удалил', p.q('projects.length') === 0)
+}
+
+// ── 6. Чужие разделы не задеты ──────────────────────────────────────────────
 {
   t.section('Старая цепочка на месте')
   const p = panel(RULES)
@@ -173,7 +207,7 @@ function create(p, name) {
   t.ok('вкладка спецификации от проектов не изменилась', p.run('tab="spec";tSpec()').indexOf('data-a="proj-') < 0)
 }
 
-// ── 6. Смета проекта правится там же, где показана ──────────────────────────
+// ── 7. Смета проекта правится там же, где показана ──────────────────────────
 // Всё, что умеет опытный раздел, обязано работать и здесь: иначе «проект» это
 // красивый экран, а работают всё равно в другом месте.
 {
@@ -243,7 +277,7 @@ function create(p, name) {
   t.ok('объект собран тем же списком', nWorks === shown, 'объект ' + nWorks + ', смета ' + shown)
 }
 
-// ── 7. Приложили чертёж — портал его читает ─────────────────────────────────
+// ── 8. Приложили чертёж — портал его читает ─────────────────────────────────
 // Человек выбрал файл: ждать от него ещё одного тапа по кнопке, спрятанной в
 // панели редактора, — это ровно тот случай, когда «портал ничего не сделал».
 {
