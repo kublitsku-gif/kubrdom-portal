@@ -905,7 +905,9 @@ async function apiSave(opts){
   if (!getToken())  { clearSaveError(); return { success: true, skipped: true }; }
   const items = serializeState();
   const snap  = JSON.stringify(items);
-  if (snap === _lastSavedJson) { saveMarkSet("ok"); return { success: true, skipped: true }; }  // нечего сохранять
+  // Нечего сохранять — и статус трогать нечего: экранный тумблер не правка, а
+  // зелёная вспышка на каждый тап и была тем, из-за чего отметку перестали читать.
+  if (snap === _lastSavedJson) { return { success: true, skipped: true }; }
   // СТРАЖ v2. Правило: «не пиши туда, чего не видел».
   // (1) Пока не было успешного GET с НАСТОЯЩЕГО сервера — в облако не пишем вообще:
   //     вкладка, поднятая из localStorage-кэша, не знает актуального состояния и
@@ -914,6 +916,7 @@ async function apiSave(opts){
     writeCache(items);   // правки целы локально; уйдут сами после первой сверки с сервером
     _setPendingSave();
     showSaveError("Ждём ответа сервера для сверки данных. Правки сохранены на устройстве и уйдут в облако автоматически после проверки связи.");
+    saveMarkSet("wait");
     return { success: false, blocked: "unverified" };
   }
   if (_serverVerified && !window._forceSaveOnce) {
@@ -947,6 +950,7 @@ async function apiSave(opts){
       _setPendingSave();
       const what = [].concat(emptied, shrunk, seedy).filter(function(v, i, a){ return a.indexOf(v) === i; });
       showSaveError("Защита данных: разделы «" + what.join(", ") + "» локально беднее или старее, чем в облаке. Похоже, вкладка устарела. Сохранение остановлено, чтобы не затереть данные.", 0, true);
+      saveMarkSet("wait");
       return { success: false, blocked: what.join(",") };
     }
     window._allowEmptyOnce = {};   // одноразовые разрешения израсходованы
@@ -1001,6 +1005,7 @@ async function apiSave(opts){
     return j;
   } catch (err) {
     showSaveError(String((err && err.message) || err), JSON.stringify(sendItems).length);  // НЕ глотаем: показываем пользователю
+    saveMarkSet("wait");                               // статус называет то же, что баннер объясняет
     return { success: false, error: String((err && err.message) || err), fallback: "localStorage" };
   } finally {
     _saving = false;
@@ -1047,9 +1052,11 @@ function clearSaveError(){
 
 // fl() зовётся часто → шлём на сервер не чаще раза в ~800мс.
 let _hydrated = false;
+// Статус здесь НЕ ставим: `scheduleSave` зовёт каждая перерисовка, в том числе та,
+// где ничего не менялось, и «не сохранено» загоралось бы на свёрнутый блок. Про
+// несохранённое честно знает только apiSave — он и красит.
 function scheduleSave(){
   if (!_hydrated) return;                   // не сохраняем до завершения загрузки
-  saveMarkSet("wait");
   clearTimeout(scheduleSave._t);
   scheduleSave._t = setTimeout(apiSave, 800);
 }
@@ -2485,25 +2492,59 @@ function fl(){
   render();
   scheduleSave();
 }
-// Отметка сохранения — честная. Раньше «✓ Сохранено» загоралось на КАЖДУЮ правку,
-// ещё до ответа сервера: зелёная галочка при мёртвой связи — худшее, что может
-// сказать портал про данные, которые никуда не ушли.
-// Ошибку показывает свой баннер (showSaveError) — здесь только ожидание и успех.
-let saveMark="idle";
-function saveMarkSet(m){ saveMark=m; paintSaveMark(); }
+// Сохранение — СОСТОЯНИЕ в шапке, а не событие в углу. Всплывающая плашка
+// «✓ Сохранено» загоралась на каждый тап (её зажигал `scheduleSave`, то есть любая
+// перерисовка), поэтому читалась как индикатор нажатия и не отвечала на
+// единственный вопрос, который к ней есть: мои правки в облаке или нет. Теперь это
+// тихая строка рядом с именем: «✓ 12:46» / «⟳ сохраняю» / «• не сохранено».
+// Ошибку по-прежнему объясняет баннер (showSaveError) — статус только называет её.
+//
+// Красится ТОЧЕЧНО (`paintSaveMark`), без render(): статус меняется чаще всего
+// экрана, и полная перерисовка ради двух слов дёргала бы скролл на iOS.
+let saveMark="idle";       // idle | saving | ok | wait
+let saveMarkAt=0;          // когда облако подтвердило снимок
+function saveMarkSet(m){
+  if(m===saveMark&&m!=="ok")return;              // то же состояние — нечего перерисовывать
+  saveMark=m;
+  clearTimeout(saveMarkSet._t);
+  if(m==="ok"){
+    saveMarkAt=Date.now();
+    // Одна отложенная перекраска, чтобы зелёное само стало спокойным серым.
+    saveMarkSet._t=setTimeout(paintSaveMark, SAVE_FRESH+50);
+  }
+  paintSaveMark();
+}
+const SAVE_FACES={
+  idle:   ["✓ сохранено",  "#9aabbf", "Все правки ушли в облако"],
+  saving: ["⟳ сохраняю",   "#5a7a9a", "Отправляю правки в облако"],
+  ok:     ["✓ сохранено",  "#27ae60", "Облако подтвердило сохранение"],
+  wait:   ["• не сохранено","#d68910", "Есть правки, которых ещё нет в облаке. Они лежат на устройстве и уйдут сами"],
+};
+const SAVE_FRESH=10000;    // сколько «только что сохранено» остаётся зелёным
+function saveMarkFace(){
+  const f=SAVE_FACES[saveMark]||SAVE_FACES.idle;
+  if(saveMark!=="ok"||!saveMarkAt)return { text:f[0], color:f[1], title:f[2] };
+  // У подтверждённого сохранения — ВРЕМЯ вместо слова: «сохранено» без него не
+  // отличить от «сохранено полчаса назад», а это разные новости. И зелёным оно
+  // горит только первые секунды: зелёный — про «прямо сейчас», а на экране,
+  // открытом с утра, он врал бы каждым взглядом.
+  const d=new Date(saveMarkAt);
+  const fresh=(Date.now()-saveMarkAt)<SAVE_FRESH;
+  return { text:"✓ "+d.toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit"}),
+    color:fresh?"#27ae60":"#9aabbf",
+    title:"Сохранено в "+d.toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit"})+" — облако подтвердило" };
+}
+function saveMarkHtml(){
+  const f=saveMarkFace();
+  return '<div id="save-mark" title="'+esc(f.title)+'" style="font-size:10px;font-weight:700;color:'+f.color+';white-space:nowrap;flex-shrink:0;letter-spacing:0.1px">'+esc(f.text)+'</div>';
+}
 function paintSaveMark(){
-  const t=document.getElementById("save-toast");
+  const t=document.getElementById("save-mark");
   if(!t)return;
-  const face=(saveMark==="saving")?"⟳ Сохраняю…":(saveMark==="wait"?"• Есть несохранённое":"✓ Сохранено");
-  const col=(saveMark==="ok")?"#27ae60":"#5a7a9a";
-  t.textContent=face;
-  t.style.background=col;
-  t.style.boxShadow="0 4px 16px "+((saveMark==="ok")?"rgba(39,174,96,0.35)":"rgba(90,122,154,0.3)");
-  if(saveMark==="idle"){ t.style.opacity="0"; t.style.transform="translateY(8px)"; return; }
-  t.style.opacity="1"; t.style.transform="translateY(0)";
-  clearTimeout(paintSaveMark._t);
-  // Успех гаснет сам, ожидание висит: «не сохранено» — это состояние, а не событие.
-  if(saveMark==="ok")paintSaveMark._t=setTimeout(function(){ saveMark="idle"; paintSaveMark(); },1600);
+  const f=saveMarkFace();
+  t.textContent=f.text;
+  t.style.color=f.color;
+  t.title=f.title;
 }
 function deepCopy(x){return JSON.parse(JSON.stringify(x));}
 // Глубокая копия этапов со СВЕЖИМИ id (этап/работа/материал). Обязательна при
@@ -4515,15 +4556,25 @@ function tHistory(){
   return html;
 }
 
-function rerenderTab(){
+function paintTab(){
   const c=document.getElementById("tab-content");
-  if(!c){render();return;}                       // фолбэк, если контейнера ещё нет
+  if(!c){render();return false;}                 // фолбэк, если контейнера ещё нет
   const _y=window.pageYOffset||document.documentElement.scrollTop||0;
   c.innerHTML=tabContentHtml();
   bind();
-  scheduleSave();                                // как и render() — дебаунс-автосейв
   window.scrollTo(0,_y);                          // страховка от клампа высоты
+  return true;
 }
+function rerenderTab(){
+  if(paintTab())scheduleSave();                  // как и render() — дебаунс-автосейв
+}
+// ЭКРАННЫЙ переключатель — не правка дома: свёрнутый блок, раскрытая справка,
+// отмеченная в пачку строка и поиск живут только на экране и в снимок не идут.
+// Поэтому у них своя перерисовка — без автосейва и без полного render():
+// каждый такой тап сериализовал весь снимок (~1 МБ), гонял по нему стражей и
+// перерисовывал страницу целиком, а сохранять было нечего. Ровно этот холостой
+// круг и зажигал отметку сохранения на каждое нажатие.
+function ui(){ paintTab(); }
 // Один источник HTML активной вкладки — используется и в page(), и в rerenderTab().
 // Короткие подписи для нижней панели. Модульная область видимости, а не внутри
 // render(): её читает bottomTabsOf, который живёт снаружи.
@@ -5042,6 +5093,7 @@ function page(){
     <div style="font-size:13px;font-weight:700;color:#0d1b2e">${esc(currentUser.name)}</div>
     <div style="font-size:10px;color:#7a9aaa">${currentUser.roles.map(rid=>{const r=roles.find(x=>x.id===rid);return r?r.n:"";}).filter(Boolean).join(", ")}</div>
   </div>
+  ${saveMarkHtml()}
   ${_installBtnHtml()}
   <button data-a="notify-open" title="Напоминания в Telegram" style="width:30px;height:30px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:13px;color:#7a9aaa;flex-shrink:0">🔔</button>
   <button data-a="pin-change-open" title="Сменить PIN" style="width:30px;height:30px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:13px;color:#7a9aaa;flex-shrink:0">🔑</button>
@@ -5083,7 +5135,6 @@ ${showPinChange?`<div style="background:#fff;border-bottom:1px solid #eef2f7;pad
 <div id="tab-content" style="padding:14px">
   ${tabContentHtml()}
 </div>
-<div id="save-toast" style="position:fixed;bottom:24px;right:24px;background:#27ae60;color:#fff;border-radius:12px;padding:10px 18px;font-size:13px;font-weight:700;box-shadow:0 4px 16px rgba(39,174,96,0.35);opacity:0;transform:translateY(8px);transition:opacity 0.2s,transform 0.2s;pointer-events:none;z-index:999">✓ Сохранено</div>
 <div style="text-align:center;font-size:9px;color:#c0ccd8;padding:10px 0 16px">КубрДом · v${APP_BUILD}</div>
 ${bottomBar}
 ${moreSheet(ALL_TABS,_accessible,_bottomPicked)}
@@ -24783,7 +24834,7 @@ function bind(){
     else if(a==="est-pos-hours"){
       // Тап по полю показывает готовые часы: набирать «6» на телефоне в поле рядом
       // с полем цены — способ поставить план не в ту строку.
-      el.onclick=()=>{ const key=el.dataset.k||""; hoursPickKey=(hoursPickKey===key)?"":key; fl(); };
+      el.onclick=()=>{ const key=el.dataset.k||""; hoursPickKey=(hoursPickKey===key)?"":key; ui(); };
       el.onchange=()=>{
       const key=el.dataset.k||"";
       const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
@@ -24862,15 +24913,15 @@ function bind(){
       estFilter=(estFilter===f)?"":f; rerenderTab();
     };}
     else if(a==="est-find-clear"){el.onclick=()=>{ estFind=""; rerenderTab(); };}
-    else if(a==="est-facts-open"){el.onclick=()=>{ factsOpen=!factsOpen; fl(); };}
-    else if(a==="est-dropped-open"){el.onclick=()=>{ droppedOpen=!droppedOpen; fl(); };}
-    else if(a==="est-gaps-open"){el.onclick=()=>{ gapsOpen=!gapsOpen; fl(); };}
+    else if(a==="est-facts-open"){el.onclick=()=>{ factsOpen=!factsOpen; ui(); };}
+    else if(a==="est-dropped-open"){el.onclick=()=>{ droppedOpen=!droppedOpen; ui(); };}
+    else if(a==="est-gaps-open"){el.onclick=()=>{ gapsOpen=!gapsOpen; ui(); };}
     // Разбор площади — по строке комнаты. Раскрыта одна: три развёрнутых разбора
     // подряд это уже не ответ на вопрос «откуда 19,64», а вторая таблица.
     else if(a==="est-room-why"){el.onclick=()=>{
       const id=String(el.dataset.id||"");
       factsRoomOpen=(factsRoomOpen===id)?"":id;
-      fl();
+      ui();
     };}
     // Высота стен — свойство МОДЕЛИ: по ней считаются и площади в справке, и
     // чертёж, и развёртка. Поэтому пишем её в модель и синхронизируем
@@ -25230,24 +25281,24 @@ function bind(){
       // требует тапа и перекрывает сам список, ради которого кнопку и жали.
       if(cnt)alert("Обновлено позиций: "+cnt+".\nЭтап "+(diff>=0?"подорожал на ":"подешевел на ")+Math.abs(diff).toLocaleString("ru-RU")+" ₽.");
     };}
-    else if(a==="est-pos-stage-pick"){el.onclick=()=>{ stagePickKey=(stagePickKey===(el.dataset.k||""))?"":(el.dataset.k||""); fl(); };}
+    else if(a==="est-pos-stage-pick"){el.onclick=()=>{ stagePickKey=(stagePickKey===(el.dataset.k||""))?"":(el.dataset.k||""); ui(); };}
     else if(a==="est-block-open"){el.onclick=()=>{
       const b=String(el.dataset.b||"");
       const map=Object.assign({}, blockShut);
       if(map[b])delete map[b]; else map[b]=1;
-      blockShut=map; fl();
+      blockShut=map; ui();
     };}
     else if(a==="est-stage-open"){el.onclick=()=>{
       const n=String(el.dataset.n||"");
       const map=Object.assign({}, stageOpen);
       if(map[n])delete map[n]; else map[n]=1;
-      stageOpen=map; fl();
+      stageOpen=map; ui();
     };}
     else if(a==="est-mats-open"){el.onclick=()=>{
       const k=el.dataset.k||""; if(!k)return;
       const map=Object.assign({}, matsOpen);
       if(map[k])delete map[k]; else map[k]=1;
-      matsOpen=map; fl();
+      matsOpen=map; ui();
     };}
     else if(a==="est-pos-drag"){el.onpointerdown=(ev)=>{
       const key=el.dataset.k||""; if(!key)return;
@@ -25303,17 +25354,17 @@ function bind(){
     else if(a==="est-pick-mode"){el.onclick=()=>{
       estPickOn=!estPickOn;
       if(!estPickOn){ estPick={}; estPickWhat=""; }
-      estRowOpen=""; fl();
+      estRowOpen=""; ui();
     };}
     else if(a==="est-pick"){el.onclick=()=>{
       const key=el.dataset.k||""; if(!key)return;
       const map=Object.assign({}, estPick);
       if(map[key])delete map[key]; else map[key]=1;
-      estPick=map; fl();
+      estPick=map; ui();
     };}
-    else if(a==="est-pick-off"){el.onclick=()=>{ estPickOn=false; estPick={}; estPickWhat=""; fl(); };}
-    else if(a==="est-pick-stage-open"){el.onclick=()=>{ estPickWhat=(estPickWhat==="stage")?"":"stage"; fl(); };}
-    else if(a==="est-pick-room-open"){el.onclick=()=>{ estPickWhat=(estPickWhat==="room")?"":"room"; fl(); };}
+    else if(a==="est-pick-off"){el.onclick=()=>{ estPickOn=false; estPick={}; estPickWhat=""; ui(); };}
+    else if(a==="est-pick-stage-open"){el.onclick=()=>{ estPickWhat=(estPickWhat==="stage")?"":"stage"; ui(); };}
+    else if(a==="est-pick-room-open"){el.onclick=()=>{ estPickWhat=(estPickWhat==="room")?"":"room"; ui(); };}
     // Массовые правки — один снимок на всю пачку: отменять «убрал десять работ»
     // по одной значит десять раз нажать «вернуть» и всё равно не собрать как было.
     else if(a==="est-pick-del"){el.onclick=()=>{
@@ -25368,11 +25419,11 @@ function bind(){
       if(estPickOn){
         const map=Object.assign({}, estPick);
         if(map[key])delete map[key]; else map[key]=1;
-        estPick=map; fl(); return;
+        estPick=map; ui(); return;
       }
       estRowOpen=(estRowOpen===key)?"":key;
       roomPickKey=""; stagePickKey=""; hoursPickKey="";
-      fl();
+      ui();
     };}
     else if(a==="est-pos-k"){el.onclick=()=>{
       const key=el.dataset.k||"";
@@ -25386,7 +25437,7 @@ function bind(){
     };}
     else if(a==="est-pos-room-pick"){el.onclick=()=>{
       const key=el.dataset.k||"";
-      roomPickKey=(roomPickKey===key)?"":key; fl();
+      roomPickKey=(roomPickKey===key)?"":key; ui();
     };}
     else if(a==="est-pos-stage"){el.onchange=()=>{
       const key=el.dataset.k||"";
@@ -25402,7 +25453,7 @@ function bind(){
       if(Object.keys(map).length)sh.posStage=map; else delete sh.posStage;
       scheduleSave(); fl();
     };}
-    else if(a==="est-pos-add-open"){el.onclick=()=>{ posAddOpen=el.dataset.k||""; fl(); };}
+    else if(a==="est-pos-add-open"){el.onclick=()=>{ posAddOpen=el.dataset.k||""; ui(); };}
     else if(a==="est-pos-add-do"){el.onclick=()=>{
       const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
       estSnap(sh, "добавленную работу");
@@ -25554,7 +25605,7 @@ function bind(){
     else if(a==="est-mat-open"){el.onclick=()=>{
       const k=el.dataset.k||"";
       matSwapOpen=(matSwapOpen===k)?"":k;
-      render();
+      ui();
     };}
     else if(a==="est-mat-do"){el.onclick=()=>{
       const k=el.dataset.k||"";
@@ -25694,7 +25745,7 @@ function bind(){
     else if(a==="est-why"){el.onclick=()=>{
       const id=el.dataset.est||"";
       estWhyOpen=(estWhyOpen===id)?"":id;
-      render();
+      ui();
     };}
     else if(a==="est-rule-set"){el.onclick=()=>{
       const sh=schemeSheet()||spec2Sheet();
