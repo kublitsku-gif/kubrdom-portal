@@ -705,7 +705,10 @@ export function allPositionsRaw(sheet, ctx) {
   // Номер повтора проставляется ДО правок: по нему они и адресуются, а считается
   // он по составу справочника, поэтому не зависит ни от замен, ни от перестановки.
   const numbered = stampMatIx(all);
-  return applyRooms(applyOrder(applyStage(applyHours(applyCost(dropOff(applyPicks(applyMatEdits(numbered, sheet, c.products), sheet), sheet), sheet), sheet), sheet), sheet), sheet, rooms);
+  // Порядок важен: сначала свои часы, потом норма (она их уважает и считает по ним
+  // деньги), и только потом своя цена — она главнее любого расчёта.
+  const priced = applyCost(applyNorm(applyHours(dropOff(applyPicks(applyMatEdits(numbered, sheet, c.products), sheet), sheet), sheet), sheet, c), sheet);
+  return applyRooms(applyOrder(applyStage(priced, sheet), sheet), sheet, rooms);
 }
 
 // Работы, убранные руками из ЭТОГО дома. Смета справочника описывает типовой дом,
@@ -892,6 +895,71 @@ export function applyCost(raw, sheet) {
         return Object.assign({}, p, { labor: n, cost: Math.round(mats) + n, costSet: true, costMode: "labor" });
       }
       return Object.assign({}, p, { labor: 0, cost: n, costSet: true, costAll: true, costMode: "all" });
+    }),
+  });
+}
+
+// ── НОРМА-ЧАС ───────────────────────────────────────────────────────────────
+// Цену работы вбивали руками в каждой строке каждого дома. Норма-час убирает эту
+// работу: у работы в справочнике записано, сколько времени она занимает на
+// ЕДИНИЦУ своего объёма, у портала — по чём этот час, а объём у строки уже есть
+// (тот же, которым считаются материалы). Дальше: часы = норма × объём × коэффициент,
+// деньги = часы × ставка.
+//
+// Три величины лежат там, где каждая ОБЩАЯ:
+//   `est.hourNorm` — норма и `est.hourK` — коэффициент сложности: свойство самой
+//   работы, одинаковое на всех домах (высотные работы тяжелее везде);
+//   `sheet.posK[key]` — коэффициент ЭТОГО дома: конкретно здесь работа сложнее;
+//   `sheet.hourRate` / `ctx.hourRate` — ставка объекта и портала.
+//
+// Руками вписанное главнее расчёта — как и везде в портале: свои часы (`posHours`)
+// перебивают норму, своя цена (`posCost`) перебивает и её, и ставку.
+//
+// Единица объёма — та же, которой меряется строка: площадь, если считали по
+// площади, число точек, если по точкам, и сама строка, если она «один раз на дом».
+export function normUnitsOf(pos) {
+  const p = pos || {};
+  const mult = Number(p.mult) > 0 ? Number(p.mult) : 1;
+  if (Number(p.area) > 0) return Number(p.area) * mult;
+  if (Number(p.count) > 0) return Number(p.count) * mult;
+  return mult;
+}
+export function hourKOf(sheet, est, key) {
+  const own = ((sheet && sheet.posK) || {})[key];
+  if (own != null && Number(own) > 0) return Number(own);
+  const k = est && est.hourK;
+  return (k != null && Number(k) > 0) ? Number(k) : 1;
+}
+export function hourRateOf(sheet, ctx) {
+  const own = Number(sheet && sheet.hourRate);
+  if (own > 0) return own;
+  return Number((ctx || {}).hourRate) || 0;
+}
+export function applyNorm(raw, sheet, ctx) {
+  const rate = hourRateOf(sheet, ctx);
+  const byId = {};
+  ((ctx || {}).estimates || []).forEach(function (e) { if (e && e.id) byId[e.id] = e; });
+  return Object.assign({}, raw, {
+    positions: (raw.positions || []).map(function (p) {
+      // У своей работы цена — это она сама, нормировать нечего.
+      if (p.own) return p;
+      const est = byId[p.estId];
+      const k = hourKOf(sheet, est, p.key);
+      const norm = Number(est && est.hourNorm) || 0;
+      const units = normUnitsOf(p);
+      // Часы: свои, если вписаны руками, иначе норма × объём × коэффициент.
+      const hours = p.hoursSet ? (Number(p.hours) || 0)
+        : (norm > 0 ? Math.round(norm * units * k * 10) / 10 : 0);
+      if (!(hours > 0)) return p;
+      const next = Object.assign({}, p, { hours: hours, hourK: k, hourRate: rate });
+      if (!p.hoursSet) { next.norm = norm; next.normUnits = Math.round(units * 100) / 100; next.hoursNorm = true; }
+      if (!(rate > 0)) return next;
+      // Деньги за работу считаются по часам — но не у строки, у которой цена уже
+      // назначена руками: applyCost идёт следом и перебьёт, а до тех пор в смете
+      // не должно мелькать чужое число.
+      const labor = Math.round(hours * rate);
+      const mats = (p.mats || []).reduce(function (a, m) { return a + (Number(m.cost) || 0) * (Number(m.qty) || 0); }, 0);
+      return Object.assign(next, { labor: labor, cost: Math.round(mats) + labor, laborCalc: true });
     }),
   });
 }

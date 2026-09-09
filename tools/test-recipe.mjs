@@ -7,7 +7,7 @@
 // список из справочника и список из правил складываются, а не подменяют друг друга.
 import { presetModel, MODEL_PRESETS } from '../src/model.js'
 import { sheetPositions } from '../src/spec.js'
-import { rulePositions, allPositions, allPositionsRaw, ruleText, ruleReady, ruleAreas, probeSheet,
+import { rulePositions, allPositions, allPositionsRaw, ruleText, ruleReady, ruleAreas, probeSheet, positionSplit,
   layerPositions, pieArea, pieCost, applyPicks, optLabelOf, optPrefixOf, applyRooms, roomKeyOf, posRoomOf, ROOM_HOUSE, applyMatEdits, matOrderOf, matKeyOf, matAddKey, matAddrs, matLegacyKey, matAddrPid, matAddrSwap, stampMatIx, migrateMatAddrs } from '../src/recipe.js'
 import { modelAreas, modelTotals, applyLayers } from '../src/model.js'
 import { gaps2 } from '../src/spec2.js'
@@ -120,6 +120,70 @@ const R = (o) => Object.assign({ id: 'r1', kind: 'house', what: 'surface', k: 'w
     rooms: {}, global: {}, qty: {} }
   const hp = rulePositions(hand, [R({ estId: 'e_osb', k: 'wallnet', scope: 'house' })], EST, PRODUCTS, TYPES)
   t.ok('без модели чистая стена равна полной', hp.length === 1 && hp[0].area === 14 * 2.5, JSON.stringify(hp.map((x) => x.area)))
+}
+
+// ── Норма-час ───────────────────────────────────────────────────────────────
+// Цену работы вбивали руками в каждой строке каждого дома. Норма-час считает её
+// сам: норма × объём × коэффициент = часы, часы × ставка = деньги. Сторожим, что
+// расчёт идёт от ТЕХ ЖЕ объёмов, что и материалы, и что руками вписанное главнее.
+{
+  t.section('Норма-час')
+  const EST_H = EST.map((e) => (e.id === 'e_osb' ? Object.assign({}, e, { hourNorm: 0.4 }) : e))
+  const ctx = (extra) => Object.assign({ estimates: EST_H, products: PRODUCTS, winTypes: TYPES, rules: [], pies: false }, extra || {})
+  const rule = [R({ estId: 'e_osb', k: 'wall', scope: 'house' })]
+  const pos = (sheet, extra) => allPositionsRaw(sheet, ctx(Object.assign({ rules: rule }, extra || {})))
+    .positions.filter((p) => p.estId === 'e_osb')[0]
+
+  const noRate = pos(SHEET)
+  t.ok('часы посчитались от объёма', noRate.hours === Math.round(noRate.area * 0.4 * 10) / 10,
+    noRate.area + ' м² → ' + noRate.hours + ' ч')
+  t.ok('и видно, из чего', noRate.norm === 0.4 && noRate.normUnits === noRate.area && noRate.hoursNorm === true)
+  t.ok('без ставки денег за работу нет', !noRate.laborCalc && !(noRate.labor > 0))
+
+  const paid = pos(SHEET, { hourRate: 1200 })
+  t.ok('деньги — часы × ставка', paid.labor === Math.round(paid.hours * 1200), paid.hours + ' ч → ' + paid.labor)
+  t.ok('и они попали в итог строки', paid.cost === Math.round(paid.cost - paid.labor) + paid.labor)
+  t.ok('раскладка знает про них', positionSplit(paid).labor === paid.labor)
+
+  // Коэффициент: у работы в справочнике — на всех домах, у строки в листе — здесь.
+  const EST_K = EST_H.map((e) => (e.id === 'e_osb' ? Object.assign({}, e, { hourK: 1.5 }) : e))
+  const withK = allPositionsRaw(SHEET, ctx({ rules: rule, estimates: EST_K, hourRate: 1200 }))
+    .positions.filter((p) => p.estId === 'e_osb')[0]
+  t.ok('коэффициент справочника поднял часы',
+    Math.abs(withK.hours - Math.round(noRate.hours * 1.5 * 10) / 10) < 0.11, noRate.hours + ' → ' + withK.hours)
+  t.ok('и деньги вместе с ними', withK.labor === Math.round(withK.hours * 1200))
+
+  const houseK = Object.assign({}, SHEET, { posK: { [paid.key]: 2 } })
+  const withHouseK = allPositionsRaw(houseK, ctx({ rules: rule, estimates: EST_K, hourRate: 1200 }))
+    .positions.filter((p) => p.estId === 'e_osb')[0]
+  t.ok('коэффициент дома перебивает справочный', withHouseK.hourK === 2,
+    'вышло ×' + withHouseK.hourK)
+  t.ok('и часы посчитаны по нему',
+    Math.abs(withHouseK.hours - Math.round(noRate.hours * 2 * 10) / 10) < 0.11, withHouseK.hours)
+
+  // Ставка дома важнее портальной: другая бригада, дальняя логистика, сроки.
+  const ownRate = Object.assign({}, SHEET, { hourRate: 2000 })
+  const byOwn = allPositionsRaw(ownRate, ctx({ rules: rule, hourRate: 1200 }))
+    .positions.filter((p) => p.estId === 'e_osb')[0]
+  t.ok('ставка дома главнее базовой', byOwn.labor === Math.round(byOwn.hours * 2000), byOwn.labor)
+
+  // Руками вписанное главнее расчёта — как и везде в портале.
+  const byHand = Object.assign({}, SHEET, { posHours: { [paid.key]: 3 } })
+  const handHours = allPositionsRaw(byHand, ctx({ rules: rule, hourRate: 1200 }))
+    .positions.filter((p) => p.estId === 'e_osb')[0]
+  t.ok('свои часы перебивают норму', handHours.hours === 3 && !handHours.hoursNorm)
+  t.ok('и деньги считаются по ним', handHours.labor === 3600, String(handHours.labor))
+
+  const byPrice = Object.assign({}, SHEET, { posCost: { [paid.key]: 9000 }, posCostMode: { [paid.key]: 'labor' } })
+  const handPrice = allPositionsRaw(byPrice, ctx({ rules: rule, hourRate: 1200 }))
+    .positions.filter((p) => p.estId === 'e_osb')[0]
+  t.ok('своя цена перебивает и ставку', handPrice.labor === 9000 && handPrice.costSet === true)
+  t.ok('а часы при этом остаются планом', handPrice.hours === paid.hours, String(handPrice.hours))
+
+  // Работа без нормы живёт как раньше: ни часов, ни денег за работу.
+  const plain = allPositionsRaw(SHEET, ctx({ rules: [R({ estId: 'e_tile', k: 'floor', scope: 'house' })], hourRate: 1200 }))
+    .positions.filter((p) => p.estId === 'e_tile')[0]
+  t.ok('без нормы работа не считается', !(plain.hours > 0) && !plain.laborCalc)
 }
 
 // ── Объёмы для кнопок выбора ────────────────────────────────────────────────

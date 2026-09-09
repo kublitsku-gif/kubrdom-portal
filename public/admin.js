@@ -64,7 +64,7 @@ import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
-const APP_BUILD = "2026-09-09.8";
+const APP_BUILD = "2026-09-09.9";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -8363,6 +8363,22 @@ function renderEstimates(){
             '</div>'+
             '<div style="font-size:10px;color:#a0b4c8;margin-top:6px;line-height:1.4">Количество материалов пересчитается от площади помещения: м² подставятся как есть, листы и пачки — через фасовку.</div>'
           :'')+
+          // Труд работы — здесь же, рядом с тем, чем она меряется: норма привязана
+          // к той же единице (м², точка, вся работа), и порознь их не читают.
+          // Норма и коэффициент — свойство самой работы: высотные работы тяжелее на
+          // всех домах. Ставка живёт у портала, коэффициент этого дома — в его листе.
+          '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin:9px 0 5px">ТРУД: НОРМА-ЧАСЫ НА ЕДИНИЦУ</div>'+
+          '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+
+            '<input id="est-hnorm" inputmode="decimal" value="'+(Number(e.hourNorm)>0?numRu(Number(e.hourNorm)):"")+'" placeholder="ч на ед." title="Сколько человеко-часов занимает единица объёма этой работы: на м², на точку или на всю работу, если она считается разом" style="width:96px;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box">'+
+            '<span style="font-size:11px;color:#7a9aaa">'+esc(e.optPoint?"ч на точку":(e.optSurface?"ч на м²":"ч на всю работу"))+'</span>'+
+            '<input id="est-hk" inputmode="decimal" value="'+(Number(e.hourK)>0&&Number(e.hourK)!==1?numRu(Number(e.hourK)):"")+'" placeholder="×1" title="Повышенный коэффициент сложности: высотные работы, стеснённые условия, зима" style="width:70px;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box">'+
+            '<span style="font-size:11px;color:#7a9aaa">коэффициент</span>'+
+          '</div>'+
+          '<div style="font-size:10px;color:#a0b4c8;margin-top:6px;line-height:1.4">'+
+            (hourRateBase()>0
+              ? 'Часы считаются сами: норма × объём строки × коэффициент. Деньги бригаде — часы × '+hourRateBase().toLocaleString("ru-RU")+' ₽ (норма-час портала).'
+              : 'Норма-час портала не задан — часы посчитаются, а деньги нет. Ставка ставится в проекте, полоса «Деньги».')+
+          '</div>'+
           // Точки считаются штуками, а не квадратами: «монтаж розетки» ×18 берётся из
           // раскладки помещений. Доступно и обязательным позициям — розетки в доме есть
           // всегда, выбирать тут нечего.
@@ -8458,6 +8474,17 @@ function renderEstimates(){
     // Текстовые поля пишем без перерисовки — иначе клавиатура закрывается на каждой букве.
     var og=document.getElementById("est-optgroup"); if(og)og.oninput=function(){e.optGroup=this.value;scheduleSave();};
     var ol=document.getElementById("est-optlabel"); if(ol)ol.oninput=function(){e.optLabel=this.value;scheduleSave();};
+    // Норму и коэффициент пишем по change: перерисовка на каждой букве выбивает поле.
+    var hn=document.getElementById("est-hnorm"); if(hn)hn.onchange=function(){
+      var v=parseFloat(String(this.value).replace(",","."));
+      if(isFinite(v)&&v>0)e.hourNorm=v; else delete e.hourNorm;
+      renderEstimates(); scheduleSave();
+    };
+    var hk=document.getElementById("est-hk"); if(hk)hk.onchange=function(){
+      var v=parseFloat(String(this.value).replace(",","."));
+      if(isFinite(v)&&v>0&&v!==1)e.hourK=v; else delete e.hourK;
+      renderEstimates(); scheduleSave();
+    };
     el.querySelectorAll(".est-q").forEach(function(inp){inp.oninput=function(){
       var i=+inp.dataset.i; e.lines[i].qty=parseFloat(String(this.value).replace(",","."))||0;
       scheduleSave(); // правка без перерисовки (фокус в поле) — сохраняем явно
@@ -10560,10 +10587,15 @@ function specPlanTiles(kind, sel, action){
 // Контекст расчёта листа. Правила даём ТОЛЬКО опытному разделу: по боевым
 // спецификациям заведены договора, объекты и транши, и молча изменить их сумму
 // новым правилом нельзя — сначала правила обкатываются здесь.
+// Норма-час портала: одна цифра на все дома, у объекта может быть своя (дальняя
+// логистика, сроки, другая бригада). Ноль значит «не считаем по часам» — так и
+// было до появления нормы, и молча начинать считать деньги за всех нельзя.
+function hourRateBase(){ return Math.max(0, Number(settings&&settings.hourRate)||0); }
 function specCtx(sh){
   const war=!!sh&&(specSheets||[]).some(function(x){return x.id===sh.id;});
   return { estimates:estimates, products:expProducts, winTypes:winTypes,
-    stages:EST_STAGES, rules: war?[]:(buildRules||[]), pies: !war };
+    stages:EST_STAGES, rules: war?[]:(buildRules||[]), pies: !war,
+    hourRate: hourRateBase() };
 }
 // Деньги проекта считаются ТЕМ ЖЕ, ЧЕМ ЕГО СОСТАВ. Проект живёт в своей коллекции
 // (`projects`), и `specIs2` его не узнаёт — по этой развилке «Деньги» уходили в
@@ -13534,7 +13566,7 @@ function optChipsHtml(pos, sh, w){
 // следующей работе с тем же адресом.
 function estForgetKey(sh, key){
   if(!sh||!key)return;
-  ["posRoom","posStage","posCost","posCostMode","posOrder","matQty","mats","matAdd","matOff","matOrder"].forEach(function(f){
+  ["posRoom","posStage","posCost","posCostMode","posOrder","posHours","posK","matQty","mats","matAdd","matOff","matOrder"].forEach(function(f){
     const map=sh[f]; if(!map||!Object.prototype.hasOwnProperty.call(map,key))return;
     const next=Object.assign({}, map); delete next[key];
     if(Object.keys(next).length)sh[f]=next; else delete sh[f];
@@ -13721,6 +13753,36 @@ function matOffHtml(pos, off, sh){
     }).join("")+
   '</div>';
 }
+// Труд строки: норма × объём × коэффициент = часы, часы × ставка = деньги. Плюс
+// коэффициент ЭТОГО дома: в справочнике записано, сколько работа стоит обычно, а
+// здесь она бывает сложнее — и правка не должна уезжать во все дома сразу.
+const POS_K=[1,1.15,1.25,1.5,2];
+function estNormHtml(p, sh){
+  if(p.own)return '';
+  const est=(estimates||[]).find(function(e){ return e&&e.id===p.estId; });
+  const norm=Number(est&&est.hourNorm)||0;
+  const own=Number(((sh&&sh.posK)||{})[p.key])||0;
+  const k=Number(p.hourK)||1;
+  if(!norm&&!own&&!(Number(p.hours)>0))return '';
+  const rate=Number(p.hourRate)||0;
+  const line=p.hoursNorm
+    ? numRu(norm)+' ч/ед × '+numRu(Number(p.normUnits)||0)+(k!==1?' × '+numRu(k):'')+' = <b style="color:#0d1b2e">'+numRu(Number(p.hours)||0)+' ч</b>'
+    : (Number(p.hours)>0?'часы вписаны руками: <b style="color:#0d1b2e">'+numRu(Number(p.hours)||0)+' ч</b>':'нормы нет');
+  const money=(rate>0&&Number(p.hours)>0)
+    ? ' × '+Math.round(rate).toLocaleString("ru-RU")+' ₽ = <b style="color:#0d1b2e">'+Math.round((Number(p.hours)||0)*rate).toLocaleString("ru-RU")+' ₽</b>'
+    : ' · <span style="color:#c0392b">норма-час не задан</span>';
+  return '<div style="flex-basis:100%;background:#f7fafc;border:1px solid #e6ecf3;border-radius:9px;padding:7px 9px;margin-top:2px">'+
+    '<div style="font-size:10.5px;color:#5a7a9a;line-height:1.5">'+line+(p.costSet?' · <span style="color:#8e44ad">цена назначена руками, расчёт не применяется</span>':money)+'</div>'+
+    '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;align-items:center">'+
+      '<span style="font-size:9.5px;font-weight:700;color:#9aabbf;letter-spacing:0.4px">СЛОЖНЕЕ ОБЫЧНОГО ЗДЕСЬ</span>'+
+      POS_K.map(function(x){
+        const on=own?own===x:(!own&&k===x);
+        return '<button data-a="est-pos-k" data-k="'+esc(p.key)+'" data-v="'+x+'" style="border:1px solid '+(on?"#8e44ad":"#dde6f0")+';background:'+(on?"#8e44ad":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:7px;padding:3px 8px;font-size:10.5px;font-weight:700;cursor:pointer">×'+numRu(x)+'</button>';
+      }).join("")+
+      (own?'<button data-a="est-pos-k" data-k="'+esc(p.key)+'" data-v="" title="Вернуть коэффициент из справочника" style="border:1px solid #8e44ad33;background:#fff;color:#8e44ad;border-radius:7px;padding:3px 8px;font-size:10.5px;font-weight:700;cursor:pointer">⟲ по справочнику</button>':'')+
+    '</div>'+
+  '</div>';
+}
 // Назначенные цифры строки — подписью, а не полем. Пустая рамка «работа ₽» в
 // каждой из сорока строк читается как незаполненная форма, будто смета не
 // готова, — а не назначенная бригаде цена это норма. Поля живут в управлении,
@@ -13731,13 +13793,16 @@ function estPosSetChips(p, sh, fact){
   };
   const out=[];
   const sp=positionSplit(p);
-  if(p.own||p.costSet){
+  if(p.own||p.costSet||p.laborCalc){
     const all=p.costSet&&p.costMode!=="labor";
     const sum=p.own?sp.labor:Math.round(all?p.cost:(Number(p.labor)||0));
-    out.push(chip("#8e44ad","#f3ecf9",(all?"под ключ ":"работа ")+Math.round(sum).toLocaleString("ru-RU")+" ₽"));
+    // «По норме» отличаем от назначенной руками цены: одно считается и поедет за
+    // объёмом, другое обещано бригаде и не поедет никуда.
+    const face=p.own||p.costSet?(all?"под ключ ":"работа "):"по норме ";
+    out.push(chip("#8e44ad","#f3ecf9",face+Math.round(sum).toLocaleString("ru-RU")+" ₽"));
   }
-  const hv=Number(((sh&&sh.posHours)||{})[p.key])||0;
-  if(hv>0)out.push(chip("#2980b9","#eef6ff","план "+numRu(hv)+" ч"));
+  const hv=Number(p.hours)||0;
+  if(hv>0)out.push(chip("#2980b9","#eef6ff",(p.hoursNorm?"":"план ")+numRu(hv)+" ч"));
   const f=factOfPos(fact, p);
   if(f>0)out.push(chip("#16a085","#e8f6f3","факт "+numRu(f)+" ч"));
   return out.join("");
@@ -14695,7 +14760,7 @@ function estRowsHtml(rows){
 // комната, цена и материалы), и откатывать их по одной значит собирать
 // полусостояние.
 const EST_EDIT_FIELDS=["posOrder","posOff","posAdd","posRoom","posStage","posCost","posCostMode",
-  "posHours","optPick","matOrder","matOff","matAdd","matQty","mats"];
+  "posHours","posK","hourRate","optPick","matOrder","matOff","matAdd","matQty","mats"];
 const EST_UNDO_MAX=20;
 let estUndo=[];
 function estSnap(sh, what){
@@ -15314,6 +15379,10 @@ function estBodyHtml(sh, types, live, actions){
                       : '<button data-a="est-pos-cost-mode" data-k="'+esc(p.key)+'" title="Оплата работы — материалы считаются сверху. Тап: подряд под ключ" style="width:28px;height:28px;border:1px solid #dde6f0;background:#fff;color:#9aabbf;border-radius:7px;font-size:11px;cursor:pointer">⇄</button>')+
                     (p.costSet?'<button data-a="est-pos-cost-reset" data-k="'+esc(p.key)+'" title="Вернуть цену по материалам" style="width:28px;height:28px;border:1px solid #8e44ad33;background:#fff;color:#8e44ad;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer">⟲</button>':'');
                   })()+
+                  // Откуда взялись часы и деньги: формула целиком, теми же числами,
+                  // которыми считалось. Число, про которое непонятно, как оно вышло,
+                  // не проверяют — его либо принимают на веру, либо не верят вовсе.
+                  estNormHtml(p, sh)+
                   '<span style="flex:1"></span>'+
                   // Правые кнопки — одна группа: они про одно и то же (что сделать
                   // со строкой). Без обёртки узкая колонка переносила их по одной, и
@@ -15575,6 +15644,20 @@ function projMoneyHtml(p){
     '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:6px">НАЦЕНКА, %</div>'+
     '<input data-a="proj-markup" data-id="'+p.id+'" type="number" step="1" min="0" value="'+String(Number(p.markup)||0)+'" style="width:110px;padding:8px 10px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box">'+
     '<div style="font-size:10.5px;color:#9aabbf;line-height:1.45;margin-top:6px">Наценка одна на проект: продавец должен понимать, что он назвал клиенту, а не собирать сумму из сорока процентов.</div>'+
+  '</div>'+
+  // Норма-час: по нему считается работа бригады в каждой строке. База одна на
+  // портал, у этого дома может быть своя — дальняя логистика, сроки, другая
+  // бригада. Пусто у дома значит «по базе», а не «ноль».
+  '<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
+    '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:6px">НОРМА-ЧАС, ₽</div>'+
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+
+      '<input data-a="proj-rate" data-id="'+p.id+'" inputmode="numeric" value="'+(Number(p.hourRate)>0?String(Math.round(Number(p.hourRate))):"")+'" placeholder="'+(hourRateBase()>0?String(hourRateBase()):"не задан")+'" title="Ставка на этом доме. Пусто — берётся база портала." style="width:110px;padding:8px 10px;border-radius:9px;border:1px solid '+(Number(p.hourRate)>0?"#8e44ad":"#d0dae8")+';font-size:13px;outline:none;box-sizing:border-box">'+
+      '<span style="font-size:11.5px;color:#7a9aaa">на этом доме</span>'+
+      '<span style="flex:1"></span>'+
+      '<input data-a="hour-rate-base" inputmode="numeric" value="'+(hourRateBase()>0?String(hourRateBase()):"")+'" placeholder="база" title="Базовая ставка портала — по ней считаются все дома, где своя не задана" style="width:96px;padding:8px 10px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box">'+
+      '<span style="font-size:11.5px;color:#7a9aaa">база портала</span>'+
+    '</div>'+
+    '<div style="font-size:10.5px;color:#9aabbf;line-height:1.45;margin-top:6px">Работа бригады = часы × ставка. Часы берутся из нормы работы (справочник смет) или вписываются в строке руками. Своя цена в строке главнее любого расчёта.</div>'+
   '</div>';
   // Объект и договор — отсюда: это единственное место, где «что построить»
   // встречается с «за сколько».
@@ -25194,6 +25277,19 @@ function bind(){
     };}
     // Тап по шапке строки раскрывает её управление. Раскрыта одна: два ряда
     // кнопок подряд — это уже не «что сделать с этой работой», а список кнопок.
+    else if(a==="proj-rate"){el.onchange=()=>{
+      const sh=(projects||[]).find(function(x){ return x.id===el.dataset.id; });
+      if(!sh)return;
+      estSnap(sh, "ставку дома");
+      const v=parseFloat(String(el.value).replace(/\s/g,"").replace(",","."));
+      if(isFinite(v)&&v>0)sh.hourRate=Math.round(v); else delete sh.hourRate;
+      scheduleSave(); fl();
+    };}
+    else if(a==="hour-rate-base"){el.onchange=()=>{
+      const v=parseFloat(String(el.value).replace(/\s/g,"").replace(",","."));
+      settings=Object.assign({}, settings, { hourRate:(isFinite(v)&&v>0)?Math.round(v):0 });
+      scheduleSave(); fl();
+    };}
     else if(a==="est-undo"){el.onclick=()=>{ if(!estUndoLast())fl(); };}
     else if(a==="est-pick-mode"){el.onclick=()=>{
       estPickOn=!estPickOn;
@@ -25268,6 +25364,16 @@ function bind(){
       estRowOpen=(estRowOpen===key)?"":key;
       roomPickKey=""; stagePickKey=""; hoursPickKey="";
       fl();
+    };}
+    else if(a==="est-pos-k"){el.onclick=()=>{
+      const key=el.dataset.k||"";
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
+      estSnap(sh, "коэффициент работы");
+      const v=parseFloat(String(el.dataset.v||"").replace(",","."));
+      const map=Object.assign({}, sh.posK||{});
+      if(isFinite(v)&&v>0)map[key]=v; else delete map[key];
+      if(Object.keys(map).length)sh.posK=map; else delete sh.posK;
+      scheduleSave(); fl();
     };}
     else if(a==="est-pos-room-pick"){el.onclick=()=>{
       const key=el.dataset.k||"";
