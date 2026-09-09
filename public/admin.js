@@ -2303,6 +2303,8 @@ let modelPlaceTab="mine";  // mine | cat — свои изделия или ка
 let modelPlaceType="";     // боевой инструмент «Проём»: одно изделие на оба вида
 let modelZoom=1;           // 1 = вписать по ширине
 let schemeZoom=0;          // схема плана крупно: 0 — закрыта, иначе кратность
+let presetPeek="";         // какую ЗАГОТОВКУ разглядывают крупно: ключ или ""
+let presetPeekZoom=1;      // и с какой кратностью — ступени те же, что у схемы
 let schemeView="dim";      // чей чертёж: dim — рабочий с размерами, plain — клиенту
 let nodeTab="n1";          // какой узел раскрыт под чертежом
 let spec2Tab="scheme";     // что смотрим в разделе: чертёж или смету по нему
@@ -4808,6 +4810,10 @@ function render(){
   // Схема плана крупно: на вкладке она миниатюра, а разглядывают её здесь.
   if(schemeZoom){
     a.insertAdjacentHTML("beforeend", spec2SchemeOverlay());
+  }
+  // Заготовка крупно: на плитке миниатюра, по лупе — тот же чертёж во весь экран.
+  if(presetPeek){
+    a.insertAdjacentHTML("beforeend", modelPresetOverlay());
   }
   // Мастер записи времени/фото («+ Запись»)
   if(tlWizard){
@@ -11460,24 +11466,84 @@ function modelElevSvg(sh){
 
 // Заготовки планировок (src/model.js): типовой контейнер уже начерчен — отсеки,
 // длины и проёмы. Пустая коробка остаётся рядом: она нужна, когда дом свой.
-function modelPresetBtns(action){
+//
+// Заготовку выбирают ПО ЧЕРТЕЖУ, а не по имени. Имена у них дежурные и похожие
+// («12 м · санузел / кухня-гостиная / спальня» против «Дом для СВО · санузел /
+// зал / спальня»), а различаются дома тем, где стоит вход и куда смотрит окно, —
+// то есть тем, что видно только на плане. Тот же приём, что у планировок в
+// спецификации (`specPlanTiles`): плитка с миниатюрой, а не строка списка.
+//
+// Миниатюра рисуется ТЕМ ЖЕ `modelSchemeSvg`, что и большая схема. Картинкой её
+// не заводим: заготовка живёт в коде, и картинка разошлась бы с ней на первой же
+// правке отсека — на плитке был бы один дом, в проекте другой.
+//
+// Строится заготовка на ПУСТОМ справочнике изделий, а не на `winTypes` панели: у
+// миниатюры нет ни дома, ни клиента, и подмешивать сюда свои окна значит показать
+// в чертеже чужие размеры. Поэтому же результат можно запомнить — заготовка
+// статична, и пересчитывать её геометрию на каждый рендер незачем.
+const PRESET_THUMB_H=92;   // высота миниатюры: ряд плиток обязан стоять ровно
+const presetBuiltCache={}, presetThumbCache={};
+function presetBuilt(k){
+  if(presetBuiltCache[k]===undefined){
+    const pr=modelPreset(k);
+    let seq=0;
+    presetBuiltCache[k]=pr?presetModel(pr, [], function(){ return k+"-t"+(++seq); }):null;
+  }
+  return presetBuiltCache[k];
+}
+function presetThumbSvg(k, view){
+  const key=k+"|"+view;
+  if(presetThumbCache[key]===undefined){
+    const b=presetBuilt(k);
+    presetThumbCache[key]=b?modelSchemeSvg(b.model, b.winTypes, 0, view, PRESET_THUMB_H):"";
+  }
+  return presetThumbCache[key];
+}
+// На плитке — вид «Планировка»: размерные цепочки в двести пикселей превращаются в
+// штриховку, а имена помещений и стены читаются формой. Подписи в этом размере
+// мелкие, и это честно: плитка отвечает на вопрос «что это за дом», а прочитать
+// чертёж дают лупой — тем же оверлеем, которым разглядывают схему проекта.
+function modelPresetTiles(action, sel, col){
   if(!MODEL_PRESETS.length)return "";
-  return '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-bottom:8px">'+
+  const c=col||"#8e44ad";
+  // По две в ряд, а не лентой вбок: заготовок четыре, и прокрутка прятала бы
+  // половину списка за краем — выбирают из того, что видно.
+  return '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px">'+
     MODEL_PRESETS.map(function(pr){
-      return '<button data-a="'+action+'" data-k="'+pr.k+'" style="text-align:left;border:1.5px solid #8e44ad;background:#8e44ad;color:#fff;border-radius:9px;padding:7px 12px;font-size:11.5px;font-weight:700;cursor:pointer">📐 '+esc(pr.n)+
-        (pr.note?'<div style="font-size:9.5px;font-weight:600;opacity:.85;margin-top:1px">'+esc(pr.note)+'</div>':'')+'</button>';
+      const on=sel===pr.k;
+      return '<div data-a="'+action+'" data-k="'+pr.k+'" style="flex:0 0 calc(50% - 4px);min-width:0;box-sizing:border-box;border:2px solid '+(on?c:"#e2e8f0")+';background:#fff;border-radius:12px;padding:7px;cursor:pointer;text-align:left;'+(on?"box-shadow:0 2px 10px "+c+"33":"")+'">'+
+        // Чертёж на белом листе: схема — это бумага, и на цветной плитке её линии
+        // теряются. Лупа стоит СВОЕЙ кнопкой, а не тапом по картинке: тап по плитке
+        // уже означает «беру эту заготовку», и второй смысл у того же жеста развести
+        // было бы нечем — человек метил бы в выбор, а получал бы полный экран.
+        '<div style="position:relative;background:#fbfcfe;border:1px solid #eef2f7;border-radius:8px;padding:6px;height:'+PRESET_THUMB_H+'px;display:flex;align-items:center;overflow:hidden;box-sizing:content-box">'+
+          '<div style="flex:1;min-width:0">'+
+          presetThumbSvg(pr.k, "plain")+
+          '</div>'+
+          '<button data-a="preset-peek" data-k="'+pr.k+'" title="Показать чертёж крупно" style="position:absolute;right:3px;bottom:3px;width:27px;height:27px;line-height:1;border:1px solid #dde6f0;background:#fff;border-radius:8px;cursor:pointer;font-size:13px;color:#5a7a9a;padding:0">🔍</button>'+
+        '</div>'+
+        '<div style="font-size:11px;font-weight:800;color:'+(on?c:"#0d1b2e")+';margin-top:6px;line-height:1.3;max-height:29px;overflow:hidden">'+esc(pr.n)+'</div>'+
+        (pr.note?'<div style="font-size:9.5px;color:#8fa3b8;margin-top:2px;line-height:1.35;max-height:26px;overflow:hidden">'+esc(pr.note)+'</div>':'')+
+      '</div>';
     }).join("")+'</div>';
 }
+// Заготовка, которая применяется сразу: выбранной среди них нет — она становится
+// моделью в тот же тап.
+function modelPresetBtns(action){ return modelPresetTiles(action, "", "#8e44ad"); }
 // Та же заготовка в форме создания: здесь она не применяется сразу, а выбирается —
 // модель соберётся в момент «Создать».
-function specPresetPickHtml(){
-  if(!MODEL_PRESETS.length)return "";
-  return '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px">'+
-    MODEL_PRESETS.map(function(pr){
-      const on=specNew.preset===pr.k;
-      return '<button data-a="spec-n-preset" data-k="'+pr.k+'" style="text-align:left;border:1.5px solid '+(on?"#8e44ad":"#dde6f0")+';background:'+(on?"#8e44ad":"#fff")+';color:'+(on?"#fff":"#5a7a9a")+';border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">📐 '+esc(pr.n)+
-        (pr.note?'<div style="font-size:9.5px;font-weight:600;opacity:.8;margin-top:1px">'+esc(pr.note)+'</div>':'')+'</button>';
-    }).join("")+'</div>';
+function specPresetPickHtml(){ return modelPresetTiles("spec-n-preset", specNew.preset, "#8e44ad"); }
+// Набранное в форме живёт в самом поле, а лупа и выбор заготовки перерисовывают
+// экран целиком. Не забрать значения перед перерисовкой — и название пропадёт от
+// тапа по соседней кнопке.
+function presetFormStash(){
+  if(typeof specNew!=="undefined"&&specNew){
+    const e=document.getElementById("spec-n-name"); if(e)specNew.name=e.value;
+  }
+  if(typeof projNew!=="undefined"&&projNew){
+    const e=document.getElementById("proj-n-name"); if(e)projNew.name=e.value;
+    const c=document.getElementById("proj-n-client"); if(c)projNew.clientId=c.value;
+  }
 }
 
 function specModelHtml(sh){
@@ -12605,10 +12671,14 @@ function schemeParts(sc, view){
 // На вкладке он МИНИАТЮРА (minW=0): 12-метровая схема, уезжающая вправо, читается
 // как поломка вёрстки, а не как чертёж — её листают вслепую и не видят целиком.
 // Разглядывают её в оверлее по тапу, там прокрутка уместна и есть чем увеличить.
-function modelSchemeSvg(model, types, minW, view){
+function modelSchemeSvg(model, types, minW, view, maxH){
   const f=schemeParts(modelScheme(model, types), view);
   const mw=(minW==null)?560:(Number(minW)||0);
-  return '<svg viewBox="'+f.vb+'" style="width:100%;'+(mw?'min-width:'+mw+'px;':'')+'height:auto;display:block;user-select:none">'+f.g+'</svg>';
+  // Потолок высоты нужен только миниатюре: у заготовок разные поля под цепочки, и
+  // без него плитки в ряду вставали бы разной высоты — ряд читался бы как сбитая
+  // вёрстка. Большой чертёж потолка не знает: его высота и есть его масштаб.
+  const mh=Number(maxH)||0;
+  return '<svg viewBox="'+f.vb+'" style="width:100%;'+(mw?'min-width:'+mw+'px;':'')+(mh?'max-height:'+mh+'px;':'')+'height:auto;display:block;margin:0 auto;user-select:none">'+f.g+'</svg>';
 }
 
 // ═══ ВКЛАДКА «СПЕЦИФИКАЦИЯ 2» ════════════════════════════════════════════════
@@ -13035,21 +13105,20 @@ function schemeViewTabs(){
 // Схема крупно. Миниатюра на вкладке отвечает на вопрос «что это за дом», а
 // разглядывают чертёж здесь: оверлей выходит из колонки 480 px на весь экран, и
 // только тут прокрутка вбок уместна — её включает увеличение, а не вёрстка.
-function spec2SchemeOverlay(){
-  const sh=schemeSheet();
-  const pr=MODEL_PRESETS[0];
-  const built=(sh&&sh.model)?{model:sh.model,winTypes:winTypes}:(pr?presetModel(pr, winTypes, gid):null);
-  if(!built)return "";
-  return '<div id="spec2-scheme-full" style="position:fixed;inset:0;z-index:900;background:#0d1b2e;display:flex;flex-direction:column">'+
+// Чертёж крупно — ОДИН экран на оба повода: разглядывают ли схему открытого дома
+// или заготовку из списка. Вторая копия этого экрана разошлась бы с первой на
+// первой же правке, и человек смотрел бы на два разных чертежа одного дома.
+function schemeFullHtml(o){
+  return '<div id="'+o.id+'" style="position:fixed;inset:0;z-index:900;background:#0d1b2e;display:flex;flex-direction:column">'+
     '<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.12);flex-shrink:0">'+
-      '<span style="font-size:13px;font-weight:800;color:#fff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📐 '+esc((sh&&sh.name)||(pr&&pr.n)||"Схема плана")+'</span>'+
+      '<span style="font-size:13px;font-weight:800;color:#fff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📐 '+esc(o.title||"Схема плана")+'</span>'+
       // Увеличение — теми же ступенями и той же кнопкой, что в редакторе модели:
       // два разных способа увеличить один и тот же чертёж пришлось бы объяснять.
       [1,2,4].map(function(z){
-        const on=schemeZoom===z;
-        return '<button data-a="spec2-scheme-zoom" data-z="'+z+'" style="border:1.5px solid '+(on?"#2980b9":"rgba(255,255,255,.18)")+';background:'+(on?"#2980b9":"transparent")+';color:#fff;border-radius:8px;padding:6px 11px;font-size:11.5px;font-weight:700;cursor:pointer;flex-shrink:0">'+z+'×</button>';
+        const on=o.zoom===z;
+        return '<button data-a="'+o.aZoom+'" data-z="'+z+'" style="border:1.5px solid '+(on?"#2980b9":"rgba(255,255,255,.18)")+';background:'+(on?"#2980b9":"transparent")+';color:#fff;border-radius:8px;padding:6px 11px;font-size:11.5px;font-weight:700;cursor:pointer;flex-shrink:0">'+z+'×</button>';
       }).join("")+
-      '<button data-a="spec2-scheme-close" style="padding:7px 14px;background:rgba(255,255,255,.12);border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:12px;font-weight:700;flex-shrink:0">Готово</button>'+
+      '<button data-a="'+o.aClose+'" style="padding:7px 14px;background:rgba(255,255,255,.12);border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:12px;font-weight:700;flex-shrink:0">Готово</button>'+
     '</div>'+
     // Вид переключается и здесь: разглядывают чертёж крупно, и уходить за этим
     // обратно на вкладку значит закрыть то, что разглядывал.
@@ -13064,10 +13133,30 @@ function spec2SchemeOverlay(){
     // 1× — чертёж целиком по ширине экрана, дальше он растёт и едет вбок. Белый лист
     // под ним: схема — это бумага, и на тёмном фоне тонкие линии теряются.
     '<div style="flex:1;min-height:0;overflow:auto;background:#f4f7fa;padding:16px">'+
-      '<div style="width:'+(schemeZoom*100)+'%;min-width:100%">'+
-        modelSchemeSvg(built.model, built.winTypes, 0, schemeView)+
+      '<div style="width:'+(o.zoom*100)+'%;min-width:100%">'+
+        modelSchemeSvg(o.model, o.types, 0, schemeView)+
       '</div>'+
     '</div>';
+}
+
+function spec2SchemeOverlay(){
+  const sh=schemeSheet();
+  const pr=MODEL_PRESETS[0];
+  const built=(sh&&sh.model)?{model:sh.model,winTypes:winTypes}:(pr?presetModel(pr, winTypes, gid):null);
+  if(!built)return "";
+  return schemeFullHtml({ id:"spec2-scheme-full", title:(sh&&sh.name)||(pr&&pr.n)||"Схема плана",
+    model:built.model, types:built.winTypes, zoom:schemeZoom,
+    aZoom:"spec2-scheme-zoom", aClose:"spec2-scheme-close" });
+}
+
+// Заготовка крупно. Тот же экран, но чертёж берётся из кода, а не из снимка: у
+// заготовки нет ни листа, ни справочника изделий дома.
+function modelPresetOverlay(){
+  const pr=modelPreset(presetPeek), b=presetBuilt(presetPeek);
+  if(!pr||!b)return "";
+  return schemeFullHtml({ id:"preset-peek-full", title:pr.n,
+    model:b.model, types:b.winTypes, zoom:presetPeekZoom,
+    aZoom:"preset-peek-zoom", aClose:"preset-peek-close" });
 }
 
 // ── СМЕТА ПО ЧЕРТЕЖУ ────────────────────────────────────────────────────────
@@ -14900,12 +14989,7 @@ function projNewFormHtml(){
     '<div style="font-size:10px;font-weight:700;color:'+PROJ_COL+';letter-spacing:0.5px;margin-bottom:8px">НОВЫЙ ПРОЕКТ</div>'+
     '<input id="proj-n-name" value="'+esc(n.name||"")+'" placeholder="Название (например: Дом Ивановых)" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:8px">'+
     '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:5px">С ЧЕГО НАЧАТЬ</div>'+
-    '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:4px">'+
-      MODEL_PRESETS.map(function(pr){
-        const on=(n.preset||MODEL_PRESETS[0].k)===pr.k;
-        return '<button data-a="proj-n-preset" data-k="'+pr.k+'" style="border:1.5px solid '+(on?PROJ_COL:"#dde6f0")+';background:'+(on?PROJ_COL:"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:9px;padding:7px 11px;font-size:11.5px;font-weight:700;cursor:pointer">📐 '+esc(pr.n)+'</button>';
-      }).join("")+
-    '</div>'+
+    modelPresetTiles("proj-n-preset", (n.preset||MODEL_PRESETS[0].k), PROJ_COL)+
     '<div style="font-size:10px;color:#a0b4c8;margin:2px 0 9px;line-height:1.45">Заготовка — уже начерченный контейнер: отсеки, длины и проёмы стоят, дальше их двигают в редакторе. Если приложите чертёж заказчика, дом прочитается с него, а заготовка останется запасным вариантом.</div>'+
     // Планировка заказчика — подложкой под наш чертёж: по ней ставят стены, и она же
     // остаётся в проекте как исходник, с которым сверяют результат.
@@ -24106,6 +24190,13 @@ function bind(){
     else if(a==="spec2-scheme-zoom"){el.onclick=()=>{ schemeZoom=parseInt(el.dataset.z,10)||1; render(); };}
     else if(a==="spec2-scheme-close"){el.onclick=()=>{ schemeZoom=0; render(); };}
     else if(a==="spec2-scheme-view"){el.onclick=()=>{ schemeView=(el.dataset.v==="plain")?"plain":"dim"; render(); };}
+    // Лупа на плитке заготовки. Событие до плитки не всплывает: тап по ней означает
+    // «беру эту заготовку», и открытый поверх выбора чертёж выглядел бы так, будто
+    // выбор не сработал.
+    else if(a==="preset-peek"){el.onclick=(ev)=>{ if(ev&&ev.stopPropagation)ev.stopPropagation();
+      presetFormStash(); presetPeek=el.dataset.k||""; presetPeekZoom=1; render(); };}
+    else if(a==="preset-peek-zoom"){el.onclick=()=>{ presetPeekZoom=parseInt(el.dataset.z,10)||1; render(); };}
+    else if(a==="preset-peek-close"){el.onclick=()=>{ presetPeek=""; render(); };}
     else if(a==="spec2-node-tab"){el.onclick=()=>{ nodeTab=el.dataset.v||"n1"; render(); };}
     else if(a==="spec2-tab"){el.onclick=()=>{ const v=el.dataset.v; spec2Tab=(v==="est"||v==="rules")?v:"scheme"; render(); window.scrollTo(0,0); };}
     // Правила сборки. Правка пишется сразу в раздел снимка: отдельной кнопки
@@ -24978,7 +25069,8 @@ function bind(){
     // ── ПРОЕКТЫ ────────────────────────────────────────────────────────────
     else if(a==="proj-new"){el.onclick=()=>{ projNew={name:"",preset:MODEL_PRESETS[0].k,clientId:""}; render(); };}
     else if(a==="proj-new-cancel"){el.onclick=()=>{ projNew=null; render(); };}
-    else if(a==="proj-n-preset"){el.onclick=()=>{ projNew=Object.assign({},projNew||{},{k:0,preset:el.dataset.k}); render(); };}
+    else if(a==="proj-n-preset"){el.onclick=()=>{ presetFormStash();
+      projNew=Object.assign({},projNew||{},{k:0,preset:el.dataset.k}); render(); };}
     else if(a==="proj-create"){el.onclick=()=>{
       const name=((document.getElementById("proj-n-name")||{}).value||"").trim();
       const clientId=((document.getElementById("proj-n-client")||{}).value||"");
