@@ -64,7 +64,7 @@ import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
-const APP_BUILD = "2026-09-09.1";
+const APP_BUILD = "2026-09-09.2";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -2323,8 +2323,6 @@ let matsOpen={};           // у каких строк сметы раскрыт
 let stageOpen={};          // какие этапы раскрыты целиком
 let roomPickKey="";        // у какой строки раскрыт ряд «перенести в помещение»
 let blockShut={};          // какие блоки помещений свёрнуты: "<этап>|<ключ комнаты>"
-let matMoveKey="";         // какой материал сейчас переносят: "<ключ позиции>|<адрес>"
-let matMoveSheet="";       // и в каком листе
 // Справки над сметой свёрнуты по умолчанию: экран открывают ради сметы, а
 // объёмы и убранное — это контекст, к которому обращаются, когда он нужен.
 let factsOpen=false;       // раскрыт ли блок «откуда числа»
@@ -13526,10 +13524,6 @@ function specMatsListHtml(pos, sh, live){
   // Раскладка «материалы · работа · итого» живёт в самой строке сметы, а не в
   // шапке списка: две цифры нужны в КАЖДОЙ работе, в том числе там, где списка нет.
   if(!open)return '';
-  // Индекс взятого материала в ЭТОЙ строке: место «сюда» показываем только там,
-  // где его взяли — материал принадлежит своей работе.
-  const moving=(can&&matMoveSheet===String((live&&live.id)||sh.id||"")&&(matMoveKey||"").indexOf(pos.key+"|")===0)?matMoveKey:"";
-  const mi=moving?mats.findIndex(function(x){ return matSwapKey(pos,x)===moving; }):-1;
   // Материалы — БЛОК, приписанный к своей работе. Раньше они шли тем же белым фоном,
   // что и сама строка, и на экране из четырёх работ подряд было не понять, где
   // кончаются материалы одной и начинаются другой: полоска в пиксель этого не
@@ -13538,7 +13532,6 @@ function specMatsListHtml(pos, sh, live){
   return '<div style="margin:5px 0 2px 2px;padding:5px 9px 4px 10px;border-left:3px solid #c9d6e4;'+
       'background:#f7fafc;border-radius:0 10px 10px 0">'+
     '<div style="font-size:9px;font-weight:800;color:#a8b8c8;letter-spacing:0.5px;margin-bottom:2px">СОСТАВ · '+mats.length+'</div>'+
-    matDropSlot(moving, 0, mi)+
     mats.map(function(m, midx){
       const unit=specMatUnit(m);
       const qty=Math.round((Number(m.qty)||0)*100)/100;
@@ -13546,7 +13539,11 @@ function specMatsListHtml(pos, sh, live){
       const open=matSwapOpen===matSwapKey(pos,m);
       const was=!!(m.swapped||sw[m.pid||""]);
       const added=!!m.added;
-      return '<div style="padding:5px 0'+(midx<mats.length-1?';border-bottom:1px solid #eaf0f6':'')+'">'+
+      // Адрес материала в разметке: перенос ищет соседей по DOM, а не по индексу —
+      // между материалами стоят раскрытые редакторы замены. Работа — часть адреса:
+      // материал принадлежит своей строке и в чужую не уходит.
+      return '<div data-mat-row="'+esc(matKeyOf(m))+'" data-mat-grp="'+esc(pos.key)+'" '+
+        'style="padding:5px 0'+(midx<mats.length-1?';border-bottom:1px solid #eaf0f6':'')+'">'+
         '<div style="display:flex;align-items:baseline;gap:7px">'+
           '<span style="flex:1;min-width:0;font-size:11.5px;color:#0d1b2e;line-height:1.35">'+esc(m.n||"")+
             (was?' <span style="font-size:9.5px;font-weight:700;color:#8e44ad;background:#f3ecf9;border-radius:5px;padding:1px 5px">заменён</span>':'')+
@@ -13597,11 +13594,10 @@ function specMatsListHtml(pos, sh, live){
           // Порядок материалов — тот же жест, что у работ: взял и указал место, а
           // на соседнюю строку быстрее тапнуть стрелкой. Список читают сверху вниз
           // и по нему закупают.
-          (can&&mats.length>1?matMoveBtns(pos, m, mats, moving):'')+
+          (can&&mats.length>1?matDragBtn(matSwapKey(pos,m)):'')+
         '</div>'+
         (open?matSwapEditor(pos, m, sh, was):'')+
-      '</div>'+
-      matDropSlot(moving, midx+1, mi);
+      '</div>';
     }).join("")+
     matOffHtml(pos, off, sh)+
     // Смета из справочника описывает типовой дом, а на этом бывает лишний уголок
@@ -13643,27 +13639,33 @@ function matOffHtml(pos, off, sh){
     }).join("")+
   '</div>';
 }
-// Кнопки переноса у материала: взятый показывает шаги и отмену, остальные — ↕.
-function matMoveBtns(pos, m, mats, moving){
-  const key=matSwapKey(pos, m);
-  const held=moving===key;
-  if(!held)return '<button data-a="est-mat-grab" data-k="'+esc(key)+'" title="Переставить материал в строке" style="width:24px;height:24px;background:transparent;border:1px solid #dde6f0;border-radius:6px;cursor:pointer;color:#7a9aaa;font-size:11px;flex-shrink:0">↕</button>';
-  const i=mats.findIndex(function(x){ return matKeyOf(x)===matKeyOf(m); });
-  const step=function(dir, off){
-    return '<button data-a="est-mat-step" data-k="'+esc(key)+'" data-d="'+dir+'"'+(off?' disabled':'')+
-      ' title="'+(dir<0?"Выше на одну строку":"Ниже на одну строку")+'" style="width:24px;height:24px;background:#fff;border:1px solid '+(off?"#e6ecf3":RULE_COL+"66")+';border-radius:6px;cursor:'+(off?"default":"pointer")+';color:'+(off?"#dde6f0":RULE_COL)+';font-size:10px;font-weight:700;flex-shrink:0;padding:0">'+(dir<0?"↑":"↓")+'</button>';
-  };
-  return '<span style="display:flex;align-items:center;gap:3px;flex-shrink:0">'+
-    step(-1, i<=0)+step(1, i<0||i>=mats.length-1)+
-    '<button data-a="est-mat-grab" data-k="'+esc(key)+'" title="Положить материал обратно" style="width:24px;height:24px;background:'+RULE_COL+';border:1px solid '+RULE_COL+';border-radius:6px;cursor:pointer;color:#fff;font-size:10px;font-weight:700;flex-shrink:0;padding:0">✕</button>'+
-  '</span>';
+// Ручка переноса материала — тот же жест, что у работ: тянут, а не «берут».
+function matDragBtn(key){
+  return '<button data-a="est-mat-drag" data-k="'+esc(key)+'" title="Перетащите, чтобы переставить материал в строке" '+
+    'style="width:24px;height:24px;background:transparent;border:1px solid #dde6f0;border-radius:6px;cursor:grab;'+
+    'color:#7a9aaa;font-size:11px;flex-shrink:0;padding:0;touch-action:none">⠿</button>';
 }
-// Место «сюда» между материалами — узкая полоса во всю ширину списка.
-function matDropSlot(key, j, mi){
-  if(mi<0||j===mi||j===mi+1)return '';
-  return '<div data-a="est-mat-drop" data-k="'+esc(key)+'" data-i="'+j+'" title="Поставить материал сюда" '+
-    'style="margin:2px 0;padding:4px 0;border:1px dashed '+RULE_COL+'88;border-radius:7px;background:'+RULE_COL+'0d;'+
-    'text-align:center;font-size:10px;font-weight:700;color:'+RULE_COL+';cursor:pointer;line-height:1.2">сюда</div>';
+// Ставит материал перед указанным (пустой адрес — последним в своей работе).
+// Порядок берём ТОТ, что на экране: он уже с учётом прежних перестановок.
+function matPutBefore(k, beforeMid){
+  const cut=String(k||"").lastIndexOf("|");
+  if(cut<0)return false;
+  const posKey=k.slice(0,cut), mid=k.slice(cut+1);
+  const sh=schemeSheet()||spec2Sheet(); if(!sh||!posKey||!mid)return false;
+  const pos=allPositions(sh, specCtx(sh)).filter(function(x){ return x.key===posKey; })[0];
+  if(!pos)return false;
+  const was=(pos.mats||[]).map(function(m){ return matKeyOf(m); });
+  const keys=was.slice();
+  const i=keys.indexOf(mid);
+  if(i<0)return false;
+  keys.splice(i, 1);
+  const j=beforeMid?keys.indexOf(beforeMid):-1;
+  keys.splice(j<0?keys.length:j, 0, mid);
+  // Материал вернули туда же, откуда взяли: сохранять и перерисовывать нечего.
+  if(keys.join("\u0000")===was.join("\u0000"))return false;
+  const row={}; keys.forEach(function(x,n){ row[x]=n; });
+  sh.matOrder=Object.assign({}, sh.matOrder||{}, { [posKey]:row });
+  scheduleSave(); fl(); return true;
 }
 // Две цифры в КАЖДОЙ строке: сколько в ней материалов и сколько работы. Одна
 // сумма отвечала на вопрос «сколько стоит», но не на те два, которые задают на
@@ -14574,12 +14576,71 @@ function estDragBtn(key){
 function estRowsHtml(rows){
   return rows.join("");
 }
-// Ближайшая строка сметы над этим узлом: ручка переноса живёт внутри строки, а
-// двигать надо строку целиком.
-function estPosRowOf(el){
+// Перенос строки списка пальцем — один жест на работы этапа и материалы работы:
+// взяли за ручку, повели, отпустили. Пока ведут, fl() не зовём: перерисовка
+// уносит узел с захваченным указателем, и жест обрывается на первом же движении.
+// Поэтому двигается не список, а место в нём: саму строку прячем, а под пальцем
+// едет пустая рамка «сюда».
+//
+// rowKey/grpKey — имена data-атрибутов строки и её группы: соседей ищем по
+// разметке, а не по индексу в массиве — на экране между строками стоят шапки
+// помещений и раскрытые редакторы, и «следующий узел» ≠ «следующая строка».
+// Группа держит перенос в своих берегах: работа не уходит в чужую комнату, а
+// материал — в чужую работу; и там и там список собран группами, и брошенная
+// мимо строка вернулась бы обратно тем же рендером.
+// done(адрес соседа, перед которым встали; пустой — встали последним).
+function dragRowOf(el, rowKey){
   let n=el;
-  while(n&&(!n.dataset||!n.dataset.posRow))n=n.parentNode;
-  return (n&&n.dataset&&n.dataset.posRow)?n:null;
+  while(n&&(!n.dataset||!n.dataset[rowKey]))n=n.parentNode;
+  return (n&&n.dataset&&n.dataset[rowKey])?n:null;
+}
+function dragRow(el, ev, rowKey, grpKey, done){
+  const row=dragRowOf(el, rowKey); if(!row||!row.parentNode)return;
+  const grp=row.dataset[grpKey]||"";
+  const kin=Array.prototype.slice.call(row.parentNode.children).filter(function(x){
+    return x.dataset&&x.dataset[rowKey]&&x.dataset[grpKey]===grp;
+  });
+  const others=kin.filter(function(x){ return x!==row; });
+  if(!others.length)return;
+  ev.preventDefault();
+  try{ el.setPointerCapture(ev.pointerId); }catch(e){}
+  const box=row.getBoundingClientRect();
+  const slot=document.createElement("div");
+  slot.textContent="сюда";
+  slot.style.cssText="height:"+Math.max(Math.round(box.height),24)+"px;margin:3px 0;display:flex;"+
+    "align-items:center;justify-content:center;border:2px dashed "+RULE_COL+";border-radius:9px;"+
+    "background:"+RULE_COL+"14;font-size:10.5px;font-weight:700;color:"+RULE_COL;
+  row.parentNode.insertBefore(slot, row);
+  row.style.display="none";
+  let at=kin.indexOf(row), edge=0, live=true;
+  // Край экрана листает сам: список бывает длиннее экрана, а палец уже занят
+  // строкой и прокрутить страницу им нечем.
+  const roll=function(){ if(!live)return; if(edge)window.scrollBy(0, edge); requestAnimationFrame(roll); };
+  requestAnimationFrame(roll);
+  const move=function(e){
+    const y=e.clientY;
+    let j=others.length;
+    for(let n=0;n<others.length;n++){
+      const b=others[n].getBoundingClientRect();
+      if(y<b.top+b.height/2){ j=n; break; }
+    }
+    at=j;
+    row.parentNode.insertBefore(slot, others[j]||null);
+    const h=window.innerHeight||0;
+    edge=(y<90)?-14:((h&&y>h-90)?14:0);
+  };
+  const up=function(){
+    live=false;
+    document.removeEventListener("pointermove", move);
+    document.removeEventListener("pointerup", up);
+    document.removeEventListener("pointercancel", up);
+    if(slot.parentNode)slot.parentNode.removeChild(slot);
+    row.style.display="";
+    done(others[at]?String(others[at].dataset[rowKey]||""):"");
+  };
+  document.addEventListener("pointermove", move);
+  document.addEventListener("pointerup", up);
+  document.addEventListener("pointercancel", up);
 }
 // Ставит работу перед указанной строкой (пустой адрес — последней в помещении).
 // Порядок берём ТОТ, что на экране: он уже с учётом прежних перестановок, и
@@ -24767,60 +24828,9 @@ function bind(){
       if(map[k])delete map[k]; else map[k]=1;
       matsOpen=map; fl();
     };}
-    // Перенос строки — пальцем: взяли за ручку, повели, отпустили. Пока ведут,
-    // fl() не зовём: перерисовка уносит узел с захваченным указателем, и жест
-    // обрывается на первом же движении. Поэтому двигаем не список, а место в нём:
-    // саму строку прячем, а под пальцем едет пустая рамка «сюда».
     else if(a==="est-pos-drag"){el.onpointerdown=(ev)=>{
       const key=el.dataset.k||""; if(!key)return;
-      const row=estPosRowOf(el); if(!row||!row.parentNode)return;
-      // Соседи — работы ТОГО ЖЕ помещения: список режется на блоки по комнатам,
-      // и строка, брошенная в чужой блок, вернулась бы обратно тем же рендером.
-      const grp=row.dataset.posGrp||"";
-      const kin=Array.prototype.slice.call(row.parentNode.children).filter(function(x){
-        return x.dataset&&x.dataset.posRow&&x.dataset.posGrp===grp;
-      });
-      const others=kin.filter(function(x){ return x!==row; });
-      if(!others.length)return;
-      ev.preventDefault();
-      try{ el.setPointerCapture(ev.pointerId); }catch(e){}
-      const box=row.getBoundingClientRect();
-      const slot=document.createElement("div");
-      slot.textContent="сюда";
-      slot.style.cssText="height:"+Math.max(Math.round(box.height),28)+"px;margin:3px 0;display:flex;"+
-        "align-items:center;justify-content:center;border:2px dashed "+RULE_COL+";border-radius:9px;"+
-        "background:"+RULE_COL+"14;font-size:10.5px;font-weight:700;color:"+RULE_COL;
-      row.parentNode.insertBefore(slot, row);
-      row.style.display="none";
-      let at=kin.indexOf(row), edge=0, live=true;
-      // Край экрана листает сам: этап бывает длиннее экрана, а палец уже занят
-      // строкой и прокрутить страницу им нечем.
-      const roll=function(){ if(!live)return; if(edge)window.scrollBy(0, edge); requestAnimationFrame(roll); };
-      requestAnimationFrame(roll);
-      const move=function(e){
-        const y=e.clientY;
-        let j=others.length;
-        for(let n=0;n<others.length;n++){
-          const b=others[n].getBoundingClientRect();
-          if(y<b.top+b.height/2){ j=n; break; }
-        }
-        at=j;
-        row.parentNode.insertBefore(slot, others[j]||null);
-        const h=window.innerHeight||0;
-        edge=(y<90)?-14:((h&&y>h-90)?14:0);
-      };
-      const up=function(){
-        live=false;
-        document.removeEventListener("pointermove", move);
-        document.removeEventListener("pointerup", up);
-        document.removeEventListener("pointercancel", up);
-        if(slot.parentNode)slot.parentNode.removeChild(slot);
-        row.style.display="";
-        estPosPutBefore(key, others[at]?String(others[at].dataset.posRow||""):"");
-      };
-      document.addEventListener("pointermove", move);
-      document.addEventListener("pointerup", up);
-      document.addEventListener("pointercancel", up);
+      dragRow(el, ev, "posRow", "posGrp", function(before){ estPosPutBefore(key, before); });
     };}
     else if(a==="est-pos-room-pick"){el.onclick=()=>{
       const key=el.dataset.k||"";
@@ -25064,39 +25074,13 @@ function bind(){
       if(Object.keys(row).length)map[posKey]=row; else delete map[posKey];
       sh.matQty=map; fl();
     };}
+    // Порядок материалов внутри строки — тот же жест, что у работ.
+    else if(a==="est-mat-drag"){el.onpointerdown=(ev)=>{
+      const key=el.dataset.k||""; if(!key)return;
+      dragRow(el, ev, "matRow", "matGrp", function(before){ matPutBefore(key, before); });
+    };}
     // Убрать материал из строки НА ЭТОМ ДОМЕ. Справочник смет общий: удалить из
     // него позицию ради одного дома значит изменить состав всех будущих.
-    // Порядок материалов внутри строки — тот же жест, что у работ.
-    else if(a==="est-mat-grab"){el.onclick=()=>{
-      const k=el.dataset.k||"";
-      const sh=schemeSheet()||spec2Sheet();
-      matMoveKey=(matMoveKey===k)?"":k;
-      matMoveSheet=matMoveKey?String((sh&&sh.id)||""):"";
-      fl();
-    };}
-    else if(a==="est-mat-drop"||a==="est-mat-step"){el.onclick=()=>{
-      const k=el.dataset.k||"";
-      const cut=k.lastIndexOf("|");
-      const posKey=k.slice(0,cut), mid=k.slice(cut+1);
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!posKey||!mid){ matMoveKey=""; fl(); return; }
-      // Порядок берём ТОТ, что на экране: он уже с учётом прежних перестановок.
-      const pos=allPositions(sh, specCtx(sh)).filter(function(x){ return x.key===posKey; })[0];
-      if(!pos){ matMoveKey=""; matMoveSheet=""; fl(); return; }
-      const keys=(pos.mats||[]).map(function(m){ return matKeyOf(m); });
-      const i=keys.indexOf(mid);
-      if(i<0){ matMoveKey=""; matMoveSheet=""; fl(); return; }
-      const j=(a==="est-mat-step")?(i+(Number(el.dataset.d)||0)):Number(el.dataset.i);
-      if(!isFinite(j))return;
-      if(a==="est-mat-step"&&(j<0||j>=keys.length))return;
-      keys.splice(i, 1);
-      // Место указано МЕЖДУ строками, которые человек видит, — вместе с переносимой.
-      keys.splice((a==="est-mat-step")?j:(j>i?j-1:j), 0, mid);
-      const row={}; keys.forEach(function(x,n){ row[x]=n; });
-      sh.matOrder=Object.assign({}, sh.matOrder||{}, { [posKey]:row });
-      // Шаг строку не отпускает — их обычно несколько подряд; место отпускает.
-      if(a!=="est-mat-step"){ matMoveKey=""; matMoveSheet=""; }
-      scheduleSave(); fl();
-    };}
     else if(a==="est-mat-off"){el.onclick=()=>{
       const k=el.dataset.k||"";
       const cut=k.lastIndexOf("|");

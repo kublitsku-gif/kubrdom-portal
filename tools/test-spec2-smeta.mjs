@@ -532,21 +532,22 @@ const SHEET = {
   t.ok('расчётное количество вернулось', q2.mats.find((m) => m.pid === 'p_dr').qty === 50)
   t.ok('и лист чист', p.q('Object.keys(spec2Sheet().matQty||{}).length') === 0)
 
-  // Порядок материалов внутри строки — тот же жест: взял и указал место.
+  // Порядок материалов внутри строки — тот же жест, что у работ: тянут за ручку.
   {
     const mkeys = () => p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0].mats.map(function(m){return m.pid||m.id;})')
     const before = mkeys()
     t.ok('в строке несколько материалов', before.length >= 2, before.join(','))
     const mk = q2.key + '|' + before[before.length - 1]
-    t.ok('у материала есть ↕', p.run('tSpec2()').indexOf('data-a="est-mat-grab"') >= 0)
-    const grabM = p.dom.node({ a: 'est-mat-grab', k: mk }); p.run('bind();'); grabM.onclick()
-    t.ok('места «сюда» раскрылись', p.run('tSpec2()').indexOf('data-a="est-mat-drop"') >= 0)
-    const slotM = p.dom.node({ a: 'est-mat-drop', k: mk, i: '0' }); p.run('bind();'); slotM.onclick()
-    t.ok('материал встал первым', mkeys()[0] === before[before.length - 1], mkeys().join(','))
+    const shown = p.run('tSpec2()')
+    t.ok('у материала есть ручка', shown.indexOf('data-a="est-mat-drag"') >= 0)
+    t.ok('мест «сюда» нет', shown.indexOf('data-a="est-mat-drop"') < 0)
+    t.ok('материал встал первым',
+      p.q('matPutBefore(' + JSON.stringify(mk) + ',' + JSON.stringify(before[0]) + ')') === true &&
+      mkeys()[0] === before[before.length - 1], mkeys().join(','))
     t.ok('порядок записан в опытный лист', !!p.q('spec2Sheet().matOrder'))
-    const g2M = p.dom.node({ a: 'est-mat-grab', k: mk }); p.run('bind();'); g2M.onclick()
-    const backM = p.dom.node({ a: 'est-mat-drop', k: mk, i: String(before.length) }); p.run('bind();'); backM.onclick()
-    t.ok('и возвращается на место', mkeys().join(',') === before.join(','), mkeys().join(','))
+    t.ok('и возвращается на место',
+      p.q('matPutBefore(' + JSON.stringify(mk) + ', "")') === true &&
+      mkeys().join(',') === before.join(','), mkeys().join(','))
   }
 
   // Материал можно и убрать: смета описывает типовой дом, а на этом гофру ведут

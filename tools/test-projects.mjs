@@ -942,31 +942,29 @@ function create(p, name) {
     t.ok('в строке есть что переставлять', false, 'материалов: ' + was.length)
   } else {
     const idle = p.run('tProjects()')
-    t.ok('у материала есть ↕', idle.indexOf('data-a="est-mat-grab"') >= 0)
-    t.ok('до взятия мест «сюда» нет', idle.indexOf('data-a="est-mat-drop"') < 0)
+    const mk = key + '|' + was[was.length - 1]
+    t.ok('у материала есть ручка переноса', idle.indexOf('data-a="est-mat-drag"') >= 0)
+    t.ok('мест «сюда» в списке нет', idle.indexOf('data-a="est-mat-drop"') < 0)
+    t.ok('и стрелок шага тоже нет', idle.indexOf('data-a="est-mat-step"') < 0)
+    t.ok('у материала есть адрес', idle.indexOf('data-mat-row="' + was[was.length - 1] + '"') >= 0)
+    t.ok('и работа в адресе', idle.indexOf('data-mat-grp="' + key + '"') >= 0)
+    t.ok('ручка не перехватывается прокруткой', /data-a="est-mat-drag"[^>]*touch-action:none/.test(idle))
 
-    const grab = p.dom.node({ a: 'est-mat-grab', k: key + '|' + was[was.length - 1] })
-    p.run('bind();'); grab.onclick()
-    const held = p.run('tProjects()')
-    t.ok('места «сюда» раскрылись', held.indexOf('data-a="est-mat-drop"') >= 0)
-    t.ok('и стрелки шага у взятого', (held.match(/data-a="est-mat-step"/g) || []).length === 2)
-
-    const slot = p.dom.node({ a: 'est-mat-drop', k: key + '|' + was[was.length - 1], i: '0' })
-    p.run('bind();'); slot.onclick()
-    t.ok('материал встал первым', mats()[0] === was[was.length - 1], mats().join(','))
+    // Жест браузерный — проверяем то, чем он заканчивается.
+    t.ok('материал встал первым',
+      p.q('matPutBefore(' + JSON.stringify(mk) + ',' + JSON.stringify(was[0]) + ')') === true &&
+      mats()[0] === was[was.length - 1], mats().join(','))
     t.ok('порядок записан в лист', !!p.q('projects[0].matOrder'))
-    t.ok('материал отпущен', p.q('matMoveKey') === '')
     t.ok('цена строки не изменилась',
       p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0].cost') === cost0)
     t.ok('справочник не тронут', p.q('estimates.length') === 3)
-
-    // Шаг вниз — и материал остаётся взятым: шагов обычно несколько подряд.
-    const g2 = p.dom.node({ a: 'est-mat-grab', k: key + '|' + was[was.length - 1] })
-    p.run('bind();'); g2.onclick()
-    const step = p.dom.node({ a: 'est-mat-step', k: key + '|' + was[was.length - 1], d: '1' })
-    p.run('bind();'); step.onclick()
-    t.ok('шаг вниз сработал', mats()[1] === was[was.length - 1], mats().join(','))
-    t.ok('и материал ещё взят', p.q('matMoveKey') === key + '|' + was[was.length - 1])
+    // Пустой адрес — «последним в этой работе»: так заканчивается бросок ниже всех.
+    t.ok('без адреса материал уходит вниз',
+      p.q('matPutBefore(' + JSON.stringify(mk) + ', "")') === true &&
+      mats().join(',') === was.join(','), mats().join(','))
+    t.ok('перенос на место ничего не меняет',
+      p.q('matPutBefore(' + JSON.stringify(mk) + ', "")') === false)
+    t.ok('чужой материал переносить нечего', p.q('matPutBefore(' + JSON.stringify(key + '|нет') + ', "")') === false)
 
     // На стройку уезжает тот же порядок, что показан.
     p.run('projBand="money";tProjects();')
