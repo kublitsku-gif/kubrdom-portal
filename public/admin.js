@@ -13406,41 +13406,6 @@ function spec2RulesHtml(built, sh, pr){
 // Тело сметы одно на два экрана: опытный раздел и карточка проекта. Второй экран
 // с теми же числами разошёлся бы с первым на первой же правке.
 // `live` — лист, из которого можно заводить объект и договор (у заготовки его нет).
-// Портал сам замечает, что рядом стоят «Утепление — ППУ 3 см», «— 5 см», «— 8 см».
-// Автоматически схлопывать нельзя: «Электрика — кабель» и «Электрика — щиток» —
-// разные работы с общим началом имени. Поэтому предлагаем, а решает человек.
-function optSuggest(w, sh){
-  const byPref={};
-  (w.positions||[]).forEach(function(p){
-    if(!p.estId)return;
-    if(optGroupOf(sh, p.estId))return;                  // уже в группе — предлагать нечего
-    const pref=optPrefixOf(p.name||"");
-    if(!pref||pref===p.name)return;                     // имя без « — » вариантом не считаем
-    if(!byPref[pref])byPref[pref]={pref:pref, byEst:{}, list:[], first:p};
-    const g=byPref[pref];
-    if(g.byEst[p.estId])return;
-    g.byEst[p.estId]=true;
-    g.list.push({estId:p.estId, label:optLabelOf(p.name||""), cost:Number(p.cost)||0});
-  });
-  const out={};
-  Object.keys(byPref).forEach(function(k){ if(byPref[k].list.length>1)out[k]=byPref[k]; });
-  return out;
-}
-function optSuggestHtml(g){
-  return '<div style="background:#fffaf3;border:1px solid #f0d9b8;border-radius:10px;padding:9px 11px;margin:8px 0 4px">'+
-    '<div style="font-size:11.5px;color:#0d1b2e;line-height:1.45">'+
-      'Похоже, это один выбор, а не '+g.list.length+' работы: <b>'+esc(g.pref)+'</b>'+
-    '</div>'+
-    '<div style="display:flex;flex-wrap:wrap;gap:4px;margin:6px 0">'+
-      g.list.map(function(v){
-        return '<span style="background:#fff;border:1px solid #e6d3b5;border-radius:7px;padding:2px 7px;font-size:10.5px;color:#8a6d3b">'+esc(v.label)+' · '+Math.round(v.cost).toLocaleString("ru-RU")+' ₽</span>';
-      }).join("")+
-    '</div>'+
-    '<button data-a="est-opt-auto" data-e="'+esc(g.first.estId)+'" data-g="'+esc(g.pref)+'" style="padding:7px 12px;background:#16a085;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:11.5px;font-weight:700">Собрать в выбор — оставить один</button>'+
-    '<div style="font-size:10px;color:#a08a6a;line-height:1.4;margin-top:6px">Сейчас в дом идут все '+g.list.length+'. После сборки останется один, а переключаться он будет чипами прямо тут.</div>'+
-  '</div>';
-}
-
 // Варианты одной группы — переключателем, а не тремя строками в смете. Три
 // «Утепления» подряд читаются как три работы, а это одно решение с тремя
 // ответами: удалять лишние пришлось бы в каждом новом доме заново.
@@ -14773,8 +14738,7 @@ function estBodyHtml(sh, types, live, actions){
   const fact=factHoursOf(sh);
   const factSum=Object.keys(fact).reduce(function(a,k){ return a+(Number(fact[k])||0); }, 0);
   const canRule=canRuleSheet(sh);
-  const seen={}, seenPref={};
-  const suggest=canRule?optSuggest(w, sh):{};
+  const seen={};
   // Переставлять есть смысл только там, где порядок кому-то записывается: у
   // заготовки листа нет, и взятая на ней строка повисла бы поднятой навсегда.
   const canMove=canRule&&!!live;
@@ -14880,12 +14844,8 @@ function estBodyHtml(sh, types, live, actions){
           // даёт их несколько, и три одинаковых редактора подряд — это не выбор.
           const first=seen[p.estId]!==true; if(p.estId)seen[p.estId]=true;
           const open=canRule&&first&&p.estId&&estWhyOpen===p.estId;
-          // Подсказку показываем над ПЕРВОЙ строкой семейства: она про них все.
-          const pref=optPrefixOf(p.name||"");
-          const tip=(suggest[pref]&&!seenPref[pref])?suggest[pref]:null;
-          if(pref)seenPref[pref]=true;
           const held=p.key===moving;
-          return (tip?optSuggestHtml(tip):'')+
+          return ''+
             // Строка читается сверху вниз: имя и итог — чипы — управление. Раньше
             // всё стояло в один ряд, и на узкой колонке имя сжималось до одного
             // слова в строку: поле, чип, итог, ↕, этап и ✕ не сжимаются. Строки
