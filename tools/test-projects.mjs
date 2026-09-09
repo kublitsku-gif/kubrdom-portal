@@ -1138,6 +1138,66 @@ function create(p, name) {
     new RegExp('материалы ' + st.mats.toLocaleString('ru-RU').replace(/[\u00a0\u202f]/g, ' ') + ' ₽ · работа 12 000 ₽').test(plain()))
 }
 
+// ── Фильтры и выбор нескольких работ ────────────────────────────────────────
+// К смете ходят не только с вопросом «где эта работа»: что дописано руками, где
+// не назначена оплата бригаде. И правка бывает одна на десять строк — десять
+// одинаковых заходов в строку это не работа, а обряд.
+{
+  t.section('Фильтры и пачка')
+  const p = panel(RULES)
+  create(p, 'Дом с пачкой')
+  p.run('projBand="parts";')
+  const all = () => p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).positions.map(function(x){return x.key;})')
+  const shown = () => (p.run('tProjects()').match(/data-pos-row=/g) || []).length
+  const total = all().length
+  t.ok('в доме есть работы', total >= 2, 'работ: ' + total)
+  t.ok('чипы-фильтры на экране', p.run('tProjects()').indexOf('data-a="est-filter" data-f="added"') >= 0)
+
+  // «Дописанные»: пока их нет — список пуст, а не «весь дом».
+  const chip = p.dom.node({ a: 'est-filter', f: 'added' }); p.run('bind();'); chip.onclick()
+  t.ok('фильтр включился', p.q('estFilter') === 'added')
+  t.ok('дописанных пока нет', shown() === 0, 'строк: ' + shown())
+  p.run('bind();'); chip.onclick()
+  t.ok('повторный тап снимает фильтр', p.q('estFilter') === '' && shown() === total)
+
+  // «Без оплаты»: цену бригаде ещё никому не назначили, поэтому там весь дом.
+  const chip2 = p.dom.node({ a: 'est-filter', f: 'labor0' }); p.run('bind();'); chip2.onclick()
+  t.ok('без оплаты — весь дом', shown() === total, 'строк: ' + shown())
+  p.run('bind();'); chip2.onclick()
+
+  // Выбор пачкой: отмечаем две работы и переносим их в этап одним решением.
+  const mode = p.dom.node({ a: 'est-pick-mode' }); p.run('bind();'); mode.onclick()
+  t.ok('режим выбора включён', p.q('estPickOn') === true)
+  const marks = p.run('tProjects()')
+  t.ok('у строк появились отметки', (marks.match(/data-a="est-pick"/g) || []).length === total)
+  t.ok('ручки переноса на время выбора нет', marks.indexOf('data-a="est-pos-drag"') < 0)
+  const keys = all()
+  const b1 = p.dom.node({ a: 'est-pick', k: keys[0] }); p.run('bind();'); b1.onclick()
+  const b2 = p.dom.node({ a: 'est-pick', k: keys[1] }); p.run('bind();'); b2.onclick()
+  t.ok('отмечено две', Object.keys(p.q('estPick')).length === 2)
+  t.ok('панель считает выбранные', /Выбрано 2/.test(p.run('tProjects()')))
+
+  const toStage = p.dom.node({ a: 'est-pick-stage-set', n: '1' }); p.run('bind();'); toStage.onclick()
+  t.ok('обе уехали в первый этап',
+    p.q('projects[0].posStage[' + JSON.stringify(keys[0]) + ']') === 1 &&
+    p.q('projects[0].posStage[' + JSON.stringify(keys[1]) + ']') === 1)
+  t.ok('и отметки сняты', Object.keys(p.q('estPick')).length === 0)
+  // Пачка отменяется одним шагом, а не десятью.
+  const undo = p.dom.node({ a: 'est-undo' }); p.run('bind();'); undo.onclick()
+  t.ok('отмена вернула обе', !p.q('projects[0].posStage'))
+
+  // Убрать пачкой.
+  p.run('bind();'); b1.onclick(); p.run('bind();'); b2.onclick()
+  const del = p.dom.node({ a: 'est-pick-del' }); p.run('bind();'); del.onclick()
+  t.ok('обе убраны из дома', shown() === total - 2, 'строк: ' + shown())
+  const undo2 = p.dom.node({ a: 'est-undo' }); p.run('bind();'); undo2.onclick()
+  t.ok('и вернулись одной отменой', shown() === total, 'строк: ' + shown())
+
+  const off = p.dom.node({ a: 'est-pick-off' }); p.run('bind();'); off.onclick()
+  t.ok('режим выбора выключается', p.q('estPickOn') === false)
+  t.ok('и ручка переноса вернулась', p.run('tProjects()').indexOf('data-a="est-pos-drag"') >= 0)
+}
+
 // ── Строка не рассыпается и читается сверху вниз ─────────────────────────────
 // Всё управление стояло в один ряд с именем, и на узкой колонке имя сжималось до
 // одного слова в строку: поле, чип, итог, ↕, этап и ✕ не сжимаются.

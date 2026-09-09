@@ -64,7 +64,7 @@ import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
-const APP_BUILD = "2026-09-09.5";
+const APP_BUILD = "2026-09-09.6";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -2326,6 +2326,9 @@ let matsOpen={};           // у каких строк сметы раскрыт
 let stageOpen={};          // какие этапы раскрыты целиком
 let roomPickKey="";        // у какой строки раскрыт ряд «перенести в помещение»
 let estRowOpen="";         // у какой строки сметы раскрыто управление
+let estPickOn=false;       // режим выбора нескольких работ
+let estPick={};            // какие работы отмечены: ключ → 1
+let estPickWhat="";        // что раскрыто в панели выбранных: "" | stage | room
 let dragEndAt=0;           // когда закончился перенос: тот же тап не должен её раскрыть
 let blockShut={};          // какие блоки помещений свёрнуты: "<этап>|<ключ комнаты>"
 // Справки над сметой свёрнуты по умолчанию: экран открывают ради сметы, а
@@ -14654,13 +14657,52 @@ function estUndoLast(){
 }
 // Кнопка отмены — на экране, а не только в исчезающем сообщении: сообщение
 // живёт шесть секунд, а «ой, не то» случается через минуту.
-function estUndoBarHtml(sh){
+function estToolsHtml(sh){
   const top=estUndoTop(sh);
-  if(!top)return '';
-  return '<div style="margin-bottom:9px">'+
-    '<button data-a="est-undo" title="Вернуть лист к состоянию до последней правки" '+
-    'style="border:1px solid #d0dae8;background:#fff;border-radius:9px;padding:6px 11px;'+
-    'font-size:11.5px;font-weight:700;color:#5a7a9a;cursor:pointer">⟲ Отменить '+esc(top.what)+'</button>'+
+  return '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:9px">'+
+    (top
+      ? '<button data-a="est-undo" title="Вернуть лист к состоянию до последней правки" '+
+        'style="border:1px solid #d0dae8;background:#fff;border-radius:9px;padding:6px 11px;'+
+        'font-size:11.5px;font-weight:700;color:#5a7a9a;cursor:pointer">⟲ Отменить '+esc(top.what)+'</button>'
+      : '')+
+    '<button data-a="est-pick-mode" title="Отметить несколько работ и решить по ним разом" '+
+      'style="border:1px solid '+(estPickOn?RULE_COL:"#d0dae8")+';background:'+(estPickOn?RULE_COL:"#fff")+';color:'+(estPickOn?"#fff":"#5a7a9a")+';border-radius:9px;padding:6px 11px;font-size:11.5px;font-weight:700;cursor:pointer">☑ Выбрать</button>'+
+  '</div>';
+}
+// Выбор нескольких работ. Одна и та же правка на десяти строках — это десять
+// одинаковых заходов в строку: убрать всё «под ключ» из чернового этапа, перенести
+// половину санузла в чистовые. Отмечают чекбоксом, а решают один раз.
+function estPickCount(){ return Object.keys(estPick||{}).length; }
+function estPickBoxHtml(key){
+  const on=!!estPick[key];
+  return '<button data-a="est-pick" data-k="'+esc(key)+'" title="Отметить работу" '+
+    'style="width:28px;height:28px;flex-shrink:0;background:'+(on?RULE_COL:"#fff")+';border:1.5px solid '+(on?RULE_COL:"#d0dae8")+';'+
+    'border-radius:7px;cursor:pointer;color:'+(on?"#fff":"#c0ccd8")+';font-size:13px;line-height:1;padding:0">'+(on?"✓":"")+'</button>';
+}
+// Панель — снизу и поверх списка: решение принимают, глядя на отмеченные строки,
+// а не на кнопку, уехавшую за край экрана.
+function estPickBarHtml(w){
+  const n=estPickCount();
+  const btn=function(a, txt, extra){
+    return '<button data-a="'+a+'"'+(extra||"")+' style="border:1px solid #d0dae8;background:#fff;border-radius:9px;padding:7px 11px;font-size:11.5px;font-weight:700;color:#5a7a9a;cursor:pointer;white-space:nowrap">'+esc(txt)+'</button>';
+  };
+  return '<div style="position:sticky;bottom:8px;z-index:5;background:#0d1b2e;border-radius:13px;padding:9px 11px;margin:9px 0;box-shadow:0 6px 20px rgba(13,27,46,.28)">'+
+    '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+
+      '<span style="font-size:12px;font-weight:800;color:#fff;white-space:nowrap">Выбрано '+n+'</span>'+
+      '<span style="flex:1"></span>'+
+      (n?btn("est-pick-stage-open","В этап ▾")+btn("est-pick-room-open","В помещение ▾")+
+         '<button data-a="est-pick-del" style="border:1px solid #e74c3c;background:#fff;border-radius:9px;padding:7px 11px;font-size:11.5px;font-weight:700;color:#e74c3c;cursor:pointer;white-space:nowrap">Убрать из дома</button>':'')+
+      btn("est-pick-off","Готово")+
+    '</div>'+
+    (estPickWhat==="stage"&&n
+      ? '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:8px">'+
+          EST_STAGES.map(function(st){ return '<button data-a="est-pick-stage-set" data-n="'+st.n+'" style="border:1px solid '+st.color+';background:'+st.color+';color:#fff;border-radius:8px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer">'+esc(st.short)+'</button>'; }).join("")+
+        '</div>' : '')+
+    (estPickWhat==="room"&&n
+      ? '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:8px">'+
+          ((w&&w.rooms)||[]).map(function(r){ return '<button data-a="est-pick-room-set" data-r="'+esc(r.id)+'" style="border:1px solid #fff5;background:#ffffff1a;color:#fff;border-radius:8px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer">'+esc(r.name||"Помещение")+'</button>'; }).join("")+
+          '<button data-a="est-pick-room-set" data-r="" style="border:1px solid #fff5;background:#ffffff1a;color:#fff;border-radius:8px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer">Общее по дому</button>'+
+        '</div>' : '')+
   '</div>';
 }
 // Сообщение о сделанном с кнопкой «Вернуть». Вместо вопроса ПЕРЕД действием:
@@ -14921,6 +14963,7 @@ function estRoomPickHtml(key, cur, w){
 //
 // Живёт на экране, в лист не пишется: поиск — это способ посмотреть, а не правка.
 let estFind="";
+let estFilter="";     // какой чип-фильтр включён: "" | added | labor0 | stale
 let estFindOpen={};   // key → раскрыть материалы: нашлось внутри, надо показать где
 function estFindTerms(){
   return String(estFind||"").trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -14939,6 +14982,29 @@ function estFindHit(p, terms){
     return false;
   });
   return ok?{ mat:byMat }:null;
+}
+// Чипы-фильтры рядом с поиском. Поиск отвечает на «где эта работа», а к смете
+// ходят и с другими вопросами: что дописано руками, где не назначена оплата
+// бригаде, у чего цены отстали от каталога. Раньше на них отвечали глазами по
+// сорока строкам.
+const EST_FILTERS=[
+  ["added","дописанные","Работы, вписанные в этот дом руками"],
+  ["labor0","без оплаты","Строки, где бригаде ещё ничего не назначено"],
+  ["stale","цены отстали","Строки с материалами, у которых в каталоге цена новее"],
+];
+function estFilterOk(p, f, byId){
+  if(f==="added")return !!p.added;
+  if(f==="labor0")return positionSplit(p).labor<=0;
+  if(f==="stale")return (p.mats||[]).some(function(m){ return priceStale(m, byId[m.pid]); });
+  return true;
+}
+function estFilterHtml(){
+  return '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:9px">'+
+    EST_FILTERS.map(function(f){
+      const on=estFilter===f[0];
+      return '<button data-a="est-filter" data-f="'+f[0]+'" title="'+esc(f[2])+'" style="border:1px solid '+(on?"#2980b9":"#dde6f0")+';background:'+(on?"#2980b9":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:8px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer">'+esc(f[1])+'</button>';
+    }).join("")+
+  '</div>';
 }
 // Этап с одними найденными строками: суммы пересчитываем по ним же — под шапкой
 // лежит именно этот список, и чужой итог над ним читался бы как его собственный.
@@ -14961,8 +15027,9 @@ function estFindStage(st, hits){
   }).filter(Boolean);
   return Object.assign({}, st, money(pos), { positions:pos, blocks:blocks, found:(st.positions||[]).length });
 }
-function estFindHtml(w, hits){
+function estFindHtml(w, hits, active){
   const terms=estFindTerms();
+  const on=active===undefined?terms.length>0:!!active;
   const n=Object.keys(hits||{}).length;
   const sum=(w.positions||[]).reduce(function(a,p){ return a+(hits[p.key]?Math.round(Number(p.cost)||0):0); }, 0);
   return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:9px">'+
@@ -14971,7 +15038,7 @@ function estFindHtml(w, hits){
         'style="width:100%;box-sizing:border-box;padding:9px 30px 9px 12px;border:1.5px solid '+(terms.length?"#2980b9":"#dde6f0")+';border-radius:10px;font-size:13px;outline:none;background:#fff;color:#0d1b2e">'+
       (terms.length?'<button data-a="est-find-clear" title="Показать всю смету" style="position:absolute;right:7px;top:50%;transform:translateY(-50%);width:22px;height:22px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:6px;cursor:pointer;font-size:11px;color:#7a9aaa;line-height:1;padding:0">✕</button>':'')+
     '</div>'+
-    (terms.length
+    (on
       ? '<span style="font-size:11px;font-weight:700;color:'+(n?"#2980b9":"#e67e22")+';white-space:nowrap">'+
           (n?('найдено '+n+' из '+(w.positions||[]).length+' · '+sum.toLocaleString("ru-RU")+' ₽'):'ничего не нашлось')+'</span>'
       : '')+
@@ -15006,20 +15073,28 @@ function estBodyHtml(sh, types, live, actions){
       w.positions.length+' позиций · считается на лету по модели, нигде не сохраняется'+
     '</div>'+
   '</div>';
-  if(canRule)h+=estUndoBarHtml(sh);
+  if(canRule)h+=estToolsHtml(sh);
   // Поиск — сразу под деньгами: это первое, за чем в смету заходят, когда в ней
   // уже сорок строк.
   const terms=estFindTerms();
-  const finding=!!terms.length;
+  // Фильтр — тот же поиск, только вопрос задан чипом: экран одинаково остаётся
+  // «списком ответа», и второй механизм отбора завёл бы второй способ его читать.
+  const finding=!!terms.length||!!estFilter;
   const hits={};
   estFindOpen={};
-  if(finding)(w.positions||[]).forEach(function(p){
-    const r=estFindHit(p, terms);
-    // Нашлось внутри строки — раскрываем её материалы: иначе непонятно, почему
-    // она в списке, и человек открывает каждую руками.
-    if(r){ hits[p.key]=r; if(r.mat)estFindOpen[p.key]=1; }
-  });
-  h+=estFindHtml(w, hits);
+  if(finding){
+    const byId={}; (expProducts||[]).forEach(function(x){ if(x&&x.id)byId[x.id]=x; });
+    (w.positions||[]).forEach(function(p){
+      const r=terms.length?estFindHit(p, terms):{ mat:false };
+      if(!r)return;
+      if(estFilter&&!estFilterOk(p, estFilter, byId))return;
+      // Нашлось внутри строки — раскрываем её материалы: иначе непонятно, почему
+      // она в списке, и человек открывает каждую руками.
+      hits[p.key]=r; if(r.mat)estFindOpen[p.key]=1;
+    });
+  }
+  h+=estFindHtml(w, hits, finding);
+  if(canRule)h+=estFilterHtml();
   // Пока идёт поиск, экран — это его результат: справки, «+ работа» и убранное
   // отвечают на другие вопросы и только отодвигают найденное вниз.
   if(!finding){
@@ -15113,7 +15188,7 @@ function estBodyHtml(sh, types, live, actions){
             // Тап по шапке раскрывает управление: семь постоянных кнопок в каждой
             // из сорока строк — это уже не смета, а панель приборов.
             '<div data-a="est-row-open" data-k="'+esc(p.key)+'" style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">'+
-              (canDrag?estDragBtn(p.key):'')+
+              (estPickOn?estPickBoxHtml(p.key):(canDrag?estDragBtn(p.key):''))+
               '<span title="'+esc(p.name)+'" style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#0d1b2e;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+esc(p.name)+
                 (p.added?' <span style="font-size:9.5px;font-weight:700;color:#16a085;background:#e8f6f3;border-radius:5px;padding:1px 5px">дописана</span>':'')+'</span>'+
               '<span style="font-size:13px;font-weight:800;color:#0d1b2e;white-space:nowrap">'+Math.round(p.cost).toLocaleString("ru-RU")+' ₽</span>'+
@@ -15206,6 +15281,7 @@ function estBodyHtml(sh, types, live, actions){
                 }), sh, w, canRule))+
       '</div>';
     }).join("");
+    if(estPickOn)h+=estPickBarHtml(w);
     // Итог по стройке целиком теми же двумя цифрами, что стоят в каждом этапе:
     // закупщику нужен один ответ «сколько всего брать», а не сложение четырёх
     // этапов в уме. Стоит под этапами, потому что читается как их последняя строка.
@@ -24624,6 +24700,10 @@ function bind(){
       const n=document.getElementById("est-find");
       if(n){ n.focus(); try{ n.setSelectionRange(pos,pos); }catch(e){} }
     };}
+    else if(a==="est-filter"){el.onclick=()=>{
+      const f=String(el.dataset.f||"");
+      estFilter=(estFilter===f)?"":f; rerenderTab();
+    };}
     else if(a==="est-find-clear"){el.onclick=()=>{ estFind=""; rerenderTab(); };}
     else if(a==="est-facts-open"){el.onclick=()=>{ factsOpen=!factsOpen; fl(); };}
     else if(a==="est-dropped-open"){el.onclick=()=>{ droppedOpen=!droppedOpen; fl(); };}
@@ -25050,12 +25130,76 @@ function bind(){
     // Тап по шапке строки раскрывает её управление. Раскрыта одна: два ряда
     // кнопок подряд — это уже не «что сделать с этой работой», а список кнопок.
     else if(a==="est-undo"){el.onclick=()=>{ if(!estUndoLast())fl(); };}
+    else if(a==="est-pick-mode"){el.onclick=()=>{
+      estPickOn=!estPickOn;
+      if(!estPickOn){ estPick={}; estPickWhat=""; }
+      estRowOpen=""; fl();
+    };}
+    else if(a==="est-pick"){el.onclick=()=>{
+      const key=el.dataset.k||""; if(!key)return;
+      const map=Object.assign({}, estPick);
+      if(map[key])delete map[key]; else map[key]=1;
+      estPick=map; fl();
+    };}
+    else if(a==="est-pick-off"){el.onclick=()=>{ estPickOn=false; estPick={}; estPickWhat=""; fl(); };}
+    else if(a==="est-pick-stage-open"){el.onclick=()=>{ estPickWhat=(estPickWhat==="stage")?"":"stage"; fl(); };}
+    else if(a==="est-pick-room-open"){el.onclick=()=>{ estPickWhat=(estPickWhat==="room")?"":"room"; fl(); };}
+    // Массовые правки — один снимок на всю пачку: отменять «убрал десять работ»
+    // по одной значит десять раз нажать «вернуть» и всё равно не собрать как было.
+    else if(a==="est-pick-del"){el.onclick=()=>{
+      const sh=schemeSheet()||spec2Sheet(); const keys=Object.keys(estPick||{});
+      if(!sh||!keys.length)return;
+      estSnap(sh, "удаление "+keys.length+" работ");
+      let off=Object.assign({}, sh.posOff||{});
+      keys.forEach(function(key){
+        if(key.indexOf("add:")===0){
+          const id=key.slice(4);
+          const rest=(sh.posAdd||[]).filter(function(x){ return String(x.id)!==id; });
+          if(rest.length)sh.posAdd=rest; else delete sh.posAdd;
+          estForgetKey(sh, key);
+          return;
+        }
+        off[key]=1;
+      });
+      if(Object.keys(off).length)sh.posOff=off;
+      estPick={}; estPickWhat=""; scheduleSave(); fl();
+      estFlash("Убрано работ: "+keys.length);
+    };}
+    else if(a==="est-pick-stage-set"){el.onclick=()=>{
+      const sh=schemeSheet()||spec2Sheet(); const keys=Object.keys(estPick||{});
+      const n=Number(el.dataset.n)||0;
+      if(!sh||!keys.length||!n)return;
+      estSnap(sh, "перенос "+keys.length+" работ");
+      const map=Object.assign({}, sh.posStage||{});
+      keys.forEach(function(k){ map[k]=n; });
+      sh.posStage=map; estPick={}; estPickWhat=""; scheduleSave(); fl();
+      estFlash("Перенесено работ: "+keys.length);
+    };}
+    else if(a==="est-pick-room-set"){el.onclick=()=>{
+      const sh=schemeSheet()||spec2Sheet(); const keys=Object.keys(estPick||{});
+      if(!sh||!keys.length)return;
+      estSnap(sh, "перенос "+keys.length+" работ");
+      const to=String(el.dataset.r||"");
+      const map=Object.assign({}, sh.posRoom||{});
+      keys.forEach(function(k){ map[k]=to||ROOM_HOUSE; });
+      sh.posRoom=map; estPick={}; estPickWhat=""; scheduleSave(); fl();
+      estFlash("Перенесено работ: "+keys.length);
+    };}
     else if(a==="est-row-open"){el.onclick=(ev)=>{
       // Перенос заканчивается кликом по той же шапке — иначе каждая перестановка
       // ещё и раскрывала бы строку.
       if(Date.now()-dragEndAt<400)return;
-      if(ev&&ev.target&&ev.target.closest&&ev.target.closest('[data-a="est-pos-drag"]'))return;
+      // Тап пришёл с кнопки внутри шапки (ручка переноса, отметка) — у неё свой
+      // смысл: раскрывать строку заодно значит делать два дела одним пальцем.
+      if(ev&&ev.target&&ev.target.closest&&ev.target.closest("button,input,select,a"))return;
       const key=el.dataset.k||"";
+      // В режиме выбора тап по строке — это отметка: раскрывать управление у
+      // строки, которую сейчас отмечают в пачку, незачем.
+      if(estPickOn){
+        const map=Object.assign({}, estPick);
+        if(map[key])delete map[key]; else map[key]=1;
+        estPick=map; fl(); return;
+      }
       estRowOpen=(estRowOpen===key)?"":key;
       roomPickKey=""; stagePickKey=""; hoursPickKey="";
       fl();
