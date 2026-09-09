@@ -15244,6 +15244,20 @@ function estBodyHtml(sh, types, live, actions){
       '<div style="flex:1;min-width:0">'+
         '<div style="font-size:10px;color:#8fa6bd;font-weight:700;letter-spacing:0.5px">СЕБЕСТОИМОСТЬ ПО ЧЕРТЕЖУ</div>'+
         '<div style="font-size:20px;font-weight:800;margin-top:2px">'+w.cost.toLocaleString("ru-RU")+' ₽</div>'+
+        // Себестоимость — это ДВА кармана и два разных решения: сколько закупать и
+        // сколько платить бригаде. Теми же двумя цифрами подписана каждая строка и
+        // каждый этап, и общая цифра обязана раскладываться так же — иначе итог
+        // отвечает на вопрос «сколько стоит» и не отвечает ни на один из тех двух,
+        // которые задают на самом деле. Стоит ПОД себестоимостью, а не по центру
+        // карточки: цену клиенту эти два числа не делят.
+        //
+        // Сумма их всегда равна себестоимости: у работы «под ключ» материалы уже
+        // сидят в её цифре, и `positionSplit` целиком относит её к работе — делить
+        // такую пополам значило бы соврать про закупку.
+        '<div style="font-size:10.5px;color:#8fa6bd;margin-top:3px;line-height:1.4">'+
+          'материалы <b style="color:#fff">'+Math.round(w.mats||0).toLocaleString("ru-RU")+' ₽</b>'+
+          ' · работа <b style="color:#fff">'+Math.round(w.labor||0).toLocaleString("ru-RU")+' ₽</b>'+
+        '</div>'+
       '</div>'+
       '<div style="text-align:right">'+
         '<div style="font-size:10px;color:#8fa6bd;font-weight:700;letter-spacing:0.5px">КЛИЕНТУ +'+numRu(w.markup)+'%</div>'+

@@ -9,6 +9,20 @@ import { boot, reporter } from './harness/panel-vm.js'
 
 const t = reporter()
 
+// Шапка сметы: себестоимость и её раскладка. Разбираем готовый HTML, потому что
+// сторожим именно ПОКАЗАННОЕ — что раскладка стоит под себестоимостью (а не под
+// ценой клиенту, которую она не делит) и что её числа сходятся с итогом.
+function costHead(html) {
+  const i = html.indexOf('СЕБЕСТОИМОСТЬ ПО ЧЕРТЕЖУ')
+  if (i < 0) return null
+  // Пробелы схлопываем: между числом и подписью стоят закрывающие теги, а внутри
+  // самого числа — неразрывный пробел разрядов. И то, и другое здесь просто пробел.
+  const txt = html.slice(i, html.indexOf('позиций', i)).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ')
+  const m = /ЧЕРТЕЖУ\s+([\d ]+) ₽\s+материалы ([\d ]+) ₽ · работа ([\d ]+) ₽/.exec(txt)
+  const num = (v) => Number(String(v).replace(/\D/g, ''))
+  return m ? { cost: num(m[1]), mats: num(m[2]), labor: num(m[3]) } : null
+}
+
 const PRODUCTS = [
   { id: 'p_osb', name: 'ОСП 9 мм', unitCost: 1000, store: 'Лемана ПРО', mode: 'm2' },
   { id: 'p_sock', name: 'Розетка', unitCost: 300, store: 'Белка', mode: 'piece' },
@@ -93,6 +107,21 @@ function create(p, name) {
   const parts = p.run('projBand="parts";tProjects()')
   t.ok('состав посчитан', /СЕБЕСТОИМОСТЬ/.test(parts) && /ОСП/.test(parts))
   t.ok('откуда число — сказано', /стены [\d,]+ м²/.test(parts))
+  // Итог сверху раскладывается теми же двумя карманами, что и каждая строка:
+  // «сколько закупать» и «сколько платить бригаде» — разные решения и разные
+  // деньги, а одна общая цифра отвечает только на «сколько стоит».
+  const head = costHead(parts)
+  t.ok('в шапке себестоимость разложена на материалы и работу', !!head, String(head))
+  // Сумма обязана сходиться с итогом: «под ключ» целиком считается работой, и
+  // две цифры, не дающие себестоимость, читались бы как ошибка расчёта.
+  t.ok('и вместе они дают себестоимость',
+    !!head && head.mats + head.labor === head.cost,
+    head ? head.mats + ' + ' + head.labor + ' ≠ ' + head.cost : '')
+  // Числа — из общего расчёта, а не посчитаны панелью заново: разойдись они, на
+  // экране была бы одна смета, а в объекте другая.
+  const wq = p.q('(function(){var w=works2(projects[0],specCtx(projects[0]));return {c:w.cost,m:w.mats,l:w.labor};})()')
+  t.ok('и это те же числа, что в расчёте',
+    !!head && head.mats === wq.m && head.labor === wq.l && head.cost === wq.c, JSON.stringify(wq))
   // Кнопки действий живут на «Деньгах»: две одинаковые в соседних полосах
   // читаются как два разных действия.
   t.ok('объект отсюда не заводится', parts.indexOf('data-a="spec-to-object"') < 0)
@@ -1125,6 +1154,19 @@ function create(p, name) {
   // Подытоги этапа — те же две цифры, считает их общий модуль.
   const st = p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).stages.filter(function(s){return s.n===2;})[0]')
   t.ok('этап знает свои материалы и работу', st.mats > 0 && st.labor === 12000, st.mats + ' / ' + st.labor)
+
+  // Та же пара цифр стоит в шапке всей сметы: закупщику «сколько всего брать»,
+  // бригадиру «сколько всего платить». Строка, подытог этапа и шапка считаются
+  // одним модулем — разойдись они, на одном экране было бы три разных ответа.
+  const top = costHead(p.run('tProjects()'))
+  const wtop = p.q('(function(){var w=works2(projects[0],specCtx(projects[0]));return {c:w.cost,m:w.mats,l:w.labor};})()')
+  t.ok('шапка сметы знает работу целиком',
+    !!top && wtop.l >= 12000 && top.labor === wtop.l && top.mats === wtop.m,
+    JSON.stringify([top, wtop]))
+  // И с назначенной ценой бригаде две цифры по-прежнему дают себестоимость.
+  t.ok('раскладка сходится с итогом и с ценой бригаде',
+    !!top && top.mats + top.labor === top.cost && top.cost === wtop.c,
+    top ? top.mats + ' + ' + top.labor + ' ≠ ' + top.cost : '')
   t.ok('и сумма сходится с итогом этапа', st.mats + st.labor === Math.round(st.cost), st.cost)
   // Итог строки — крупной цифрой рядом с полем, чип режима стоит всегда.
   t.ok('итог строки виден в шапке',
