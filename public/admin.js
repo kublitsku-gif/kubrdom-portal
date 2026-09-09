@@ -64,7 +64,7 @@ import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
-const APP_BUILD = "2026-09-09.4";
+const APP_BUILD = "2026-09-09.5";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -905,7 +905,7 @@ async function apiSave(opts){
   if (!getToken())  { clearSaveError(); return { success: true, skipped: true }; }
   const items = serializeState();
   const snap  = JSON.stringify(items);
-  if (snap === _lastSavedJson) return { success: true, skipped: true };  // нечего сохранять
+  if (snap === _lastSavedJson) { saveMarkSet("ok"); return { success: true, skipped: true }; }  // нечего сохранять
   // СТРАЖ v2. Правило: «не пиши туда, чего не видел».
   // (1) Пока не было успешного GET с НАСТОЯЩЕГО сервера — в облако не пишем вообще:
   //     вкладка, поднятая из localStorage-кэша, не знает актуального состояния и
@@ -958,6 +958,7 @@ async function apiSave(opts){
   if (!sendItems.length) { _lastSavedJson = snap; return { success: true, skipped: true }; }
   const sentKeys = sendItems.map(function(it){ return it.work_id; });
   _saving = true;
+  saveMarkSet("saving");
   writeCache(items);                       // optimistic: локально всегда свежо
   _setPendingSave();                       // …но сервером ещё не подтверждено — маркер до успеха
   try {
@@ -996,6 +997,7 @@ async function apiSave(opts){
     // Эталон стража двигаем только по подтверждённым разделам (при форсе — по всем).
     updateServerCounts(items, forced ? null : sentKeys);
     clearSaveError();                                  // успех — убираем баннер ошибки, если был
+    saveMarkSet("ok");
     return j;
   } catch (err) {
     showSaveError(String((err && err.message) || err), JSON.stringify(sendItems).length);  // НЕ глотаем: показываем пользователю
@@ -1047,6 +1049,7 @@ function clearSaveError(){
 let _hydrated = false;
 function scheduleSave(){
   if (!_hydrated) return;                   // не сохраняем до завершения загрузки
+  saveMarkSet("wait");
   clearTimeout(scheduleSave._t);
   scheduleSave._t = setTimeout(apiSave, 800);
 }
@@ -2478,13 +2481,26 @@ let openTemplate=null,openObject=null;
 function fl(){
   render();
   scheduleSave();
-  // Show toast without re-render
+}
+// Отметка сохранения — честная. Раньше «✓ Сохранено» загоралось на КАЖДУЮ правку,
+// ещё до ответа сервера: зелёная галочка при мёртвой связи — худшее, что может
+// сказать портал про данные, которые никуда не ушли.
+// Ошибку показывает свой баннер (showSaveError) — здесь только ожидание и успех.
+let saveMark="idle";
+function saveMarkSet(m){ saveMark=m; paintSaveMark(); }
+function paintSaveMark(){
   const t=document.getElementById("save-toast");
-  if(t){
-    t.style.opacity="1";t.style.transform="translateY(0)";
-    clearTimeout(fl._t);
-    fl._t=setTimeout(function(){t.style.opacity="0";t.style.transform="translateY(8px)";},1600);
-  }
+  if(!t)return;
+  const face=(saveMark==="saving")?"⟳ Сохраняю…":(saveMark==="wait"?"• Есть несохранённое":"✓ Сохранено");
+  const col=(saveMark==="ok")?"#27ae60":"#5a7a9a";
+  t.textContent=face;
+  t.style.background=col;
+  t.style.boxShadow="0 4px 16px "+((saveMark==="ok")?"rgba(39,174,96,0.35)":"rgba(90,122,154,0.3)");
+  if(saveMark==="idle"){ t.style.opacity="0"; t.style.transform="translateY(8px)"; return; }
+  t.style.opacity="1"; t.style.transform="translateY(0)";
+  clearTimeout(paintSaveMark._t);
+  // Успех гаснет сам, ожидание висит: «не сохранено» — это состояние, а не событие.
+  if(saveMark==="ok")paintSaveMark._t=setTimeout(function(){ saveMark="idle"; paintSaveMark(); },1600);
 }
 function deepCopy(x){return JSON.parse(JSON.stringify(x));}
 // Глубокая копия этапов со СВЕЖИМИ id (этап/работа/материал). Обязательна при
@@ -13675,6 +13691,7 @@ function matPutBefore(k, beforeMid){
   if(cut<0)return false;
   const posKey=k.slice(0,cut), mid=k.slice(cut+1);
   const sh=schemeSheet()||spec2Sheet(); if(!sh||!posKey||!mid)return false;
+  estSnap(sh, "перестановку материала");
   const pos=allPositions(sh, specCtx(sh)).filter(function(x){ return x.key===posKey; })[0];
   if(!pos)return false;
   const was=(pos.mats||[]).map(function(m){ return matKeyOf(m); });
@@ -14599,6 +14616,79 @@ function estDragBtn(key){
 function estRowsHtml(rows){
   return rows.join("");
 }
+// ── ОТМЕНА ПОСЛЕДНЕГО ДЕЙСТВИЯ ─────────────────────────────────────────────
+// Правки сметы уходят в облако молча и сразу: подтверждать каждую — значит
+// спрашивать сорок раз подряд, а не подтверждать ничего — значит терять работу
+// от промаха пальцем. Поэтому отмена: снимок правок листа ДО действия, и один
+// шаг назад по кнопке.
+//
+// Снимаем весь набор карт правок, а не «то, что меняли»: одно действие расходится
+// сразу по нескольким (убрали дописанную работу — это posAdd плюс её этап,
+// комната, цена и материалы), и откатывать их по одной значит собирать
+// полусостояние.
+const EST_EDIT_FIELDS=["posOrder","posOff","posAdd","posRoom","posStage","posCost","posCostMode",
+  "posHours","optPick","matOrder","matOff","matAdd","matQty","mats"];
+const EST_UNDO_MAX=20;
+let estUndo=[];
+function estSnap(sh, what){
+  if(!sh)return;
+  const data={};
+  EST_EDIT_FIELDS.forEach(function(f){ if(sh[f]!==undefined)data[f]=deepCopy(sh[f]); });
+  estUndo=estUndo.concat([{ id:String(sh.id||""), what:String(what||"правку"), data:data }]).slice(-EST_UNDO_MAX);
+}
+// Шаг назад — только по своему листу: стек общий на экран, а лист у каждого дома
+// свой, и «отменить» в соседнем проекте вернуло бы чужую правку.
+function estUndoTop(sh){
+  const last=estUndo[estUndo.length-1];
+  return (last&&sh&&String(sh.id||"")===last.id)?last:null;
+}
+function estUndoLast(){
+  const sh=schemeSheet()||spec2Sheet();
+  const last=estUndoTop(sh);
+  if(!last)return false;
+  EST_EDIT_FIELDS.forEach(function(f){
+    if(last.data[f]!==undefined)sh[f]=deepCopy(last.data[f]); else delete sh[f];
+  });
+  estUndo=estUndo.slice(0,-1);
+  scheduleSave(); fl(); return true;
+}
+// Кнопка отмены — на экране, а не только в исчезающем сообщении: сообщение
+// живёт шесть секунд, а «ой, не то» случается через минуту.
+function estUndoBarHtml(sh){
+  const top=estUndoTop(sh);
+  if(!top)return '';
+  return '<div style="margin-bottom:9px">'+
+    '<button data-a="est-undo" title="Вернуть лист к состоянию до последней правки" '+
+    'style="border:1px solid #d0dae8;background:#fff;border-radius:9px;padding:6px 11px;'+
+    'font-size:11.5px;font-weight:700;color:#5a7a9a;cursor:pointer">⟲ Отменить '+esc(top.what)+'</button>'+
+  '</div>';
+}
+// Сообщение о сделанном с кнопкой «Вернуть». Вместо вопроса ПЕРЕД действием:
+// вопрос останавливает на каждой строке, а отмена нужна раз в сто правок — но
+// нужна по-настоящему.
+function estFlash(text){
+  let b=document.getElementById("est-flash");
+  if(!b){
+    b=document.createElement("div");
+    b.id="est-flash";
+    b.style.cssText="position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:9999;"+
+      "background:#0d1b2e;color:#fff;border-radius:12px;padding:9px 12px;font-size:12.5px;font-weight:600;"+
+      "box-shadow:0 6px 20px rgba(13,27,46,.35);display:flex;align-items:center;gap:10px";
+    document.body.appendChild(b);
+  }
+  b.innerHTML='<span>'+esc(text)+'</span>'+
+    '<button id="est-flash-undo" style="border:1px solid rgba(255,255,255,.45);background:transparent;color:#fff;'+
+    'border-radius:8px;padding:5px 10px;font-size:11.5px;font-weight:700;cursor:pointer">⟲ Вернуть</button>';
+  const u=document.getElementById("est-flash-undo");
+  if(u)u.onclick=function(){ estUndoLast(); estFlashHide(); };
+  b.style.display="flex";
+  clearTimeout(estFlash._t);
+  estFlash._t=setTimeout(estFlashHide, 6000);
+}
+function estFlashHide(){
+  const b=document.getElementById("est-flash");
+  if(b)b.style.display="none";
+}
 // Перенос строки списка пальцем — один жест на работы этапа и материалы работы:
 // взяли за ручку, повели, отпустили. Пока ведут, fl() не зовём: перерисовка
 // уносит узел с захваченным указателем, и жест обрывается на первом же движении.
@@ -14707,6 +14797,7 @@ function estPosDrag(el, ev, key){
 // переносить в него, оставляя работу в чужом этапе, значит показать её не там.
 function estPosDropZone(key, z){
   const sh=schemeSheet()||spec2Sheet(); if(!sh||!key||!z)return false;
+  estSnap(sh, "перенос работы");
   const stage=Number(z.dropStage);
   let did=false;
   if(isFinite(stage)&&stage>0){
@@ -14724,6 +14815,7 @@ function estPosDropZone(key, z){
 // всего этапа, а не одну строку: соседи разъезжаются от той же перестановки.
 function estPosPutBefore(key, beforeKey){
   const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return false;
+  estSnap(sh, "перестановку работы");
   const w=works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes }));
   const st=(w.stages||[]).find(function(s){ return s.positions.some(function(x){ return x.key===key; }); });
   if(!st)return false;
@@ -14914,6 +15006,7 @@ function estBodyHtml(sh, types, live, actions){
       w.positions.length+' позиций · считается на лету по модели, нигде не сохраняется'+
     '</div>'+
   '</div>';
+  if(canRule)h+=estUndoBarHtml(sh);
   // Поиск — сразу под деньгами: это первое, за чем в смету заходят, когда в ней
   // уже сорок строк.
   const terms=estFindTerms();
@@ -24424,6 +24517,7 @@ function bind(){
     else if(a==="est-mat-add-do"){el.onclick=()=>{
       const posKey=el.dataset.k||"";
       const sh=schemeSheet()||spec2Sheet(); if(!sh||!posKey)return;
+      estSnap(sh, "добавленный материал");
       const name=((document.getElementById("mad-n")||{}).value||"").trim();
       if(!name){ alert("Без названия материал не завести."); return; }
       const qv=parseFloat(String(((document.getElementById("mad-qty")||{}).value||"1")).replace(",","."));
@@ -24465,6 +24559,7 @@ function bind(){
       el.onchange=()=>{
       const key=el.dataset.k||"";
       const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
+      estSnap(sh, "план часов");
       const raw=String(el.value||"").replace(/\s/g,"").replace(",",".");
       const v=parseFloat(raw);
       const next=Object.assign({}, sh.posHours||{});
@@ -24477,6 +24572,7 @@ function bind(){
     else if(a==="est-pos-cost"){el.onchange=()=>{
       const key=el.dataset.k||"";
       const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
+      estSnap(sh, "цену работы");
       const v=parseFloat(String(el.value).replace(/\s/g,"").replace(",","."));
       if(!isFinite(v)||v<0){ fl(); return; }
       // У СВОЕЙ работы цена живёт в самой строке (`posAdd[].cost`), а не отметкой
@@ -24953,6 +25049,7 @@ function bind(){
     };}
     // Тап по шапке строки раскрывает её управление. Раскрыта одна: два ряда
     // кнопок подряд — это уже не «что сделать с этой работой», а список кнопок.
+    else if(a==="est-undo"){el.onclick=()=>{ if(!estUndoLast())fl(); };}
     else if(a==="est-row-open"){el.onclick=(ev)=>{
       // Перенос заканчивается кликом по той же шапке — иначе каждая перестановка
       // ещё и раскрывала бы строку.
@@ -24970,6 +25067,7 @@ function bind(){
     else if(a==="est-pos-stage"){el.onchange=()=>{
       const key=el.dataset.k||"";
       const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
+      estSnap(sh, "смену этапа");
       sh.posStage=Object.assign({}, sh.posStage||{}, { [key]:Number(el.value)||0 });
       scheduleSave(); fl();
     };}
@@ -24983,6 +25081,7 @@ function bind(){
     else if(a==="est-pos-add-open"){el.onclick=()=>{ posAddOpen=el.dataset.k||""; fl(); };}
     else if(a==="est-pos-add-do"){el.onclick=()=>{
       const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
+      estSnap(sh, "добавленную работу");
       // Адрес «<лист>@<этап>|<комната>»: кнопка «+» в шапке помещения знает, куда
       // кладут работу, и спрашивать этап второй раз незачем.
       const tag=String(el.dataset.k||"");
@@ -25018,6 +25117,7 @@ function bind(){
     else if(a==="est-pos-room"){el.onclick=()=>{
       const key=el.dataset.k||"", to=String(el.dataset.r||"");
       const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
+      estSnap(sh, "перенос в помещение");
       const map=Object.assign({}, sh.posRoom||{});
       if(to==="~")delete map[key]; else map[key]=to||ROOM_HOUSE;
       if(Object.keys(map).length)sh.posRoom=map; else delete sh.posRoom;
@@ -25039,29 +25139,30 @@ function bind(){
       const key=el.dataset.k||"";
       const sh=schemeSheet()||spec2Sheet();
       if(!sh||!key)return;
-      // Спрашиваем перед удалением: ✕ стоит в ряду с переносом и этапом, и
-      // промах пальцем по соседней кнопке снимал работу из дома молча.
+      // Не спрашиваем, а даём вернуть: вопрос перед каждым ✕ останавливает на
+      // каждой строке, а промах пальцем случается раз в сотню правок — и вот там
+      // нужна отмена, а не диалог.
       const nm=el.dataset.n?" «"+el.dataset.n+"»":"";
+      estSnap(sh, "удаление работы");
       // Дописанную работу удаляем насовсем: возвращать её незачем — она и так
       // появилась руками, а «убрано» про строки справочника.
       if(key.indexOf("add:")===0){
-        if(!confirm("Удалить дописанную работу"+nm+"? Она пропадёт совсем — вернуть можно будет только заново."))return;
         const id=key.slice(4);
         const rest=(sh.posAdd||[]).filter(function(x){ return String(x.id)!==id; });
         if(rest.length)sh.posAdd=rest; else delete sh.posAdd;
         estForgetKey(sh, key);
-        scheduleSave(); fl(); return;
+        scheduleSave(); fl(); estFlash("Работа"+nm+" удалена"); return;
       }
-      if(!confirm("Убрать работу"+nm+" из этого дома? Её видно в «Убрано из этого дома», оттуда же можно вернуть."))return;
       // Выключаем строку в ЭТОМ листе, не трогая правило и справочник: они общие
       // на все дома, а решение «здесь этой работы нет» — про один дом.
       sh.posOff=Object.assign({}, sh.posOff||{}, { [key]:1 });
-      scheduleSave(); fl();
+      scheduleSave(); fl(); estFlash("Работа"+nm+" убрана из дома");
     };}
     else if(a==="est-pos-back"){el.onclick=()=>{
       const key=el.dataset.k||"";
       const sh=schemeSheet()||spec2Sheet();
       if(!sh||!sh.posOff)return;
+      estSnap(sh, "возврат работы");
       if(!key){ delete sh.posOff; }                 // «вернуть все»
       else { const map=Object.assign({}, sh.posOff); delete map[key];
         if(Object.keys(map).length)sh.posOff=map; else delete sh.posOff; }
@@ -25137,6 +25238,7 @@ function bind(){
       const posKey=k.slice(0,cut), oldPid=k.slice(cut+1);
       const sh=schemeSheet()||spec2Sheet();
       if(!sh)return;
+      estSnap(sh, "замену материала");
       const name=((document.getElementById("msw-input")||{}).value||"").trim();
       if(!name)return;
       const prod=expProducts.find(function(x){ return String(x.name||"").trim().toLowerCase()===name.toLowerCase(); });
@@ -25217,10 +25319,12 @@ function bind(){
       const cut=k.lastIndexOf("|");
       const posKey=k.slice(0,cut), pid=k.slice(cut+1);
       const sh=schemeSheet()||spec2Sheet(); if(!sh||!posKey||!pid)return;
+      estSnap(sh, "убранный материал");
       const map=Object.assign({}, sh.matOff||{});
       const row=(map[posKey]||[]).filter(function(x){ return String(x)!==pid; });
       map[posKey]=row.concat([pid]);
       sh.matOff=map; matSwapOpen=""; scheduleSave(); fl();
+      estFlash("Материал убран из строки");
     };}
     else if(a==="est-mat-on"){el.onclick=()=>{
       const k=el.dataset.k||"";

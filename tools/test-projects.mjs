@@ -411,18 +411,27 @@ function create(p, name) {
   // спрашивать про ту ли строку человек попал пальцем.
   t.ok('крестик знает имя работы', /data-a="est-pos-del" data-k="[^"]*" data-n="[^"]+"/.test(before))
 
-  // Крестик стоит вплотную к переносу и этапу, поэтому спрашиваем. Передумал —
-  // работа остаётся в доме.
-  const no = panel(RULES)
-  no.run('confirm=function(){return false;};')
-  create(no, 'Дом с лишней работой')
-  no.run('projBand="parts";')
-  const nokey = no.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
-  const nodel = no.dom.node({ a: 'est-pos-del', k: nokey, n: 'Работа' })
-  no.run('bind();'); nodel.onclick()
-  t.ok('отказ оставляет работу в доме',
-    no.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(nokey) + ';}).length') === 1)
-  t.ok('и в листе ничего не записано', !no.q('projects[0].posOff'))
+  // Вопроса перед удалением нет: он останавливал бы на каждой строке. Вместо него
+  // отмена — работа возвращается ровно туда, где стояла.
+  const un = panel(RULES)
+  create(un, 'Дом с отменой')
+  un.run('projBand="parts";')
+  const unkey = un.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
+  const undel = un.dom.node({ a: 'est-pos-del', k: unkey, n: 'Работа' })
+  un.run('bind();'); undel.onclick()
+  t.ok('работа убрана без вопроса', !!un.q('projects[0].posOff'))
+  t.ok('и отмена предложена на экране', un.run('tProjects()').indexOf('data-a="est-undo"') >= 0)
+  const undo = un.dom.node({ a: 'est-undo' }); un.run('bind();'); undo.onclick()
+  t.ok('отмена вернула работу в дом',
+    un.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(unkey) + ';}).length') === 1)
+  t.ok('и лист снова чист', !un.q('projects[0].posOff'))
+  t.ok('отменять больше нечего', un.run('tProjects()').indexOf('data-a="est-undo"') < 0)
+  // Стек общий на экран, а лист у каждого дома свой: «отменить» в соседнем проекте
+  // вернуло бы чужую правку.
+  un.run('bind();'); undel.onclick()
+  create(un, 'Соседний дом')
+  un.run('projBand="parts";')
+  t.ok('в соседнем проекте отмены нет', un.run('tProjects()').indexOf('data-a="est-undo"') < 0)
 
   const del = p.dom.node({ a: 'est-pos-del', k: key })
   p.run('bind();'); del.onclick()
