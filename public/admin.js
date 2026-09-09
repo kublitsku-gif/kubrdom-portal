@@ -13281,15 +13281,28 @@ function spec2FactsHtml(f, live){
       '</div>';
   }
   if(f.openings.length){
+    // Площадь изделия — рядом с его размером: по ней заказывают стекло и полотна,
+    // а «1500×1200» отвечает на этот вопрос только в уме. У одинаковых изделий
+    // показываем и площадь всех: заказывают их видами, а не по одному.
+    const ga=f.goodsArea||{win:0,door:0,total:0};
     h+='<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin:10px 0 5px">ИЗДЕЛИЯ В ПРОЁМАХ</div>'+
       f.openings.map(function(o){
         return '<div style="display:flex;align-items:baseline;gap:8px;padding:4px 0;border-top:1px solid #f4f7fb;font-size:12px">'+
           '<span style="flex-shrink:0">'+(o.kind==="door"?"🚪":"🪟")+'</span>'+
           '<span style="flex:1;min-width:0;color:#0d1b2e;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(o.name)+'</span>'+
-          '<span style="color:#7a9aaa;white-space:nowrap;font-size:11px">'+o.w+'×'+o.h+'</span>'+
+          '<span title="'+esc(o.w+' × '+o.h+' мм = '+numRu(o.area)+' м² за изделие'+(o.count>1?', на '+o.count+' шт — '+numRu(o.areaAll)+' м²':""))+'" style="color:#7a9aaa;white-space:nowrap;font-size:11px">'+o.w+'×'+o.h+' · '+numRu(o.area)+' м²</span>'+
           '<span style="color:#0d1b2e;font-weight:700;white-space:nowrap">×'+o.count+'</span>'+
         '</div>';
-      }).join("");
+      }).join("")+
+      '<div style="font-size:10px;color:#9aabbf;line-height:1.45;margin-top:6px;border-top:1px solid #f4f7fb;padding-top:6px">'+
+        'Окна '+numRu(ga.win)+' м² · двери '+numRu(ga.door)+' м² · всего '+numRu(ga.total)+' м² изделий.'+
+        // Обычно это то же число, что вычтено из стен, и повторять его незачем.
+        // Разошлись — значит какое-то изделие стоит вне помещения, и молчать об
+        // этом нельзя: два счёта проёмов на одном экране требуют объяснения.
+        (Math.abs((f.total.openings||0)-ga.total)>0.01
+          ? ' Из стен вычтено '+numRu(f.total.openings)+' м²: там считаются только проёмы, попавшие в помещения.'
+          : '')+
+      '</div>';
   }
   if(f.points.length){
     h+='<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin:10px 0 5px">РАСКЛАДКА</div>'+

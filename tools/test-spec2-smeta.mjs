@@ -53,6 +53,18 @@ const SHEET = {
   t.ok('дом посчитал окна', wins && wins.count > 0)
   t.ok('и двери', doors && doors.count > 0)
   t.ok('площади пола есть', f.total.floor > 20)
+  // Площадь изделий: по ней заказывают стекло и полотна, «1500×1200» отвечает на
+  // этот вопрос только в уме.
+  const win = f.openings.find((o) => o.kind === 'win')
+  t.ok('у изделия есть своя площадь', win && win.area === Math.round(win.w * win.h / 10000) / 100,
+    'получили: ' + (win && win.area))
+  t.ok('и площадь всех таких', win && win.areaAll === Math.round(win.area * win.count * 100) / 100,
+    'получили: ' + (win && win.areaAll))
+  t.ok('окна и двери посчитаны врозь', f.goodsArea.win > 0 && f.goodsArea.door > 0,
+    'получили: ' + JSON.stringify(f.goodsArea))
+  t.ok('всего = окна + двери',
+    Math.abs(f.goodsArea.total - (f.goodsArea.win + f.goodsArea.door)) < 0.02,
+    'получили: ' + f.goodsArea.total)
 
   const pw = w.positions.find((p) => p.estId === 'e_win')
   t.ok('монтаж окна попал в смету', !!pw)
@@ -158,6 +170,8 @@ const SHEET = {
   const estOpen = p.run('tSpec2()')
   t.ok('факты рядом с ней', /ОТКУДА ЧИСЛА/.test(estOpen) && /РАСКЛАДКА/.test(estOpen))
   t.ok('изделия проёмов перечислены', /ИЗДЕЛИЯ В ПРО/.test(estOpen))
+  t.ok('и у каждого стоит его площадь', /\d+×\d+ · [\d,]+ м²/.test(estOpen))
+  t.ok('окна и двери подытожены врозь', /Окна [\d,]+ м² · двери [\d,]+ м²/.test(estOpen))
   // Площади по КОМНАТАМ: материал заказывают в комнату, а итог по дому на этот
   // вопрос не отвечает. Экран сметы один на два раздела, поэтому то же самое
   // сторожит и test-projects.

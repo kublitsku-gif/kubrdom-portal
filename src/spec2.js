@@ -89,7 +89,7 @@ export function modelFacts(sheet, winTypes) {
   const model = (sheet && sheet.model) || null;
   const types = winTypes || [];
   const empty = { height: 0, rooms: [], total: { floor: 0, ceil: 0, wallGross: 0, wallNet: 0, openings: 0 },
-    points: [], openings: [], partitions: 0, goodsCost: 0 };
+    points: [], openings: [], goodsArea: { win: 0, door: 0, total: 0 }, partitions: 0, goodsCost: 0 };
   if (!model) return empty;
   const A = modelAreas(model, types);
   const byType = {};
@@ -108,6 +108,18 @@ export function modelFacts(sheet, winTypes) {
     }
     seen[op.typeId].count++;
   });
+  // Площадь изделия и всех таких изделий: по ней заказывают стекло и полотна, а
+  // одно «1500×1200» отвечает на этот вопрос только в уме. Считаем по САМОМУ
+  // изделию, а не по вычету из стен: у стен свой счёт (`total.openings`) — он про
+  // то, чего в стене нет, и в него не попадает изделие, стоящее вне помещения.
+  const r2 = function (v) { return Math.round(v * 100) / 100; };
+  const goodsArea = { win: 0, door: 0, total: 0 };
+  openings.forEach(function (o) {
+    o.area = r2(o.w * o.h / 1000000);
+    o.areaAll = r2(o.area * o.count);
+    goodsArea[o.kind] = r2(goodsArea[o.kind] + o.areaAll);
+    goodsArea.total = r2(goodsArea.total + o.areaAll);
+  });
 
   const totals = pointTotals(probeSheet(sheet, types));
   const points = Object.keys(totals).map(function (k) {
@@ -117,7 +129,7 @@ export function modelFacts(sheet, winTypes) {
 
   const mt = modelTotals(model, types);
   return { height: A.height, rooms: A.rooms, total: A.total, points: points, openings: openings,
-    partitions: mt.partitions, goodsCost: mt.openingsCost };
+    goodsArea: goodsArea, partitions: mt.partitions, goodsCost: mt.openingsCost };
 }
 
 // Смета по этому дому: позиции с объяснением количества, разложенные по этапам.
