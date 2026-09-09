@@ -137,6 +137,77 @@ function create(p, name) {
   t.ok('и всё это прячется обратно', !/ПО ПОМЕЩЕНИЯМ/.test(p.run('tProjects()')))
 }
 
+// ── 2в. Высота стен и разбор площади ────────────────────────────────────────
+// Стены считаются периметром × высоту, поэтому высота правится ТАМ ЖЕ, где эти
+// числа показаны: уходить за ней в полноэкранный редактор значит уходить с
+// экрана, ради которого её и меняют. А на вопрос «откуда 19,64» отвечает разбор
+// по тапу и подсказка по наведению — число, которого не проверить, принимают на
+// веру или не верят вовсе.
+{
+  t.section('Высота стен правится в справке')
+  const p = panel(RULES)
+  create(p)
+  p.run('factsOpen=true;factsRoomOpen="";projBand="parts";tProjects();')
+  const shown = p.run('tProjects()')
+  t.ok('поле высоты стоит рядом с площадями', shown.indexOf('data-a="est-model-h"') >= 0)
+  t.ok('и подписано', /ВЫСОТА СТЕН/.test(shown))
+  // Значение с ТОЧКОЙ: с запятой браузер считает поле невалидным и показывает пустым.
+  t.ok('значение — с точкой', /data-a="est-model-h" value="[\d.]+"/.test(shown), 'получили: '
+    + (shown.match(/data-a="est-model-h" value="[^"]*"/) || [''])[0])
+
+  const wallsAt = () => p.q('modelAreas(projects[0].model, winTypes).total.wallGross')
+  const was = wallsAt()
+  const field = p.dom.node({ a: 'est-model-h' })
+  p.run('bind();')
+  field.value = '2.8'
+  field.onchange()
+  t.ok('высота уехала в модель', p.q('projects[0].model.h') === 2800, 'получили: ' + p.q('projects[0].model.h'))
+  t.ok('и стены пересчитались', wallsAt() > was, 'было ' + was + ', стало ' + wallsAt())
+  // Характеристики листа идут за моделью: по ним считается отделка и печать.
+  t.ok('характеристики синхронизированы', p.q('projects[0].specs.height') === 2.8,
+    'получили: ' + p.q('projects[0].specs.height'))
+
+  // Дом высотой в пять метров — опечатка, а не планировка.
+  p.run('bind();')
+  field.value = '5'
+  field.onchange()
+  t.ok('опечатку не принимаем', p.q('projects[0].model.h') === 2800, 'получили: ' + p.q('projects[0].model.h'))
+  // Стена ниже своего окна — сломанный чертёж: изделие уже стоит в проёме.
+  p.run('bind();')
+  field.value = '2'
+  field.onchange()
+  t.ok('стену ниже окна тоже', p.q('projects[0].model.h') === 2800, 'получили: ' + p.q('projects[0].model.h'))
+}
+
+// ── 2г. Откуда взялась площадь ──────────────────────────────────────────────
+{
+  t.section('Формула площади — по наведению и по тапу')
+  const p = panel(RULES)
+  create(p)
+  const shown = p.run('factsOpen=true;factsRoomOpen="";projBand="parts";tProjects()')
+  t.ok('подсказка про стены висит на самом числе', /title="Стены: периметр [^"]+"/.test(shown))
+  t.ok('и в ней есть высота', /title="Стены: периметр [^"]*высота [^"]+"/.test(shown))
+  t.ok('у пола своя', /title="Пол: [^"]+"/.test(shown))
+
+  // Подсказки по наведению видны в разметке всегда, поэтому «раскрыт ли разбор»
+  // проверяем по тексту БЕЗ атрибутов title — иначе тест не отличит одно от другого.
+  const body = (x) => x.replace(/title="[^"]*"/g, '')
+  t.ok('до тапа разбора нет', !/периметр [\d,]+ м × высота/.test(body(shown)))
+
+  const room = p.dom.node({ a: 'est-room-why', id: p.q('modelAreas(projects[0].model, winTypes).rooms[0].id') })
+  p.run('bind();')
+  room.onclick()
+  const open = body(p.run('tProjects()'))
+  t.ok('тап раскрывает разбор', /периметр [\d,]+ м × высота [\d,]+ м = [\d,]+ м²/.test(open))
+  t.ok('и в нём сказано про вычет проёмов', /минус проёмы|проёмов в этом помещении нет/.test(open))
+  t.ok('раскрытая комната помечена', /▾ /.test(open))
+  // Разбор живёт на экране: это способ проверить число, а не правка дома.
+  t.ok('в лист он не пишется', p.q('projects[0].factsRoomOpen') === null || p.q('projects[0].factsRoomOpen') === undefined)
+  p.run('bind();')
+  room.onclick()
+  t.ok('второй тап закрывает', !/периметр [\d,]+ м × высота/.test(body(p.run('tProjects()'))))
+}
+
 // ── 3. Правила работают и в проекте ─────────────────────────────────────────
 {
   t.section('Смета проекта считается правилами')

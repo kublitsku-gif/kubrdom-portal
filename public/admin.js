@@ -2329,6 +2329,9 @@ let matMoveSheet="";       // и в каком листе
 // Справки над сметой свёрнуты по умолчанию: экран открывают ради сметы, а
 // объёмы и убранное — это контекст, к которому обращаются, когда он нужен.
 let factsOpen=false;       // раскрыт ли блок «откуда числа»
+// У какой комнаты в справке раскрыта формула площади. Живёт на экране, в лист не
+// пишется: «как это посчитано» — способ проверить число, а не правка дома.
+let factsRoomOpen="";
 let droppedOpen=false;     // раскрыт ли список убранных работ
 let gapsOpen=false;        // раскрыт ли список «посчитано, но в смету не попало»
 let stagePickKey="";       // у какой строки раскрыт выбор этапа
@@ -13185,7 +13188,23 @@ function spec2Probe(built, sh, pr){
     specs:{height:2.5,rooms:[],openings:[]}, rooms:{}, global:{}, qty:{},
     markup:Number((settings&&settings.specMarkup))||30, status:"draft", model:built.model };
 }
-function spec2FactsHtml(f){
+// Формула площади — словами. Число, про которое непонятно, как оно получилось,
+// не проверяют, а принимают на веру или не верят вовсе; здесь на «19,64 м²»
+// отвечают периметром, высотой и вычтенными проёмами.
+function roomAreaWhy(r, h){
+  const per=numRu(r.perimeter)+' м × высота '+numRu(h)+' м = '+numRu(r.wallGross)+' м²';
+  return {
+    floor: r.rect
+      ? 'Пол: '+numRu(r.l)+' × '+numRu(r.w)+' = '+numRu(r.floor)+' м²'
+      : 'Пол: '+numRu(r.floor)+' м² — помещение не прямоугольное, «длина × ширина» тут не считается',
+    ceil: 'Потолок равен полу — это одна плоскость: '+numRu(r.ceil)+' м²',
+    wallNet: 'Стены: периметр '+per+((r.openings>0)
+      ? ', минус проёмы '+numRu(r.openings)+' м² = '+numRu(r.wallNet)+' м²'
+      : ' (проёмов в этом помещении нет)'),
+    wallGross: 'Стены с проёмами: периметр '+per+' — по ним идут обрешётка и утеплитель',
+  };
+}
+function spec2FactsHtml(f, live){
   const cell=function(label,val){
     return '<div style="text-align:center;background:#f6f8fa;border-radius:9px;padding:7px 5px">'+
       '<div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.5px">'+label+'</div>'+
@@ -13223,21 +13242,42 @@ function spec2FactsHtml(f){
     const col=function(t){
       return '<div style="font-size:8.5px;font-weight:700;color:#9aabbf;letter-spacing:0.3px;text-align:right;line-height:1.2">'+t+'</div>';
     };
-    const val=function(v,dim){
-      return '<div style="font-size:12px;font-weight:'+(dim?700:800)+';color:'+(dim?"#7a9aaa":"#0d1b2e")+';text-align:right;white-space:nowrap">'+numRu(v)+'</div>';
+    const val=function(v,why,dim){
+      return '<div title="'+esc(why)+'" style="font-size:12px;font-weight:'+(dim?700:800)+';color:'+(dim?"#7a9aaa":"#0d1b2e")+';text-align:right;white-space:nowrap">'+numRu(v)+'</div>';
     };
-    h+='<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin:10px 0 5px">ПО ПОМЕЩЕНИЯМ · ЧТО ЗАКАЗЫВАТЬ, М²</div>'+
+    // Высота стен правится ЗДЕСЬ, рядом с числами, которые от неё зависят: стены
+    // считаются периметром × высоту, и лезть за этой цифрой в полноэкранный
+    // редактор — уходить с экрана, ради которого её и меняют. Пишется по `change`,
+    // а не по `input`: перерисовка на каждой цифре выбивала бы поле из-под пальца.
+    // У заготовки листа нет — записывать высоту некуда, и поле там просто число.
+    h+='<div style="display:flex;align-items:center;gap:8px;margin:10px 0 5px">'+
+        '<span style="flex:1;min-width:0;font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px">ПО ПОМЕЩЕНИЯМ · ЧТО ЗАКАЗЫВАТЬ, М²</span>'+
+        '<span style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px">ВЫСОТА СТЕН</span>'+
+        (live
+          ? '<input data-a="est-model-h" value="'+String(f.height)+'" type="number" step="0.01" min="1.8" max="4" inputmode="decimal" title="Высота помещений, м — стены считаются по ней" style="width:66px;padding:4px 7px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;font-weight:700;color:#0d1b2e;outline:none;box-sizing:border-box;text-align:right">'
+          : '<span style="font-size:12px;font-weight:800;color:#0d1b2e">'+numRu(f.height)+'</span>')+
+        '<span style="font-size:11px;color:#9aabbf">м</span>'+
+      '</div>'+
       '<div style="'+grid+'"><div></div>'+col("ПОЛ")+col("ПОТОЛОК")+col(gross?"СТЕНЫ ЧИСТЫЕ":"СТЕНЫ")+(gross?col("СТЕНЫ ПОЛНЫЕ"):"")+'</div>'+
       f.rooms.map(function(r){
-        return '<div style="'+grid+';padding:5px 0;border-top:1px solid #f4f7fb">'+
-          '<div style="min-width:0;font-size:12px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.name||"Помещение")+'</div>'+
-          val(r.floor)+val(r.ceil)+val(r.wallNet)+(gross?val(r.wallGross,true):"")+
-        '</div>';
+        // Наведение отвечает по каждой цифре отдельно, тап — раскрывает разбор
+        // целиком: на телефоне наводить нечем, а вопрос «откуда 19,64» там тот же.
+        const why=roomAreaWhy(r, f.height);
+        const open=factsRoomOpen===String(r.id);
+        return '<div data-a="est-room-why" data-id="'+esc(String(r.id))+'" title="Как посчитано" style="'+grid+';padding:5px 0;border-top:1px solid #f4f7fb;cursor:pointer">'+
+          '<div style="min-width:0;font-size:12px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(open?"▾ ":"")+esc(r.name||"Помещение")+'</div>'+
+          val(r.floor,why.floor)+val(r.ceil,why.ceil)+val(r.wallNet,why.wallNet)+(gross?val(r.wallGross,why.wallGross,true):"")+
+        '</div>'+
+        (open
+          ? '<div style="font-size:10.5px;color:#5a7a9a;line-height:1.5;padding:2px 0 6px 10px;border-left:2px solid #dde6f0;margin-left:2px">'+
+              esc(why.floor)+'<br>'+esc(why.ceil)+'<br>'+esc(why.wallNet)+'</div>'
+          : '');
       }).join("")+
       '<div style="font-size:10px;color:#9aabbf;line-height:1.45;margin-top:6px">Потолок равен полу — это одна плоскость. '+
         (gross
           ? 'Чистые стены — за вычетом проёмов ('+numRu(f.total.openings)+' м² по дому): по ним обшивают и красят. Полные ('+numRu(f.total.wallGross)+' м²) — по ним идут обрешётка и утеплитель.'
           : 'Проёмов в доме нет, поэтому стены одни: '+numRu(f.total.wallNet)+' м².')+
+        ' Тап по строке — как посчитано.'+
       '</div>';
   }
   if(f.openings.length){
@@ -14762,7 +14802,7 @@ function estBodyHtml(sh, types, live, actions){
   // Пока идёт поиск, экран — это его результат: справки, «+ работа» и убранное
   // отвечают на другие вопросы и только отодвигают найденное вниз.
   if(!finding){
-    h+=spec2FactsHtml(w.facts);
+    h+=spec2FactsHtml(w.facts, live);
     h+=estPosAddHtml(sh, canRule);
     h+=estDroppedHtml(sh, canRule);
   }
@@ -24355,6 +24395,34 @@ function bind(){
     else if(a==="est-facts-open"){el.onclick=()=>{ factsOpen=!factsOpen; fl(); };}
     else if(a==="est-dropped-open"){el.onclick=()=>{ droppedOpen=!droppedOpen; fl(); };}
     else if(a==="est-gaps-open"){el.onclick=()=>{ gapsOpen=!gapsOpen; fl(); };}
+    // Разбор площади — по строке комнаты. Раскрыта одна: три развёрнутых разбора
+    // подряд это уже не ответ на вопрос «откуда 19,64», а вторая таблица.
+    else if(a==="est-room-why"){el.onclick=()=>{
+      const id=String(el.dataset.id||"");
+      factsRoomOpen=(factsRoomOpen===id)?"":id;
+      fl();
+    };}
+    // Высота стен — свойство МОДЕЛИ: по ней считаются и площади в справке, и
+    // чертёж, и развёртка. Поэтому пишем её в модель и синхронизируем
+    // характеристики, а не заводим второе число рядом со сметой.
+    else if(a==="est-model-h"){el.onchange=()=>{
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!sh.model)return;
+      const mm=Math.round((parseFloat(String(el.value).replace(",","."))||0)*1000);
+      // Дом высотой в метр или в пять — это опечатка, а не планировка, и молча
+      // пересчитать по ней всю смету хуже, чем не принять число.
+      if(mm<1800||mm>4000){ alert("Высота стен — от 1,8 до 4 м. Такое число похоже на опечатку."); render(); return; }
+      // Стена ниже своего окна — сломанный чертёж: изделие уже стоит в проёме, и
+      // молча укоротить стену значит спрятать это до площадки.
+      const byType={};
+      (winTypes||[]).forEach(function(t){ if(t&&t.id)byType[t.id]=t; });
+      const tall=(sh.model.openings||[]).map(function(op){
+        const t=byType[op.typeId]; if(!t)return null;
+        return ((Number(op.sill)||0)+(Number(t.h)||0)>mm)?(t.n||"Изделие"):null;
+      }).filter(Boolean)[0];
+      if(tall){ alert("«"+tall+"» выше такой стены — сначала перенесите или замените изделие."); render(); return; }
+      sh.model=Object.assign({}, sh.model, { h:mm });
+      modelSync(sh); fl();
+    };}
     // Цены материалов этапа — по каталогу. Правим ТОЛЬКО то, что лежит копией:
     // дописанные руками материалы. У остальных цена и так приезжает из карточки
     // товара при каждом расчёте, и «обновлять» там нечего.
