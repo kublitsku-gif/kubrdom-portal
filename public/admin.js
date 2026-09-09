@@ -13204,6 +13204,42 @@ function spec2FactsHtml(f){
   h+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px">'+
       cell("ПОЛ",f.total.floor)+cell("ПОТОЛОК",f.total.ceil)+cell("СТЕНЫ",f.total.wallNet)+
     '</div>';
+  // По ПОМЕЩЕНИЯМ — то, чем заказывают материал: плитку берут в санузел, ламинат
+  // в спальню, и общая цифра «стены 80 м²» на этот вопрос не отвечает. Комнатные
+  // числа уже посчитаны моделью (`modelAreas`), и держать их на другом экране
+  // значит заставить сверять два экрана ради одной закупки.
+  //
+  // Стены даём ДВУМЯ числами, как везде в портале: чистые (за вычетом проёмов) —
+  // по ним обшивают и красят, полные — по ним идут обрешётка и утеплитель, они
+  // проходят и за окном. Одно число врало бы одному из двух расчётов, а какому —
+  // зависит от материала.
+  if((f.rooms||[]).length){
+    // Ширины колонок фиксированы: шапка и строки — разные гриды, и «по
+    // содержимому» они разъехались бы на первом же длинном числе.
+    // Колонки «полных» стен нет, когда проёмов в доме нет вовсе: два одинаковых
+    // числа в соседних колонках — не второе мнение, а лишняя ширина.
+    const gross=(f.total.openings||0)>0;
+    const grid='display:grid;grid-template-columns:minmax(0,1fr) repeat('+(gross?4:3)+',48px);gap:6px;align-items:baseline';
+    const col=function(t){
+      return '<div style="font-size:8.5px;font-weight:700;color:#9aabbf;letter-spacing:0.3px;text-align:right;line-height:1.2">'+t+'</div>';
+    };
+    const val=function(v,dim){
+      return '<div style="font-size:12px;font-weight:'+(dim?700:800)+';color:'+(dim?"#7a9aaa":"#0d1b2e")+';text-align:right;white-space:nowrap">'+numRu(v)+'</div>';
+    };
+    h+='<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin:10px 0 5px">ПО ПОМЕЩЕНИЯМ · ЧТО ЗАКАЗЫВАТЬ, М²</div>'+
+      '<div style="'+grid+'"><div></div>'+col("ПОЛ")+col("ПОТОЛОК")+col(gross?"СТЕНЫ ЧИСТЫЕ":"СТЕНЫ")+(gross?col("СТЕНЫ ПОЛНЫЕ"):"")+'</div>'+
+      f.rooms.map(function(r){
+        return '<div style="'+grid+';padding:5px 0;border-top:1px solid #f4f7fb">'+
+          '<div style="min-width:0;font-size:12px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.name||"Помещение")+'</div>'+
+          val(r.floor)+val(r.ceil)+val(r.wallNet)+(gross?val(r.wallGross,true):"")+
+        '</div>';
+      }).join("")+
+      '<div style="font-size:10px;color:#9aabbf;line-height:1.45;margin-top:6px">Потолок равен полу — это одна плоскость. '+
+        (gross
+          ? 'Чистые стены — за вычетом проёмов ('+numRu(f.total.openings)+' м² по дому): по ним обшивают и красят. Полные ('+numRu(f.total.wallGross)+' м²) — по ним идут обрешётка и утеплитель.'
+          : 'Проёмов в доме нет, поэтому стены одни: '+numRu(f.total.wallNet)+' м².')+
+      '</div>';
+  }
   if(f.openings.length){
     h+='<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin:10px 0 5px">ИЗДЕЛИЯ В ПРОЁМАХ</div>'+
       f.openings.map(function(o){
