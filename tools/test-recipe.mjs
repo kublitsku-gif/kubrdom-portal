@@ -6,7 +6,7 @@
 // что материалы остаются сметиными, что недонастроенное правило молчит и что
 // список из справочника и список из правил складываются, а не подменяют друг друга.
 import { presetModel, MODEL_PRESETS } from '../src/model.js'
-import { sheetPositions, matNeedForArea } from '../src/spec.js'
+import { sheetPositions, matNeedForArea, matNeedOk } from '../src/spec.js'
 import { rulePositions, allPositions, allPositionsRaw, ruleText, ruleReady, ruleAreas, probeSheet, positionSplit,
   layerPositions, pieArea, pieCost, applyPicks, optLabelOf, optPrefixOf, applyRooms, roomKeyOf, posRoomOf, ROOM_HOUSE, applyMatEdits, matOrderOf, matKeyOf, matAddKey, matAddrs, matLegacyKey, matAddrPid, matAddrSwap, stampMatIx, migrateMatAddrs } from '../src/recipe.js'
 import { modelAreas, modelTotals, applyLayers } from '../src/model.js'
@@ -694,6 +694,17 @@ const R = (o) => Object.assign({ id: 'r1', kind: 'house', what: 'surface', k: 'w
   t.ok('штучный — подсказки нет', matNeedForArea({ mode: 'piece' }, 26.87) === 0)
   t.ok('лист без фасовки — делить не на что', matNeedForArea({ mode: 'sheet' }, 26.87) === 0)
   t.ok('строка без площади — считать не от чего', matNeedForArea(PLY, 0) === 0)
+
+  // Совпадает ли количество с объёмом. Расчётный лист считается дробно (8,96
+  // листа ГКЛ на 26,87 м²) — это те же 9 покупок, и подсказывать там нечего.
+  const GKL = { mode: 'sheet', packBase: 'м²', packPer: 3 }
+  t.ok('8,96 листа — это 9 покупок, совпадает', matNeedOk(GKL, 26.87, 8.96) === true)
+  t.ok('ровно 9 — тоже', matNeedOk(GKL, 26.87, 9) === true)
+  t.ok('5 листов на 26,87 м² — мало', matNeedOk(GKL, 26.87, 5) === false)
+  t.ok('15 листов — лишнее', matNeedOk(GKL, 26.87, 15) === false)
+  t.ok('м² — сверка по площади', matNeedOk({ mode: 'm2' }, 26.87, 26.87) === true
+    && matNeedOk({ mode: 'm2' }, 26.87, 20) === false)
+  t.ok('считать не от чего — и сверять нечего', matNeedOk({ mode: 'piece' }, 26.87, 1) === false)
 }
 
 t.done()

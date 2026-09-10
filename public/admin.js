@@ -42,7 +42,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // одинаково считаться в панели и в Telegram, иначе бригадир и снабженец увидят разное.
 import { needStatus, needState, objectSupply, migrateLegacy, needQty, isSelection, pendingSelections, clientPays, objClientPays, refundMats, refundTotals, isLabour, buyMats, looksLikeLabour } from "../src/supply.js";
 // Сроки этапов — тот же общий модуль, что читают напоминания (см. src/stages.js).
-import { sheetPositions, sheetTotals, sheetIssues, optionGroups, roomArea, optionCost, matNeedForArea,
+import { sheetPositions, sheetTotals, sheetIssues, optionGroups, roomArea, optionCost, matNeedForArea, matNeedOk,
   SPEC_POINTS, pointMeta, pointTotals, roomPoints } from "../src/spec.js";
 import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyContainer, modelRooms,
   modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom, wallFits,
@@ -13888,19 +13888,26 @@ function matOffName(pos, sh, addr){
 function posNeedArea(pos){
   return Math.round((Number(pos&&pos.area)||0)*(Number(pos&&pos.mult)||1)*100)/100;
 }
-// «Нужно 12 лист на 26,87 м²» у ДОПИСАННОГО руками материала: расчётный считается
-// от площади сам, а дописанный встаёт числом из формы. Портал подсказывает, решает
-// человек — тап ставит рекомендацию, свою правку никто не перебивает.
+// «Нужно 12 лист на 26,87 м²» — у КАЖДОГО материала, который меряется площадью,
+// в строке с площадью (пол санузла и кварцвинил, стены зала и фанера). Портал
+// подсказывает, решает человек: тап ставит рекомендацию, а совпавшее помечается
+// галочкой — видно, что число взято из объёма, а не с потолка.
+//
+// Тап у двух видов материала разный. Дописанный руками хранит число в самом
+// листе — ему рекомендация становится количеством. Расчётный и так считается от
+// площади, разойтись он может только ручной правкой — тап её снимает.
 function matNeedHtml(pos, m, qty, can){
-  if(!m||!m.added)return '';
+  if(!m||m.own)return '';
   const area=posNeedArea(pos);
   const need=matNeedForArea(m, area);
   if(!(need>0))return '';
   const what=numRu(need)+' '+esc(specMatUnit(m))+' на '+numRu(area)+' м²';
-  if(need===qty)return '<span title="Количество совпадает с объёмом строки" style="color:#16a085;font-weight:700">✓ '+what+'</span>';
-  if(!can)return '<span style="color:#e67e22;font-weight:700">нужно '+what+'</span>';
-  return '<button data-a="est-mat-need" data-k="'+esc(pos.key)+'" data-m="'+esc(m.id||"")+'" data-q="'+need+'" '+
-    'title="Поставить количество по объёму строки" '+
+  if(matNeedOk(m, area, qty))return '<span title="Количество совпадает с объёмом строки" style="color:#16a085;font-weight:700">✓ '+what+'</span>';
+  const act=!can?'':(m.added
+    ? 'data-a="est-mat-need" data-k="'+esc(pos.key)+'" data-m="'+esc(m.id||"")+'" data-q="'+need+'"'
+    : (m.qtySet?'data-a="est-mat-qty-reset" data-k="'+esc(matSwapKey(pos,m))+'"':''));
+  if(!act)return '<span style="color:#e67e22;font-weight:700">нужно '+what+'</span>';
+  return '<button '+act+' title="Поставить количество по объёму строки" '+
     'style="border:1px solid #e67e2255;background:#fdf2e9;color:#d35400;border-radius:5px;padding:1px 6px;font-size:9.5px;font-weight:700;cursor:pointer">нужно '+what+' ⟵</button>';
 }
 function matOffHtml(pos, off, sh){
