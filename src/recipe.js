@@ -712,7 +712,7 @@ export function allPositionsRaw(sheet, ctx) {
   // Порядок важен: сначала свои часы, потом норма (она их уважает и считает по ним
   // деньги), и только потом своя цена — она главнее любого расчёта.
   const priced = applyCost(applyNorm(applyHours(dropOff(applyPicks(applyMatEdits(numbered, sheet, c.products), sheet), sheet), sheet), sheet, c), sheet);
-  return applyRooms(applyOrder(applyStage(priced, sheet), sheet), sheet, rooms);
+  return applyRooms(applyOrder(applyStage(priced, sheet), sheet), sheet, rooms, c.stages);
 }
 
 // Работы, убранные руками из ЭТОГО дома. Смета справочника описывает типовой дом,
@@ -952,7 +952,16 @@ export function posRoomOf(sheet, key) {
 // Порядок блоков — по ПЕРВОМУ появлению: он и так осмысленный (в каком порядке
 // правила прошли по дому), и его же двигает ручная перестановка строк. Отдельный
 // список комнат пришлось бы вести руками, и он разошёлся бы с чертежом.
-export function applyRooms(raw, sheet, rooms) {
+// Кучками по комнатам раскладываем ТОЛЬКО этапы, которые так и показаны — блоками
+// по помещениям (чистовой, `finish`). Подготовку и черновые работы экран рисует
+// одним списком, и там кучки были невидимой силой: человек ставил «Монтаж
+// подвесов · Санузел» выше «Разводки электрики», а applyRooms после его порядка
+// снова собирал этап по комнатам — строка возвращалась ниже всех работ «на весь
+// дом». В этапе без блоков порядок — человека.
+// Без сведений об этапах (прямые вызовы, старые проверки) — комнатами везде, как
+// раньше: экран и сборка объекта этапы передают всегда (specCtx), и разойтись
+// порядком им не на чем.
+export function applyRooms(raw, sheet, rooms, stages) {
   const named = {};
   (rooms || []).forEach(function (r) { if (r && r.id) named[r.id] = String(r.name || ""); });
   // Ручная приписка меняет ТОЛЬКО комнату: количество и `why` остаются как
@@ -969,8 +978,12 @@ export function applyRooms(raw, sheet, rooms) {
     const n = Number(r.p.stage) || 0;
     (byStage[n] = byStage[n] || []).push(r);
   });
+  const known = Array.isArray(stages);
+  const finish = {};
+  (stages || []).forEach(function (s) { if (s && s.finish) finish[Number(s.n)] = true; });
   const queue = {};
   Object.keys(byStage).forEach(function (n) {
+    if (known && !finish[Number(n)]) { queue[n] = byStage[n].slice(); return; }
     const seen = {}, ord = [];
     byStage[n].forEach(function (r) {
       const k = roomKeyOf(r.p);

@@ -15667,6 +15667,11 @@ function estBodyHtml(sh, types, live, actions){
       // Найденное прятать внутрь свёрнутого этапа нельзя: поиск для того и нужен,
       // чтобы не открывать этапы руками.
       const shut=finding?false:!stageOpen[st.n];
+      // Этап без блоков помещений — один список, и группа переноса у его строк
+      // ОДНА: «Монтаж подвесов · Санузел» ставят выше «Разводки электрики», хотя
+      // комнаты у них разные. Блоки рисуются от двух комнат (estStageBody), и
+      // только там строка ходит внутри своего блока.
+      const estFlat=!(st.blocks&&st.blocks.length>=2);
       // Карточка — адрес «в этот этап» целиком (см. dropZoneOk): бросают на неё,
       // а не прицеливаются в строку шапки.
       return '<div data-drop-stage="'+st.n+'" style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
@@ -15739,7 +15744,7 @@ function estBodyHtml(sh, types, live, actions){
           // редакторы, и «следующий элемент» не равен «следующей работе».
           // Помещение — часть адреса: список режется на блоки по комнатам, и
           // строка, брошенная в чужой блок, вернулась бы обратно тем же рендером.
-          const addr=' data-a="est-row-hold" data-pos-row="'+esc(p.key)+'" data-pos-grp="'+esc(st.n+"|"+roomKeyOf(p))+'"';
+          const addr=' data-a="est-row-hold" data-pos-row="'+esc(p.key)+'" data-pos-grp="'+esc(st.n+"|"+(estFlat?"*":roomKeyOf(p)))+'"';
           const rowOpen=canRule&&estRowOpen===p.key;
           const canDrag=canMove&&(arr.length>1||(!finding&&stages.length>1)); // есть куда: к соседям или в другой этап
           return ''+
