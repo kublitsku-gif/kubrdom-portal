@@ -2320,6 +2320,7 @@ let schemeView="dim";      // чей чертёж: dim — рабочий с р�
 let nodeTab="n1";          // какой узел раскрыт под чертежом
 let spec2Tab="scheme";     // что смотрим в разделе: чертёж или смету по нему
 let estWhyOpen="";         // у какой сметы раскрыт редактор правила прямо в строке
+let ruleMore={};           // у каких строк раскрыты «Другие способы счёта» — только экран
 let matSwapOpen="";        // какой материал сметы сейчас меняют: "<ключ позиции>|<pid>"
 let matAddOpen="";         // у какой строки сметы открыта форма «+ материал»
 let matOfferAdd="";        // у какого товара открыта форма «＋ магазин»
@@ -14097,6 +14098,70 @@ function estRuleSet(estId, kind, field, value){
     else x[field]=value||"";
   });
 }
+// ── ОБЪЁМ ИЗ ЧЕРТЕЖА ─────────────────────────────────────────────────────────
+// Вопрос у строки человеческий — «сколько брать», и ответ уже посчитан чертежом:
+// у каждой комнаты пол, стены, стены без проёмов и потолок. Раньше до того же
+// числа шли тремя шагами через абстракции («по площади поверхности» → «стены» →
+// «в каких помещениях»), а по умолчанию окно показывало поле «часть имени» и
+// «множитель» — и ни одного квадратного метра этого дома. Жалоба была прямая:
+// «хочу просто вставить уже посчитанный объём — стены спальни, пол спальни».
+// Поэтому сверху таблица: комнаты и «весь дом» × четыре поверхности, и одно
+// нажатие на клетку делает из неё правило целиком.
+const VOL_COLS=[["floor","пол"],["wall","стены"],["wallnet","без проёмов"],["ceil","потолок"]];
+// Выражается ли правило клеткой таблицы. Нет — «Другие способы» раскрыты сами:
+// прятать от человека то, чем строка на самом деле меряется, нельзя.
+function estRuleOnGrid(cur, rooms){
+  if(!cur||cur.what!=="surface")return false;
+  if(!VOL_COLS.some(function(c){ return c[0]===String(cur.k||""); }))return false;
+  const q=String(cur.room||"").trim().toLowerCase();
+  if(cur.scope==="house")return !q;
+  return !!q&&(rooms||[]).some(function(rm){ return String(rm.name||"").trim().toLowerCase()===q; });
+}
+// Комната в правиле — ИМЕНЕМ, а не id: правило общее на все дома вида, и в каждом
+// «Спальня» — своя, со своим id и своей площадью. Безымянную комнату адресовать
+// нечем, в таблицу она не идёт.
+function estVolGridHtml(p, sh, cur){
+  const A=ruleAreas(sh, Object.assign({}, cur, { room:"" }), winTypes);
+  const rooms=(A.rooms||[]).filter(function(rm){ return !!String(rm.name||"").trim(); });
+  if(!rooms.length)return "";
+  const nameOf={}; VOL_COLS.forEach(function(c){ nameOf[c[0]]=c[1]; });
+  const isOn=function(k, room){
+    if(cur.what!=="surface"||String(cur.k||"")!==k)return false;
+    if(!room)return cur.scope==="house"&&!String(cur.room||"").trim();
+    return cur.scope!=="house"&&String(cur.room||"").trim().toLowerCase()===String(room).trim().toLowerCase();
+  };
+  const cell=function(k, room, v){
+    const on=isOn(k, room);
+    return '<button data-a="est-rule-vol" data-est="'+esc(p.estId)+'" data-k="'+k+'" data-room="'+esc(room)+'" aria-pressed="'+(on?"true":"false")+'" '+
+      'title="'+esc((room||"Весь дом")+" · "+nameOf[k]+" — "+numRu(v)+" м²")+'" '+
+      'style="border:1.5px solid '+(on?RULE_COL:"#dde6f0")+';background:'+(on?RULE_COL:"#fff")+';color:'+(on?"#fff":(v>0?"#0d1b2e":"#c3ceda"))+';border-radius:7px;padding:6px 3px;font-size:11.5px;font-weight:700;cursor:pointer;white-space:nowrap;min-width:0">'+
+      (v>0?numRu(v):'—')+'</button>';
+  };
+  const line=function(name, room, src, strong){
+    return '<div style="font-size:11px;font-weight:'+(strong?800:700)+';color:'+(strong?"#0d1b2e":"#5a7a9a")+';align-self:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(name)+'</div>'+
+      VOL_COLS.map(function(c){ return cell(c[0], room, Number(src[c[0]])||0); }).join("");
+  };
+  return ruleLab("ОБЪЁМ ИЗ ЧЕРТЕЖА, М² — НАЖМИТЕ, И СТРОКА ПОСЧИТАЕТСЯ ИМ")+
+    '<div style="display:grid;grid-template-columns:minmax(58px,1.1fr) repeat(4,minmax(0,1fr));gap:4px">'+
+      '<div></div>'+VOL_COLS.map(function(c){ return '<div style="font-size:9.5px;font-weight:700;color:#9aabbf;text-align:center">'+c[1]+'</div>'; }).join("")+
+      rooms.map(function(rm){ return line(rm.name, rm.name, rm, false); }).join("")+
+      line("Весь дом", "", A, true)+
+    '</div>';
+}
+// Клетка таблицы — правило ОДНИМ шагом: поверхность, комната и «по помещению» /
+// «на весь дом» ставятся разом. По одному полю (estRuleSet) выходило три захода
+// и промежуточные правила, которыми дом успевал посчитаться.
+function estRuleVol(estId, kind, k, room){
+  let r=ruleOfEst(estId, kind);
+  if(!r){
+    r={ id:gid(), kind:kind||"house", estId:estId, what:"surface", k:"wall", scope:"room", room:"", qty:1, stage:0, off:false };
+    buildRules=buildRules.concat([r]);
+  }
+  ruleSet(r.id, function(x){
+    x.what="surface"; x.k=String(k||"wall");
+    x.scope=room?"room":"house"; x.room=String(room||"");
+  });
+}
 function estWhyEditor(p, sh){
   const kind=sh.kind||"house";
   const r=ruleOfEst(p.estId, kind);
@@ -14110,25 +14175,38 @@ function estWhyEditor(p, sh){
       }).join("")+
     '</div>';
   };
-  let h='<div style="background:#faf7fd;border:1px solid #e2d4ee;border-radius:11px;padding:10px 11px;margin-top:7px">'+
-    '<div style="font-size:9.5px;font-weight:700;color:'+RULE_COL+';letter-spacing:0.5px;margin-bottom:6px">ЧЕМ МЕРЯЕТСЯ ЭТА СТРОКА</div>'+
-    chips("what", RULE_WHATS.map(function(x){return [x.k,x.n];}), cur.what||"house");
-  if(need==="surface")h+=ruleLab("ПОВЕРХНОСТЬ — ОБЪЁМ ЭТОГО ДОМА")+ruleAreaChips(sh, cur, "est-rule-set", ' data-est="'+p.estId+'"');
-  if(need==="point")h+=ruleLab("ТОЧКА РАСКЛАДКИ")+chips("k", SPEC_POINTS.map(function(pt){return [pt.k, pt.emoji+" "+pt.n];}), cur.k||"");
-  if(need)h+=ruleLab("СЧИТАТЬ")+chips("scope", RULE_SCOPES, cur.scope||"room");
   const rooms=(ruleAreas(sh, Object.assign({}, cur, { room:"" }), winTypes).rooms||[]);
-  if(need==="surface"&&rooms.length)h+=ruleLab("В КАКИХ ПОМЕЩЕНИЯХ")+ruleRoomChips(sh, cur, "est-rule-set", ' data-est="'+p.estId+'"');
-  h+='<div style="display:flex;gap:6px;margin-top:8px">'+
-      (rooms.length&&need==="surface"?''
-        : '<div style="flex:1;min-width:0">'+ruleLab("ТОЛЬКО В ПОМЕЩЕНИЯХ (ЧАСТЬ ИМЕНИ)")+
-          '<input data-a="est-rule-room" data-est="'+p.estId+'" value="'+esc(cur.room||"")+'" placeholder="все помещения" style="width:100%;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box">'+
-        '</div>')+
+  const grid=estVolGridHtml(p, sh, cur);
+  // Раскрыты сами, когда таблица ответа не даёт: чертёж без помещений или правило,
+  // которое клеткой не выражается. Тогда и кнопка сворачивания не нужна — свернуть
+  // значило бы спрятать то, чем строка на самом деле считается.
+  const forced=!grid||(!!r&&!estRuleOnGrid(cur, rooms.filter(function(rm){ return !!String(rm.name||"").trim(); })));
+  const more=forced||!!ruleMore[p.estId];
+  const kindName=estKindMeta(kind).n;
+  let h='<div style="background:#faf7fd;border:1px solid #e2d4ee;border-radius:11px;padding:10px 11px;margin-top:7px">'+
+    '<div style="font-size:9.5px;font-weight:700;color:'+RULE_COL+';letter-spacing:0.5px;margin-bottom:4px">ЧЕМ МЕРЯЕТСЯ ЭТА СТРОКА</div>'+
+    '<div style="font-size:11.5px;font-weight:700;color:#0d1b2e;line-height:1.35">Сейчас: '+esc(r?ruleText(r):"как в справочнике — на весь дом")+'</div>'+
+    grid+
+    (forced
+      ? ruleLab("ДРУГИЕ СПОСОБЫ СЧЁТА")
+      : '<button data-a="est-rule-more" data-est="'+esc(p.estId)+'" style="margin-top:9px;border:none;background:transparent;padding:2px 0;font-size:11px;font-weight:700;color:'+RULE_COL+';cursor:pointer">'+(more?'▾':'▸')+' Другие способы счёта</button>');
+  if(more){
+    h+='<div style="margin-top:5px">'+chips("what", RULE_WHATS.map(function(x){return [x.k,x.n];}), cur.what||"house")+'</div>';
+    if(need==="surface")h+=ruleLab("ПОВЕРХНОСТЬ — ОБЪЁМ ЭТОГО ДОМА")+ruleAreaChips(sh, cur, "est-rule-set", ' data-est="'+p.estId+'"');
+    if(need==="point")h+=ruleLab("ТОЧКА РАСКЛАДКИ")+chips("k", SPEC_POINTS.map(function(pt){return [pt.k, pt.emoji+" "+pt.n];}), cur.k||"");
+    if(need)h+=ruleLab("СЧИТАТЬ")+chips("scope", RULE_SCOPES, cur.scope||"room");
+    if(need==="surface"&&rooms.length)h+=ruleLab("В КАКИХ ПОМЕЩЕНИЯХ")+ruleRoomChips(sh, cur, "est-rule-set", ' data-est="'+p.estId+'"');
+    if(!(rooms.length&&need==="surface"))h+=ruleLab("ТОЛЬКО В ПОМЕЩЕНИЯХ (ЧАСТЬ ИМЕНИ)")+
+      '<input data-a="est-rule-room" data-est="'+p.estId+'" value="'+esc(cur.room||"")+'" placeholder="все помещения" style="width:100%;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box">';
+  }
+  h+='<div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">'+
       '<div style="width:92px;flex-shrink:0">'+ruleLab("МНОЖИТЕЛЬ")+
         '<input data-a="est-rule-qty" data-est="'+p.estId+'" type="number" step="0.1" min="0.1" value="'+String(Number(cur.qty)||1)+'" style="width:100%;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box">'+
       '</div>'+
+      '<div style="flex:1;min-width:0">'+ruleLab("ЭТАП")+
+        chips("stage", [["0","из сметы"]].concat(EST_STAGES.map(function(st){return [String(st.n), st.short];})), String(Number(cur.stage)||0))+
+      '</div>'+
     '</div>'+
-    ruleLab("ЭТАП")+
-    chips("stage", [["0","из сметы"]].concat(EST_STAGES.map(function(st){return [String(st.n), st.short];})), String(Number(cur.stage)||0))+
     (r?ruleGotHtml(sh, r):'')+
     optEditorHtml(p, sh)+
     '<div style="display:flex;gap:6px;margin-top:9px;flex-wrap:wrap">'+
@@ -14138,9 +14216,12 @@ function estWhyEditor(p, sh){
         ? '<button data-a="proj-rules" style="padding:7px 11px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:11px;font-weight:700">Все правила</button>'
         : '<button data-a="spec2-tab" data-v="rules" style="padding:7px 11px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:11px;font-weight:700">Все правила</button>')+
     '</div>'+
+    // Правило живёт в справочнике вида, а не в этом доме: сказать это надо здесь,
+    // до нажатия, — иначе «поставил стены спальни в Доме СВО» тихо меняет и Мордвес.
     '<div style="font-size:10px;color:#a08ab8;line-height:1.45;margin-top:7px">'+
-      (r?'Правило считает эту смету вместо обязательной строки. Убрать правило — вернуть счёт «как в справочнике».'
-        :'Пока правила нет: строка входит в дом как обязательная. Первый же выбор заведёт правило.')+
+      (r?('Правило общее для всех домов вида «'+esc(kindName)+'»: в каждом доме строка возьмёт объём из своего чертежа'+
+          (String(r.room||"").trim()?' — площадь его помещения «'+esc(r.room)+'»':'')+'. Убрать правило — вернуть счёт «как в справочнике».')
+        :('Пока правила нет: строка входит в дом как обязательная. Первое нажатие заведёт правило — общее для всех домов вида «'+esc(kindName)+'».'))+
     '</div>'+
   '</div>';
   return h;
@@ -26208,6 +26289,16 @@ function bind(){
     else if(a==="est-rule-set"){el.onclick=()=>{
       const sh=schemeSheet()||spec2Sheet();
       estRuleSet(el.dataset.est, (sh&&sh.kind)||"house", el.dataset.f, el.dataset.v);
+    };}
+    // Клетка «объёма из чертежа» — правило одним шагом (estRuleVol).
+    else if(a==="est-rule-vol"){el.onclick=()=>{
+      const sh=schemeSheet()||spec2Sheet();
+      estRuleVol(el.dataset.est, (sh&&sh.kind)||"house", el.dataset.k, el.dataset.room||"");
+    };}
+    else if(a==="est-rule-more"){el.onclick=()=>{
+      const id=String(el.dataset.est||""), m=Object.assign({}, ruleMore);
+      if(m[id])delete m[id]; else m[id]=1;
+      ruleMore=m; ui();
     };}
     else if(a==="est-rule-room"){el.onchange=()=>{
       const sh=schemeSheet()||spec2Sheet();

@@ -1262,6 +1262,51 @@ function create(p, name) {
     Math.abs(got[0].area - p.q('ruleAreas(projects[0], {room:' + JSON.stringify(rooms[0]) + '}, winTypes).wallceil')) < 0.05)
 }
 
+// ── Объём из чертежа — одним нажатием ───────────────────────────────────────
+// «Хочу просто вставить уже посчитанный объём: стены спальни, пол спальни, стены
+// зала». Числа посчитаны чертежом по каждой комнате — окно отдаёт их таблицей, и
+// одно нажатие делает из клетки правило. Абстракции («по площади поверхности»,
+// «часть имени») — под «Другими способами»: они нужны, но реже.
+{
+  t.section('Объём из чертежа одним нажатием')
+  const p = panel()
+  create(p, 'Дом с объёмами')
+  p.run('projBand="parts";')
+  const key = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.estId==="e_osb";})[0].key')
+  openRow(p, key)
+  p.run('estWhyOpen="e_osb";')
+  const html = p.run('tProjects()')
+  const rooms = p.q('ruleAreas(projects[0], {room:""}, winTypes).rooms.filter(function(r){return r.name;}).map(function(r){return r.name;})')
+  t.ok('в доме есть помещения', rooms.length >= 2, JSON.stringify(rooms))
+  t.ok('таблица объёмов на виду', /ОБЪЁМ ИЗ ЧЕРТЕЖА/.test(html))
+  t.ok('у каждой комнаты свои стены', rooms.every((n) => html.indexOf('data-k="wall" data-room="' + n + '"') >= 0))
+  t.ok('и строка «весь дом»', html.indexOf('data-k="floor" data-room=""') >= 0)
+  t.ok('абстрактные способы — под кнопкой',
+    html.indexOf('data-a="est-rule-more"') >= 0 && !/по точкам раскладки/.test(html))
+  t.ok('правило от открытия не завелось', p.q('buildRules.length') === 0)
+
+  const room = rooms[1]
+  const cell = p.dom.node({ a: 'est-rule-vol', est: 'e_osb', k: 'wall', room: room }); p.run('bind();'); cell.onclick()
+  const r = p.q('buildRules.filter(function(x){return x.estId==="e_osb";})[0]')
+  t.ok('одно нажатие — готовое правило',
+    !!r && r.what === 'surface' && r.k === 'wall' && r.scope === 'room' && r.room === room, JSON.stringify(r))
+  const got = p.q('rulePositions(projects[0], buildRules, estimates, expProducts, winTypes).filter(function(x){return x.estId==="e_osb";})')
+  const want = p.q('ruleAreas(projects[0], {room:' + JSON.stringify(room) + '}, winTypes).wall')
+  t.ok('строка посчиталась стенами этой комнаты', got.length === 1 && Math.abs(got[0].area - want) < 0.05,
+    JSON.stringify(got.map((x) => [x.room, x.area])) + ' против ' + want)
+  const after = p.run('tProjects()')
+  t.ok('выбранная клетка отмечена', after.indexOf('data-k="wall" data-room="' + room + '" aria-pressed="true"') >= 0)
+  t.ok('сказано, что правило общее для всех домов', /общее для всех домов/.test(after))
+
+  const whole = p.dom.node({ a: 'est-rule-vol', est: 'e_osb', k: 'floor', room: '' }); p.run('bind();'); whole.onclick()
+  const r2 = p.q('buildRules.filter(function(x){return x.estId==="e_osb";})[0]')
+  t.ok('«весь дом» — одной строкой на дом', r2.scope === 'house' && r2.room === '' && r2.k === 'floor', JSON.stringify(r2))
+  const got2 = p.q('rulePositions(projects[0], buildRules, estimates, expProducts, winTypes).filter(function(x){return x.estId==="e_osb";})')
+  t.ok('и площадь — пол всего дома', got2.length === 1 &&
+    Math.abs(got2[0].area - p.q('ruleAreas(projects[0], {room:""}, winTypes).floor')) < 0.05, JSON.stringify(got2.map((x) => x.area)))
+  t.ok('правило одно, а не второе рядом', p.q('buildRules.filter(function(x){return x.estId==="e_osb";}).length') === 1)
+}
+
 // ── Фильтры и выбор нескольких работ ────────────────────────────────────────
 // К смете ходят не только с вопросом «где эта работа»: что дописано руками, где
 // не назначена оплата бригаде. И правка бывает одна на десять строк — десять
