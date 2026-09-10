@@ -42,7 +42,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // одинаково считаться в панели и в Telegram, иначе бригадир и снабженец увидят разное.
 import { needStatus, needState, objectSupply, migrateLegacy, needQty, isSelection, pendingSelections, clientPays, objClientPays, refundMats, refundTotals, isLabour, buyMats, looksLikeLabour } from "../src/supply.js";
 // Сроки этапов — тот же общий модуль, что читают напоминания (см. src/stages.js).
-import { sheetPositions, sheetTotals, sheetIssues, optionGroups, roomArea, optionCost,
+import { sheetPositions, sheetTotals, sheetIssues, optionGroups, roomArea, optionCost, matNeedForArea,
   SPEC_POINTS, pointMeta, pointTotals, roomPoints } from "../src/spec.js";
 import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyContainer, modelRooms,
   modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom, wallFits,
@@ -13831,6 +13831,7 @@ function specMatsListHtml(pos, sh, live){
               // «30 лист» — это сколько квадратов? Ответ стоит тут же, рядом с
               // числом, а не в уме у того, кто читает смету.
               matAltQtyHtml(m, qty)+
+              matNeedHtml(pos, m, qty, can)+
               (m.qtySet
                 ? '<button data-a="est-mat-qty-reset" data-k="'+esc(matSwapKey(pos,m))+'" title="Вернуть расчётное количество" style="border:none;background:transparent;color:#8e44ad;font-size:10px;font-weight:700;cursor:pointer;padding:0 2px">вручную ⟲</button>'
                 : '')+
@@ -13881,6 +13882,26 @@ function matOffName(pos, sh, addr){
   if(!pid)pid=matAddrPid(addr);
   const prod=pid?(expProducts||[]).find(function(x){ return x.id===pid; }):null;
   return (prod&&prod.name)||"материал";
+}
+// Площадь строки с множителем правила («×2» удваивает и материалы) — от неё
+// считается подсказка «сколько нужно».
+function posNeedArea(pos){
+  return Math.round((Number(pos&&pos.area)||0)*(Number(pos&&pos.mult)||1)*100)/100;
+}
+// «Нужно 12 лист на 26,87 м²» у ДОПИСАННОГО руками материала: расчётный считается
+// от площади сам, а дописанный встаёт числом из формы. Портал подсказывает, решает
+// человек — тап ставит рекомендацию, свою правку никто не перебивает.
+function matNeedHtml(pos, m, qty, can){
+  if(!m||!m.added)return '';
+  const area=posNeedArea(pos);
+  const need=matNeedForArea(m, area);
+  if(!(need>0))return '';
+  const what=numRu(need)+' '+esc(specMatUnit(m))+' на '+numRu(area)+' м²';
+  if(need===qty)return '<span title="Количество совпадает с объёмом строки" style="color:#16a085;font-weight:700">✓ '+what+'</span>';
+  if(!can)return '<span style="color:#e67e22;font-weight:700">нужно '+what+'</span>';
+  return '<button data-a="est-mat-need" data-k="'+esc(pos.key)+'" data-m="'+esc(m.id||"")+'" data-q="'+need+'" '+
+    'title="Поставить количество по объёму строки" '+
+    'style="border:1px solid #e67e2255;background:#fdf2e9;color:#d35400;border-radius:5px;padding:1px 6px;font-size:9.5px;font-weight:700;cursor:pointer">нужно '+what+' ⟵</button>';
 }
 function matOffHtml(pos, off, sh){
   if(!off||!off.length)return '';
@@ -14027,7 +14048,10 @@ function matAddHtml(pos){
     '<input id="mad-n" list="msw-catalog" autocomplete="off" placeholder="Название — можно выбрать из базы" style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;margin-bottom:5px;outline:none;box-sizing:border-box">'+
     '<datalist id="msw-catalog">'+matPickOptions()+'</datalist>'+
     '<div style="display:flex;gap:5px;margin-bottom:6px">'+
-      '<input id="mad-qty" placeholder="Кол-во" value="1" inputmode="decimal" style="flex:1;min-width:0;padding:7px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none">'+
+      // Пустое количество у строки с площадью — «по объёму»: листы посчитаются от
+      // её квадратов при добавлении. Прежняя единица по умолчанию давала «1 лист»
+      // на целую стену.
+      '<input id="mad-qty" placeholder="'+(posNeedArea(pos)>0?'Кол-во: пусто — по '+numRu(posNeedArea(pos))+' м²':'Кол-во')+'" value="'+(posNeedArea(pos)>0?'':'1')+'" inputmode="decimal" style="flex:1;min-width:0;padding:7px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none">'+
       '<input id="mad-cost" placeholder="Цена ₽ (из базы)" inputmode="decimal" style="flex:2;min-width:0;padding:7px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none">'+
     '</div>'+
     // Ссылка и магазин — только для НОВОГО товара: имя из базы приносит их само.
@@ -14039,7 +14063,7 @@ function matAddHtml(pos){
       '<span>завести в базу, если такого товара ещё нет</span>'+
     '</label>'+
     '<div style="display:flex;gap:6px">'+
-      '<button data-a="est-mat-add-do" data-k="'+esc(pos.key)+'" style="flex:1;padding:8px;background:#16a085;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Добавить</button>'+
+      '<button data-a="est-mat-add-do" data-k="'+esc(pos.key)+'" data-area="'+posNeedArea(pos)+'" style="flex:1;padding:8px;background:#16a085;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Добавить</button>'+
       '<button data-a="est-mat-add-open" data-k="" style="padding:8px 12px;background:#fff;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;color:#7a9aaa;font-size:12px">Отмена</button>'+
     '</div>'+
 
@@ -25333,9 +25357,36 @@ function bind(){
         qty:isFinite(qv)&&qv>0?qv:1 };
       m.unitCost=m.cost;
       if(prod)["packBase","packPer","lenPer","sheetM2","packName"].forEach(function(k){ if(prod[k]!=null)m[k]=prod[k]; });
+      // Количество не вписано — берём по объёму строки (12 листов на 26,87 м²).
+      // Посчитать не от чего (штучный товар, нет площади) — остаётся одна штука.
+      if(!(isFinite(qv)&&qv>0)){
+        const need=matNeedForArea(m, parseFloat(el.dataset.area||"0"));
+        if(need>0)m.qty=need;
+      }
       const map=Object.assign({}, sh.matAdd||{});
       map[posKey]=(map[posKey]||[]).concat([m]);
       sh.matAdd=map; matAddOpen=""; fl();
+    };}
+    // Тап по подсказке «нужно 12 лист на 26,87 м²» — рекомендация становится
+    // количеством самого дописанного материала. Ручное число поверх снимаем:
+    // иначе оно перебило бы только что выбранное, и тап ничего бы не изменил.
+    else if(a==="est-mat-need"){el.onclick=()=>{
+      const posKey=el.dataset.k||"", mid=el.dataset.m||"", q=parseFloat(el.dataset.q||"0");
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!posKey||!mid||!(q>0))return;
+      estSnap(sh, "количество по объёму");
+      const rows=((sh.matAdd||{})[posKey]||[]).map(function(r){
+        return (r&&r.id===mid)?Object.assign({}, r, { qty:q }):r;
+      });
+      sh.matAdd=Object.assign({}, sh.matAdd, { [posKey]:rows });
+      const addr=matAddKey({ id:mid });
+      const own=(sh.matQty||{})[posKey];
+      if(own&&own[addr]!=null){
+        const row=Object.assign({}, own); delete row[addr];
+        const next=Object.assign({}, sh.matQty);
+        if(Object.keys(row).length)next[posKey]=row; else delete next[posKey];
+        sh.matQty=next;
+      }
+      fl();
     };}
     else if(a==="est-pos-hours-set"){el.onclick=()=>{
       const key=el.dataset.k||"", h=parseFloat(el.dataset.h||"0");

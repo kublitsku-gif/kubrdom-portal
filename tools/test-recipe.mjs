@@ -6,7 +6,7 @@
 // что материалы остаются сметиными, что недонастроенное правило молчит и что
 // список из справочника и список из правил складываются, а не подменяют друг друга.
 import { presetModel, MODEL_PRESETS } from '../src/model.js'
-import { sheetPositions } from '../src/spec.js'
+import { sheetPositions, matNeedForArea } from '../src/spec.js'
 import { rulePositions, allPositions, allPositionsRaw, ruleText, ruleReady, ruleAreas, probeSheet, positionSplit,
   layerPositions, pieArea, pieCost, applyPicks, optLabelOf, optPrefixOf, applyRooms, roomKeyOf, posRoomOf, ROOM_HOUSE, applyMatEdits, matOrderOf, matKeyOf, matAddKey, matAddrs, matLegacyKey, matAddrPid, matAddrSwap, stampMatIx, migrateMatAddrs } from '../src/recipe.js'
 import { modelAreas, modelTotals, applyLayers } from '../src/model.js'
@@ -675,6 +675,25 @@ const R = (o) => Object.assign({ id: 'r1', kind: 'house', what: 'surface', k: 'w
   // Новый адрес главнее: человек правил уже в новом формате.
   const both = applyMatEdits(pos, { matQty: { 'base:e_one': { p_osb: 4, 'l:L1': 6 } } }, PRODUCTS)[0]
   t.ok('новый адрес перебивает прежний', both.mats[0].qty === 6, String(both.mats[0].qty))
+}
+
+// ── Сколько нужно на объём строки ────────────────────────────────────────────
+// «Стены спальня · 26,87 м²» — фанеру дописали руками, и она встала «1 лист»:
+// число из формы так и осталось числом. Портал подсказывает, сколько ЦЕЛЫХ
+// покупок нужно на площадь строки (`matNeedForArea`), а решает человек.
+{
+  t.section('Сколько нужно на объём строки')
+  const PLY = { mode: 'sheet', packBase: 'м²', packPer: 2.325 }
+
+  t.ok('листов фанеры на 26,87 м² — 12', matNeedForArea(PLY, 26.87) === 12,
+    String(matNeedForArea(PLY, 26.87)))
+  t.ok('ровно в лист — без лишнего', matNeedForArea(PLY, 4.65) === 2, String(matNeedForArea(PLY, 4.65)))
+  // Множитель правила («×2») умножает площадь, а не округлённые листы.
+  t.ok('на удвоенную площадь — 24', matNeedForArea(PLY, 26.87 * 2) === 24)
+  t.ok('м² — сама площадь', matNeedForArea({ mode: 'm2' }, 26.87) === 26.87)
+  t.ok('штучный — подсказки нет', matNeedForArea({ mode: 'piece' }, 26.87) === 0)
+  t.ok('лист без фасовки — делить не на что', matNeedForArea({ mode: 'sheet' }, 26.87) === 0)
+  t.ok('строка без площади — считать не от чего', matNeedForArea(PLY, 0) === 0)
 }
 
 t.done()
