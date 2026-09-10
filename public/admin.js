@@ -42,7 +42,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // одинаково считаться в панели и в Telegram, иначе бригадир и снабженец увидят разное.
 import { needStatus, needState, objectSupply, migrateLegacy, needQty, isSelection, pendingSelections, clientPays, objClientPays, refundMats, refundTotals, isLabour, buyMats, looksLikeLabour } from "../src/supply.js";
 // Сроки этапов — тот же общий модуль, что читают напоминания (см. src/stages.js).
-import { sheetPositions, sheetTotals, sheetIssues, optionGroups, roomArea, optionCost, matNeedForArea, matNeedOk,
+import { sheetPositions, sheetTotals, sheetIssues, optionGroups, roomArea, optionCost, matNeedForArea, matNeedOk, matNeedMatch,
   SPEC_POINTS, pointMeta, pointTotals, roomPoints } from "../src/spec.js";
 import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyContainer, modelRooms,
   modelBays, sideLength, totalLength, openingRoom, moveBoundary, splitRoom, mergeRoom, wallFits,
@@ -56,7 +56,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
 import { totals2, issues2, works2 } from "../src/spec2.js";
 import { priceHist, priceWas, pricePush, priceStale, refreshPrices } from "../src/prices.js";
 import { UNIT_WORDS, PACK_AS_WORD, normProduct } from "../src/catalog.js";
-import { allPositions, allPositionsRaw, addedPositions, matKeyOf, matAddKey, matAddrs, matAddrPid, matAddrSwap, migrateMatAddrs, rulePositions, positionWork, ruleText, ruleReady, ruleAreas, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
+import { allPositions, allPositionsRaw, addedPositions, guessVolume, carryRuleEdits, matKeyOf, matAddKey, matAddrs, matAddrPid, matAddrSwap, migrateMatAddrs, rulePositions, positionWork, ruleText, ruleReady, ruleAreas, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
   pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
   optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf, ROOM_HOUSE, roomKeyOf, positionSplit,
   importRows, importPatch } from "../src/recipe.js";
@@ -355,6 +355,7 @@ function applyState(items){
   try{ ensureMatPids(); }catch(e){}        // ссылка материала на карточку каталога (по имени, разово)
   try{ ensureLineIds(); }catch(e){}        // id строкам смет: по ним адресуются правки в листах
   try{ ensureMatAddrs(); }catch(e){}       // адреса дописанных материалов: был pid, стал +id
+  try{ ensureRuleEdits(); }catch(e){ console.warn("ensureRuleEdits", e); } // правки строки — под её правило
   try{ backfillWorkRooms(); }catch(e){}    // комнаты работ из сметы по estId (шаблон → объект)
   // Имя клиента договора из привязанного CRM-клиента, если поле пустое.
   try{ (contractDocs||[]).forEach(function(c){ if((!c.client||!String(c.client).trim())&&c.crmClientId){ var cl=crmClients.find(function(x){return x.id===c.crmClientId;}); if(cl&&cl.name)c.client=cl.name; } }); }catch(e){}
@@ -8268,6 +8269,23 @@ function ensureMatAddrs(){
   });
   return n;
 }
+// Правило заменяет обязательную строку, и ключ у строки меняется: `base:<смета>`
+// → `rule:<правило>:<комната>`. Правки дома (дописанные материалы, ручные числа,
+// часы, цены) переезжают за строкой (`carryRuleEdits`) — иначе они остаются под
+// ключом, которого на экране больше нет. Правило общее на все дома вида, поэтому
+// прогон — по всем листам: заведённое в «Доме СВО» правило меняет ключ и в
+// «Мордвесе». Гоняется при загрузке и после каждой правки правил; идемпотентен.
+function ensureRuleEdits(){
+  let n=0;
+  [specSheets, specSheets2, projects].forEach(function(list){
+    (list||[]).forEach(function(sh){
+      if(!sh)return;
+      const rp=rulePositions(sh, buildRules, estimates, expProducts, winTypes);
+      if(carryRuleEdits(sh, rp))n++;
+    });
+  });
+  return n;
+}
 // Где используется товар каталога: работы шаблонов и объектов, ссылающиеся на него.
 // Ссылку ищем по pid; исторические позиции без ссылки добираем по точному имени,
 // иначе на карточке старого материала «где используется» пустовало бы.
@@ -13576,6 +13594,9 @@ function ruleSet(id, fn){
     if(r.id!==id)return r;
     const c=Object.assign({},r); fn(c); return c;
   });
+  // Строка сменила ключ — её правки едут за ней сразу, а не при следующей загрузке:
+  // иначе дописанная фанера пропала бы с экрана в момент тапа.
+  ensureRuleEdits();
   fl();
 }
 function spec2RulesHtml(built, sh, pr){
@@ -13763,6 +13784,9 @@ function specMatsListHtml(pos, sh, live){
   // дописать материал по-прежнему можно: кнопка не должна пропадать вместе с ним.
   if(!mats.length&&!off.length)return can?matAddHtml(pos):"";
   const sw=matSwapsOf(sh, pos.key);
+  // Объёмы дома нужны только для сверки своего числа — считаем, лишь когда спросили.
+  let volsMemo=null;
+  const vols=function(){ if(!volsMemo)volsMemo=houseVolsOf(sh); return volsMemo; };
   // Список работ читают работами: на экране двадцать строк сметы, и если каждая
   // разворачивает по шесть материалов, увидеть сам состав дома нельзя. Материалы
   // прячем за одну строку — они нужны, когда в них лезут, а не всегда.
@@ -13831,7 +13855,7 @@ function specMatsListHtml(pos, sh, live){
               // «30 лист» — это сколько квадратов? Ответ стоит тут же, рядом с
               // числом, а не в уме у того, кто читает смету.
               matAltQtyHtml(m, qty)+
-              matNeedHtml(pos, m, qty, can)+
+              matNeedHtml(pos, m, qty, can, vols)+
               (m.qtySet
                 ? '<button data-a="est-mat-qty-reset" data-k="'+esc(matSwapKey(pos,m))+'" title="Вернуть расчётное количество" style="border:none;background:transparent;color:#8e44ad;font-size:10px;font-weight:700;cursor:pointer;padding:0 2px">вручную ⟲</button>'
                 : '')+
@@ -13888,6 +13912,48 @@ function matOffName(pos, sh, addr){
 function posNeedArea(pos){
   return Math.round((Number(pos&&pos.area)||0)*(Number(pos&&pos.mult)||1)*100)/100;
 }
+// Объёмы всего дома — для сверки своего числа: 2 пачки звукоизоляции в строке
+// стен сходятся не со стенами, а с перегородками. Перегородки считает модель
+// (одна сторона — звукоизоляцию кладут внутрь, а не на каждую сторону).
+function houseVolsOf(sh){
+  if(!sh)return [];
+  const A=ruleAreas(sh, { room:"" }, winTypes);
+  const parts=sh.model?(Number(modelTotals(sh.model, winTypes||[]).partitionArea)||0):0;
+  return [["стены дома",A.wall],["стены без проёмов",A.wallnet],["пол дома",A.floor],["перегородки",parts]]
+    .map(function(v){ return { n:v[0], area:Math.round((Number(v[1])||0)*100)/100 }; })
+    .filter(function(v){ return v.area>0; });
+}
+// Объём для строки, у которой его нет. «Стены зал», «Монтаж стен из ОСП» стояли
+// «на весь дом» числом из справочника, и фанере с ОСП не от чего было считаться,
+// хотя по названию видно, чем строка меряется (`guessVolume`). Предлагаем тем же
+// жестом, что клетка таблицы в редакторе правила (`est-rule-vol`), — ставит человек.
+// Помещение из имени работы главнее; не названо — то, к которому строку приписали.
+// У стен два ответа: по полной площади идут утеплитель и обрешётка, по чистой —
+// обшивка, и какой нужен, решает материал, а не портал.
+const VOL_GUESS_N={ floor:"пол", wall:"стены", wallnet:"без проёмов", ceil:"потолок", wallceil:"стены + потолок" };
+function estVolGuessHtml(p, sh, can){
+  if(!can||!sh||!p||!p.estId||p.own||p.from!=="est")return '';
+  if(Number(p.area)>0||p.point)return '';
+  if(ruleOfEst(p.estId, sh.kind||"house"))return '';
+  const A=ruleAreas(sh, { room:"" }, winTypes);
+  const rooms=(A.rooms||[]).filter(function(rm){ return !!String(rm.name||"").trim(); });
+  const g=guessVolume(p.name, rooms.map(function(rm){ return rm.name; }));
+  if(!g)return '';
+  const roomName=g.room||(rooms.some(function(rm){ return rm.name===p.room; })?p.room:"");
+  const src=roomName?rooms.find(function(rm){ return rm.name===roomName; }):A;
+  const opts=(g.k==="wall"?["wall","wallnet"]:[g.k]).filter(function(k){ return (Number(src&&src[k])||0)>0; });
+  if(!opts.length)return '';
+  const where=roomName||"весь дом";
+  return '<span style="display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px">'+
+    '<span style="font-size:10px;font-weight:700;color:#d35400">объём:</span>'+
+    opts.map(function(k){
+      return '<button data-a="est-rule-vol" data-est="'+esc(p.estId)+'" data-k="'+k+'" data-room="'+esc(roomName)+'" '+
+        'title="'+esc("Считать строку по: "+where+" · "+VOL_GUESS_N[k]+". Правило общее для всех домов вида — в каждом строка возьмёт объём своего чертежа")+'" '+
+        'style="border:1px solid #e67e2255;background:#fdf2e9;color:#d35400;border-radius:7px;padding:3px 8px;font-size:10.5px;font-weight:700;cursor:pointer;line-height:1.35">'+
+        esc(where+" · "+VOL_GUESS_N[k]+" "+numRu(Number(src[k])))+' м² ⟵</button>';
+    }).join("")+
+  '</span>';
+}
 // «Нужно 12 лист на 26,87 м²» — у КАЖДОГО материала, который меряется площадью,
 // в строке с площадью (пол санузла и кварцвинил, стены зала и фанера). Портал
 // подсказывает, решает человек: тап ставит рекомендацию, а совпавшее помечается
@@ -13896,13 +13962,22 @@ function posNeedArea(pos){
 // Тап у двух видов материала разный. Дописанный руками хранит число в самом
 // листе — ему рекомендация становится количеством. Расчётный и так считается от
 // площади, разойтись он может только ручной правкой — тап её снимает.
-function matNeedHtml(pos, m, qty, can){
+function matNeedHtml(pos, m, qty, can, vols){
   if(!m||m.own)return '';
   const area=posNeedArea(pos);
   const need=matNeedForArea(m, area);
+  const okHtml=function(txt, why){ return '<span title="'+esc(why)+'" style="color:#16a085;font-weight:700">✓ '+txt+'</span>'; };
+  if(need>0&&matNeedOk(m, area, qty))return okHtml(numRu(need)+' '+esc(specMatUnit(m))+' на '+numRu(area)+' м²', "Количество совпадает с объёмом строки");
+  // Своё число, не совпавшее с объёмом строки, бывает верным для ДРУГОГО объёма
+  // дома: звукоизоляция в «Монтаже стен из ОСП» идёт только в перегородки. Тогда
+  // говорим, с чем оно сошлось, а не зажигаем «нужно 16» — это была бы ошибка.
+  // У строки без объёма и число расчётного — просто число из справочника: сверяем и его.
+  if((m.added||m.qtySet||!(area>0))&&vols){
+    const hit=matNeedMatch(m, qty, vols());
+    if(hit)return okHtml(numRu(matNeedForArea(m, hit.area))+' '+esc(specMatUnit(m))+' = '+esc(hit.n)+' '+numRu(hit.area)+' м²', "Количество совпадает с этим объёмом дома");
+  }
   if(!(need>0))return '';
   const what=numRu(need)+' '+esc(specMatUnit(m))+' на '+numRu(area)+' м²';
-  if(matNeedOk(m, area, qty))return '<span title="Количество совпадает с объёмом строки" style="color:#16a085;font-weight:700">✓ '+what+'</span>';
   const act=!can?'':(m.added
     ? 'data-a="est-mat-need" data-k="'+esc(pos.key)+'" data-m="'+esc(m.id||"")+'" data-q="'+need+'"'
     : (m.qtySet?'data-a="est-mat-qty-reset" data-k="'+esc(matSwapKey(pos,m))+'"':''));
@@ -15906,6 +15981,7 @@ function estBodyHtml(sh, types, live, actions){
                 const bg=open?RULE_COL:"#f0f4f8", fg=open?"#fff":"#5a7a9a";
                 return '<button data-a="est-why" data-est="'+p.estId+'" title="'+esc("Чем меряется эта строка — "+p.why)+'" style="background:'+bg+';color:'+fg+';border:none;border-radius:7px;padding:3px '+(dflt?'7px':'8px')+';font-size:10.5px;font-weight:700;cursor:pointer;line-height:1.35">'+(dflt?'⚙':esc(p.why)+' ⚙')+'</button>';
               })()+
+              estVolGuessHtml(p, sh, canRule)+
               estSplitHtml(p, matsShown(p).length, !!matsOpen[p.key])+
               optChipsHtml(p, sh, w)+
               // «Цена отстала» — В САМОЙ СТРОКЕ, а не только под чипом-фильтром.

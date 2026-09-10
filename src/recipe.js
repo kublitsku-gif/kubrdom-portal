@@ -501,6 +501,117 @@ export function migrateMatAddrs(sheet) {
   return hit;
 }
 
+// ─── ПРАВКИ СТРОКИ ПЕРЕЕЗЖАЮТ ПОД ПРАВИЛО ────────────────────────────────────
+// Правило ЗАМЕНЯЕТ обязательную строку сметы, и ключ у неё другой: был
+// `base:<смета>`, стал `rule:<правило>:<комната>`. Всё, что человек правил в
+// строке этого дома, лежит по ключу — дописанный материал, ручное количество,
+// часы, цена, этап, «убрать», — и оставалось под старым ключом, которого на
+// экране больше нет. Так на «Доме СВО» пропали дописанная фанера и ручные 12
+// упаковок клея, на «Мордвесе» — подвесы, часы и цены.
+//
+// Переносим, а не читаем по двум ключам: правка, записанная после, легла бы в
+// новый ключ, и старая на экране исчезла бы в тот же момент.
+//
+// Куда ехать, решает комната: правило по каждому помещению даёт несколько строк,
+// и правка уходит в строку той комнаты, к которой строку приписали. Строка
+// правила одна — туда. Не сказано и строк несколько — гадать нельзя, правка
+// остаётся на месте.
+//
+// Едет только в НЕТРОНУТУЮ строку правила — только что заведённую. Если строку
+// под правилом уже правили, человек работает с тем, что видит, и воскрешать
+// поверх старые правки нельзя: клей «Стен спальни» вернулся бы с 1 на давние 12.
+// «Убрано из дома» (`posOff`) не везём вовсе: оно прячет работу целиком, и
+// молча спрятать то, что сейчас стоит в смете, — хуже, чем показать лишнее.
+// Прогон идемпотентен.
+export const POS_EDIT_SECTIONS = ["matAdd", "matQty", "mats", "matOff", "matOrder", "posHours", "posK",
+  "posCost", "posCostMode", "posStage", "posRoom", "posOrder", "qty"];
+export function carryRuleEdits(sheet, rulePos) {
+  if (!sheet) return false;
+  const byEst = {}, byRule = {}, live = {};
+  (rulePos || []).forEach(function (p) {
+    if (!p || !p.key) return;
+    live[p.key] = true;
+    if (p.estId) (byEst[p.estId] = byEst[p.estId] || []).push(p);
+    if (p.ruleId) (byRule[p.ruleId] = byRule[p.ruleId] || []).push(p);
+  });
+  const room = sheet.posRoom || {};
+  // Какие строки правил уже правили — в них не везём ничего.
+  const touched = {};
+  POS_EDIT_SECTIONS.concat(["posOff"]).forEach(function (sec) {
+    const map = sheet[sec];
+    if (map && typeof map === "object" && !Array.isArray(map)) {
+      Object.keys(map).forEach(function (k) { if (live[k]) touched[k] = true; });
+    }
+  });
+  // Адрес считается ДО переноса: комната приписки — тоже раздел, и она уедет
+  // вместе с остальными.
+  const plan = {};
+  POS_EDIT_SECTIONS.forEach(function (sec) {
+    const map = sheet[sec];
+    if (!map || typeof map !== "object" || Array.isArray(map)) return;
+    Object.keys(map).forEach(function (k) {
+      if (k in plan || live[k]) return;
+      let list = null;
+      if (k.indexOf("base:") === 0) list = byEst[k.slice(5)];
+      else if (k.indexOf("rule:") === 0) list = byRule[k.split(":")[1]];
+      if (!list || !list.length) { plan[k] = ""; return; }
+      const hit = room[k] ? list.filter(function (p) { return p.roomId === room[k]; }) : [];
+      const to = hit.length === 1 ? hit[0].key : (list.length === 1 ? list[0].key : "");
+      plan[k] = (to && !touched[to]) ? to : "";
+    });
+  });
+  let moved = false;
+  POS_EDIT_SECTIONS.forEach(function (sec) {
+    const map = sheet[sec];
+    if (!map || typeof map !== "object" || Array.isArray(map)) return;
+    let next = null;
+    Object.keys(map).forEach(function (k) {
+      const to = plan[k];
+      if (!to || map[to] != null || (next && next[to] != null)) return;
+      next = next || Object.assign({}, map);
+      next[to] = map[k];
+      delete next[k];
+    });
+    if (next) { sheet[sec] = next; moved = true; }
+  });
+  return moved;
+}
+
+// ─── ОБЪЁМ ПО НАЗВАНИЮ РАБОТЫ ────────────────────────────────────────────────
+// Строка без объёма («Монтаж стен из ОСП», «Стены зал») встаёт «на весь дом»
+// числом из справочника, хотя по названию видно, чем она меряется. Портал
+// ПРЕДЛАГАЕТ поверхность и, если названо, помещение, — ставит человек.
+// «Стены и пол» одной поверхностью портал не меряет, выдумывать её нельзя.
+export function guessVolume(name, roomNames) {
+  const s = String(name || "").toLowerCase().replace(/ё/g, "е");
+  const wall = /стен/.test(s);
+  const ceil = /потол/.test(s);
+  // «пол» — отдельным словом: полотенцесушитель и полиэтилен — не пол.
+  const floor = /(^|[^а-я])пол(а|у|ом|е|ы|ов)?([^а-я]|$)/.test(s);
+  if (wall && floor) return null;
+  const k = wall ? (ceil ? "wallceil" : "wall") : (ceil ? "ceil" : (floor ? "floor" : ""));
+  if (!k) return null;
+  return { k: k, room: roomInName(s, roomNames) };
+}
+// Помещение, названное в имени работы: «Стены зал», «Потолок спальни», «Пол сан
+// узел». Слово целиком — иначе «заливка» нашла бы «зал»; у длинных имён сверяем
+// основу (спальн-я/-и, сануз-ел/-ла), и соседние слова склеиваем («сан узел»).
+function roomInName(s, roomNames) {
+  const words = s.split(/[^а-яa-z0-9]+/).filter(Boolean);
+  const cand = words.concat(words.slice(1).map(function (w, i) { return words[i] + w; }));
+  const names = (roomNames || []).filter(function (r) { return String(r || "").trim(); });
+  for (let i = 0; i < names.length; i++) {
+    const rn = String(names[i]).toLowerCase().replace(/ё/g, "е").replace(/[^а-яa-z0-9]/g, "");
+    if (!rn) continue;
+    const stem = rn.length >= 5 ? rn.slice(0, -2) : "";
+    const hit = cand.some(function (w) {
+      return w === rn || (stem && w.indexOf(stem) === 0 && w.length <= rn.length + 2);
+    });
+    if (hit) return String(names[i]);
+  }
+  return "";
+}
+
 export function matAddOf(sheet, key) {
   return (((sheet && sheet.matAdd) || {})[key]) || [];
 }

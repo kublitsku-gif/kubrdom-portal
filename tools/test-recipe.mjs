@@ -6,7 +6,8 @@
 // что материалы остаются сметиными, что недонастроенное правило молчит и что
 // список из справочника и список из правил складываются, а не подменяют друг друга.
 import { presetModel, MODEL_PRESETS } from '../src/model.js'
-import { sheetPositions, matNeedForArea, matNeedOk } from '../src/spec.js'
+import { sheetPositions, matNeedForArea, matNeedOk, matNeedMatch } from '../src/spec.js'
+import { guessVolume, carryRuleEdits } from '../src/recipe.js'
 import { rulePositions, allPositions, allPositionsRaw, ruleText, ruleReady, ruleAreas, probeSheet, positionSplit,
   layerPositions, pieArea, pieCost, applyPicks, optLabelOf, optPrefixOf, applyRooms, roomKeyOf, posRoomOf, ROOM_HOUSE, applyMatEdits, matOrderOf, matKeyOf, matAddKey, matAddrs, matLegacyKey, matAddrPid, matAddrSwap, stampMatIx, migrateMatAddrs } from '../src/recipe.js'
 import { modelAreas, modelTotals, applyLayers } from '../src/model.js'
@@ -705,6 +706,86 @@ const R = (o) => Object.assign({ id: 'r1', kind: 'house', what: 'surface', k: 'w
   t.ok('м² — сверка по площади', matNeedOk({ mode: 'm2' }, 26.87, 26.87) === true
     && matNeedOk({ mode: 'm2' }, 26.87, 20) === false)
   t.ok('считать не от чего — и сверять нечего', matNeedOk({ mode: 'piece' }, 26.87, 1) === false)
+
+  // Ручное число, которое не сходится с объёмом строки, может сходиться с другим
+  // объёмом дома: звукоизоляция в «Монтаже стен из ОСП» идёт только в перегородки.
+  const ACU = { mode: 'pack', packBase: 'м²', packPer: 6 }
+  const VOLS = [{ n: 'стены дома', area: 90.65 }, { n: 'перегородки', area: 11.76 }]
+  t.ok('2 пачки — это перегородки', (matNeedMatch(ACU, 2, VOLS) || {}).n === 'перегородки',
+    JSON.stringify(matNeedMatch(ACU, 2, VOLS)))
+  t.ok('16 пачек — стены дома', (matNeedMatch(ACU, 16, VOLS) || {}).n === 'стены дома')
+  t.ok('5 пачек — ни с чем не сходится', matNeedMatch(ACU, 5, VOLS) === null)
+  t.ok('штучный ни с чем не сверяется', matNeedMatch({ mode: 'piece' }, 2, VOLS) === null)
+}
+
+// ── Объём по названию работы ─────────────────────────────────────────────────
+// Строка без объёма («Монтаж стен из ОСП») встаёт «на весь дом» числом из
+// справочника, хотя по названию видно, чем она меряется. Портал предлагает объём —
+// поверхность и, если названо, помещение, — а ставит его человек.
+{
+  t.section('Объём по названию работы')
+  const ROOMS = ['Санузел', 'Зал', 'Спальня', '']
+  const g = (n) => JSON.stringify(guessVolume(n, ROOMS))
+  t.ok('стены из ОСП — стены всего дома', g('Монтаж стен из ОСП, и утеплителя') === '{"k":"wall","room":""}', g('Монтаж стен из ОСП, и утеплителя'))
+  t.ok('стены зала — стены зала', g('Стены зал') === '{"k":"wall","room":"Зал"}', g('Стены зал'))
+  t.ok('пол санузла — пол санузла, хоть и через пробел', g('Пол сан узел') === '{"k":"floor","room":"Санузел"}', g('Пол сан узел'))
+  t.ok('стены и потолок — одна поверхность', g('Утепление стен и потолка — ППУ 5 см') === '{"k":"wallceil","room":""}', g('Утепление стен и потолка — ППУ 5 см'))
+  t.ok('тёплый пол — пол', g('Монтаж тёплого пола с заливкой') === '{"k":"floor","room":""}', g('Монтаж тёплого пола с заливкой'))
+  t.ok('потолок спальни', g('Потолок спальни') === '{"k":"ceil","room":"Спальня"}', g('Потолок спальни'))
+  t.ok('полотенцесушитель — не пол', g('Элетрический полотенцесушитель') === 'null')
+  t.ok('полиэтилен — не пол', g('Водоснабжение — сшитый полиэтилен') === 'null')
+  // «Стены и пол» одной поверхностью портал не меряет — выдумывать её нельзя.
+  t.ok('стены и пол — предложить нечего', g('Санузел — гидроизоляция стен и пола') === 'null')
+  t.ok('унитаз — не поверхность', g('Монтаж унитаза') === 'null')
+}
+
+// ── Правки строки переезжают вместе с ней под правило ────────────────────────
+// Правило ЗАМЕНЯЕТ обязательную строку, и ключ у неё новый: был `base:<смета>`,
+// стал `rule:<правило>:<комната>`. Правки листа лежат по ключу — дописанная
+// фанера, ручные 12 упаковок клея, часы, убранные материалы — и оставались под
+// старым, невидимые. На «Доме СВО» и «Мордвесе» так уже пропали правки.
+{
+  t.section('Правки переезжают под правило')
+  const A = { id: 'm1', pid: 'p_ply', n: 'Фанера', qty: 1 }
+  const RP = [{ key: 'rule:r1:house', estId: 'e1', ruleId: 'r1' }]
+  const sh = { matAdd: { 'base:e1': [A] }, matQty: { 'base:e1': { '+m1': 12 } }, posHours: { 'base:e1': 3, 'base:e2': 1 } }
+  t.ok('перенос случился', carryRuleEdits(sh, RP) === true)
+  t.ok('дописанный материал доехал', (sh.matAdd['rule:r1:house'] || [])[0] === A && !sh.matAdd['base:e1'],
+    JSON.stringify(sh.matAdd))
+  t.ok('ручное количество доехало', sh.matQty['rule:r1:house']['+m1'] === 12)
+  t.ok('часы доехали', sh.posHours['rule:r1:house'] === 3 && sh.posHours['base:e1'] === undefined)
+  t.ok('строку без правила не трогаем', sh.posHours['base:e2'] === 1)
+  t.ok('повтор ничего не меняет', carryRuleEdits(sh, RP) === false)
+
+  // Строку под правилом уже правили — человек работает с тем, что видит, и
+  // старые правки поверх не воскрешаем: ни фанеру второй раз, ни давний этап.
+  const B = { id: 'm2', pid: 'p_ply', n: 'Фанера', qty: 12 }
+  const own = { matAdd: { 'base:e1': [A], 'rule:r1:house': [B] }, posStage: { 'base:e1': 3 } }
+  t.ok('в тронутую строку ничего не везём', carryRuleEdits(own, RP) === false)
+  t.ok('её фанера одна', own.matAdd['rule:r1:house'].length === 1 && own.matAdd['rule:r1:house'][0] === B)
+  t.ok('и давний этап не приехал', own.posStage['rule:r1:house'] === undefined && own.posStage['base:e1'] === 3)
+
+  // «Убрано из дома» прячет работу целиком — молча прятать то, что сейчас в
+  // смете, нельзя. Остальное едет, а эта отметка остаётся на месте.
+  const off = { posOff: { 'base:e1': 1 }, posHours: { 'base:e1': 2 } }
+  carryRuleEdits(off, RP)
+  t.ok('«убрано» не переезжает', off.posOff['base:e1'] === 1 && off.posOff['rule:r1:house'] === undefined)
+  t.ok('а часы переезжают', off.posHours['rule:r1:house'] === 2)
+
+  // Правило по каждой комнате даёт несколько строк: куда ехать, говорит комната,
+  // к которой строку приписали. Не сказано — гадать нельзя, правки остаются.
+  const RR = [{ key: 'rule:r1:kA', estId: 'e1', ruleId: 'r1', roomId: 'kA' }, { key: 'rule:r1:kB', estId: 'e1', ruleId: 'r1', roomId: 'kB' }]
+  const byRoom = { posRoom: { 'base:e1': 'kB' }, posHours: { 'base:e1': 5 } }
+  carryRuleEdits(byRoom, RR)
+  t.ok('едет в строку своей комнаты', byRoom.posHours['rule:r1:kB'] === 5 && byRoom.posHours['rule:r1:kA'] === undefined,
+    JSON.stringify(byRoom.posHours))
+  const blind = { posHours: { 'base:e1': 5 } }
+  t.ok('комната не названа — остаётся на месте', carryRuleEdits(blind, RR) === false && blind.posHours['base:e1'] === 5)
+
+  // Правило сменило комнату («весь дом» → «Зал»): старый ключ того же правила.
+  const moved = { posHours: { 'rule:r1:house': 4 } }
+  carryRuleEdits(moved, [{ key: 'rule:r1:kA', estId: 'e1', ruleId: 'r1', roomId: 'kA' }])
+  t.ok('правки старого ключа правила доезжают', moved.posHours['rule:r1:kA'] === 4 && moved.posHours['rule:r1:house'] === undefined)
 }
 
 t.done()
