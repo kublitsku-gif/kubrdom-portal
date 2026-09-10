@@ -15169,6 +15169,24 @@ function dragRowOf(el, rowKey){
   while(n&&(!n.dataset||!n.dataset[rowKey]))n=n.parentNode;
   return (n&&n.dataset&&n.dataset[rowKey])?n:null;
 }
+// Можно ли бросить строку сюда. Адрес — `data-drop-stage` (у шапки помещения ещё
+// `data-drop-room`) на узле под пальцем или на его предке.
+//
+// Карточка этапа ЦЕЛИКОМ — адрес «в этот этап». Раньше им была только верхняя
+// строка шапки в 28 px, а свёрнутая карточка — это ещё деньги, «цены», «+» и
+// полоска доли. Строку бросают на карточку, и промах мимо полоски тихо
+// становился перестановкой в своём этапе («отменить перестановку работы»).
+// Свой этап без помещения — не адрес: над своими строками палец ищет место среди
+// соседей. Общий блок дома в группе строки зовётся «-», а у шапки его ключ бывает
+// пустым — сравниваем с этим, иначе своя шапка считалась бы чужой.
+function dropZoneOk(ds, grp){
+  if(!ds||ds.dropStage===undefined)return false;
+  const g=String(grp||""), cut=g.indexOf("|");
+  const gs=cut<0?g:g.slice(0,cut), gr=cut<0?"":g.slice(cut+1);
+  const zs=String(ds.dropStage||"");
+  if(ds.dropRoom===undefined)return zs!==gs;
+  return !(zs===gs&&(String(ds.dropRoom||"")||ROOM_HOUSE)===(gr||ROOM_HOUSE));
+}
 function dragRow(el, ev, rowKey, grpKey, done, onZone){
   const row=dragRowOf(el, rowKey); if(!row||!row.parentNode)return;
   const grp=row.dataset[grpKey]||"";
@@ -15176,7 +15194,10 @@ function dragRow(el, ev, rowKey, grpKey, done, onZone){
     return x.dataset&&x.dataset[rowKey]&&x.dataset[grpKey]===grp;
   });
   const others=kin.filter(function(x){ return x!==row; });
-  if(!others.length)return;
+  // Соседей нет — переставляться не с кем, но шапки и карточки этапов остаются
+  // адресом: одинокую строку переносят в другой этап. Раньше жест здесь и
+  // кончался — ручка была, а перенос не начинался.
+  if(!others.length&&!onZone)return;
   ev.preventDefault();
   try{ el.setPointerCapture(ev.pointerId); }catch(e){}
   const box=row.getBoundingClientRect();
@@ -15212,9 +15233,15 @@ function dragRow(el, ev, rowKey, grpKey, done, onZone){
     if(onZone){
       const over=document.elementFromPoint(e.clientX, y);
       const z=(over&&over.closest)?over.closest("[data-drop-stage]"):null;
-      const same=z&&(String(z.dataset.dropStage||"")+"|"+String(z.dataset.dropRoom||""))===grp;
-      lit((z&&!same)?z:null);
+      lit((z&&dropZoneOk(z.dataset, grp))?z:null);
       if(zone)return;
+    }
+    if(!others.length){
+      // Двигать среди соседей нечего — ждём шапку или карточку. Край экрана
+      // по-прежнему листает: до соседнего этапа ещё надо доехать.
+      const h0=window.innerHeight||0;
+      edge=(y<90)?-14:((h0&&y>h0-90)?14:0);
+      return;
     }
     let j=others.length;
     for(let n=0;n<others.length;n++){
@@ -15239,7 +15266,7 @@ function dragRow(el, ev, rowKey, grpKey, done, onZone){
     row.style.display="";
     dragEndAt=Date.now();
     if(drop&&onZone)onZone(drop.dataset);
-    else done(others[at]?String(others[at].dataset[rowKey]||""):"");
+    else if(others.length)done(others[at]?String(others[at].dataset[rowKey]||""):"");
   };
   document.addEventListener("pointermove", move);
   document.addEventListener("pointerup", up);
@@ -15632,7 +15659,9 @@ function estBodyHtml(sh, types, live, actions){
       // Найденное прятать внутрь свёрнутого этапа нельзя: поиск для того и нужен,
       // чтобы не открывать этапы руками.
       const shut=finding?false:!stageOpen[st.n];
-      return '<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
+      // Карточка — адрес «в этот этап» целиком (см. dropZoneOk): бросают на неё,
+      // а не прицеливаются в строку шапки.
+      return '<div data-drop-stage="'+st.n+'" style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
         // Шапка липнет к верху: в этапе на сорок строк через полэкрана уже не
         // видно, в каком этапе смотришь, а по этапам идут сроки и транши.
         '<div data-a="est-stage-open" data-n="'+st.n+'" data-drop-stage="'+st.n+'" style="position:sticky;top:calc(var(--hdr,116px) + '+EST_BAR+'px);z-index:5;background:#fff;display:flex;align-items:baseline;gap:8px;padding:4px 0;margin-bottom:'+(shut?'0':'4px')+';cursor:pointer">'+
@@ -15704,7 +15733,7 @@ function estBodyHtml(sh, types, live, actions){
           // строка, брошенная в чужой блок, вернулась бы обратно тем же рендером.
           const addr=' data-a="est-row-hold" data-pos-row="'+esc(p.key)+'" data-pos-grp="'+esc(st.n+"|"+roomKeyOf(p))+'"';
           const rowOpen=canRule&&estRowOpen===p.key;
-          const canDrag=canMove&&arr.length>1;
+          const canDrag=canMove&&(arr.length>1||(!finding&&stages.length>1)); // есть куда: к соседям или в другой этап
           return ''+
             // Строка читается сверху вниз: имя и итог — чипы — управление. Раньше
             // всё стояло в один ряд, и на узкой колонке имя сжималось до одного
