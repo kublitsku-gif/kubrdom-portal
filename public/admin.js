@@ -4562,9 +4562,26 @@ function paintTab(){
   const _y=window.pageYOffset||document.documentElement.scrollTop||0;
   c.innerHTML=tabContentHtml();
   bind();
+  syncStickyTop();
   window.scrollTo(0,_y);                          // страховка от клампа высоты
   return true;
 }
+// Высота шапки приложения — в переменную `--hdr`, к ней липнет всё остальное.
+// Без неё липкие шапки этапов и помещений прилипали к `top:0`, то есть уезжали
+// ПОД карточку сотрудника и карусель вкладок (у тех z-index 50 и 49, у этапа 3):
+// липкость в разметке была, а на экране её не было. Считаем по факту, а не
+// константой: ряд вкладок выше на строку «смахни», когда вкладок больше
+// четырёх, а карточка сотрудника растёт от числа ролей — «Администратор,
+// Снабженец, Начальник производства, Финансист, Маркетолог» занимает три
+// строки вместо одной.
+function syncStickyTop(){
+  const h=["hdr-user","hdr-tabs"].reduce(function(a,id){
+    const el=document.getElementById(id);
+    return a+(el?Math.round(el.getBoundingClientRect().height):0);
+  }, 0);
+  if(h>0)document.documentElement.style.setProperty("--hdr", h+"px");
+}
+if(typeof window!=="undefined")window.addEventListener("resize", function(){ syncStickyTop(); });
 function rerenderTab(){
   if(paintTab())scheduleSave();                  // как и render() — дебаунс-автосейв
 }
@@ -5087,7 +5104,7 @@ function page(){
 </div>`:"";
   const SC={"Озон":"#005bff","Белка":"#d68910","pechki.su":"#c0392b","Егорьевск":"#8e44ad","Лемана":"#e30613","Авито":"#00aaff","Нижний Новгород":"#27ae60"};
   return`<div style="max-width:480px;margin:0 auto;min-height:100vh;background:#f6f8fa;padding-bottom:calc(76px + env(safe-area-inset-bottom,0px));box-sizing:border-box">
-<div style="background:#fff;border-bottom:1px solid #eef2f7;padding:10px 14px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:50">
+<div id="hdr-user" style="background:#fff;border-bottom:1px solid #eef2f7;padding:10px 14px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:50">
   <div style="width:32px;height:32px;border-radius:8px;background:${currentUser.c};display:flex;align-items:center;justify-content:center;font-size:16px">${currentUser.av}</div>
   <div style="flex:1;min-width:0">
     <div style="font-size:13px;font-weight:700;color:#0d1b2e">${esc(currentUser.name)}</div>
@@ -5113,7 +5130,7 @@ ${showPinChange?`<div style="background:#fff;border-bottom:1px solid #eef2f7;pad
     <button data-a="pin-change-save" style="width:100%;padding:10px;background:#27ae60;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">Сохранить PIN</button>
   </div>
 </div>`:""}
-<div style="background:linear-gradient(180deg,#fff 0%,#f8fafc 100%);border-bottom:1px solid #dde6f0;padding:8px 0;position:sticky;top:53px;z-index:49;box-shadow:0 2px 4px rgba(0,0,0,0.04)">
+<div id="hdr-tabs" style="background:linear-gradient(180deg,#fff 0%,#f8fafc 100%);border-bottom:1px solid #dde6f0;padding:8px 0;position:sticky;top:53px;z-index:49;box-shadow:0 2px 4px rgba(0,0,0,0.04)">
   <div style="display:flex;overflow-x:auto;padding:0 10px;scrollbar-width:none;-webkit-overflow-scrolling:touch;gap:6px" id="tabs-scroll">
   ${TABS.filter(function(t){return _bottomPicked.indexOf(t[0])<0;}).map(([k,n],i)=>{
     const active=tab===k;
@@ -13965,16 +13982,26 @@ function estSplitHtml(pos, count, open){
   }
   // Цифра ведёт туда, где её правят: «материалы» раскрывают список, «работа»
   // ставит курсор в поле цены. Одна кнопка на всю строку делала одно и то же.
+  //
+  // «работа 0 ₽» НЕ печатаем, когда материалы в строке есть. Ноль здесь значит
+  // «бригаде за эту строку ещё ничего не назначено», а читается как незаполненная
+  // форма — тот же довод, по которому из строк убрали пустые поля цены
+  // (см. estPosSetChips). У чисто материальной строки — доставка, аренда, покупка
+  // контейнера — платить бригаде и не за что, а нулём смета сорок раз намекает,
+  // что её не дописали. Кто ищет такие строки специально, включает чип «без
+  // оплаты»; кто хочет назначить оплату — тапает строку, поле там же.
+  const hideLabor=sp.labor<=0&&sp.mats>0;
   return '<span style="font-size:11px">'+
     '<button data-a="est-mats-open" data-k="'+esc(pos.key)+'" style="border:none;background:transparent;padding:2px 0;font-size:11px;cursor:pointer;text-align:left">'+
       '<span style="'+dim+'">'+(open?"▾":"▸")+' материалы </span>'+
       '<span style="'+(sp.mats?on:dim)+'">'+money(sp.mats)+'</span>'+
     '</button>'+
-    '<span style="'+dim+'"> · </span>'+
-    '<button data-a="est-pos-cost-focus" data-k="'+esc(pos.key)+'" title="Открыть строку: работа считается по часам и норма-часу" style="border:none;background:transparent;padding:2px 0;font-size:11px;cursor:pointer">'+
-      '<span style="'+dim+'">работа </span>'+
-      '<span style="'+(sp.labor?on:dim)+'">'+money(sp.labor)+'</span>'+
-    '</button>'+
+    (hideLabor?'':
+      '<span style="'+dim+'"> · </span>'+
+      '<button data-a="est-pos-cost-focus" data-k="'+esc(pos.key)+'" title="Открыть строку: работа считается по часам и норма-часу" style="border:none;background:transparent;padding:2px 0;font-size:11px;cursor:pointer">'+
+        '<span style="'+dim+'">работа </span>'+
+        '<span style="'+(sp.labor?on:dim)+'">'+money(sp.labor)+'</span>'+
+      '</button>')+
   '</span>';
 }
 function matAddHtml(pos){
@@ -14113,12 +14140,29 @@ function estWhyEditor(p, sh){
 // справочника берём целиком, со своими материалами и этапом; чего в справочнике
 // нет — пишем своей строкой: имя и сумма. Справочник от этого не меняется, он
 // общий на все дома.
-function estPosAddHtml(sh, canRule){
+// «+ работа» живёт В ШАПКЕ ЭТАПА, а не над всей сметой. Сверху она спрашивала
+// «добавить куда?» выпадающим списком этапов — и строка падала не туда, куда
+// смотрит человек: он ждёт её в конце открытого списка, а она уходит в этап из
+// справочника. Кнопка в шапке отвечает на этот вопрос сама, местом нажатия, и
+// список этапов в форме тогда не нужен вовсе (`fixed`).
+//
+// Именно в ШАПКЕ, а не в подвале этапа: этапы по умолчанию свёрнуты, и кнопка
+// внутри раскрытого списка на свежем доме не показалась бы ни разу — добавить
+// работу стало бы негде вообще. Тот же «+» и на тех же 24 пикселях уже стоит в
+// шапке помещения, так что жест один на оба уровня.
+// Адрес «<лист>@<этап>|» — тот же, что у «+» помещения, только комната пустая:
+// работа встаёт в общий блок дома этого этапа.
+function estStageAddTag(sh, st){ return ((sh&&sh.id)||"")+"@"+st.n+"|"; }
+function estStageAddBtn(sh, st, canRule){
   if(!canRule)return "";
-  if(posAddOpen!==(sh&&sh.id)){
-    return '<div style="margin-bottom:9px"><button data-a="est-pos-add-open" data-k="'+esc((sh&&sh.id)||"")+'" style="width:100%;padding:9px;background:#eef6f4;border:1px dashed #16a085;border-radius:10px;cursor:pointer;color:#16a085;font-size:12.5px;font-weight:700">+ работа</button></div>';
-  }
-  return estAddFormHtml(sh, (sh&&sh.id)||"", "");
+  return '<button data-a="est-pos-add-open" data-k="'+esc(estStageAddTag(sh, st))+'" '+
+    'title="Добавить работу в этап «'+esc(st.label||"")+'»" '+
+    'style="width:24px;height:24px;background:transparent;border:1px solid #16a08555;border-radius:7px;cursor:pointer;color:#16a085;font-size:13px;flex-shrink:0;line-height:1;padding:0">+</button>';
+}
+function estStageAddFormHtml(sh, st, canRule){
+  if(!canRule)return "";
+  const tag=estStageAddTag(sh, st);
+  return posAddOpen===tag?estAddFormHtml(sh, tag, st.label||""):"";
 }
 // Одна форма на две кнопки: общую «+ работа» и «+» в шапке помещения. Вторая
 // приходит с адресом «<лист>@<этап>|<комната>» — работа сразу встаёт туда, куда
@@ -14156,15 +14200,24 @@ function estDroppedHtml(sh, canRule){
   const sum=dropped.reduce(function(a,p){ return a+(Number(p.cost)||0); },0);
   // Свёрнут по умолчанию: сколько убрано и на сколько денег — в шапке, а сам
   // перечень нужен, когда что-то возвращают.
-  return '<div style="background:#fff;border:1px solid #f0d5d0;border-radius:13px;padding:9px 13px;margin-bottom:9px">'+
-    '<div data-a="est-dropped-open" style="display:flex;align-items:baseline;gap:8px;cursor:pointer;padding:2px 0'+(droppedOpen?';margin-bottom:6px':'')+'">'+
-      '<span style="flex:1;min-width:0;font-size:11px;font-weight:700;color:#c0392b;letter-spacing:0.4px">'+(droppedOpen?"▾ ":"▸ ")+'УБРАНО ИЗ ЭТОГО ДОМА · '+keys.length+'</span>'+
-      '<span style="font-size:12px;font-weight:700;color:#c0392b;white-space:nowrap">−'+Math.round(sum).toLocaleString("ru-RU")+' ₽</span>'+
+  // Красный минус читался как ВЫЧЕТ из показанного итога: «531 478 ₽» и рядом
+  // «−175 000 ₽» ставят вопрос, до вычета итог или после, — а он ни то, ни другое:
+  // убранная строка в смету просто не входит, и деньги никуда не уходили. Поэтому
+  // ни минуса, ни тревожного цвета: тон серый, а подпись говорит прямо, что этих
+  // денег в итоге нет. Тревога здесь была ложной — убрать строку это решение
+  // человека, а не поломка.
+  return '<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:9px 13px;margin-bottom:9px">'+
+    '<div data-a="est-dropped-open" title="Эти работы не считаются в смете" style="display:flex;align-items:baseline;gap:8px;cursor:pointer;padding:2px 0'+(droppedOpen?';margin-bottom:6px':'')+'">'+
+      // Подпись короткая не ради красоты: справка стоит в половине ширины рядом с
+      // «откуда числа», и «НЕ ВХОДИТ В ИТОГ · УБРАНО 1» обрезается многоточием
+      // ровно на том слове, ради которого её и переписывали.
+      '<span style="flex:1;min-width:0;font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(droppedOpen?"▾ ":"▸ ")+'НЕ В ИТОГЕ · '+keys.length+'</span>'+
+      '<span style="font-size:11px;font-weight:700;color:#7a9aaa;white-space:nowrap">'+Math.round(sum).toLocaleString("ru-RU")+' ₽</span>'+
     '</div>'+
     (!droppedOpen?'':
     (dropped.length
       ? dropped.map(function(p){
-          return '<div style="display:flex;align-items:baseline;gap:8px;padding:5px 0;border-top:1px solid #fbf1ef">'+
+          return '<div style="display:flex;align-items:baseline;gap:8px;padding:5px 0;border-top:1px solid #f4f7fb">'+
             '<span style="flex:1;min-width:0;font-size:12px;color:#7a9aaa">'+esc(p.name)+(p.room?' — '+esc(p.room):'')+'</span>'+
             '<span style="font-size:11.5px;color:#9aabbf;white-space:nowrap">'+Math.round(Number(p.cost)||0).toLocaleString("ru-RU")+' ₽</span>'+
             (canRule?'<button data-a="est-pos-back" data-k="'+esc(p.key)+'" style="border:1px solid #16a08544;background:#fff;border-radius:7px;padding:3px 9px;font-size:10.5px;font-weight:700;color:#16a085;cursor:pointer">вернуть</button>':'')+
@@ -15161,7 +15214,7 @@ function estStageBody(st, rows, sh, w, canRule){
     const rl=roomLook(b.room, sh&&sh.kind);
     // Липнет следом за шапкой этапа: в этапе из четырёх комнат «где я» — это
     // пара «этап + помещение», и терять из виду вторую половину так же плохо.
-    h+='<div data-drop-stage="'+st.n+'" data-drop-room="'+esc(b.key)+'" style="position:sticky;top:30px;z-index:2;display:flex;align-items:center;gap:5px;margin:8px 0 2px;padding:4px 8px;background:'+rl.color+'12;border:1px solid '+rl.color+'2e;border-left:3px solid '+rl.color+';border-radius:8px;backdrop-filter:blur(6px)">'+
+    h+='<div data-drop-stage="'+st.n+'" data-drop-room="'+esc(b.key)+'" style="position:sticky;top:calc(var(--hdr,116px) + '+(EST_BAR+30)+'px);z-index:4;display:flex;align-items:center;gap:5px;margin:8px 0 2px;padding:4px 8px;background:'+rl.color+'12;border:1px solid '+rl.color+'2e;border-left:3px solid '+rl.color+';border-radius:8px;backdrop-filter:blur(6px)">'+
         '<span style="flex-shrink:0;font-size:11px;line-height:1">'+rl.emoji+'</span>'+
         '<span data-a="est-block-open" data-b="'+esc(id)+'" style="flex:1;min-width:0;font-size:10.5px;font-weight:800;color:'+rl.color+';letter-spacing:0.4px;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;padding:3px 0">'+
           (shut?"▸ ":"▾ ")+esc(b.room||"Общее по дому")+
@@ -15233,19 +15286,62 @@ const EST_FILTERS=[
   ["labor0","без оплаты","Строки, где бригаде ещё ничего не назначено"],
   ["stale","цены отстали","Строки с материалами, у которых в каталоге цена новее"],
 ];
+// Один цвет — один смысл. Раньше на строке уживались четыре палитры, причём
+// зелёный занимал сразу два разных смысла («дописана» и «факт N ч»), а синий —
+// время и правило счёта. Цвет, который значит два разных, не значит ничего:
+// глаз перестаёт им пользоваться и читает подписи. Поэтому:
+//   деньги бригаде — фиолетовый, время — синий, факт со стройки — зелёный,
+//   справочное (правило, доля этапа) — серый.
+// «Дописана» цвета лишилась вовсе: она свойство ВСЕЙ строки, а не одного числа,
+// и живёт рейкой слева (см. ряд строки) — так же, как блок «СОСТАВ» отделён от
+// соседей рейкой, а не пилюлей.
+const EST_COL={ money:"#8e44ad", time:"#2980b9", fact:"#16a085", note:"#9aabbf", added:"#e67e22" };
+// Подпись правила по умолчанию — ровно та, что отдаёт `positionWhy` в src/recipe.js,
+// когда у строки нет ни площади, ни точек, ни помещения. Держим её здесь строкой,
+// а не переписываем условие: разойдись они, смета начала бы прятать подпись не у
+// тех строк, а заметно это станет на чужом доме.
+const EST_WHY_ALL="на весь дом";
+// Высота липкой полосы с итогом сметы. От неё считаются смещения липких шапок
+// этапа и помещения — держим числом в одном месте, иначе стек разъедется на
+// первой же правке кегля.
+const EST_BAR=28;
+// Отстала ли цена ХОТЯ БЫ У ОДНОГО материала строки. Один предикат на три места:
+// чип-фильтр, счётчик на нём и пометка в самой строке. Своя проверка в каждом
+// означала бы, что фильтр находит строку, которую строка о себе не говорит.
+function estPosStale(p, byId){
+  return (p.mats||[]).some(function(m){ return priceStale(m, (byId||{})[m.pid]); });
+}
 function estFilterOk(p, f, byId){
   if(f==="added")return !!p.added;
   if(f==="labor0")return positionSplit(p).labor<=0;
-  if(f==="stale")return (p.mats||[]).some(function(m){ return priceStale(m, byId[m.pid]); });
+  if(f==="stale")return estPosStale(p, byId);
   return true;
 }
-function estFilterHtml(){
-  return '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:9px">'+
-    EST_FILTERS.map(function(f){
-      const on=estFilter===f[0];
-      return '<button data-a="est-filter" data-f="'+f[0]+'" title="'+esc(f[2])+'" style="border:1px solid '+(on?"#2980b9":"#dde6f0")+';background:'+(on?"#2980b9":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:8px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer">'+esc(f[1])+'</button>';
-    }).join("")+
-  '</div>';
+// Сколько строк под каждым чипом. Без числа чип молчит о том, есть ли вообще что
+// искать: три тапа ради ответа «ничего». Считаем один раз по всем позициям —
+// три прохода по сорока строкам дешевле одного лишнего рендера.
+function estFilterCounts(positions, byId){
+  const c={};
+  EST_FILTERS.forEach(function(f){ c[f[0]]=0; });
+  (positions||[]).forEach(function(p){
+    EST_FILTERS.forEach(function(f){ if(estFilterOk(p, f[0], byId))c[f[0]]++; });
+  });
+  return c;
+}
+function estFilterHtml(counts){
+  return EST_FILTERS.map(function(f){
+    const on=estFilter===f[0];
+    const n=(counts||{})[f[0]]||0;
+    // Пустой чип гаснет, но не исчезает: пропавшая кнопка читается как «такого
+    // вопроса не бывает», а он бывает — просто сегодня ответ пустой. Нажать её
+    // всё равно можно: увидеть «ничего не нашлось» честнее, чем мёртвый тап.
+    const col=on?"#fff":(n?"#5a7a9a":"#c3ceda");
+    const bd=on?"#2980b9":(n?"#dde6f0":"#eef2f7");
+    return '<button data-a="est-filter" data-f="'+f[0]+'" title="'+esc(f[2])+(n?"":" — сейчас таких нет")+'" '+
+      'style="border:1px solid '+bd+';background:'+(on?"#2980b9":"#fff")+';color:'+col+';border-radius:8px;padding:5px 9px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">'+
+      esc(f[1])+(n?' <span style="opacity:'+(on?"0.85":"1")+';color:'+(on?"#fff":"#0d1b2e")+'">'+n+'</span>':'')+
+    '</button>';
+  }).join("");
 }
 // Этап с одними найденными строками: суммы пересчитываем по ним же — под шапкой
 // лежит именно этот список, и чужой итог над ним читался бы как его собственный.
@@ -15268,19 +15364,25 @@ function estFindStage(st, hits){
   }).filter(Boolean);
   return Object.assign({}, st, money(pos), { positions:pos, blocks:blocks, found:(st.positions||[]).length });
 }
-function estFindHtml(w, hits, active){
+// Поиск и чипы — ОДНИМ рядом. Раньше это были два блока друг под другом, и до
+// первой строки сметы человек пролистывал пять полос управления: поиск, чипы,
+// «откуда числа», «+ работа», «убрано». Вопрос у них общий — «покажи не всю
+// смету, а вот эту её часть», — и разными полосами он читался как два разных
+// механизма отбора. Ряд переносится: на узкой колонке чипы уходят под поле сами.
+function estFindHtml(w, hits, active, chips){
   const terms=estFindTerms();
   const on=active===undefined?terms.length>0:!!active;
   const n=Object.keys(hits||{}).length;
   const sum=(w.positions||[]).reduce(function(a,p){ return a+(hits[p.key]?Math.round(Number(p.cost)||0):0); }, 0);
-  return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:9px">'+
-    '<div style="position:relative;flex:1;min-width:0">'+
+  return '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:9px">'+
+    '<div style="position:relative;flex:1 1 190px;min-width:0">'+
       '<input id="est-find" data-a="est-find" value="'+esc(estFind||"")+'" placeholder="🔍 работа или материал" '+
         'style="width:100%;box-sizing:border-box;padding:9px 30px 9px 12px;border:1.5px solid '+(terms.length?"#2980b9":"#dde6f0")+';border-radius:10px;font-size:13px;outline:none;background:#fff;color:#0d1b2e">'+
       (terms.length?'<button data-a="est-find-clear" title="Показать всю смету" style="position:absolute;right:7px;top:50%;transform:translateY(-50%);width:22px;height:22px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:6px;cursor:pointer;font-size:11px;color:#7a9aaa;line-height:1;padding:0">✕</button>':'')+
     '</div>'+
+    (chips||'')+
     (on
-      ? '<span style="font-size:11px;font-weight:700;color:'+(n?"#2980b9":"#e67e22")+';white-space:nowrap">'+
+      ? '<span style="flex-basis:100%;font-size:11px;font-weight:700;color:'+(n?"#2980b9":"#e67e22")+'">'+
           (n?('найдено '+n+' из '+(w.positions||[]).length+' · '+sum.toLocaleString("ru-RU")+' ₽'):'ничего не нашлось')+'</span>'
       : '')+
   '</div>';
@@ -15335,10 +15437,13 @@ function estBodyHtml(sh, types, live, actions){
   // Фильтр — тот же поиск, только вопрос задан чипом: экран одинаково остаётся
   // «списком ответа», и второй механизм отбора завёл бы второй способ его читать.
   const finding=!!terms.length||!!estFilter;
+  // Каталог по id — ОДИН раз на весь экран: по нему считаются и счётчики чипов,
+  // и пометка «цена отстала» в каждой строке. Раньше он строился только внутри
+  // поиска, и строка о своей отставшей цене молчала, пока фильтр не включили.
+  const byId={}; (expProducts||[]).forEach(function(x){ if(x&&x.id)byId[x.id]=x; });
   const hits={};
   estFindOpen={};
   if(finding){
-    const byId={}; (expProducts||[]).forEach(function(x){ if(x&&x.id)byId[x.id]=x; });
     (w.positions||[]).forEach(function(p){
       const r=terms.length?estFindHit(p, terms):{ mat:false };
       if(!r)return;
@@ -15348,20 +15453,50 @@ function estBodyHtml(sh, types, live, actions){
       hits[p.key]=r; if(r.mat)estFindOpen[p.key]=1;
     });
   }
-  h+=estFindHtml(w, hits, finding);
-  if(canRule)h+=estFilterHtml();
+  h+=estFindHtml(w, hits, finding, canRule?estFilterHtml(estFilterCounts(w.positions, byId)):'');
   // Пока идёт поиск, экран — это его результат: справки, «+ работа» и убранное
   // отвечают на другие вопросы и только отодвигают найденное вниз.
+  // Две справки — «откуда числа» и «убрано» — стоят РЯДОМ, а не друг под другом:
+  // обе отвечают на вопрос «почему в смете столько», обе свёрнуты, и каждая
+  // занимала целую полосу ради одной строки текста. На узкой колонке они
+  // складываются обратно в столбик сами.
   if(!finding){
-    h+=spec2FactsHtml(w.facts, live);
-    h+=estPosAddHtml(sh, canRule);
-    h+=estDroppedHtml(sh, canRule);
+    // Рядом стоят только СВЁРНУТЫЕ справки: свёрнутая — это одна строка, и две
+    // такие строки не заслуживают двух полос экрана. Раскрытая занимает всю
+    // ширину: внутри перечень убранных работ с длинными именами, и в половинной
+    // колонке «Контейнер 40 фут новый · 30 м² · высота 2,6 м+ доставка+разгрузка
+    // краном» рвётся по слову в строку — экономия ширины оборачивается вдвое
+    // большей высотой.
+    const asides=[
+      { html:spec2FactsHtml(w.facts, live), wide:!!factsOpen },
+      { html:estDroppedHtml(sh, canRule),   wide:!!droppedOpen },
+    ].filter(function(x){ return !!x.html; });
+    if(asides.length)h+='<div style="display:flex;flex-wrap:wrap;gap:0 9px;align-items:flex-start">'+
+      asides.map(function(x){ return '<div style="flex:'+(x.wide?'1 1 100%':'1 1 210px')+';min-width:0">'+x.html+'</div>'; }).join("")+'</div>';
   }
   // Переносить строки во время поиска нечего: половина списка скрыта, и ручка
   // переноса ставила бы работу между строками, которых человек не видит.
   const stages=finding
     ? w.stages.map(function(st){ return estFindStage(st, hits); }).filter(Boolean)
     : w.stages;
+  // Итог, который НЕ уезжает. Тёмная карточка сверху написана с расчётом «лезть
+  // за итогом в конец списка из сорока строк никто не будет» — но она уезжает за
+  // верхний край на первом же свайпе, и дальше вся смета читается без главной
+  // цифры. Полоска повторяет её в одну строку и липнет под шапкой приложения:
+  // это заголовок списка, а не второй итог, поэтому она узкая, серо-тёмная и
+  // стоит уже ПОСЛЕ поиска — над самими этапами.
+  if(stages.length){
+    // Высота задана ЧИСЛОМ, а не набегает из шрифта: под неё выставлены смещения
+    // липких шапок этапа (+EST_BAR) и помещения (+EST_BAR+30). Дай ей расти
+    // самой — стек разъедется, и между полосой и шапкой этапа поедет чужой текст.
+    h+='<div style="position:sticky;top:var(--hdr,116px);z-index:6;height:'+EST_BAR+'px;box-sizing:border-box;display:flex;align-items:center;gap:8px;'+
+        'background:#0d1b2e;border-radius:9px;padding:0 11px;margin-bottom:9px;box-shadow:0 2px 6px rgba(13,27,46,0.18)">'+
+      '<span style="font-size:9.5px;font-weight:700;color:#8fa6bd;letter-spacing:0.5px">СМЕТА</span>'+
+      '<span style="flex:1;min-width:0;font-size:12.5px;font-weight:800;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+w.cost.toLocaleString("ru-RU")+' ₽</span>'+
+      '<span style="font-size:9.5px;font-weight:700;color:#8fa6bd;letter-spacing:0.5px">КЛИЕНТУ</span>'+
+      '<span style="font-size:12.5px;font-weight:800;color:#4ecdc4;white-space:nowrap">'+w.price.toLocaleString("ru-RU")+' ₽</span>'+
+    '</div>';
+  }
   // Работы этапами: стройка меряется этапами, по ним же идут сроки, приёмка и
   // транши — смета обязана читаться в том же разрезе.
   if(stages.length){
@@ -15375,7 +15510,7 @@ function estBodyHtml(sh, types, live, actions){
       return '<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
         // Шапка липнет к верху: в этапе на сорок строк через полэкрана уже не
         // видно, в каком этапе смотришь, а по этапам идут сроки и транши.
-        '<div data-a="est-stage-open" data-n="'+st.n+'" data-drop-stage="'+st.n+'" style="position:sticky;top:0;z-index:3;background:#fff;display:flex;align-items:baseline;gap:8px;padding:4px 0;margin-bottom:'+(shut?'0':'4px')+';cursor:pointer">'+
+        '<div data-a="est-stage-open" data-n="'+st.n+'" data-drop-stage="'+st.n+'" style="position:sticky;top:calc(var(--hdr,116px) + '+EST_BAR+'px);z-index:5;background:#fff;display:flex;align-items:baseline;gap:8px;padding:4px 0;margin-bottom:'+(shut?'0':'4px')+';cursor:pointer">'+
           '<span style="width:8px;height:8px;border-radius:3px;background:'+st.color+';flex-shrink:0"></span>'+
           '<span style="flex:1;min-width:0;font-size:11px;font-weight:700;color:#0d1b2e;letter-spacing:0.4px;text-transform:uppercase">'+(shut?"▸ ":"▾ ")+esc(st.label)+
             (shut?' <span style="font-weight:700;color:#9aabbf;text-transform:none;letter-spacing:0">· '+st.positions.length+' '+pluralRu(st.positions.length,"работа","работы","работ")+'</span>':'')+
@@ -15409,7 +15544,25 @@ function estBodyHtml(sh, types, live, actions){
                     :"Сверить цены материалов этапа с каталогом");
             return '<button data-a="est-stage-prices" data-n="'+st.n+'" title="'+esc(ttl)+'" style="height:24px;padding:0 8px;border:1px solid '+col+'55;background:#fff;color:'+col+';border-radius:7px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap">'+face+'</button>';
           })():'')+
+          estStageAddBtn(sh, st, canRule)+
         '</div>'+
+        // Доля этапа в смете — полоской. «531 478 ₽» и «17 335 ₽» стоят рядом
+        // одинаковым кеглем, и во что из них упираются деньги дома, приходится
+        // считать в уме при каждом взгляде. Полоска отвечает мгновенно и не
+        // занимает строки. Считаем от СЕБЕСТОИМОСТИ дома, а не от самого
+        // большого этапа: вопрос «какая часть сметы здесь», а не «кто длиннее».
+        (function(){
+          const all=Math.round(Number(w.cost)||0);
+          if(all<=0)return '';
+          const part=Math.max(0, Math.min(1, Math.round(st.cost)/all));
+          return '<div title="'+Math.round(part*100)+' % себестоимости дома" style="height:3px;border-radius:2px;background:#eef2f7;overflow:hidden;margin:0 0 7px">'+
+            '<div style="width:'+(part*100).toFixed(1)+'%;height:100%;background:'+st.color+';border-radius:2px"></div>'+
+          '</div>';
+        })()+
+        // Форма «+ работа» — сразу под шапкой, у той кнопки, которой её открыли,
+        // и ВНЕ зависимости от того, свёрнут этап или нет: добавляют работу как
+        // раз в свёрнутый, не разворачивая ради этого сорок чужих строк.
+        estStageAddFormHtml(sh, st, canRule)+
         // Список магазинов — сразу под шапкой: сверять цены идут отсюда, и
         // прятать его внутрь свёрнутого этапа значит прятать саму задачу.
         ((priceWizStage===String(st.n))?priceWizHtml(st):'')+
@@ -15433,7 +15586,12 @@ function estBodyHtml(sh, types, live, actions){
             // слова в строку: поле, чип, итог, ⠿, этап и ✕ не сжимаются. Строки
             // разделяет воздух, а не полоска: сорок работ, слепленных линиями в
             // один пиксель, читаются как простыня.
-            '<div'+addr+' style="padding:12px 0'+(rowOpen?';background:#fbfcfe':'')+'">'+
+            // Дописанная руками работа помечена РЕЙКОЙ слева, а не пилюлей у имени:
+            // «дописана» — свойство всей строки, а не её названия, и зелёная пилюля
+            // отнимала зелёный у «факта со стройки», единственного цвета, который в
+            // смете значит «это уже случилось». Тот же приём, что у блока «СОСТАВ»:
+            // приписано отступом и рейкой, а не подписью.
+            '<div'+addr+' style="padding:12px 0'+(p.added?';border-left:2px solid '+EST_COL.added+';padding-left:9px;margin-left:-2px':'')+(rowOpen?';background:#fbfcfe':'')+'">'+
             // Имя во всю ширину и не длиннее двух строк (полное — в подсказке):
             // одно наименование на пол-экрана прятало соседние работы. Итог прижат
             // к правому краю, у всех строк он встаёт в одну колонку.
@@ -15444,8 +15602,7 @@ function estBodyHtml(sh, types, live, actions){
             // из сорока строк — это уже не смета, а панель приборов.
             '<div data-a="est-row-open" data-k="'+esc(p.key)+'" style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">'+
               (estPickOn?estPickBoxHtml(p.key):(canDrag?estDragBtn(p.key):''))+
-              '<span title="'+esc(p.name)+'" style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#0d1b2e;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+esc(p.name)+
-                (p.added?' <span style="font-size:9.5px;font-weight:700;color:#16a085;background:#e8f6f3;border-radius:5px;padding:1px 5px">дописана</span>':'')+'</span>'+
+              '<span title="'+esc(p.name)+(p.added?" · дописана в этот дом руками":"")+'" style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#0d1b2e;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+esc(p.name)+'</span>'+
               '<span style="font-size:13px;font-weight:800;color:#0d1b2e;white-space:nowrap">'+Math.round(p.cost).toLocaleString("ru-RU")+' ₽</span>'+
             '</div>'+
             optChipsHtml(p, sh, w)+
@@ -15453,11 +15610,41 @@ function estBodyHtml(sh, types, live, actions){
             // работой съедали по двадцать пикселей. «Итого» из раскладки убрано —
             // оно уже стоит справа от имени.
             '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin-top:5px">'+
-              (!p.why?''
-                : canRule&&p.estId
-                ? '<button data-a="est-why" data-est="'+p.estId+'" title="Чем меряется эта строка" style="background:'+(open?RULE_COL:"#eef6ff")+';color:'+(open?"#fff":"#2980b9")+';border:none;border-radius:7px;padding:3px 8px;font-size:10.5px;font-weight:700;cursor:pointer">'+esc(p.why)+' ⚙</button>'
-                : '<span style="background:#eef6ff;color:#2980b9;border-radius:7px;padding:2px 7px;font-size:10.5px;font-weight:700">'+esc(p.why)+'</span>')+
+              // «На весь дом» — правило ПО УМОЛЧАНИЮ, и напечатанное под каждой из
+              // сорока строк оно перестаёт что-либо сообщать: одинаковая подпись
+              // всюду читается как часть разметки. Хуже того, она прячет строки, у
+              // которых правило ДРУГОЕ («Санузел», «розетки 15 шт») — а именно их и
+              // ищут глазами. Поэтому подпись остаётся только у отклонений, а у
+              // остальных живёт одной ⚙: править правило по-прежнему можно, просто
+              // оно больше не кричит о том, что и так верно для всех.
+              (function(){
+                if(!p.why)return '';
+                const dflt=p.why===EST_WHY_ALL;
+                if(!(canRule&&p.estId))return dflt?'':'<span style="background:#f0f4f8;color:#5a7a9a;border-radius:7px;padding:2px 7px;font-size:10.5px;font-weight:700">'+esc(p.why)+'</span>';
+                const bg=open?RULE_COL:"#f0f4f8", fg=open?"#fff":"#5a7a9a";
+                return '<button data-a="est-why" data-est="'+p.estId+'" title="'+esc("Чем меряется эта строка — "+p.why)+'" style="background:'+bg+';color:'+fg+';border:none;border-radius:7px;padding:3px '+(dflt?'7px':'8px')+';font-size:10.5px;font-weight:700;cursor:pointer;line-height:1.35">'+(dflt?'⚙':esc(p.why)+' ⚙')+'</button>';
+              })()+
               estSplitHtml(p, matsShown(p).length, !!matsOpen[p.key])+
+              // «Цена отстала» — В САМОЙ СТРОКЕ, а не только под чипом-фильтром.
+              // Предикат для фильтра уже был, но строка о себе молчала: устаревшую
+              // цену видел лишь тот, кто догадался включить отбор. Читают смету
+              // сверху вниз, а не фильтрами, и цифра, которая врёт, обязана
+              // сказать об этом там, где на неё смотрят.
+              (estPosStale(p, byId)
+                ? '<button data-a="est-mats-open" data-k="'+esc(p.key)+'" title="В каталоге цена новее — раскройте материалы и сверьте" style="border:1px solid '+EST_COL.money+'44;background:#f3ecf9;color:'+EST_COL.money+';border-radius:7px;padding:2px 7px;font-size:10.5px;font-weight:700;cursor:pointer;white-space:nowrap">💱 цена в базе новее</button>'
+                : '')+
+              // Доля крупной строки в этапе. Полоску на КАЖДУЮ строку вешать нечего
+              // — сорок полосок это шум, — но контейнер за 175 000 ₽ при этапе в
+              // 531 478 ₽ забирает треть денег, и заметить это глазами нельзя:
+              // цифры набраны одинаковым кеглем. Порог в пятую часть отсекает
+              // мелочь и оставляет ровно те строки, из-за которых спорят.
+              (function(){
+                const all=Math.round(Number(st.cost)||0), part=Math.round(Number(p.cost)||0);
+                if(all<=0||part<=0)return '';
+                const share=part/all;
+                if(share<0.2)return '';
+                return '<span title="Доля этой строки в этапе" style="color:'+EST_COL.note+';font-size:10.5px;font-weight:700;white-space:nowrap">'+Math.round(share*100)+' % этапа</span>';
+              })()+
               (rowOpen?'':estPosSetChips(p, sh, fact))+
             '</div>'+
             // Ряд управления — своей строкой, кнопки одного размера (28 px), и всё,

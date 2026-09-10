@@ -343,11 +343,20 @@ function create(p, name) {
   // сумма отвечала «сколько стоит», но не на те два вопроса, которые задают:
   // сколько закупать и сколько платить бригаде.
   const partsPlain = parts.replace(/<[^>]*>/g, '').replace(/[\u00a0\u202f]/g, ' ')
-  t.ok('в строке видно материалы, работу и итог',
-    /материалы [\d ]+ ₽ · работа [\d ]+ ₽/.test(partsPlain), 'нет раскладки')
+  // НО «работа 0 ₽» у материальной строки не печатаем вовсе. Ноль здесь значит
+  // «бригаде за эту строку ещё ничего не назначено», а читается как незаполненная
+  // форма — и в живом доме таких строк почти все (доставка, аренда, покупка
+  // контейнера: платить бригаде там не за что). Сорок нулей подряд говорят, что
+  // смета недоделана, хотя она готова. На тот же вопрос теперь отвечает чип
+  // «без оплаты» со счётчиком — одним взглядом вместо сорока повторов.
+  t.ok('материалы в строке видны', /материалы [\d ]+ ₽/.test(partsPlain), 'нет раскладки')
+  // Сторожим по метке СТРОКИ, а не по тексту: подытог этапа обе цифры сохраняет
+  // («работа 0 ₽» там значит «по этапу бригаде не назначено ничего» — это ответ,
+  // а не пустая форма), и текстовый поиск ловил бы именно его.
+  t.ok('«работа 0 ₽» у материальной строки не печатается',
+    parts.indexOf('data-a="est-pos-cost-focus"') < 0, 'ссылка на цену работы осталась')
   // Цифра ведёт туда, где её правят.
   t.ok('«материалы» раскрывают список', parts.indexOf('data-a="est-mats-open"') >= 0)
-  t.ok('«работа» ведёт в поле цены', parts.indexOf('data-a="est-pos-cost-focus"') >= 0)
   const matsKey = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
   const openMats = p.dom.node({ a: 'est-mats-open', k: matsKey }); p.run('bind();'); openMats.onclick()
   const parts2 = p.run('tProjects()')
@@ -473,7 +482,12 @@ function create(p, name) {
   // остаётся на виду, с ценой и кнопкой «вернуть».
   // Шапка «убрано» видна всегда — со счётом и суммой; сам перечень свёрнут,
   // потому что экран открывают ради сметы, а не ради убранного.
-  t.ok('убранное показано отдельно', /УБРАНО ИЗ ЭТОГО ДОМА/.test(after))
+  // Красный минус «−175 000 ₽» читался как вычет из показанного итога: до вычета
+  // он или после — по экрану не понять. Убранная строка в смету просто не входит,
+  // и деньги никуда не уходили, поэтому подпись говорит это прямо, а тревожный
+  // цвет снят: убрать работу — решение человека, а не поломка.
+  t.ok('убранное показано отдельно', /НЕ В ИТОГЕ/.test(after))
+  t.ok('и не выглядит вычетом из итога', !/−[\d  ]+ ₽/.test(after), 'минус вернулся')
   t.ok('перечень свёрнут', after.indexOf('data-a="est-pos-back"') < 0)
   const dropHead = p.dom.node({ a: 'est-dropped-open' }); p.run('bind();'); dropHead.onclick()
   const openDrop = p.run('tProjects()')
@@ -507,30 +521,44 @@ function create(p, name) {
   create(p, 'Дом с дописанной работой')
   p.run('projBand="parts";')
   const cost0 = p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost')
-  t.ok('кнопка «+ работа» есть', p.run('tProjects()').indexOf('data-a="est-pos-add-open"') >= 0)
+  // «+ работа» живёт в ШАПКЕ ЭТАПА и адресуется тегом «<лист>@<этап>|»: место
+  // нажатия и есть ответ на «добавить куда?». Общей кнопки над сметой больше нет
+  // — она спрашивала этап списком, и строка уходила не туда, куда смотрел
+  // человек. В шапке, а не в подвале этапа: этапы по умолчанию свёрнуты, и
+  // кнопка внутри списка на свежем доме не показалась бы ни разу.
+  // Заготовка тестов кладёт обе работы на этап 2 — значит и шапка с «+» одна, его.
+  // Тег берём оттуда же: кнопка адресует ровно тот этап, в шапке которого стоит,
+  // и «свой этап» у дописанной работы — это он.
+  const tag1 = p.q('projects[0].id') + '@2|'
+  t.ok('кнопка «+ работа» есть в шапке этапа',
+    p.run('tProjects()').indexOf('data-k="' + tag1 + '"') >= 0)
 
-  const open = p.dom.node({ a: 'est-pos-add-open', k: p.q('projects[0].id') })
+  const open = p.dom.node({ a: 'est-pos-add-open', k: tag1 })
   p.run('bind();'); open.onclick()
   t.ok('форма открылась', p.run('tProjects()').indexOf('data-a="est-pos-add-do"') >= 0)
+  // Этап пришёл вместе с адресом, и спрашивать его второй раз незачем.
+  t.ok('этап в форме не спрашивают', p.run('tProjects()').indexOf('id="pad-stage"') < 0)
 
   // Своя строка: имени в справочнике нет, зато есть сумма.
-  p.dom.field('pad-n', 'Вывоз мусора'); p.dom.field('pad-cost', '9000'); p.dom.field('pad-stage', '1')
-  const go = p.dom.node({ a: 'est-pos-add-do', k: p.q('projects[0].id') })
+  p.dom.field('pad-n', 'Вывоз мусора'); p.dom.field('pad-cost', '9000')
+  const go = p.dom.node({ a: 'est-pos-add-do', k: tag1 })
   p.run('bind();'); go.onclick()
   const own = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.name==="Вывоз мусора";})')
   t.ok('своя работа появилась', own.length === 1, JSON.stringify(own.map((x) => x.name)))
   t.ok('с её суммой', own[0] && own[0].cost === 9000, own[0] && String(own[0].cost))
-  t.ok('и на своём этапе', own[0] && own[0].stage === 1, own[0] && String(own[0].stage))
+  t.ok('и на своём этапе', own[0] && own[0].stage === 2, own[0] && String(own[0].stage))
   t.ok('деньги выросли ровно на неё',
     p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost') === cost0 + 9000)
   t.ok('справочник не тронут', p.q('estimates.length') === 2)
-  t.ok('на экране помечена дописанной', /дописана/.test(p.run('tProjects()')))
+  // Дописанная помечена РЕЙКОЙ слева, а не зелёной пилюлей у имени: «дописана» —
+  // свойство всей строки, а зелёный в смете значит «факт со стройки» и занят.
+  t.ok('на экране помечена дописанной', /border-left:2px solid #e67e22/.test(p.run('tProjects()')))
 
   // Имя из справочника — строка берётся целиком, со своими материалами и ценой.
-  const open2 = p.dom.node({ a: 'est-pos-add-open', k: p.q('projects[0].id') })
+  const open2 = p.dom.node({ a: 'est-pos-add-open', k: tag1 })
   p.run('bind();'); open2.onclick()
   p.dom.field('pad-n', 'Обшивка стен ОСП'); p.dom.field('pad-cost', '')
-  const go2 = p.dom.node({ a: 'est-pos-add-do', k: p.q('projects[0].id') })
+  const go2 = p.dom.node({ a: 'est-pos-add-do', k: tag1 })
   p.run('bind();'); go2.onclick()
   const fromCat = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key.indexOf("add:")===0&&x.estId==="e_osb";})')
   t.ok('работа из справочника добавилась', fromCat.length === 1)
@@ -1132,8 +1160,13 @@ function create(p, name) {
   openRow(p, key)
   const fieldHtml = () => (p.run('tProjects()').match(/data-a="est-pos-cost"[^>]*/) || [''])[0]
   t.ok('поля цены у обычной строки нет', fieldHtml() === '', fieldHtml().slice(0, 120))
-  t.ok('без цены бригаде работа нулевая',
-    new RegExp('материалы ' + cost0.toLocaleString('ru-RU').replace(/[\u00a0\u202f]/g, ' ') + ' ₽ · работа 0 ₽').test(plain()), 'нет раскладки')
+  // Пока бригаде ничего не назначено, «работа 0 ₽» в строке не печатается вовсе:
+  // ноль читается как незаполненная форма, хотя за доставку или аренду бригаде и
+  // платить не за что. Сколько таких строк — отвечает чип «без оплаты» со счётчиком.
+  t.ok('без цены бригаде работа в строке не показана',
+    p.run('tProjects()').indexOf('data-a="est-pos-cost-focus"') < 0, 'ссылка на цену работы осталась')
+  t.ok('а материалы показаны',
+    new RegExp('материалы ' + cost0.toLocaleString('ru-RU').replace(/[\u00a0\u202f]/g, ' ') + ' ₽').test(plain()), 'нет раскладки')
 
   const inp = p.dom.node({ a: 'est-pos-cost', k: key })
   p.run('bind();'); inp.value = '12000'; inp.onchange()
