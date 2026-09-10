@@ -387,7 +387,8 @@ function create(p, name) {
   t.ok('в доме один вариант',
     p.q('works2(projects[0], specCtx(projects[0])).positions.filter(function(x){return /ППУ/.test(x.name);}).length') === 1)
   const chips = p.run('estWhyOpen="";tProjects()')
-  t.ok('и переключатель на месте', (chips.match(/data-a="est-opt-pick"/g) || []).length === 2)
+  // Два варианта — одна пилюля: выбранный уже в имени строки.
+  t.ok('и переключатель на месте', (chips.match(/data-a="est-opt-pick"/g) || []).length === 1)
 
   // Всё это уезжает в объект тем же составом.
   const shown = p.q('works2(projects[0], specCtx(projects[0])).positions.length')

@@ -13667,23 +13667,31 @@ function optEditorHtml(p, sh){
   '</div>';
 }
 
+// Выбор варианта — ПИЛЮЛЯМИ в строке материалов, а не блоком под строкой.
+// Выбранный вариант уже написан в имени строки («Утепление пола — ЭППС 10 см»)
+// и стоит её суммой справа; кнопка с ним же и подпись «ВЫБОР · …» занимали две
+// строки экрана под каждой такой работой ради того, что и так видно. Остались
+// только ДРУГИЕ варианты, по пилюле на каждый, и на пилюле не цена, а разница:
+// вопрос у выбора — «на сколько поедет дом», и считать 24 092 − 13 592 в уме
+// при каждом взгляде никто не должен. Цена целиком и имя группы — в подсказке.
+// Варианты считаются одним кодом (applyPicks) на одной основе — разница честная.
+// Цвет нейтральный: зелёный в смете закреплён за фактом со стройки (EST_COL).
 function optChipsHtml(pos, sh, w){
   const g=optGroupOf(sh, pos.estId);
   if(!g)return "";
   const grp=(w.groups||[]).find(function(x){return x.group===g;});
   if(!grp||grp.variants.length<2)return "";
-  return '<div style="margin-top:5px">'+
-    '<div style="font-size:9.5px;font-weight:700;color:#9aabbf;letter-spacing:0.4px;margin-bottom:4px">ВЫБОР · '+esc(g)+'</div>'+
-    '<div style="display:flex;flex-wrap:wrap;gap:4px">'+
-      grp.variants.map(function(v){
-        const on=!!v.on;
-        return '<button data-a="est-opt-pick" data-g="'+esc(g)+'" data-e="'+esc(v.estId)+'" style="border:1.5px solid '+(on?"#16a085":"#dde6f0")+';background:'+(on?"#16a085":"#fff")+';color:'+(on?"#fff":"#5a7a9a")+';border-radius:8px;padding:5px 9px;font-size:11px;font-weight:700;cursor:pointer;line-height:1.3">'+
-          esc(v.label||v.name)+
-          '<span style="display:block;font-size:9.5px;font-weight:400;opacity:.85">'+Math.round(v.cost).toLocaleString("ru-RU")+' ₽</span>'+
-        '</button>';
-      }).join("")+
-    '</div>'+
-  '</div>';
+  const cur=grp.variants.find(function(v){ return v.on; });
+  if(!cur)return "";
+  const rub=function(n){ return Math.round(n).toLocaleString("ru-RU")+' ₽'; };
+  return grp.variants.filter(function(v){ return !v.on; }).map(function(v){
+    const d=Math.round(v.cost)-Math.round(cur.cost);
+    const diff=d===0?'та же цена':((d>0?'+':'−')+rub(Math.abs(d)));
+    return '<button data-a="est-opt-pick" data-g="'+esc(g)+'" data-e="'+esc(v.estId)+'" '+
+      'title="'+esc(g+': '+(v.label||v.name)+' — '+rub(v.cost))+'" '+
+      'style="border:1px solid #d0dae8;background:#fff;color:#5a7a9a;border-radius:7px;padding:2px 7px;font-size:10.5px;font-weight:700;cursor:pointer;white-space:nowrap">'+
+      '⇄ '+esc(v.label||v.name)+' · '+diff+'</button>';
+  }).join("");
 }
 
 // ── МАТЕРИАЛЫ СТРОКИ СМЕТЫ: ПЕРЕЧНЕМ И С ЗАМЕНОЙ ────────────────────────────
@@ -15759,7 +15767,7 @@ function estBodyHtml(sh, types, live, actions){
               '<span title="'+esc(p.name)+(p.added?" · дописана в этот дом руками":"")+'" style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#0d1b2e;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+esc(p.name)+'</span>'+
               '<span style="font-size:13px;font-weight:800;color:#0d1b2e;white-space:nowrap">'+Math.round(p.cost).toLocaleString("ru-RU")+' ₽</span>'+
             '</div>'+
-            optChipsHtml(p, sh, w)+
+            
             // Чип «откуда число» и раскладка — одной строкой: две подписи под каждой
             // работой съедали по двадцать пикселей. «Итого» из раскладки убрано —
             // оно уже стоит справа от имени.
@@ -15779,6 +15787,7 @@ function estBodyHtml(sh, types, live, actions){
                 return '<button data-a="est-why" data-est="'+p.estId+'" title="'+esc("Чем меряется эта строка — "+p.why)+'" style="background:'+bg+';color:'+fg+';border:none;border-radius:7px;padding:3px '+(dflt?'7px':'8px')+';font-size:10.5px;font-weight:700;cursor:pointer;line-height:1.35">'+(dflt?'⚙':esc(p.why)+' ⚙')+'</button>';
               })()+
               estSplitHtml(p, matsShown(p).length, !!matsOpen[p.key])+
+              optChipsHtml(p, sh, w)+
               // «Цена отстала» — В САМОЙ СТРОКЕ, а не только под чипом-фильтром.
               // Предикат для фильтра уже был, но строка о себе молчала: устаревшую
               // цену видел лишь тот, кто догадался включить отбор. Читают смету
