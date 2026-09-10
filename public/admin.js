@@ -15227,7 +15227,11 @@ function dragRow(el, ev, rowKey, grpKey, done, onZone){
     if(zone){ zone.style.outline=""; zone.style.outlineOffset=""; }
     zone=z;
     if(zone){ zone.style.outline="2px dashed "+RULE_COL; zone.style.outlineOffset="2px"; }
-    slot.style.display=zone?"none":"flex";
+    // Над адресом рамку «сюда» ГАСИМ, но место не освобождаем. Убранная из потока
+    // (display:none), она поднимала всё ниже на свою высоту: шапка «Санузел»
+    // уезжала из-под пальца, адрес гас, рамка возвращалась, шапка падала обратно —
+    // адрес мигал, и бросок в блок НИЖЕ строки срывался в перестановку.
+    slot.style.visibility=zone?"hidden":"visible";
   };
   // Край экрана листает сам: список бывает длиннее экрана, а палец уже занят
   // строкой и прокрутить страницу им нечем.

@@ -132,4 +132,54 @@ function gesture(p, opts) {
   t.ok('над чужой карточкой мимо шапки — уезжает туда', b === '["zone:2"]', b)
 }
 
+// ── 5. Шапка помещения НИЖЕ строки: рамка «сюда» не должна прыгать ─────────
+// Жалоба: «стены санузла не могу опустить в санузел». Пока строку ведут, под
+// пальцем едет рамка «сюда» высотой в строку. Над адресом рамку прятали ЦЕЛИКОМ
+// (display:none) — и всё, что ниже, подпрыгивало на её высоту: шапка «Санузел»
+// (34 px) уезжала из-под пальца, на следующем движении адрес гас, рамка
+// возвращалась, шапка падала обратно. Адрес мигал, и где он окажется в момент
+// отпускания — случайно; чаще выходила перестановка. Цель ВЫШЕ рамки (бросок в
+// предыдущий этап) этого не замечала: прятание рамки её не двигало.
+function gestureShift(p) {
+  p.run(`
+    var __L={}, __log=[], __slot=null;
+    var __mkEl=document.createElement;
+    document.createElement=function(t){ var el=__mkEl.call(document,t); if(t==="div")__slot=el; return el; };
+    document.addEventListener=function(t,f){ __L[t]=f; };
+    document.removeEventListener=function(t){ delete __L[t]; };
+    var __mk=function(ds, top, h){ return { dataset:ds, style:{}, up:null, parentNode:null, nextSibling:null,
+      getBoundingClientRect:function(){ return { top:top, height:h||40 }; },
+      closest:function(sel){ var m=/data-([a-z-]+)/.exec(sel); var k=m?m[1].replace(/-([a-z])/g,function(_,c){return c.toUpperCase();}):"";
+        var x=this; while(x){ if(x.dataset&&x.dataset[k]!==undefined)return x; x=x.up; } return null; } }; };
+    var __par={ children:[], insertBefore:function(){}, removeChild:function(){} };
+    var __card=__mk({dropStage:"3"}, 0, 600);
+    var __sib=__mk({posRow:"k0",posGrp:"3|"}, 20, 77); __sib.parentNode=__par; __sib.up=__card;
+    var __row=__mk({posRow:"k1",posGrp:"3|"}, 100, 77); __row.parentNode=__par; __row.up=__card;
+    __par.children=[__sib, __row];
+    var __h=__mk({}, 100); __h.parentNode=__row; __h.setPointerCapture=function(){};
+    var __head=__mk({dropStage:"3", dropRoom:"r1"}, 0, 34); __head.up=__card;
+    var __below=__mk({}, 0); __below.up=__card;
+    // Раскладка: шапка «Санузел» на 200 px, пока рамка «сюда» занимает место.
+    // Рамку убрали из потока — всё ниже поднимается на её высоту, 77 px.
+    document.elementFromPoint=function(x, y){
+      var gone=!!(__slot&&__slot.style.display==="none");
+      var top=gone?123:200;
+      return (y>=top&&y<top+34)?__head:__below;
+    };
+    dragRow(__h, { preventDefault:function(){}, pointerId:1 }, "posRow", "posGrp",
+      function(b){ __log.push("done:"+b); }, function(z){ __log.push("zone:"+z.dropStage+"|"+z.dropRoom); });
+    __L.pointermove({ clientX:10, clientY:210 }); __log.push(__head.style.outline?"горит":"погасла");
+    __L.pointermove({ clientX:10, clientY:212 }); __log.push(__head.style.outline?"горит":"погасла");
+    __L.pointerup({});
+    document.createElement=__mkEl;
+  `)
+  return JSON.stringify(p.q('__log'))
+}
+{
+  t.section('Шапка помещения ниже строки')
+  const p = panel()
+  const a = gestureShift(p)
+  t.ok('адрес под пальцем не мигает, строка уезжает в санузел', a === '["горит","горит","zone:3|r1"]', a)
+}
+
 t.done()
