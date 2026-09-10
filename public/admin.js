@@ -58,7 +58,8 @@ import { priceHist, priceWas, pricePush, priceStale, refreshPrices } from "../sr
 import { UNIT_WORDS, PACK_AS_WORD, normProduct } from "../src/catalog.js";
 import { allPositions, allPositionsRaw, addedPositions, matKeyOf, matAddKey, matAddrs, matAddrPid, matAddrSwap, migrateMatAddrs, rulePositions, positionWork, ruleText, ruleReady, ruleAreas, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
   pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
-  optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf, ROOM_HOUSE, roomKeyOf, positionSplit } from "../src/recipe.js";
+  optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf, ROOM_HOUSE, roomKeyOf, positionSplit,
+  importRows, importPatch } from "../src/recipe.js";
 import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
 import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
@@ -2325,6 +2326,9 @@ let matOfferAdd="";        // у какого товара открыта фор
 let expAddUrl=false;       // открыта ли форма «новый товар по ссылке»
 let expAddTsv=false;       // открыта ли вставка таблицы
 let expTsvText="";         // что вставили — живёт на экране, в снимок не идёт
+// Открытый перенос «📋 из проекта»: откуда берём, что отмечено, какой этап
+// показан. Живёт на экране и в снимок не пишется — как и открытая форма «+ работа».
+let estImport=null;
 let posAddOpen="";         // у какого листа открыта форма «+ работа»
 let matsOpen={};           // у каких строк сметы раскрыт список материалов
 // Этапы свёрнуты ПО УМОЛЧАНИЮ, поэтому карта про раскрытые: смета на сорок
@@ -14186,7 +14190,121 @@ function estAddFormHtml(sh, tag, where){
       '<button data-a="est-pos-add-open" data-k="" style="padding:9px 13px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:12.5px">Отмена</button>'+
     '</div>'+
     '<div style="font-size:10px;color:#7a9aaa;line-height:1.45;margin-top:7px">Имя из справочника подтянет материалы, цену и этап — сумма'+(fixed?'':' и этап')+' тогда не нужны. Работа живёт в этом доме, справочник не меняется.</div>'+
+    // Вторая дверь в тот же перенос — прямо из формы: работу добавляют здесь, и
+    // «а в Мордвесе она уже собрана» вспоминают именно в этот момент. Этап формы
+    // едет с кнопкой: открылись из «+» этапа 2 — показываем работы этапа 2.
+    (function(){
+      if(!estImportSources(sh).length)return '';
+      const at=String(tag||"").indexOf("@");
+      const st=at>0?String(tag).slice(at+1).split("|")[0]:"";
+      return '<button data-a="est-import-open" data-st="'+esc(st)+'" style="margin-top:7px;border:none;background:transparent;padding:2px 0;font-size:11px;font-weight:700;color:#2980b9;cursor:pointer;text-align:left">📋 или взять готовые из другого проекта →</button>';
+    })()+
   '</div>';
+}
+
+// ── ВЗЯТЬ РАБОТЫ ИЗ ДРУГОГО ПРОЕКТА: ЭКРАН ──────────────────────────────────
+// Перенос считает src/recipe.js (importRows / importPatch) — там он проверен без
+// браузера. Здесь только выбор: откуда, какие строки, и одно нажатие «взять».
+function estImportSources(sh){
+  return (projects||[]).filter(function(p){ return p&&p.id&&p.id!==(sh&&sh.id); });
+}
+// Строки источника против ЭТОГО дома: что в нём уже есть, считается по его
+// собственной смете — иначе «уже есть» врало бы про дом, который открыт.
+function estImportCtx(sh, imp){
+  const w=works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes }));
+  const src=estImportSources(sh).find(function(p){ return p.id===(imp&&imp.src); })||null;
+  if(!src)return { src:null, w:w, all:[], rows:[] };
+  const sw=works2(src, Object.assign(specCtx(src), { winTypes:winTypes }));
+  const all=importRows(sw.positions, w.positions, sh, src.id);
+  const st=String((imp&&imp.stage)||"");
+  return { src:src, w:w, all:all, rows:st?all.filter(function(r){ return String(r.stage)===st; }):all };
+}
+// Сменили источник или этап — отмечаем заново ВСЁ новое на экране. Отметки,
+// оставшиеся от другого этапа, взялись бы строками, которых человек не видит.
+function estImportReset(sh, imp){
+  const pick={};
+  estImportCtx(sh, imp).rows.forEach(function(r){ if(!r.exists)pick[r.key]=1; });
+  return Object.assign({}, imp, { pick:pick });
+}
+function estStageName(n){
+  const st=EST_STAGES.find(function(x){ return String(x.n)===String(n); });
+  return st?st.label:"Без этапа";
+}
+function estImportRowHtml(r, on){
+  const dim=r.exists&&!on;
+  const sub=[r.room, r.matCount?(r.matCount+' '+pluralRu(r.matCount,"материал","материала","материалов")):"", r.exists?r.why:""]
+    .filter(Boolean).map(esc).join(" · ");
+  return '<div style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-top:1px solid #e8eef6">'+
+    '<button data-a="est-import-pick" data-k="'+esc(r.key)+'" title="'+(on?"Не брать":"Взять")+'" style="width:24px;height:24px;flex-shrink:0;background:'+(on?"#2980b9":"#fff")+';border:1.5px solid '+(on?"#2980b9":"#c9d6e4")+';border-radius:6px;cursor:pointer;color:#fff;font-size:12px;line-height:1;padding:0">'+(on?"✓":"")+'</button>'+
+    '<div style="flex:1;min-width:0">'+
+      '<div style="font-size:12px;font-weight:700;color:'+(dim?"#9aabbf":"#0d1b2e")+'">'+esc(r.name)+'</div>'+
+      (sub?'<div style="font-size:10.5px;color:#9aabbf;margin-top:1px">'+sub+'</div>':'')+
+    '</div>'+
+    '<span style="font-size:12px;font-weight:800;color:'+(dim?"#9aabbf":"#0d1b2e")+';white-space:nowrap">'+Math.round(r.cost).toLocaleString("ru-RU")+' ₽</span>'+
+  '</div>';
+}
+function estImportHtml(sh){
+  const imp=estImport||{};
+  const pick=imp.pick||{};
+  const ctx=estImportCtx(sh, imp);
+  const chip=function(on, attrs, txt){
+    return '<button '+attrs+' style="border:1px solid '+(on?"#2980b9":"#dde6f0")+';background:'+(on?"#2980b9":"#fff")+';color:'+(on?"#fff":"#5a7a9a")+';border-radius:8px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+txt+'</button>';
+  };
+  let h='<div style="background:#f5f9ff;border:1px solid #2980b944;border-radius:13px;padding:11px 12px;margin-bottom:9px">'+
+    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
+      '<span style="flex:1;min-width:0;font-size:10px;font-weight:800;color:#2980b9;letter-spacing:0.4px">📋 ВЗЯТЬ РАБОТЫ ИЗ ДРУГОГО ПРОЕКТА</span>'+
+      '<button data-a="est-import-close" title="Закрыть" style="width:24px;height:24px;background:#fff;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;color:#7a9aaa;font-size:11px;padding:0;line-height:1">✕</button>'+
+    '</div>'+
+    '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px">'+
+      estImportSources(sh).map(function(p){
+        return chip(!!ctx.src&&ctx.src.id===p.id, 'data-a="est-import-src" data-id="'+esc(p.id)+'"', esc(p.name||"Проект"));
+      }).join("")+
+    '</div>';
+  if(!ctx.src)return h+'<div style="font-size:11px;color:#7a9aaa;line-height:1.45">Выберите проект — покажу его работы с материалами, количеством и ценой бригаде.</div></div>';
+  // Этапы — по порядку стройки, «без этапа» в конце.
+  const stages=[];
+  ctx.all.forEach(function(r){ if(stages.indexOf(r.stage)<0)stages.push(r.stage); });
+  stages.sort(function(a, b){ return (a||99)-(b||99); });
+  if(stages.length>1){
+    h+='<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:4px">'+
+      chip(!imp.stage, 'data-a="est-import-stage" data-n=""', 'все этапы')+
+      stages.map(function(n){ return chip(String(imp.stage)===String(n), 'data-a="est-import-stage" data-n="'+esc(n)+'"', esc(estStageName(n))); }).join("")+
+    '</div>';
+  }
+  if(!ctx.rows.length)return h+'<div style="font-size:11px;color:#7a9aaa;padding:4px 0">На этом этапе у «'+esc(ctx.src.name||"")+'» работ нет.</div></div>';
+  stages.forEach(function(n){
+    const list=ctx.rows.filter(function(r){ return r.stage===n; });
+    if(!list.length)return;
+    h+='<div style="font-size:9.5px;font-weight:800;color:#9aabbf;letter-spacing:0.4px;margin:8px 0 2px">'+esc(estStageName(n).toUpperCase())+'</div>'+
+      list.map(function(r){ return estImportRowHtml(r, !!pick[r.key]); }).join("");
+  });
+  const took=ctx.rows.filter(function(r){ return pick[r.key]; });
+  const n=took.length, sum=took.reduce(function(a, r){ return a+r.cost; }, 0);
+  const fresh=ctx.rows.filter(function(r){ return !r.exists; });
+  const allOn=fresh.length>0&&fresh.every(function(r){ return pick[r.key]; });
+  return h+
+    '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:9px">'+
+      '<button data-a="est-import-do" '+(n?'':'disabled ')+'style="flex:1 1 180px;padding:9px;background:'+(n?"#2980b9":"#c9d6e4")+';border:none;border-radius:8px;cursor:'+(n?"pointer":"default")+';color:#fff;font-size:12.5px;font-weight:700">'+
+        (n?('Взять '+n+' '+pluralRu(n,"работу","работы","работ")+' · '+Math.round(sum).toLocaleString("ru-RU")+' ₽'):'Отметьте работы')+'</button>'+
+      (fresh.length?'<button data-a="est-import-all" style="padding:9px 12px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#5a7a9a;font-size:12px;font-weight:700">'+(allOn?'Снять все':'Отметить новые')+'</button>':'')+
+    '</div>'+
+    '<div style="font-size:10px;color:#7a9aaa;line-height:1.45;margin-top:7px">Строки встанут своими работами этого дома — с материалами, количеством, ценой бригаде и планом часов, как в «'+esc(ctx.src.name||"")+'». Дальше живут своей сметой: правка здесь источник не трогает.</div>'+
+  '</div>';
+}
+// «Взять». Снимок для «отменить» — ДО записи: перенос это десяток строк сразу, и
+// откатывать его по одной никто не станет.
+function estImportDo(){
+  const sh=schemeSheet()||spec2Sheet(); if(!sh||!estImport)return;
+  const ctx=estImportCtx(sh, estImport);
+  const pick=estImport.pick||{};
+  const n=ctx.rows.filter(function(r){ return pick[r.key]; }).length;
+  if(!ctx.src||!n){ fileToast("Отметьте хотя бы одну работу","#e67e22"); return; }
+  const from=ctx.src.name||"проекта";
+  estSnap(sh, "работы из «"+from+"»");
+  const patch=importPatch(sh, ctx.rows, pick, ctx.src.id, { gid:gid, rooms:ctx.w.rooms||[] });
+  Object.keys(patch).forEach(function(f){ sh[f]=patch[f]; });
+  estImport=null; scheduleSave(); fl();
+  fileToast("✓ Взято "+n+" "+pluralRu(n,"работа","работы","работ")+" из «"+from+"»");
 }
 
 // Убранные работы: перечнем, с ценой и кнопкой «вернуть». Держим их на виду —
@@ -14961,6 +15079,12 @@ function estToolsHtml(sh){
       : '')+
     '<button data-a="est-pick-mode" title="Отметить несколько работ и решить по ним разом" '+
       'style="border:1px solid '+(estPickOn?RULE_COL:"#d0dae8")+';background:'+(estPickOn?RULE_COL:"#fff")+';color:'+(estPickOn?"#fff":"#5a7a9a")+';border-radius:9px;padding:6px 11px;font-size:11.5px;font-weight:700;cursor:pointer">☑ Выбрать</button>'+
+    // Взять готовые работы из соседнего проекта — рядом с «Выбрать», на уровне
+    // всего листа, а не этапа: перечень из Мордвеса идёт сразу в несколько этапов.
+    (estImportSources(sh).length
+      ? '<button data-a="est-import-open" title="Взять готовые работы с материалами из другого проекта" '+
+        'style="border:1px solid '+(estImport?"#2980b9":"#d0dae8")+';background:'+(estImport?"#2980b9":"#fff")+';color:'+(estImport?"#fff":"#5a7a9a")+';border-radius:9px;padding:6px 11px;font-size:11.5px;font-weight:700;cursor:pointer">📋 Из проекта</button>'
+      : '')+
   '</div>';
 }
 // Выбор нескольких работ. Одна и та же правка на десяти строках — это десять
@@ -15431,6 +15555,7 @@ function estBodyHtml(sh, types, live, actions){
     '</div>'+
   '</div>';
   if(canRule)h+=estToolsHtml(sh);
+  if(canRule&&estImport)h+=estImportHtml(sh);
   // Поиск — сразу под деньгами: это первое, за чем в смету заходят, когда в ней
   // уже сорок строк.
   const terms=estFindTerms();
@@ -25714,7 +25839,33 @@ function bind(){
       if(Object.keys(map).length)sh.posStage=map; else delete sh.posStage;
       scheduleSave(); fl();
     };}
-    else if(a==="est-pos-add-open"){el.onclick=()=>{ posAddOpen=el.dataset.k||""; ui(); };}
+    else if(a==="est-pos-add-open"){el.onclick=()=>{ posAddOpen=el.dataset.k||""; estImport=null; ui(); };}
+    // «📋 Из проекта». Открытие закрывает форму «+ работа» и наоборот: два способа
+    // добавить работу на экране разом — это вопрос «какой из них сейчас нажмётся».
+    else if(a==="est-import-open"){el.onclick=()=>{
+      estImport={ src:"", pick:{}, stage:String(el.dataset.st||"") }; posAddOpen=""; ui();
+    };}
+    else if(a==="est-import-close"){el.onclick=()=>{ estImport=null; ui(); };}
+    else if(a==="est-import-src"||a==="est-import-stage"){el.onclick=()=>{
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!estImport)return;
+      const patch=el.dataset.a==="est-import-src"?{ src:String(el.dataset.id||"") }:{ stage:String(el.dataset.n||"") };
+      estImport=estImportReset(sh, Object.assign({}, estImport, patch)); ui();
+    };}
+    else if(a==="est-import-pick"){el.onclick=()=>{
+      if(!estImport)return;
+      const k=String(el.dataset.k||""), pick=Object.assign({}, estImport.pick||{});
+      if(pick[k])delete pick[k]; else pick[k]=1;
+      estImport=Object.assign({}, estImport, { pick:pick }); ui();
+    };}
+    else if(a==="est-import-all"){el.onclick=()=>{
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!estImport)return;
+      const fresh=estImportCtx(sh, estImport).rows.filter(function(r){ return !r.exists; });
+      const cur=estImport.pick||{};
+      const allOn=fresh.length>0&&fresh.every(function(r){ return cur[r.key]; });
+      const pick={}; if(!allOn)fresh.forEach(function(r){ pick[r.key]=1; });
+      estImport=Object.assign({}, estImport, { pick:pick }); ui();
+    };}
+    else if(a==="est-import-do"){el.onclick=()=>{ estImportDo(); };}
     else if(a==="est-pos-add-do"){el.onclick=()=>{
       const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
       estSnap(sh, "добавленную работу");

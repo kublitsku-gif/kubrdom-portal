@@ -20,6 +20,10 @@
 
 import { positionFor, roomArea, roomPoints, pointMeta, sheetPositions, matQtyForArea } from "./spec.js";
 import { modelToSpecs, modelTotals, modelAreas } from "./model.js";
+// Ключ сравнения имён — тот же, по которому каталог отсекает тёзок: «ОСП 9 мм» и
+// «осп  9 мм» — одно. Своя копия правила разошлась бы с каталогом на первом же
+// неразрывном пробеле.
+import { nameKey } from "./catalog.js";
 
 // Чем меряется правило. `need` — что ещё обязано быть заполнено, иначе правило
 // не о чем: поверхность без «пол/стены/потолок» и точка без вида точки — это
@@ -755,6 +759,124 @@ export function addedPositions(sheet, estimates, products) {
       cost: cost,
     };
   });
+}
+
+// ─── ВЗЯТЬ РАБОТЫ ИЗ ДРУГОГО ПРОЕКТА ─────────────────────────────────────────
+// Дом собирают не с нуля: в «Мордвес 1» уже подобраны тридцать позиций труб и
+// фитингов к водоснабжению, назначена цена бригаде и план часов. Вписывать это в
+// новый дом второй раз — час работы и гарантированная опечатка в количестве.
+//
+// Берём строку ГОТОВОЙ — такой, какой её отдаёт works2() источника: правки листа
+// уже применены, количества итоговые (у дописанных материалов настоящее число
+// лежит не в самой строке, а в `matQty`, и сырой лист отдал бы по штуке каждого).
+// Перенос правок по одной — тринадцать карт листа с перепривязкой ключей и
+// номеров повтора — был бы вторым расчётом сметы, который однажды разошёлся бы
+// с первым.
+//
+// Взятая строка становится СВОЕЙ работой нового дома (`posAdd`), её материалы —
+// дописанными (`matAdd`): ровно так «Водоснабжение» живёт в самом Мордвесе, и
+// дальше строку считает, правит и закупает тот же код, что и всё остальное.
+// Ссылки на справочник у копии нет намеренно: строка справочника в новом доме
+// пересчиталась бы по ЕГО чертежу и потеряла бы то, ради чего её брали.
+
+// Что из материала переносим. Остальное — метки ИСТОЧНИКА: `lid`/`mix` адресуют
+// строку его справочника, `added`/`qtySet` ставит applyMatEdits при счёте, а
+// `client` («платит заказчик») — решение по договору ТОГО дома, не этого.
+const IMPORT_MAT_FIELDS = ["pid", "n", "store", "url", "note", "mode", "cost", "qty", "unitCost",
+  "packBase", "packPer", "lenPer", "sheetM2", "packName"];
+
+// Почему строка уже есть в доме — или пусто, если её нет. Помеченную не отмечаем
+// заранее, но и не запрещаем: вторая «Разводка электрики» бывает нужна (второй
+// санузел), а вот случайно задвоить обшивку — ошибка в деньгах.
+function importExists(sp, targetPositions, target, srcId) {
+  const here = targetPositions || [];
+  if (sp.estId && here.some(function (p) { return p && p.estId === sp.estId; })) {
+    return "эта работа справочника в доме уже есть";
+  }
+  const k = nameKey(sp.name);
+  if (k && here.some(function (p) { return p && nameKey(p.name) === k; })) {
+    return "работа с таким именем в доме уже есть";
+  }
+  const taken = ((target && target.posAdd) || []).some(function (r) {
+    return r && r.from && r.from.p === srcId && r.from.k === sp.key;
+  });
+  return taken ? "уже взята из этого проекта" : "";
+}
+
+// Перечень строк источника для выбора: что это, сколько стоит, есть ли уже.
+// Сама строка источника едет рядом (`src`), чтобы перенос не считал её заново.
+export function importRows(srcPositions, targetPositions, target, srcId) {
+  return (srcPositions || []).map(function (sp) {
+    const why = importExists(sp, targetPositions, target, srcId);
+    return {
+      key: sp.key, name: String(sp.name || ""), stage: Number(sp.stage) || 0,
+      room: String(sp.room || ""), cost: Math.round(Number(sp.cost) || 0),
+      matCount: (sp.mats || []).filter(function (m) { return m && !m.own; }).length,
+      exists: !!why, why: why, src: sp,
+    };
+  });
+}
+
+// Одна материальная позиция источника → дописанный материал нового дома.
+// Id СВОЙ: общий id «протёк» бы отметками закупки между объектами — купили трубу
+// в Мордвес, а галка встала и в новом доме.
+function importMat(m, gid) {
+  const out = { id: gid() };
+  IMPORT_MAT_FIELDS.forEach(function (f) { if (m[f] != null && m[f] !== "") out[f] = m[f]; });
+  return out;
+}
+
+// Правка листа для отмеченных строк. Лист НЕ трогаем — возвращаем новые карты
+// поверх его прежних: запишет их обработчик, после снимка для «отменить», а до
+// нажатия «взять» дом остаётся ровно таким, каким был.
+//
+// opts.gid — выдача id (у панели своя, у тестов своя); opts.rooms — помещения
+// нового дома: комната едет ПО ИМЕНИ, потому что id у неё свой в каждом чертеже,
+// а «Санузел» — это санузел в любом доме. Нет такой комнаты — строка общая.
+export function importPatch(target, rows, picked, srcId, opts) {
+  const o = opts || {};
+  if (typeof o.gid !== "function") throw new Error("importPatch: нужна выдача id (opts.gid)");
+  const roomBy = {};
+  (o.rooms || []).forEach(function (r) {
+    const k = nameKey(r && r.name);
+    if (k && r.id && !roomBy[k]) roomBy[k] = r.id;
+  });
+  const t = target || {};
+  const posAdd = (t.posAdd || []).slice();
+  const matAdd = Object.assign({}, t.matAdd || {});
+  const posHours = Object.assign({}, t.posHours || {});
+  const posRoom = Object.assign({}, t.posRoom || {});
+  (rows || []).forEach(function (row) {
+    if (!row || !(picked || {})[row.key]) return;
+    const sp = row.src || {};
+    const id = o.gid();
+    const key = "add:" + id;
+    const split = positionSplit(sp);
+    // Цена бригаде — та, что стояла в источнике. «Под ключ» переносится договорной
+    // цифрой целиком и БЕЗ материалов: они уже внутри неё, и отдельной строкой
+    // закупки они посчитались бы дважды.
+    const add = {
+      id: id, name: row.name, stage: row.stage,
+      cost: Math.round(split.all ? (Number(sp.cost) || 0) : split.labor),
+      from: { p: String(srcId || ""), k: row.key },
+    };
+    if (sp.estId) add.srcEstId = sp.estId;
+    posAdd.push(add);
+    if (!split.all) {
+      const mats = (sp.mats || []).filter(function (m) { return m && !m.own; })
+        .map(function (m) { return importMat(m, o.gid); });
+      if (mats.length) matAdd[key] = mats;
+    }
+    const h = Number(sp.hours) || 0;
+    if (h > 0) posHours[key] = h;
+    const rid = roomBy[nameKey(row.room)];
+    if (rid) posRoom[key] = rid;
+  });
+  const out = { posAdd: posAdd };
+  if (Object.keys(matAdd).length) out.matAdd = matAdd;
+  if (Object.keys(posHours).length) out.posHours = posHours;
+  if (Object.keys(posRoom).length) out.posRoom = posRoom;
+  return out;
 }
 
 // Работа, переставленная в другой этап ЭТОГО дома. Этап — свойство стройки, а не
