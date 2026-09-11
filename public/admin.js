@@ -68,7 +68,7 @@ import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js"
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 import { plinthOptions, plinthPieceLen, isPlinthMat } from "../src/plinth.js";
 
-const APP_BUILD = "2026-09-11.6";
+const APP_BUILD = "2026-09-11.7";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -2498,6 +2498,8 @@ let openTemplate=null,openObject=null;
 
 
 function fl(){
+  // Правка открытого проекта сама доезжает до его объекта (projAutoSync).
+  projSyncOpen();
   render();
   scheduleSave();
 }
@@ -5984,6 +5986,50 @@ const PROJ_DIFF_KIND={
   removed:{i:"➖", n:"из проекта убрали",   c:"#c0392b"},
   changed:{i:"✏️", n:"изменилась в проекте", c:"#2980b9"},
 };
+// Правка проекта, которую портал перенёс в объект сам (projAutoSync). Подсвечена в
+// перечне работ, пока её не отметили «Видел»: стройка идёт уже по новому плану, и
+// мастер обязан заметить это здесь, а не на приёмке. Деньги — тем, кто их видит.
+function projMarkHtml(obj, w){
+  const mk=w&&w.projMark; if(!mk)return "";
+  const was=mk.was||{}, now=mk.now||{};
+  const parts=[];
+  if(mk.kind!=="added"){
+    const wc=Math.round(Number(was.cost)||0), nc=Math.round(Number(now.cost)||0);
+    if(canSeeClientMoney()&&wc!==nc)parts.push(fmt(wc)+" → "+fmt(nc));
+    const wh=Number(was.hours)||0, nh=Number(now.hours)||0;
+    if(wh!==nh)parts.push("план "+numRu(wh)+" → "+numRu(nh)+" ч");
+    // Цена и часы те же, а подпись разошлась — поменялись материалы или имя.
+    if(!parts.length)parts.push("состав изменился");
+  }
+  const face=(mk.kind==="added"?"добавлена из проекта ":"изменено в проекте ")+ruDate(mk.at)+(parts.length?" · "+parts.join(" · "):"");
+  return `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:3px">
+    <span style="font-size:10px;font-weight:800;color:${PROJ_COL};background:${PROJ_COL}14;border:1px solid ${PROJ_COL}44;border-radius:5px;padding:2px 7px">🏗 ${esc(face)}</span>
+    <button data-a="obj-proj-seen" data-oid="${obj.id}" data-wid="${w.id}" style="padding:2px 9px;background:#fff;border:1px solid ${PROJ_COL}66;border-radius:5px;cursor:pointer;font-size:10px;font-weight:700;color:${PROJ_COL}">Видел</button>
+  </div>`;
+}
+// Сводка правок проекта над перечнем работ: сколько подсвечено и что из объекта
+// ушло вслед за проектом. «Видел всё» снимает и подсветку, и список убранного.
+function projMarksBannerHtml(obj){
+  const marked=(obj.stages||[]).reduce(function(a,s){ return a+(s.works||[]).filter(function(w){ return !!w.projMark; }).length; },0);
+  const gone=obj.projGone||[];
+  if(!marked&&!gone.length)return "";
+  const money=canSeeClientMoney();
+  return `<div style="background:#fff;border:1.5px solid ${PROJ_COL}55;border-radius:12px;padding:10px 12px;margin-bottom:10px">
+    <div style="display:flex;align-items:center;gap:8px">
+      <div style="flex:1;min-width:0;font-size:11px;font-weight:800;color:${PROJ_COL};letter-spacing:0.4px">🏗 ПРОЕКТ ОБНОВИЛ ОБЪЕКТ${marked?" · подсвечено "+marked:""}</div>
+      <button data-a="obj-proj-seen-all" data-oid="${obj.id}" style="padding:4px 11px;background:${PROJ_COL};border:none;border-radius:7px;cursor:pointer;font-size:11px;font-weight:700;color:#fff;white-space:nowrap">Видел всё</button>
+    </div>
+    ${gone.length?`<div style="font-size:10px;font-weight:700;color:#c0392b;letter-spacing:0.4px;margin:8px 0 3px">УБРАНО В ПРОЕКТЕ · ${gone.length}</div>`+gone.map(function(g){
+      return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-top:1px solid #f4f7fb">
+        <span style="flex:1;min-width:0;font-size:12px;color:#7a9aaa;text-decoration:line-through;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(g.n||"Работа")}</span>
+        ${money&&g.cost?`<span style="font-size:11px;color:#9aabbf;white-space:nowrap">${fmt(Math.round(g.cost))}</span>`:""}
+        <span style="font-size:10px;color:#9aabbf;white-space:nowrap">${esc(ruDate(g.at))}</span>
+        <button data-a="obj-proj-gone-seen" data-oid="${obj.id}" data-key="${esc(g.key)}" style="padding:2px 9px;background:#fff;border:1px solid #d0dae8;border-radius:5px;cursor:pointer;font-size:10px;font-weight:700;color:#7a9aaa">Видел</button>
+      </div>`;
+    }).join(""):""}
+    <div style="font-size:10px;color:#9aabbf;line-height:1.45;margin-top:6px">Правки проекта переносятся в объект сами; часы, фото и отметки «выполнено» при этом сохраняются. Спорные — в блоке «Проект обновился».</div>
+  </div>`;
+}
 function projDiffRows(obj, d, oid){
   return d.items.map(function(it){
     const k=PROJ_DIFF_KIND[it.kind]||PROJ_DIFF_KIND.changed;
@@ -6927,6 +6973,7 @@ ${showNObjStageTid===obj.id?`<div style="background:#fff;border-radius:12px;bord
 </div>`:""}
 
 
+${projMarksBannerHtml(obj)}
 ${obj.stages.map(s=>{
   const _q=(objWorkSearch||"").trim().toLowerCase();
   const _matchW=(w)=>{ if(!_q)return true; if((w.n||"").toLowerCase().indexOf(_q)>=0)return true; return (w.mats||[]).some(m=>(m.n||"").toLowerCase().indexOf(_q)>=0||(m.store||"").toLowerCase().indexOf(_q)>=0); };
@@ -7004,11 +7051,12 @@ ${obj.stages.map(s=>{
       const _rail=(!_rd||!_rd.total)?null
         :_rd.ok?"#27ae60"
         :_rd.missing.some(m=>matStatus(m).bought<=0)?"#c0392b":"#e67e22";
-      let h=`<div style="background:${isDone?'#27ae6008':isSupplyWork?'#e67e220f':'#f8fafc'};border:1px solid ${isDone?'#27ae6055':isSupplyWork?'#e67e2255':'#dde6f0'};${_rail?`border-left:4px solid ${_rail};`:""}border-radius:8px;margin-bottom:4px;overflow:hidden">
+      let h=`<div style="background:${isDone?'#27ae6008':isSupplyWork?'#e67e220f':'#f8fafc'};border:1px solid ${isDone?'#27ae6055':isSupplyWork?'#e67e2255':'#dde6f0'};${_rail?`border-left:4px solid ${_rail};`:""}border-radius:8px;margin-bottom:4px;overflow:hidden;${w.projMark?`box-shadow:0 0 0 2px ${PROJ_COL}66;background:${PROJ_COL}0f;`:""}">
       <div style="display:flex;align-items:center;gap:8px;padding:7px 10px">
         ${canComplete?(canCheck?`<button data-a="obj-toggle-done" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="width:24px;height:24px;flex-shrink:0;background:${isDone?'#27ae60':'#fff'};border:2px solid ${isDone?'#27ae60':'#c0d0e0'};border-radius:6px;cursor:pointer;color:#fff;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0;line-height:1">${isDone?'✓':''}</button>`:`<button data-a="obj-need-time" data-wid="${w.id}" style="width:24px;height:24px;flex-shrink:0;background:#f8fafc;border:2px dashed #d0dae8;border-radius:6px;cursor:pointer;color:#9aabbf;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0;line-height:1" title="Сначала отметьте часы">🔒</button>`):`<div style="width:24px;height:24px;flex-shrink:0;background:${isDone?'#27ae60':'#f0f4f8'};border:2px solid ${isDone?'#27ae60':'#dde6f0'};border-radius:6px;color:#fff;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1">${isDone?'✓':''}</div>`}
         <div style="flex:1;min-width:0">
           <div ${canSheet?`data-a="work-sheet-open" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}"`:""} style="font-size:13px;font-weight:${isSupplyWork?700:600};color:${isDone?'#27ae60':isSupplyWork?'#e67e22':'#1a2a3a'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${canSheet?'cursor:pointer;':''}${isDone?'text-decoration:line-through;text-decoration-color:#27ae6066':''}">${esc(w.n)}</div>
+          ${w.projMark?projMarkHtml(obj, w):""}
           <div style="display:flex;gap:6px;margin-top:2px;align-items:center;flex-wrap:wrap">
             ${isSupplyWork?`<span style="font-size:9px;font-weight:700;color:#e67e22;background:#e67e2214;border:1px solid #e67e2240;border-radius:5px;padding:2px 7px;letter-spacing:0.3px">ДОБАВИЛ СНАБЖЕНЕЦ</span>`:""}
             ${objWorkView==="works"?(()=>{const ql=workQtyLabel(w);return ql?`<span style="font-size:10px;color:#16a085;background:#16a08515;border-radius:5px;padding:2px 7px;font-weight:600">${ql}</span>`:"";})():""}
@@ -8168,15 +8216,25 @@ function objProjDiff(obj){
 // Принятая правка двигает слепок ПО ЭТОЙ позиции: «принято» и значит, что дальше
 // сравнивать надо отсюда. Оставь слепок на месте — принятая правка висела бы в
 // списке вечно, уже помеченная спорной (объект-то теперь совпадает с проектом).
-function projBaseMove(objId, key, sig){
+function projBaseMove(objId, key, sig, hours){
   objects=objects.map(function(o){
     if(o.id!==objId)return o;
-    const base=Object.assign({}, (o.projBase&&o.projBase.sig)||{});
+    const pb=o.projBase||{};
+    const base=Object.assign({}, pb.sig||{});
     if(sig===null)delete base[key]; else base[key]=sig;
-    return Object.assign({},o,{projBase:{at:(o.projBase&&o.projBase.at)||todayISO(), sig:base}});
+    const next={ at:pb.at||todayISO(), sig:base };
+    // Часы — только если слепок их уже помнит: завести карту с одной позиции значило
+    // бы сравнивать все остальные с нулём и зажечь их «изменёнными».
+    if(pb.hrs){
+      const hrs=Object.assign({}, pb.hrs);
+      if(sig===null||!(Number(hours)>0))delete hrs[key]; else hrs[key]=Number(hours);
+      next.hrs=hrs;
+    }
+    return Object.assign({},o,{projBase:next});
   });
 }
-function objProjApply(obj, item){
+// auto — перенос сделал портал сам (projAutoSync): такую правку подсвечиваем в объекте.
+function objProjApply(obj, item, auto){
   if(!obj||!item)return false;
   const key=item.key;
   if(item.kind==="removed"){
@@ -8189,6 +8247,14 @@ function objProjApply(obj, item){
         if(!(st.works||[]).some(function(w){return (w.posKey||"")===key;}))return st;
         return Object.assign({},st,{works:st.works.filter(function(w){return (w.posKey||"")!==key;})});
       })});
+    });
+    // Убранную в проекте работу при автопереносе держим на виду в объекте
+    // («убрано в проекте»), пока не отметили «Видел»: молча исчезнувшая работа —
+    // та, о которой вспомнят на площадке.
+    if(auto)objects=objects.map(function(x){
+      if(x.id!==obj.id)return x;
+      const rest=(x.projGone||[]).filter(function(g){ return g.key!==key; });
+      return Object.assign({},x,{projGone:rest.concat([{ key:key, n:(o&&o.n)||"Работа", cost:Math.round(Number(o&&o.cost)||0), at:todayISO() }])});
     });
     projBaseMove(obj.id, key, null);
     return true;
@@ -8205,15 +8271,19 @@ function objProjApply(obj, item){
           if((w.posKey||"")!==key)return w;
           // Цена переносится ВМЕСТЕ со своей половиной: `cost` без `labor` при
           // следующей загрузке пересчитается по материалам и сотрёт принятую цифру.
-          return Object.assign({},w,{ n:src.n, cost:Number(src.cost)||0, labor:Number(src.labor)||0, costAll:!!src.costAll, mats:withIds() });
+          // План часов едет вместе с составом — это тоже правка проекта.
+          const upd=Object.assign({},w,{ n:src.n, cost:Number(src.cost)||0, labor:Number(src.labor)||0, costAll:!!src.costAll, planHours:Number(src.planHours)||0, mats:withIds() });
+          if(auto){ const mk=projMarkFor(item, w.projMark); if(mk)upd.projMark=mk; else delete upd.projMark; }
+          return upd;
         })});
       })});
     });
-    projBaseMove(obj.id, key, sigOf(src));
+    projBaseMove(obj.id, key, sigOf(src), src.planHours);
     return true;
   }
   // added — кладём в этап проекта по номеру, иначе в последний: этапы объекта уже свои.
   const nw=Object.assign({},src,{ id:gid(), mats:withIds(), timeLogs:[] });
+  if(auto){ const mk=projMarkFor(item, null); if(mk)nw.projMark=mk; }
   const stN=item.proj&&item.proj.stage;
   const meta=EST_STAGES.find(function(x){return x.n===stN;});
   const stName=meta?(meta.short.toUpperCase()+" — "+meta.label.toUpperCase()):"";
@@ -8226,7 +8296,7 @@ function objProjApply(obj, item){
     stages[idx]=Object.assign({},stages[idx],{works:(stages[idx].works||[]).concat([nw])});
     return Object.assign({},x,{stages:stages});
   });
-  projBaseMove(obj.id, key, sigOf(src));
+  projBaseMove(obj.id, key, sigOf(src), src.planHours);
   return true;
 }
 // Слепок принимаем целиком: «я посмотрел, дальше сравнивай отсюда». Иначе
@@ -8237,6 +8307,44 @@ function objProjAccept(obj){
   const base=projBaseline(projPositions(p), todayISO());
   objects=objects.map(function(o){ return o.id!==obj.id?o:Object.assign({},o,{projBase:base}); });
   return true;
+}
+
+// ─── АВТОПЕРЕНОС ПРАВОК ПРОЕКТА В ОБЪЕКТ ─────────────────────────────────────
+// Решение Юрия (11.09.2026): правка проекта попадает в объект сразу и подсвечена там
+// «было → стало», пока её не отметили «Видел». Сами переносятся только БЕЗОПАСНЫЕ
+// правки — те, которых объект не касался; спорные ждут решения в «Проект обновился».
+//
+// Запускается ТОЛЬКО из правки открытого проекта (`fl` на вкладке «Проекты»):
+// правящее устройство держит свежий проект. Перенос при загрузке на любом устройстве
+// откатил бы объект по устаревшей вкладке — снимки проектов и объектов приходят
+// раздельно, и потерю данных от стейл-вкладки портал уже переживал.
+function projMarkFor(item, prev){
+  const pick=function(x){ return x?{ cost:Math.round(Number(x.cost)||0), hours:Number(x.planHours)||0 }:null; };
+  const now=pick(item.proj&&item.proj.w);
+  const was=(prev&&prev.was)||pick(item.obj&&item.obj.w);
+  const kind=(prev&&prev.kind==="added")?"added":item.kind;
+  // Вернули как было, пока никто не смотрел, — подсвечивать нечего.
+  if(prev&&kind!=="added"&&was&&now&&was.cost===now.cost&&was.hours===now.hours)return null;
+  return { at:todayISO(), kind:kind, was:was, now:now };
+}
+function projAutoSync(p){
+  const o=projObj(p);
+  if(!o||!o.projBase)return false;
+  const d=objProjDiff(o);
+  if(!d||d.noBase||!d.safe)return false;
+  d.items.filter(function(x){ return x.safe; }).forEach(function(it){
+    objProjApply(objects.find(function(x){ return x.id===o.id; }), it, true);
+  });
+  // Перенесли всё — слепок целиком и с часами: так и объекты, собранные до учёта
+  // часов, начинают сравнивать план часов.
+  if(d.safe===d.total)objProjAccept(objects.find(function(x){ return x.id===o.id; }));
+  normalizeWorkCosts();
+  return true;
+}
+function projSyncOpen(){
+  if(!_hydrated||tab!=="projects"||!projOpenId)return;
+  const p=proj(projOpenId);
+  if(p&&p.objId)projAutoSync(p);
 }
 
 // Восстановить комнату работ (templates+objects) из сметы по estId — чтобы группировка
@@ -29196,6 +29304,47 @@ function bind(){
       // спорные остаются в списке и никуда не пропадают.
       safe.forEach(function(it){ objProjApply(objects.find(function(o){return o.id===oid;}),it); });
       normalizeWorkCosts(); fl();
+    };}
+    // «Видел» у подсвеченной правки проекта: подсветка снимается, новый план остаётся.
+    else if(a==="obj-proj-seen"){el.onclick=()=>{
+      const {oid,wid}=el.dataset;
+      objects=objects.map(function(o){
+        if(o.id!==oid)return o;
+        return Object.assign({},o,{stages:(o.stages||[]).map(function(st){
+          if(!(st.works||[]).some(function(w){ return w.id===wid&&w.projMark; }))return st;
+          return Object.assign({},st,{works:st.works.map(function(w){
+            if(w.id!==wid)return w;
+            const next=Object.assign({},w); delete next.projMark; return next;
+          })});
+        })});
+      });
+      fl();
+    };}
+    else if(a==="obj-proj-gone-seen"){el.onclick=()=>{
+      const {oid,key}=el.dataset;
+      objects=objects.map(function(o){
+        if(o.id!==oid)return o;
+        const rest=(o.projGone||[]).filter(function(g){ return g.key!==key; });
+        const next=Object.assign({},o);
+        if(rest.length)next.projGone=rest; else delete next.projGone;
+        return next;
+      });
+      fl();
+    };}
+    else if(a==="obj-proj-seen-all"){el.onclick=()=>{
+      const oid=el.dataset.oid;
+      objects=objects.map(function(o){
+        if(o.id!==oid)return o;
+        const next=Object.assign({},o,{stages:(o.stages||[]).map(function(st){
+          return Object.assign({},st,{works:(st.works||[]).map(function(w){
+            if(!w.projMark)return w;
+            const n2=Object.assign({},w); delete n2.projMark; return n2;
+          })});
+        })});
+        delete next.projGone;
+        return next;
+      });
+      fl();
     };}
     else if(a==="obj-proj-accept"){el.onclick=()=>{
       const obj=objects.find(function(o){return o.id===el.dataset.oid;});

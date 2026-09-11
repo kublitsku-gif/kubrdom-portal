@@ -92,6 +92,28 @@ const objOf = (positions, base) => ({
     sigOf({ n: 'Стены', cost: 100, mats: [] }) === sigOf({ n: 'Стены', cost: 100, mats: [], doneAt: '2026-01-01', timeLogs: [1] }))
 }
 
+// ── 3б. План часов — тоже правка ────────────────────────────────────────────
+// Поменяли часы или коэффициент в проекте — мастер обязан увидеть новый план
+// (решение Юрия, 11.09.2026). Слепок помнит часы рядом с подписями; старые слепки
+// без часов молчат, пока их не примут целиком, — иначе каждая работа с планом
+// загорелась бы «изменённой» в день выкатки.
+{
+  t.section('Часы — тоже правка')
+  const POSH = (key, qty, hours) => Object.assign(POS(key, 'Стены', qty), { hours: hours })
+  const was = [POSH('a', 10, 5)]
+  const base = projBaseline(was, '2026-09-01')
+  t.ok('слепок помнит план часов', !!base.hrs && base.hrs.a === 5, JSON.stringify(base))
+  const d = projDiff([POSH('a', 10, 8)], objOf(was, base))
+  t.ok('поменяли только часы — это правка', d.items.length === 1 && d.items[0].kind === 'changed', JSON.stringify(d.items))
+  t.ok('и она безопасна', d.items.length === 1 && d.items[0].safe === true)
+  t.ok('видно новый план', d.items.length === 1 && d.items[0].proj.w.planHours === 8)
+  t.ok('старый слепок без часов молчит', projDiff([POSH('a', 10, 8)], objOf(was, { at: base.at, sig: base.sig })).items.length === 0)
+  // Часы поменяли и в объекте — решает человек.
+  const objHrs = objOf(was, base)
+  objHrs.stages[0].works[0].planHours = 6
+  t.ok('часы правили и в объекте — спорно', projDiff([POSH('a', 10, 8)], objHrs).items[0].safe === false)
+}
+
 // ── 4. Панель: чертёж поехал — стройка узнала ───────────────────────────────
 {
   t.section('Правка чертежа доезжает до стройки')
@@ -209,7 +231,8 @@ const objOf = (positions, base) => ({
   p.run('projBand="parts";tProjects();')
   const inp2 = p.dom.node({ a: 'est-pos-cost', k: key })
   p.run('bind();'); inp2.value = '40000'; inp2.onchange()
-  t.ok('стройка увидела новую цену', p.q('objProjDiff(objects[0]).items.length') > 0)
+  // Правка открытого проекта доезжает до стройки сама (решение Юрия, 11.09.2026).
+  t.ok('новая цена сама доехала до стройки', Number(work().labor) === 40000, String(work().labor))
   const btn2 = p.dom.node({ a: 'obj-proj-apply-safe', oid: p.q('objects[0].id') })
   p.run('bind();'); btn2.onclick()
   t.ok('новая оплата работы на стройке', Number(work().labor) === 40000, String(work().labor))
@@ -227,6 +250,81 @@ const objOf = (positions, base) => ({
   p.run('normalizeWorkCosts();')
   t.ok('и цена под ключ — ровно та, что назвали', Math.round(work().cost) === 40000, String(work().cost))
   t.ok('материалы при этом на месте', (work().mats || []).length > 0)
+}
+
+// ── 6. Правка проекта доезжает сама — и подсвечена в объекте ─────────────────
+// Решение Юрия (11.09.2026): правка открытого проекта попадает в объект сразу, а в
+// перечне работ объекта подсвечена «было → стало», пока её не отметили «Видел».
+// Убранная в проекте работа уходит из объекта, но видна «убрано в проекте». Спорные
+// правки (объект правили руками) сами не переносятся — ждут решения, как раньше.
+{
+  t.section('Правка проекта доезжает сама и подсвечена')
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS, estimates: EST, dbPlans: [], crmClients: [],
+    specSheets: [], specSheets2: [], projects: [], buildRules: RULES,
+    winTypes: [], objects: [], templates: [], contractDocs: [], purchases: [], issues: [],
+    users: [], stock: [], settings: { specMarkup: 30 },
+  })
+  p.run('tab="projects";tProjects();')
+  const nb = p.dom.node({ a: 'proj-new' }); p.run('bind();'); nb.onclick()
+  p.dom.field('proj-n-name', 'Дом с подсветкой'); p.dom.field('proj-n-client', '')
+  p.run('tProjects();')
+  const cb = p.dom.node({ a: 'proj-create' }); p.run('bind();'); cb.onclick()
+  const pid = p.q('projects[0].id')
+  p.run('projBand="money";tProjects();')
+  const ob = p.dom.node({ a: 'spec-to-object', id: pid }); p.run('bind();'); ob.onclick()
+  t.ok('объект собран', p.q('objects.length') === 1)
+  const oid = p.q('objects[0].id')
+  const openProj = () => p.run('tab="projects";projOpenId=' + JSON.stringify(pid) + ';projBand="parts";tProjects();')
+  openProj()
+  const keys = p.q('allPositions(projects[0], specCtx(projects[0])).map(function(x){return x.key;})')
+  t.ok('в проекте несколько строк', keys.length >= 2, JSON.stringify(keys))
+  const key = keys[0]
+  const work = (k) => p.q('objects[0].stages.reduce(function(a,s){return a.concat(s.works||[]);},[])'
+    + '.filter(function(w){return w.posKey===' + JSON.stringify(k) + ';})[0]||null')
+  const setHours = (h) => { const inp = p.dom.node({ a: 'est-pos-hours', k: key }); p.run('bind();'); inp.value = String(h); inp.onchange() }
+
+  // Часы в проекте — сами в объекте.
+  setHours(7)
+  t.ok('план часов сам доехал до объекта', Number((work(key) || {}).planHours) === 7, JSON.stringify(work(key)))
+  const mk = (work(key) || {}).projMark
+  t.ok('работа подсвечена: было 0 → стало 7 ч', !!mk && mk.was && mk.was.hours === 0 && mk.now && mk.now.hours === 7, JSON.stringify(mk))
+  t.ok('расхождений не осталось', p.q('objProjDiff(objects[0]).items.length') === 0)
+  t.ok('слепок помнит и часы', p.q('!!(objects[0].projBase&&objects[0].projBase.hrs)') === true)
+
+  // Вторая правка той же работы, пока не отметили «Видел», — «было» остаётся первым.
+  setHours(9)
+  const mk2 = (work(key) || {}).projMark
+  t.ok('вторая правка — «было» не сдвинулось', !!mk2 && mk2.was.hours === 0 && mk2.now.hours === 9, JSON.stringify(mk2))
+
+  // Подсветка — в перечне работ объекта.
+  const card = p.run('tab="assign";openObject=' + JSON.stringify(oid) + ';objWorkView="money";tObjects()')
+  t.ok('в объекте работа подсвечена', /изменено в проекте/.test(card) && /план 0 → 9 ч/.test(card),
+    (card.match(/изменено в проекте[^<]*/) || ['подсветки нет'])[0])
+  t.ok('и есть кнопка «Видел»', card.indexOf('data-a="obj-proj-seen" data-oid="' + oid + '" data-wid="' + work(key).id + '"') >= 0)
+  const seen = p.dom.node({ a: 'obj-proj-seen', oid: oid, wid: work(key).id }); p.run('bind();'); seen.onclick()
+  t.ok('«Видел» снимает подсветку', !work(key).projMark)
+  t.ok('а план остался новым', Number(work(key).planHours) === 9)
+
+  // Работу выключили в проекте — из объекта ушла, но видна «убрано в проекте».
+  openProj()
+  const gone = keys[1]
+  const goneName = (work(gone) || {}).n || ''
+  const tick = p.dom.node({ a: 'est-pos-on', k: gone }); p.run('bind();'); tick.onclick()
+  t.ok('выключенная в проекте ушла из объекта', !work(gone), JSON.stringify(work(gone)))
+  t.ok('и помечена «убрано в проекте»', (p.q('(objects[0].projGone||[]).map(function(g){return g.key;})') || []).indexOf(gone) >= 0)
+  const card2 = p.run('tab="assign";openObject=' + JSON.stringify(oid) + ';objWorkView="money";tObjects()')
+  t.ok('в объекте видно, что убрано', /УБРАНО В ПРОЕКТЕ/.test(card2) && goneName && card2.indexOf(goneName) >= 0)
+  const all = p.dom.node({ a: 'obj-proj-seen-all', oid: oid }); p.run('bind();'); all.onclick()
+  t.ok('«Видел всё» убирает и убранные', !(p.q('objects[0].projGone') || []).length)
+
+  // Работу правили в объекте руками — правку проекта сами не переносим.
+  p.run('objects[0].stages.forEach(function(s){(s.works||[]).forEach(function(w){ if(w.posKey===' + JSON.stringify(key) + ')w.cost=1; });});')
+  openProj()
+  setHours(4)
+  t.ok('спорная правка сама не переехала', Number(work(key).planHours) === 9, String(work(key).planHours))
+  t.ok('и ждёт решения', p.q('objProjDiff(objects[0]).items.filter(function(x){return !x.safe;}).length') === 1)
 }
 
 t.done()

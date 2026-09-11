@@ -48,9 +48,22 @@ export function projSigMap(positions) {
   return out;
 }
 
+// План часов по позициям: только ненулевые — пустая работа места в слепке не занимает.
+// Часы — не подпись, а отдельная карта: иначе слепки, записанные до учёта часов,
+// разошлись бы с подписями в день выкатки, и объект загорелся бы целиком.
+export function projHoursMap(positions) {
+  const out = {};
+  (positions || []).forEach(function (p) {
+    const w = positionWork(p);
+    const h = Number(w.planHours) || 0;
+    if (w.posKey && h > 0) out[w.posKey] = h;
+  });
+  return out;
+}
+
 // Слепок проекта для объекта: пишем при создании объекта и после принятия правок.
 export function projBaseline(positions, at) {
-  return { at: at || "", sig: projSigMap(positions) };
+  return { at: at || "", sig: projSigMap(positions), hrs: projHoursMap(positions) };
 }
 
 export function objWorkMap(obj) {
@@ -79,12 +92,18 @@ export function workTouched(w) {
 export function projDiff(positions, obj) {
   const base = obj && obj.projBase && obj.projBase.sig;
   if (!base) return { noBase: true, items: [], safe: 0, total: 0 };
+  // План часов — тоже правка (решение Юрия, 11.09.2026). Слепок без карты часов
+  // (записан до их учёта) часы не сравнивает, пока его не примут целиком.
+  const hrs = (obj.projBase.hrs) || null;
+  const hrsOf = function (map, k) { return Number(map && map[k]) || 0; };
   const now = {};
+  const nowHrs = {};
   const nowWork = {};
   (positions || []).forEach(function (p) {
     const w = positionWork(p);
     if (!w.posKey) return;
     now[w.posKey] = sigOf(w);
+    nowHrs[w.posKey] = Number(w.planHours) || 0;
     nowWork[w.posKey] = { w: w, stage: Number(p.stage) || 0 };
   });
   const inObj = objWorkMap(obj);
@@ -98,9 +117,12 @@ export function projDiff(positions, obj) {
       if (!o) items.push({ kind: "added", key: k, proj: nowWork[k], safe: true });
       return;
     }
-    if (now[k] === base[k]) return;      // проект эту позицию не менял
+    const sameHrs = !hrs || hrsOf(nowHrs, k) === hrsOf(hrs, k);
+    if (now[k] === base[k] && sameHrs) return;   // проект эту позицию не менял
     if (!o) return;                      // работу удалили из объекта — не воскрешаем
-    items.push({ kind: "changed", key: k, proj: nowWork[k], obj: o, safe: sigOf(o.w) === base[k] });
+    // Безопасно — если объект свою копию не трогал: ни состав, ни план часов.
+    const objSame = sigOf(o.w) === base[k] && (!hrs || (Number(o.w.planHours) || 0) === hrsOf(hrs, k));
+    items.push({ kind: "changed", key: k, proj: nowWork[k], obj: o, safe: objSame });
   });
 
   Object.keys(base).forEach(function (k) {
