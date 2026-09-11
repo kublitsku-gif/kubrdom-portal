@@ -68,7 +68,7 @@ import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js"
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 import { plinthOptions, plinthPieceLen, isPlinthMat } from "../src/plinth.js";
 
-const APP_BUILD = "2026-09-11.7";
+const APP_BUILD = "2026-09-11.8";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
