@@ -424,6 +424,41 @@ function create(p, name) {
   t.ok('и объясняет роль заготовки', /заготовка останется запасным вариантом/.test(form))
 }
 
+// ── Галочка: работа не в итоге ──────────────────────────────────────────────
+// Некоторые работы хотят прикинуть и выключить из расчёта, не удаляя: сравнить
+// цену с ними и без них. Галочка стоит в шапке каждой строки, выключенная строка
+// остаётся на месте серой и включается тем же тапом.
+{
+  t.section('Галочка: работа не в итоге')
+  const p = panel(RULES)
+  create(p, 'Дом с галочками')
+  p.run('projBand="parts";')
+  const W = () => p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost')
+  const key = p.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
+  const cost0 = W()
+  const box = (html) => {
+    const i = html.indexOf('data-a="est-pos-on" data-k="' + key + '"')
+    return i < 0 ? '' : html.slice(i, html.indexOf('>', i))
+  }
+  const html0 = p.run('tProjects()')
+  t.ok('галочка стоит в свёрнутой строке', box(html0) !== '', 'галочки нет')
+  t.ok('и включена', /aria-checked="true"/.test(box(html0)), box(html0))
+
+  const tick = p.dom.node({ a: 'est-pos-on', k: key }); p.run('bind();'); tick.onclick()
+  t.ok('снятая галочка выключает работу в листе', !!p.q('projects[0].posOff') && p.q('projects[0].posOff')[key] === 1)
+  t.ok('и деньги пересчитались', W() < cost0, cost0 + ' → ' + W())
+  t.ok('в состав дома она не едет',
+    p.q('allPositions(projects[0], specCtx(projects[0])).map(function(x){return x.key;})').indexOf(key) < 0)
+  const html1 = p.run('tProjects()')
+  t.ok('строка осталась на экране', box(html1) !== '', 'строка пропала')
+  t.ok('с выключенной галочкой', /aria-checked="false"/.test(box(html1)), box(html1))
+  t.ok('тап по галочке не раскрыл управление строкой', p.q('estRowOpen') === '')
+
+  const tick2 = p.dom.node({ a: 'est-pos-on', k: key }); p.run('bind();'); tick2.onclick()
+  t.ok('повторный тап включает обратно', !p.q('projects[0].posOff'))
+  t.ok('и деньги вернулись', W() === cost0, String(W()))
+}
+
 // ── Работу можно убрать из ЭТОГО дома ────────────────────────────────────────
 // Смета справочника описывает типовой дом, а в конкретном бывает лишняя строка:
 // контейнер уже стоит на участке, электрику ведёт заказчик. Править ради этого

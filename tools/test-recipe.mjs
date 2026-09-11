@@ -11,7 +11,7 @@ import { guessVolume, carryRuleEdits } from '../src/recipe.js'
 import { rulePositions, allPositions, allPositionsRaw, ruleText, ruleReady, ruleAreas, probeSheet, positionSplit,
   layerPositions, pieArea, pieCost, applyPicks, optLabelOf, optPrefixOf, applyRooms, roomKeyOf, posRoomOf, ROOM_HOUSE, applyMatEdits, matOrderOf, matKeyOf, matAddKey, matAddrs, matLegacyKey, matAddrPid, matAddrSwap, stampMatIx, migrateMatAddrs } from '../src/recipe.js'
 import { modelAreas, modelTotals, applyLayers } from '../src/model.js'
-import { gaps2 } from '../src/spec2.js'
+import { gaps2, works2 } from '../src/spec2.js'
 
 const t = reporterOf()
 function reporterOf() {
@@ -228,6 +228,48 @@ const R = (o) => Object.assign({ id: 'r1', kind: 'house', what: 'surface', k: 'w
   const fresh = ownOf(Object.assign({}, base, { posAdd: [{ id: 'w1', name: 'Пол', stage: 2 }], hourRate: 1000 }))
   t.ok('строка без суммы получает работу по часам', positionSplit(fresh).labor === 5000 && ownMats(fresh).length === 1,
     JSON.stringify(positionSplit(fresh)))
+}
+
+// ── Работа, выключенная галочкой ────────────────────────────────────────────
+// Галочка в строке сметы выключает работу из расчёта, но не из вида: строка
+// остаётся на своём месте серой и включается тем же тапом. Деньги, договор и
+// стройка считаются только по включённым (`positions`), а экран рисует `rows` —
+// те же строки вместе с выключенными, в прежнем порядке.
+{
+  t.section('Работа, выключенная галочкой')
+  const STAGES = [{ n: 2, short: 'Этап 2', label: 'Отделка', color: '#8e44ad', finish: true }]
+  const EST_OFF = EST.map((e) => (e.id === 'e_osb' ? Object.assign({}, e, { hourNorm: 0.5 }) : e))
+  const ctxOff = { estimates: EST_OFF, products: PRODUCTS, winTypes: TYPES, rules: [R({ estId: 'e_osb', k: 'wall', scope: 'room' })],
+    pies: false, stages: STAGES, hourRate: 1000 }
+  const on = works2(SHEET, ctxOff)
+  const st0 = on.stages.filter((s) => s.n === 2)[0]
+  t.ok('в этапе несколько строк по комнатам', !!st0 && st0.positions.length >= 2, st0 && String(st0.positions.length))
+  const victim = st0.positions[1]
+  const off = works2(Object.assign({}, SHEET, { posOff: { [victim.key]: 1 } }), ctxOff)
+  const st1 = off.stages.filter((s) => s.n === 2)[0]
+  t.ok('в деньги выключенная не входит', Math.abs(off.cost - (on.cost - victim.cost)) <= 1, on.cost + ' → ' + off.cost)
+  t.ok('и в состав дома тоже', off.positions.every((p) => p.key !== victim.key))
+  t.ok('этап считает только включённые',
+    st1.positions.length === st0.positions.length - 1 && Math.abs(st1.cost - (st0.cost - victim.cost)) <= 1)
+  t.ok('но на экране строка на своём месте',
+    (st1.rows || []).map((p) => p.key).join('|') === st0.positions.map((p) => p.key).join('|'),
+    JSON.stringify((st1.rows || []).map((p) => p.key)))
+  const shownOff = (st1.rows || []).filter((p) => p.key === victim.key)[0]
+  t.ok('и помечена выключенной', !!shownOff && shownOff.off === true)
+  // Цена выключенной — полная, с работой по норме: иначе серая строка врала бы,
+  // сколько вернётся в смету при включении.
+  t.ok('с полной ценой, а не одними материалами', !!shownOff && Math.round(shownOff.cost) === Math.round(victim.cost),
+    shownOff && (shownOff.cost + ' vs ' + victim.cost))
+  const b1 = (st1.blocks || []).filter((b) => (b.rows || []).some((p) => p.key === victim.key))[0]
+  t.ok('в блоке комнаты она видна, но не считается', !!b1 && b1.positions.every((p) => p.key !== victim.key),
+    JSON.stringify((st1.blocks || []).map((b) => [b.room, (b.rows || []).length, b.positions.length])))
+  // Выключили всё в этапе — этап не пропадает: иначе включить работы обратно негде.
+  const allOff = {}
+  st0.positions.forEach((p) => { allOff[p.key] = 1 })
+  const empty = works2(Object.assign({}, SHEET, { posOff: allOff }), ctxOff).stages.filter((s) => s.n === 2)[0]
+  t.ok('этап со всеми выключенными остаётся на экране',
+    !!empty && empty.cost === 0 && empty.positions.length === 0 && (empty.rows || []).length === st0.positions.length,
+    empty ? JSON.stringify([empty.cost, empty.positions.length, (empty.rows || []).length]) : 'этапа нет')
 }
 
 // ── Объёмы для кнопок выбора ────────────────────────────────────────────────

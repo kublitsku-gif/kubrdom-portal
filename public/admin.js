@@ -66,7 +66,7 @@ import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
-const APP_BUILD = "2026-09-11.2";
+const APP_BUILD = "2026-09-11.3";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -15373,6 +15373,27 @@ function estToolsHtml(sh){
 // одинаковых заходов в строку: убрать всё «под ключ» из чернового этапа, перенести
 // половину санузла в чистовые. Отмечают чекбоксом, а решают один раз.
 function estPickCount(){ return Object.keys(estPick||{}).length; }
+// Галочка «считать в смете». Выключенная работа остаётся на своём месте серой —
+// её прикидывают, а не удаляют, — и включается тем же тапом. Хранится тем же
+// `posOff`, что и ✕: у «не в итоге» одна правда, и её уже уважают деньги, договор
+// и стройка. Зелёная и меньше фиолетовой отметки выбора — чтобы их не путали.
+function estOnBoxHtml(key, on){
+  return '<button data-a="est-pos-on" data-k="'+esc(key)+'" role="checkbox" aria-checked="'+(on?"true":"false")+'" '+
+    'title="'+(on?"Считается в смете — снимите, чтобы выключить":"Не считается в смете — отметьте, чтобы включить")+'" '+
+    'style="width:22px;height:22px;margin-top:1px;flex-shrink:0;background:'+(on?"#16a085":"#fff")+';border:1.5px solid '+(on?"#16a085":"#c0ccd8")+';'+
+    'border-radius:6px;cursor:pointer;color:#fff;font-size:12px;font-weight:800;line-height:1;padding:0">'+(on?"✓":"")+'</button>';
+}
+// Выключенная строка: имя, её полная цена зачёркнутой и пометка «не в итоге».
+function estOffRowHtml(p, canRule){
+  return '<div data-pos-off="'+esc(p.key)+'" style="padding:12px 0'+(p.added?';border-left:2px solid '+EST_COL.added+';padding-left:9px;margin-left:-2px':'')+'">'+
+    '<div style="display:flex;align-items:flex-start;gap:8px">'+
+      (canRule?estOnBoxHtml(p.key, false):'')+
+      '<span title="'+esc(p.name)+' · не считается в смете" style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#9aabbf;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+esc(p.name)+'</span>'+
+      '<span style="font-size:13px;font-weight:700;color:#b8c5d3;white-space:nowrap;text-decoration:line-through">'+Math.round(Number(p.cost)||0).toLocaleString("ru-RU")+' ₽</span>'+
+    '</div>'+
+    '<div style="margin:4px 0 0 '+(canRule?'30px':'0')+';font-size:10.5px;font-weight:700;color:#9aabbf">не в итоге'+(p.room?' · '+esc(p.room):'')+'</div>'+
+  '</div>';
+}
 function estPickBoxHtml(key){
   const on=!!estPick[key];
   return '<button data-a="est-pick" data-k="'+esc(key)+'" title="Отметить работу" '+
@@ -15643,7 +15664,7 @@ function estStageBody(st, rows, sh, w, canRule){
   if(blocks.length<2)return estRowsHtml(rows)+more;
   let base=0, h='';
   blocks.forEach(function(b){
-    const from=base, to=base+b.positions.length; base=to;
+    const from=base, to=base+(b.rows||b.positions).length; base=to;
     const id=st.n+"|"+b.key;
     const shut=!!blockShut[id];
     // Каждое помещение своим цветом: этап из четырёх комнат одинаковыми серыми
@@ -15797,9 +15818,9 @@ function estFindStage(st, hits){
   };
   const blocks=(st.blocks||[]).map(function(b){
     const bp=(b.positions||[]).filter(keep);
-    return bp.length?Object.assign({}, b, { positions:bp, cost:money(bp).cost }):null;
+    return bp.length?Object.assign({}, b, { positions:bp, rows:bp, cost:money(bp).cost }):null;
   }).filter(Boolean);
-  return Object.assign({}, st, money(pos), { positions:pos, blocks:blocks, found:(st.positions||[]).length });
+  return Object.assign({}, st, money(pos), { positions:pos, rows:pos, blocks:blocks, found:(st.positions||[]).length });
 }
 // Поиск и чипы — ОДНИМ рядом. Раньше это были два блока друг под другом, и до
 // первой строки сметы человек пролистывал пять полос управления: поиск, чипы,
@@ -16012,7 +16033,10 @@ function estBodyHtml(sh, types, live, actions){
         // прятать его внутрь свёрнутого этапа значит прятать саму задачу.
         ((priceWizStage===String(st.n))?priceWizHtml(st):'')+
         ((priceShopStage===String(st.n)&&priceWizStage!==String(st.n))?priceShopHtml(st):'')+
-        (shut?'':estStageBody(st, st.positions.map(function(p, pi, arr){
+        (shut?'':estStageBody(st, (st.rows||st.positions).map(function(p, pi, arr){
+          // Выключенная галочкой работа стоит на своём месте, но без управления:
+          // переносить и править то, что не считается, незачем — сначала включают.
+          if(p.off)return estOffRowHtml(p, canRule);
           // Редактор раскрываем у ПЕРВОЙ строки этой сметы: правило по помещениям
           // даёт их несколько, и три одинаковых редактора подряд — это не выбор.
           const first=seen[p.estId]!==true; if(p.estId)seen[p.estId]=true;
@@ -16024,7 +16048,7 @@ function estBodyHtml(sh, types, live, actions){
           // строка, брошенная в чужой блок, вернулась бы обратно тем же рендером.
           const addr=' data-a="est-row-hold" data-pos-row="'+esc(p.key)+'" data-pos-grp="'+esc(st.n+"|"+(estFlat?"*":roomKeyOf(p)))+'"';
           const rowOpen=canRule&&estRowOpen===p.key;
-          const canDrag=canMove&&(arr.length>1||(!finding&&stages.length>1)); // есть куда: к соседям или в другой этап
+          const canDrag=canMove&&(st.positions.length>1||(!finding&&stages.length>1)); // есть куда: к соседям или в другой этап
           return ''+
             // Строка читается сверху вниз: имя и итог — чипы — управление. Раньше
             // всё стояло в один ряд, и на узкой колонке имя сжималось до одного
@@ -16046,7 +16070,7 @@ function estBodyHtml(sh, types, live, actions){
             // Тап по шапке раскрывает управление: семь постоянных кнопок в каждой
             // из сорока строк — это уже не смета, а панель приборов.
             '<div data-a="est-row-open" data-k="'+esc(p.key)+'" style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">'+
-              (estPickOn?estPickBoxHtml(p.key):(canDrag?estDragBtn(p.key):''))+
+              (estPickOn?estPickBoxHtml(p.key):((canRule?estOnBoxHtml(p.key, true):'')+(canDrag?estDragBtn(p.key):'')))+
               '<span title="'+esc(p.name)+(p.added?" · дописана в этот дом руками":"")+'" style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#0d1b2e;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+esc(p.name)+'</span>'+
               '<span style="font-size:13px;font-weight:800;color:#0d1b2e;white-space:nowrap">'+Math.round(p.cost).toLocaleString("ru-RU")+' ₽</span>'+
             '</div>'+
@@ -26302,6 +26326,18 @@ function bind(){
       // на все дома, а решение «здесь этой работы нет» — про один дом.
       sh.posOff=Object.assign({}, sh.posOff||{}, { [key]:1 });
       scheduleSave(); fl(); estFlash("Работа"+nm+" убрана из дома");
+    };}
+    // Галочка «считать в смете»: тот же `posOff`, что у ✕ и «вернуть», — одна
+    // отметка, и деньги, договор и стройка её уже уважают.
+    else if(a==="est-pos-on"){el.onclick=()=>{
+      const key=el.dataset.k||"";
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
+      const wasOff=!!((sh.posOff||{})[key]);
+      estSnap(sh, wasOff?"включение работы":"выключение работы");
+      const map=Object.assign({}, sh.posOff||{});
+      if(wasOff)delete map[key]; else map[key]=1;
+      if(Object.keys(map).length)sh.posOff=map; else delete sh.posOff;
+      scheduleSave(); fl();
     };}
     else if(a==="est-pos-back"){el.onclick=()=>{
       const key=el.dataset.k||"";

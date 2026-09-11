@@ -141,13 +141,18 @@ export function modelFacts(sheet, winTypes) {
 // Блок этапа — работы ОДНОГО помещения подряд: «Санузел — стены, пол, потолок».
 // Позиции уже разложены по комнатам, здесь мы только режем список на куски и
 // считаем сумму каждого: этап на сорок строк читается комнатами, а не сплошняком.
-function blocksOf(positions) {
+// `rows` — строки блока на экране (с выключенными галочкой), `positions` и сумма —
+// только включённые: серая строка стоит в своей комнате, но денег ей не добавляет.
+function blocksOf(rows) {
   const out = [];
-  (positions || []).forEach(function (p) {
+  (rows || []).forEach(function (p) {
     const k = roomKeyOf(p);
-    const last = out[out.length - 1];
-    if (last && last.key === k) { last.positions.push(p); last.cost += Number(p.cost) || 0; return; }
-    out.push({ key: k, room: String(p.room || ""), positions: [p], cost: Number(p.cost) || 0 });
+    let b = out[out.length - 1];
+    if (!b || b.key !== k) { b = { key: k, room: String(p.room || ""), positions: [], rows: [], cost: 0 }; out.push(b); }
+    b.rows.push(p);
+    if (p.off) return;
+    b.positions.push(p);
+    b.cost += Number(p.cost) || 0;
   });
   return out.map(function (b) { return Object.assign(b, { cost: Math.round(b.cost) }); });
 }
@@ -174,9 +179,14 @@ export function works2(sheet, ctx) {
   (c.stages || []).forEach(function (s) { if (s) known[Number(s.n)] = s; });
   const byStage = {};
   const order = [];
-  positions.forEach(function (p) {
+  // Этапы строим по ВСЕМ строкам экрана (`shown`): выключенная галочкой работа
+  // стоит на своём месте, а этап, где выключено всё, не пропадает — иначе
+  // включить обратно было бы негде. Деньги этапа — только по включённым.
+  (raw.shown || positions).forEach(function (p) {
     const n = Number(p.stage) || 0;
-    if (!byStage[n]) { byStage[n] = { n: n, positions: [], cost: 0, mats: 0, labor: 0, hours: 0 }; order.push(n); }
+    if (!byStage[n]) { byStage[n] = { n: n, positions: [], rows: [], cost: 0, mats: 0, labor: 0, hours: 0 }; order.push(n); }
+    byStage[n].rows.push(p);
+    if (p.off) return;
     byStage[n].positions.push(p);
     byStage[n].cost += Number(p.cost) || 0;
     // Подытоги этапа теми же двумя цифрами, что стоят в строке: сколько закупать
@@ -199,7 +209,7 @@ export function works2(sheet, ctx) {
       // дому разом (утепление, обрешётка, электрика), и деление их на «санузел /
       // зал / спальню» — граница, которой на стройке нет. Комната у самой работы
       // при этом остаётся: она нужна и чипу в строке, и переносу.
-      blocks: (st && st.finish) ? blocksOf(byStage[n].positions) : [],
+      blocks: (st && st.finish) ? blocksOf(byStage[n].rows) : [],
     });
   });
   return {

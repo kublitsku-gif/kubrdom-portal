@@ -822,8 +822,11 @@ export function allPositionsRaw(sheet, ctx) {
   const numbered = stampMatIx(all);
   // Порядок важен: сначала свои часы, потом норма (она их уважает и считает по ним
   // деньги), и только потом своя цена — она главнее любого расчёта.
-  const priced = applyCost(applyNorm(applyHours(dropOff(applyPicks(applyMatEdits(numbered, sheet, c.products), sheet), sheet), sheet), sheet, c), sheet);
-  return applyRooms(applyOrder(applyStage(priced, sheet), sheet), sheet, rooms, c.stages);
+  const priced = applyCost(applyNorm(applyHours(applyPicks(applyMatEdits(numbered, sheet, c.products), sheet), sheet), sheet, c), sheet);
+  // Выключенные отделяем в САМОМ КОНЦЕ: к этому моменту у них есть цена по норме,
+  // этап, комната и место в порядке — экран рисует их серыми там же, где они
+  // стояли, и честно показывает, сколько вернётся в смету при включении.
+  return dropOff(applyRooms(applyOrder(applyStage(priced, sheet), sheet), sheet, rooms, c.stages), sheet);
 }
 
 // Работы, убранные руками из ЭТОГО дома. Смета справочника описывает типовой дом,
@@ -1262,12 +1265,20 @@ export function applyStage(raw, sheet) {
   });
 }
 
+// `positions` — только то, что считается (деньги, договор, стройка); `shown` —
+// все строки в прежнем порядке, выключенные с пометкой `off`: по нему экран
+// рисует галочку снятой, не убирая строку с её места.
 export function dropOff(raw, sheet) {
   const off = (sheet && sheet.posOff) || {};
-  if (!Object.keys(off).length) return Object.assign({ dropped: [] }, raw);
-  const kept = [], dropped = [];
-  (raw.positions || []).forEach(function (p) { (off[p.key] ? dropped : kept).push(p); });
-  return Object.assign({}, raw, { positions: kept, dropped: dropped });
+  const all = raw.positions || [];
+  if (!Object.keys(off).length) return Object.assign({ dropped: [] }, raw, { shown: all });
+  const kept = [], dropped = [], shown = [];
+  all.forEach(function (p) {
+    if (!off[p.key]) { kept.push(p); shown.push(p); return; }
+    const o = Object.assign({}, p, { off: true });
+    dropped.push(o); shown.push(o);
+  });
+  return Object.assign({}, raw, { positions: kept, dropped: dropped, shown: shown });
 }
 
 // Позиция → работа объекта. ОДНА машинка на сборку объекта и на подпись состава:
