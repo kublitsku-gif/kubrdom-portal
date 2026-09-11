@@ -1271,6 +1271,49 @@ export function elevation(model, side, winTypes, points) {
 // обрешётку и утеплитель, которые идут и за окном тоже. Чистая (`wallNet`) — за
 // вычетом проёмов: по ней красят и обшивают. Одно число вместо двух врало бы одному
 // из двух расчётов, а какому — зависит от материала.
+// ─── ПЛИНТУСЫ ────────────────────────────────────────────────────────────────
+// Проём режет напольный плинтус, только если доходит до пола: дверь — всегда (пока
+// подоконник ей не поставили руками), окно — лишь с подоконником 0 (панорамное).
+function opReachesFloor(op, t) {
+  if (op.sill == null) return t.kind === "door";
+  return !(Number(op.sill) > 0);
+}
+// Комнаты, у которых проём прерывает плинтус. Это НЕ `openingRoom`: тот нарочно
+// выбирает одну комнату, чтобы монтаж двери не посчитался дважды, а плинтуса нет
+// с ОБЕИХ сторон двери — и в перегородке, и в куске стены.
+function openingPlinthRooms(m, rooms, op, width) {
+  const mid = (Number(op.pos) || 0) + width / 2;
+  const atPoint = function (x, y) {
+    return rooms.find(function (r) {
+      return (r.cells || []).some(function (c) { return x >= c.x && x <= c.x + c.w && y >= c.y && y <= c.y + c.h; });
+    }) || null;
+  };
+  let pair;
+  if (op.side === "part") {
+    // Перегородка стоит сразу за отсеком `after`: комнаты по обе стороны — в нём
+    // и в следующем, на той высоте плана, где проходит дверь.
+    const bays = modelBays(m);
+    const i = bays.findIndex(function (b) { return b.id === op.after; });
+    if (i < 0 || i >= bays.length - 1) return [];
+    const inBay = function (bay) {
+      const own = rooms.filter(function (r) { return r.bayId === bay.id; });
+      return own.find(function (r) { return mid >= r.y0 && mid <= r.y1; }) || own[0] || null;
+    };
+    pair = [inBay(bays[i]), inBay(bays[i + 1])];
+  } else if (op.side === "wall") {
+    const wl = wallOf(m, op);
+    if (!wl) return [];
+    pair = wallAlong(wl)
+      ? [atPoint(mid, wl.y - 1), atPoint(mid, wl.y + wl.h + 1)]
+      : [atPoint(wl.x - 1, mid), atPoint(wl.x + wl.w + 1, mid)];
+  } else {
+    pair = [openingRoom(m, op)];
+  }
+  return pair.filter(function (r, i) {
+    return r && pair.findIndex(function (x) { return x && x.id === r.id; }) === i;
+  });
+}
+
 export function modelAreas(model, winTypes) {
   const m = model || {};
   const H = Number(m.h) || 0;
@@ -1286,22 +1329,37 @@ export function modelAreas(model, winTypes) {
     opArea[room.id] = (opArea[room.id] || 0) + (Number(t.w) || 0) * (Number(t.h) || 0) / 1000000;
   });
 
-  const rooms = modelRooms(m).map(function (r) {
+  // Плинтусы — погонными метрами: потолочный идёт по всему периметру, напольный
+  // прерывают проёмы до пола. Точность — миллиметр, как у самого периметра: без
+  // дверей оба числа обязаны совпасть до цифры.
+  const base = modelRooms(m);
+  const r3 = function (v) { return Math.round(v * 1000) / 1000; };
+  const floorCut = {};
+  (m.openings || []).forEach(function (op) {
+    const t = byType[op.typeId]; if (!t || !opReachesFloor(op, t)) return;
+    const w = Number(t.w) || 0;
+    openingPlinthRooms(m, base, op, w).forEach(function (r) { floorCut[r.id] = (floorCut[r.id] || 0) + w / 1000; });
+  });
+
+  const rooms = base.map(function (r) {
     const gross = r2(r.wallLen * H / 1000);
     const ops = r2(opArea[r.id] || 0);
+    const cut = r3(floorCut[r.id] || 0);
     return {
       id: r.id, name: r.name, bayId: r.bayId, sub: !!r.sub, rect: r.rect,
       w: r2(r.finW / 1000), l: r2(r.finL / 1000), h: r2(H / 1000),
       perimeter: r.wallLen,
       floor: r.area, ceil: r.area,
       wallGross: gross, openings: ops, wallNet: Math.max(0, r2(gross - ops)),
+      plinthCeil: r.wallLen, plinthDoors: cut, plinthFloor: Math.max(0, r3(r.wallLen - cut)),
     };
   });
   const sum = function (k) { return r2(rooms.reduce(function (a, r) { return a + r[k]; }, 0)); };
   return {
     height: r2(H / 1000), rooms: rooms,
     total: { floor: sum("floor"), ceil: sum("ceil"), wallGross: sum("wallGross"),
-      openings: sum("openings"), wallNet: sum("wallNet") },
+      openings: sum("openings"), wallNet: sum("wallNet"),
+      plinthFloor: sum("plinthFloor"), plinthCeil: sum("plinthCeil"), plinthDoors: sum("plinthDoors") },
   };
 }
 

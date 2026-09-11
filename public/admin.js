@@ -66,7 +66,7 @@ import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
-const APP_BUILD = "2026-09-11.3";
+const APP_BUILD = "2026-09-11.4";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -13406,6 +13406,42 @@ function roomAreaWhy(r, h){
     wallGross: 'Стены с проёмами: периметр '+per+' — по ним идут обрешётка и утеплитель',
   };
 }
+// Плинтусы — погонными метрами по помещениям и на весь дом: их заказывают палками
+// по периметру, а не площадью, и тоже в комнату. Числа считает модель
+// (`modelAreas`): потолочный — весь периметр, напольный — за вычетом проёмов до пола,
+// причём дверь между комнатами режет его с обеих сторон.
+function plinthTableHtml(f){
+  const rooms=(f.rooms||[]).filter(function(r){ return Number(r.plinthCeil)>0; });
+  if(!rooms.length)return '';
+  const t=f.total||{};
+  const grid='display:grid;grid-template-columns:minmax(0,1fr) repeat(2,76px);gap:6px;align-items:baseline';
+  const col=function(s){
+    return '<div style="font-size:8.5px;font-weight:700;color:#9aabbf;letter-spacing:0.3px;text-align:right;line-height:1.2">'+s+'</div>';
+  };
+  const val=function(v,why){
+    return '<div title="'+esc(why)+'" style="font-size:12px;font-weight:800;color:#0d1b2e;text-align:right;white-space:nowrap">'+numRu(v)+'</div>';
+  };
+  const whyFloor=function(r){
+    return Number(r.plinthDoors)>0
+      ? 'Периметр '+numRu(r.plinthCeil)+' м минус проёмы до пола '+numRu(r.plinthDoors)+' м = '+numRu(r.plinthFloor)+' м'
+      : 'Периметр '+numRu(r.plinthCeil)+' м — дверей в помещении нет';
+  };
+  return '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin:12px 0 5px">ПЛИНТУСЫ ПО ПОМЕЩЕНИЯМ, М.П.</div>'+
+    '<div style="'+grid+'"><div></div>'+col("НАПОЛЬНЫЙ")+col("ПОТОЛОЧНЫЙ")+'</div>'+
+    rooms.map(function(r){
+      return '<div style="'+grid+';padding:5px 0;border-top:1px solid #f4f7fb">'+
+        '<div style="min-width:0;font-size:12px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.name||"Помещение")+'</div>'+
+        val(r.plinthFloor, whyFloor(r))+val(r.plinthCeil, 'Весь периметр помещения: '+numRu(r.plinthCeil)+' м')+
+      '</div>';
+    }).join("")+
+    '<div style="'+grid+';padding:6px 0 0;border-top:1.5px solid #dde6f0">'+
+      '<div style="font-size:12px;font-weight:800;color:#0d1b2e">Всего на дом</div>'+
+      val(t.plinthFloor, 'Напольный по всем помещениям')+val(t.plinthCeil, 'Потолочный по всем помещениям')+
+    '</div>'+
+    '<div style="font-size:10px;color:#9aabbf;line-height:1.45;margin-top:6px">Потолочный — весь периметр помещения. Напольный — за вычетом проёмов до пола'+
+      (Number(t.plinthDoors)>0?' ('+numRu(t.plinthDoors)+' м по дому)':'')+
+      ': дверь между комнатами режет его с обеих сторон. Запас на подрезку и стыки добавьте при заказе.</div>';
+}
 function spec2FactsHtml(f, live){
   const cell=function(label,val){
     return '<div style="text-align:center;background:#f6f8fa;border-radius:9px;padding:7px 5px">'+
@@ -13481,6 +13517,7 @@ function spec2FactsHtml(f, live){
           : 'Проёмов в доме нет, поэтому стены одни: '+numRu(f.total.wallNet)+' м².')+
         ' Тап по строке — как посчитано.'+
       '</div>';
+    h+=plinthTableHtml(f);
   }
   if(f.openings.length){
     // Площадь изделия — рядом с его размером: по ней заказывают стекло и полотна,

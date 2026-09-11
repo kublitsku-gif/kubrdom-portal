@@ -170,6 +170,16 @@ function create(p, name) {
   t.ok('потолок равен полу', san[1] === san[0], 'получили: ' + san[1])
   t.ok('чистые стены санузла — из модели', open.indexOf('>' + san[2] + '</div>') >= 0, 'ждали: ' + san[2])
   t.ok('и полные тоже', open.indexOf('>' + san[3] + '</div>') >= 0, 'ждали: ' + san[3])
+  // Плинтусы — погонными метрами по комнатам и на весь дом: их заказывают палками
+  // по периметру, а не площадью. Числа — те же, что считает модель.
+  t.ok('плинтусы по помещениям есть', /ПЛИНТУСЫ/.test(open) && /НАПОЛЬНЫЙ/.test(open) && /ПОТОЛОЧНЫЙ/.test(open))
+  const pl = p.run('(function(){var A=modelAreas(projects[0].model, winTypes);'
+    + 'var r=A.rooms.filter(function(x){return x.name==="Санузел";})[0];'
+    + 'return [numRu(r.plinthFloor),numRu(r.plinthCeil),numRu(A.total.plinthFloor),numRu(A.total.plinthCeil)];})()')
+  t.ok('плинтус санузла — из модели',
+    open.indexOf('>' + pl[0] + '</div>') >= 0 && open.indexOf('>' + pl[1] + '</div>') >= 0, 'ждали: ' + pl.join(' / '))
+  t.ok('и всего на дом', /Всего на дом/.test(open) &&
+    open.indexOf('>' + pl[2] + '</div>') >= 0 && open.indexOf('>' + pl[3] + '</div>') >= 0, 'ждали: ' + pl[2] + ' / ' + pl[3])
   // Справка свёрнута по умолчанию: экран открывают ради сметы.
   p.run('bind();')
   head.onclick()

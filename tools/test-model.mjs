@@ -569,6 +569,47 @@ function house() {
     moved.total.floor + ' ≠ ' + A.total.floor)
 }
 
+// ── 5.8 Плинтусы: напольный и потолочный ─────────────────────────────────────
+// Плинтус заказывают погонными метрами по комнате. Потолочный идёт по всему
+// периметру. Напольный прерывают проёмы до пола — двери, — причём дверь между
+// комнатами режет его в ОБЕИХ: `openingRoom` нарочно отдаёт ей одну комнату (чтобы
+// монтаж двери не посчитался дважды), а плинтуса нет с обеих сторон проёма.
+{
+  console.log('Плинтусы')
+  const near = (a, b) => Math.abs(a - b) < 0.011
+  const m = house()
+  const A = modelAreas(m, TYPES)
+  ok('потолочный плинтус — весь периметр', A.rooms.every((r) => r.plinthCeil === r.perimeter),
+    JSON.stringify(A.rooms.map((r) => [r.perimeter, r.plinthCeil])))
+  ok('без дверей напольный равен потолочному', A.rooms.every((r) => r.plinthFloor === r.plinthCeil))
+  ok('итог по дому — сумма комнат',
+    near(A.total.plinthCeil, A.rooms.reduce((a, r) => a + r.plinthCeil, 0)) &&
+    near(A.total.plinthFloor, A.rooms.reduce((a, r) => a + r.plinthFloor, 0)),
+    JSON.stringify(A.total))
+
+  const rooms = modelRooms(m)
+  const withOps = (ops) => modelAreas(Object.assign({}, m, { openings: ops }), TYPES)
+  // Окно стоит выше пола — плинтус под ним идёт как шёл.
+  const win = withOps([{ id: 'w1', side: 'n', pos: rooms[0].x0 + 200, typeId: 't_win' }])
+  ok('окно напольный плинтус не режет', win.rooms[0].plinthFloor === A.rooms[0].plinthFloor)
+
+  // Входная дверь в наружной стене — только у своей комнаты, на свою ширину (1 м).
+  const ext = withOps([{ id: 'd0', side: 'n', pos: rooms[0].x0 + 200, typeId: 't_door' }])
+  ok('входная дверь вычтена у своей комнаты', near(ext.rooms[0].plinthFloor, A.rooms[0].plinthFloor - 1),
+    A.rooms[0].plinthFloor + ' → ' + ext.rooms[0].plinthFloor)
+  ok('у соседей напольный не тронут', ext.rooms[1].plinthFloor === A.rooms[1].plinthFloor)
+  ok('потолочный дверью не режется', ext.rooms[0].plinthCeil === A.rooms[0].plinthCeil)
+
+  // Дверь в перегородке — в обеих комнатах сразу.
+  const inner = withOps([{ id: 'd1', side: 'part', after: m.rooms[0].id, pos: 800, typeId: 't_door' }])
+  const cut = inner.rooms.map((r, i) => A.rooms[i].plinthFloor - r.plinthFloor)
+  ok('дверь в перегородке режет плинтус в обеих комнатах', cut.filter((d) => near(d, 1)).length === 2,
+    JSON.stringify(cut))
+  ok('итог по дому — минус две ширины двери', near(inner.total.plinthFloor, A.total.plinthFloor - 2),
+    A.total.plinthFloor + ' → ' + inner.total.plinthFloor)
+  ok('и видно, сколько вычли', near(inner.total.plinthDoors, 2), String(inner.total.plinthDoors))
+}
+
 // ── 6. Что мешает считать ────────────────────────────────────────────────────
 {
   console.log('Предупреждения')
