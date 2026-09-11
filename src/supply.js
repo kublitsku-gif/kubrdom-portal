@@ -37,7 +37,10 @@ export function needStatus(matId, need, purchases, legacyPurchased, legacyArrive
   });
   if (!hasBatch) {
     const b = !!(legacyPurchased || {})[matId], a = !!(legacyArrived || {})[matId];
-    return { want: want, bought: b ? want : 0, got: a ? want : 0, spent: b ? want * (Number(need && need.cost) || 0) : 0, legacy: true };
+    // Потрачено — по фактической цене, если её записали: смета — это план.
+    const fact = factPrice(need);
+    const unit = fact != null ? fact : (Number(need && need.cost) || 0);
+    return { want: want, bought: b ? want : 0, got: a ? want : 0, spent: b ? want * unit : 0, legacy: true };
   }
   return { want: want, bought: bought, got: got, spent: spent, legacy: false };
 }
@@ -203,4 +206,46 @@ export function looksLikeLabour(m) {
   if (!n || m.pid) return false;
   if ((Number(m.qty) || 1) !== 1) return false;
   return String(m.wn || "").trim() === n;
+}
+
+// ─── ЗАКАЗАНО → КУПЛЕНО → НА СКЛАДЕ ──────────────────────────────────────────
+// Между «нужно» и «куплено» есть шаг, которого портал не видел: заказ оформлен, а
+// товара ещё нет — ТЗ ушло в Белку, корзина на Озоне оплачена и едет. Признак живёт
+// НА МАТЕРИАЛЕ, как `client`: `m.ordAt` — когда заказали, `m.eta` — когда обещали
+// привезти. Так он переживает правку строки и уезжает вместе с материалом.
+export function isOrdered(m) { return !!(m && m.ordAt); }
+
+export const SUPPLY_STEPS = ["need", "ordered", "bought", "got"];
+
+// Шаг потребности на ленте статуса. Считаем от старших отметок к младшим: принятое на
+// склад уже куплено, даже если галочку «куплено» забыли поставить.
+export function supplyStep(m, purchased, arrived) {
+  if (!m) return "need";
+  if ((arrived || {})[m.id]) return "got";
+  if ((purchased || {})[m.id]) return "bought";
+  return isOrdered(m) ? "ordered" : "need";
+}
+
+// ─── ФАКТИЧЕСКАЯ ЦЕНА ────────────────────────────────────────────────────────
+// Смета — план. Купили дороже или дешевле — разницу видно, только если записать факт
+// (`m.fact`, рубли за единицу). Пусто или ноль — факта нет, считаем по плану.
+export function factPrice(m) {
+  const f = Number(m && m.fact);
+  return isFinite(f) && f > 0 ? f : null;
+}
+
+// План и факт по купленному. В разницу идут ТОЛЬКО позиции с записанным фактом:
+// «не записали» не значит «купили по плану», и выдумывать экономию или перерасход нельзя.
+export function factTotals(mats, purchased) {
+  let plan = 0, fact = 0, count = 0;
+  (mats || []).forEach(function (m) {
+    if (!m || !(purchased || {})[m.id]) return;
+    const f = factPrice(m);
+    if (f == null) return;
+    const q = needQty(m);
+    plan += (Number(m.cost) || 0) * q;
+    fact += f * q;
+    count++;
+  });
+  return { plan: plan, fact: fact, delta: fact - plan, count: count };
 }

@@ -71,7 +71,7 @@ const nb = (x) => x.replace(/[\u00a0\u202f]/g, ' ')
   const p = boot(); seed(p)
 
   const html = nb(p.run('tSupplyDetail({o1:true},"stage")'))
-  t.ok('вся смета в счёте', html.indexOf('из 5 007 ₽') >= 0, 'позицию вычли из закупки')
+  t.ok('вся смета в счёте', html.indexOf('всего 5 007 ₽') >= 0, 'позицию вычли из закупки')
   t.ok('этап считает обе позиции', html.indexOf('0/2 · 5 007 ₽') >= 0, 'подытог этапа урезан')
   t.ok('строка помечена чипом', html.indexOf('💰 платит заказчик') >= 0)
   t.ok('но не выглядит закрытой', html.indexOf('✓ Покупает заказчик') < 0,
@@ -96,6 +96,8 @@ const nb = (x) => x.replace(/[\u00a0\u202f]/g, ' ')
   t.section('Кнопка только в своём объекте')
   const p = boot(); seed(p, false)
 
+  // Включение договорённости живёт в меню «⋯» шапки: на первом экране оно отодвигало список.
+  p.run('supplyMoreOpen=true;')
   const off = p.run('tSupplyDetail({o1:true},"stage")')
   t.ok('пилюли в строках нет', off.indexOf('data-a="supply-client"') < 0,
     'значок висит в объекте, где компенсации нет')
@@ -167,7 +169,7 @@ const nb = (x) => x.replace(/[\u00a0\u202f]/g, ' ')
   t.ok('в своём объекте пилюля есть', own.indexOf('data-a="supply-client" data-ids="m_o1"') >= 0)
 
   // Соседний — ни кнопки, ни панели, ни чипа.
-  p.run('window._supplySelected={o2:true};')
+  p.run('window._supplySelected={o2:true};supplyMoreOpen=true;')
   const other = p.run('tSupplyDetail({o2:true},"stage")')
   t.ok('в чужом объекте пилюли нет', other.indexOf('data-a="supply-client"') < 0,
     'кнопка протекла в объект, где компенсации нет')

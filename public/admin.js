@@ -40,7 +40,7 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // версия на устройстве. По этой подписи это видно сразу.
 // Логика закупок — общая с ботом и Worker'ом (src/supply.js): статус материала должен
 // одинаково считаться в панели и в Telegram, иначе бригадир и снабженец увидят разное.
-import { needStatus, needState, objectSupply, migrateLegacy, needQty, isSelection, pendingSelections, clientPays, objClientPays, refundMats, refundTotals, isLabour, buyMats, looksLikeLabour } from "../src/supply.js";
+import { needStatus, needState, objectSupply, migrateLegacy, needQty, isSelection, pendingSelections, clientPays, objClientPays, refundMats, refundTotals, isLabour, buyMats, looksLikeLabour, isOrdered, SUPPLY_STEPS, factPrice, factTotals } from "../src/supply.js";
 // Сроки этапов — тот же общий модуль, что читают напоминания (см. src/stages.js).
 import { sheetPositions, sheetTotals, sheetIssues, optionGroups, roomArea, optionCost, matNeedForArea, matNeedOk, matNeedMatch,
   SPEC_POINTS, pointMeta, pointTotals, roomPoints } from "../src/spec.js";
@@ -1352,10 +1352,10 @@ function numRu(n){
 }
 // Один магазин — одно имя. «Лемана» и «Леруа Мерлен» — прежние вывески той же
 // сети: пока их пишут по-разному, закупка разъезжается на два списка, и один
-// заказ едет в два адреса. Приводим к нынешней вывеске при вводе.
-const STORE_ALIAS={"лемана":"Лемана ПРО","леруа":"Лемана ПРО","леруа мерлен":"Лемана ПРО","leroy merlin":"Лемана ПРО","леманапро":"Лемана ПРО","лемана про":"Лемана ПРО","petrovich":"Петрович","petrovich.ru":"Петрович","moscow.petrovich.ru":"Петрович","стд петрович":"Петрович"};
+// заказ едет в два адреса. Приводим к нынешней вывеске при вводе, а в снабжении и при показе («Ozon» и «Озон» — один чип).
+const STORE_ALIAS={"лемана":"Лемана ПРО","леруа":"Лемана ПРО","леруа мерлен":"Лемана ПРО","leroy merlin":"Лемана ПРО","леманапро":"Лемана ПРО","лемана про":"Лемана ПРО","petrovich":"Петрович","petrovich.ru":"Петрович","moscow.petrovich.ru":"Петрович","стд петрович":"Петрович","ozon":"Озон","ozon.ru":"Озон","www.ozon.ru":"Озон","озон":"Озон","яндекс маркет":"Яндекс Маркет","яндекс.маркет":"Яндекс Маркет","yandex market":"Яндекс Маркет","market.yandex.ru":"Яндекс Маркет","grand line":"Grand Line","грандлайн":"Grand Line","гранд лайн":"Grand Line","южые ворота":"Южные ворота"};
 function normStore(v){const k=String(v||"").trim().replace(/\s+/g," ");return STORE_ALIAS[k.toLowerCase()]||k;}
-const SC={"Озон":"#005bff","Петрович":"#e8552d","Белка":"#d68910","pechki.su":"#c0392b","Егорьевск":"#8e44ad","Лемана ПРО":"#e30613","Лемана":"#e30613","Авито":"#00aaff","Нижний Новгород":"#27ae60","Грандлайн":"#7f8c8d","Южые ворота":"#f39c12","Доставка":"#95a5a6"};
+const SC={"Озон":"#005bff","Петрович":"#e8552d","Белка":"#d68910","pechki.su":"#c0392b","Егорьевск":"#8e44ad","Лемана ПРО":"#e30613","Лемана":"#e30613","Авито":"#00aaff","Нижний Новгород":"#27ae60","Грандлайн":"#7f8c8d","Южые ворота":"#f39c12","Доставка":"#95a5a6","Grand Line":"#7f8c8d","Южные ворота":"#f39c12","Яндекс Маркет":"#b8860b","Славянский мир":"#16a085","Подряд":"#5d6d7e"};
 const fmt=n=>n.toLocaleString("ru-RU")+" ₽";
 // Format number value with spaces (5 500 000) - no ruble sign, for input fields
 function fmtMoney(v){
@@ -4577,6 +4577,15 @@ function paintTab(){
   window.scrollTo(0,_y);                          // страховка от клампа высоты
   return true;
 }
+// В шапке — первая роль и счётчик остальных. «Администратор, Снабженец, Начальник
+// производства, Финансист, Маркетолог» занимали три строки и отодвигали содержимое
+// вниз на каждой вкладке; полный список остаётся в подсказке.
+function userRolesShort(u){
+  const names=((u&&u.roles)||[]).map(function(rid){ const r=roles.find(function(x){return x.id===rid;}); return r?r.n:""; }).filter(Boolean);
+  if(!names.length)return "";
+  return '<span title="'+esc(names.join(", "))+'" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(names[0])+
+    (names.length>1?' <b style="font-weight:700;color:#9aabbf">+'+(names.length-1)+'</b>':'')+'</span>';
+}
 // Высота шапки приложения — в переменную `--hdr`, к ней липнет всё остальное.
 // Без неё липкие шапки этапов и помещений прилипали к `top:0`, то есть уезжали
 // ПОД карточку сотрудника и карусель вкладок (у тех z-index 50 и 49, у этапа 3):
@@ -5095,7 +5104,7 @@ function page(){
     const m=nm.match(/^(\S+)\s+(.*)$/);
     return [k, (m?m[2]:nm).split(" ")[0], m?m[1]:"•"];
   });
-  const bottomBar=(_bottomItems.length>0)?`<div style="position:fixed;left:0;right:0;bottom:0;z-index:60;pointer-events:none;-webkit-transform:translateZ(0);transform:translateZ(0)">
+  const bottomBar=(_bottomItems.length>0)?`<div id="bottom-bar" style="position:fixed;left:0;right:0;bottom:0;z-index:60;pointer-events:none;-webkit-transform:translateZ(0);transform:translateZ(0)">
   <div style="max-width:480px;margin:0 auto;background:#ffffff;border-top:1px solid #e2e8f0;display:flex;padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px));pointer-events:auto;box-shadow:0 -1px 10px rgba(13,27,46,0.06)">
   ${_bottomItems.map(function(it){
     const k=it[0],label=it[1],icon=it[2],on=tab===k;
@@ -5119,7 +5128,7 @@ function page(){
   <div style="width:32px;height:32px;border-radius:8px;background:${currentUser.c};display:flex;align-items:center;justify-content:center;font-size:16px">${currentUser.av}</div>
   <div style="flex:1;min-width:0">
     <div style="font-size:13px;font-weight:700;color:#0d1b2e">${esc(currentUser.name)}</div>
-    <div style="font-size:10px;color:#7a9aaa">${currentUser.roles.map(rid=>{const r=roles.find(x=>x.id===rid);return r?r.n:"";}).filter(Boolean).join(", ")}</div>
+    <div style="font-size:10px;color:#7a9aaa">${userRolesShort(currentUser)}</div>
   </div>
   ${saveMarkHtml()}
   ${_installBtnHtml()}
@@ -19577,7 +19586,7 @@ function syncNeedToBatch(matId, on){
   const openId="pur_"+owner.id+"_"+day;
   const exists=purchases.find(p=>p.id===openId);
   const item={ id:"pi_"+matId, needId:matId, name:found.n||"", qty:needQty(found),
-    price:Number(found.cost)||0, gotQty:arrived[matId]?needQty(found):0, gotAt:arrived[matId]?day:null };
+    price:factPrice(found)||Number(found.cost)||0, gotQty:arrived[matId]?needQty(found):0, gotAt:arrived[matId]?day:null };
   purchases=exists
     ? purchases.map(p=>p.id!==openId?p:Object.assign({},p,{items:(p.items||[]).concat([item])}))
     : purchases.concat([{ id:openId, date:day, store:"", objId:owner.id,
@@ -19892,6 +19901,8 @@ function tReceive(sel){
           // Про оплату заказчиком бригадиру знать незачем: материал купили мы, везём мы,
           // принимает он как обычно. Кто вернёт деньги — вопрос не склада.
           (bought?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#eafaf0;border-radius:5px;padding:1px 7px">🛒 куплено</span>':'')+
+          // Заказано, но не принято: мастер видит, когда ждать, а не гадает, едет ли вообще.
+          (!done&&m.eta?'<span style="font-size:10px;font-weight:700;color:#2980b9;background:#eaf3fb;border-radius:5px;padding:1px 7px">🚚 привезут '+ruDate(m.eta)+'</span>':(!done&&!bought&&m.ordAt?'<span style="font-size:10px;font-weight:700;color:#2980b9;background:#eaf3fb;border-radius:5px;padding:1px 7px">🚚 заказано</span>':''))+
         '</div>'+
       '</div>'+
     '</div>';
@@ -20422,7 +20433,7 @@ function buildSupplyTZ(store){
   const objs=objects.filter(function(o){return!!sel[o.id];});
   let mats=[];
   // В ТЗ попадает только то, что ещё НЕ куплено.
-  objs.forEach(function(o){(o.stages||[]).forEach(function(s){(s.works||[]).forEach(function(w){buyMats(w).forEach(function(m){ if((m.store||"")===store && !purchased[m.id]) mats.push(m); });});});});
+  objs.forEach(function(o){(o.stages||[]).forEach(function(s){(s.works||[]).forEach(function(w){buyMats(w).forEach(function(m){ if(normStore(m.store)===store && !purchased[m.id]) mats.push(m); });});});});
   if(!mats.length){ alert("Для «"+store+"» нечего закупать — всё уже куплено или нет материалов."); return; }
   const gm={};
   mats.forEach(function(m){
@@ -20572,14 +20583,7 @@ function buildHandoffList(){
 function buildSupplyList(){
   const sel=window._supplySelected||{};
   const objs=objects.filter(function(o){return !!sel[o.id];});
-  let mats=[];
-  objs.forEach(function(o){(o.stages||[]).forEach(function(s){(s.works||[]).forEach(function(w){buyMats(w).forEach(function(m){
-    mats.push(Object.assign({},m,{wn:w.n,sn:s.n,objName:o.name}));
-  });});});});
-  const q=(supplySearch||"").trim().toLowerCase();
-  if(q) mats=mats.filter(function(m){return (m.n||"").toLowerCase().includes(q)||(m.store||"").toLowerCase().includes(q)||(m.note||"").toLowerCase().includes(q)||(m.wn||"").toLowerCase().includes(q);});
-  if(supplyStoreFilter) mats=mats.filter(function(m){return (m.store||"Без магазина")===supplyStoreFilter;});
-  if(supplyHideDone) mats=mats.filter(function(m){return !purchased[m.id];});
+  const mats=supplyFilter(supplyCollect(objs).mats);
   if(!mats.length){ alert("Список пуст — нет материалов по текущему фильтру."); return; }
   function qtyText(m){
     const lens=(Array.isArray(m.breakdown)?m.breakdown:[]).map(function(r){return {len:Number(r.len)||0,n:Number(r.n)||0};}).filter(function(r){return r.len>0&&r.n>0;}).sort(function(a,b){return b.len-a.len;});
@@ -20709,44 +20713,282 @@ function supplyCostSection(label,rows,total,clickable){
   });
   return h;
 }
-function tSupplyDetail(sel, sortBy){
-  // Цвет тот же, что в общем `SC`: две карты цветов на один магазин — это чип
-  // одного цвета в снабжении и другого в сверке, и человек считает их разными.
-  const STORECOL={"Озон":"#005bff","Белка":"#d68910","pechki.su":"#c0392b","Егорьевск":"#8e44ad","Лемана ПРО":"#e30613","Лемана":"#e30613","Петрович":"#e8552d","Авито":"#00aaff","Нижний Новгород":"#27ae60"};
-  const sortBy2=sortBy||"stage";
-  const multiMode=Object.values(sel).filter(Boolean).length>1;
-  const targetObjs=objects.filter(function(o){return!!sel[o.id];});
+// ─── ЭКРАН ЗАКУПКИ: ОБЩИЕ ПОМОЩНИКИ ─────────────────────────────────────────
+// Сбор, фильтры и текст списка живут отдельно от tSupplyDetail: те же выборки нужны
+// обработчикам (корзина магазина, «отправить списком») и печатному листу, а своя копия
+// фильтра в каждом означала бы, что в сообщение уезжает не то, что на экране.
+let supplyMoreOpen=false; // раскрыто меню «⋯» в шапке закупки — экран, не снимок
 
-  let allMats=[], labourMats=[];
-  targetObjs.forEach(function(obj){
-    obj.stages.forEach(function(s){
-      s.works.forEach(function(w){
+function supplyRub(v){ return Math.round(Number(v)||0).toLocaleString("ru-RU")+" ₽"; }
+// Коротко для чипов: «212 тыс», «1,2 млн». Сумма с копейками на чипе не читается,
+// а сравнивать магазины надо именно на глаз.
+function supplyMoneyShort(v){
+  const n=Math.round(Number(v)||0);
+  if(n>=1e6)return (Math.round(n/1e5)/10).toLocaleString("ru-RU")+" млн";
+  if(n>=1e4)return Math.round(n/1e3).toLocaleString("ru-RU")+" тыс";
+  return n.toLocaleString("ru-RU");
+}
+function supplyLineSum(list){ return (list||[]).reduce(function(a,m){return a+(Number(m.cost)||0)*(m.qty||1);},0); }
+function supplySelectedObjs(){ const s=window._supplySelected||{}; return objects.filter(function(o){return !!s[o.id];}); }
+
+// Потребности объектов так, как их видит снабженец. Магазин приводим к одной вывеске
+// (`normStore`): «Ozon» и «Озон» — один магазин, а без этого заказ разъезжался на два
+// чипа и две корзины. Данные не переписываем — приводим при показе; правка строки
+// через «изм.» и так сохраняет имя уже приведённым.
+function supplyCollect(objs){
+  const mats=[], labour=[];
+  (objs||[]).forEach(function(obj){
+    (obj.stages||[]).forEach(function(s){
+      (s.works||[]).forEach(function(w){
         // Помеченные работой собираем отдельно: в закупке им не место, но исчезнуть
         // совсем они не должны — убранное остаётся на виду с возвратом одним тапом.
         (w.mats||[]).filter(isLabour).forEach(function(m){
-          labourMats.push(Object.assign({},m,{wn:w.n,sn:s.n,objName:obj.name}));
+          labour.push(Object.assign({},m,{wn:w.n,sn:s.n,objName:obj.name}));
         });
         buyMats(w).forEach(function(m){
-          allMats.push(Object.assign({},m,{wn:w.n,sn:s.n,sc:s.c,objName:obj.name,objIcon:obj.icon,objId:obj.id}));
+          mats.push(Object.assign({},m,{store:normStore(m.store),wn:w.n,sn:s.n,sc:s.c,objName:obj.name,objIcon:obj.icon,objId:obj.id}));
         });
       });
     });
   });
+  return {mats:mats, labour:labour};
+}
 
-  const totalCost=allMats.reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
+// Фильтры экрана. skipStore — для чипов магазинов: они считаются по списку ДО выбора
+// магазина, иначе после тапа по «Лемане» остальные чипы пропадали и переключиться на
+// соседний магазин было не с чего.
+function supplyFilter(mats, skipStore){
+  let out=mats||[];
+  const q=(supplySearch||"").trim().toLowerCase();
+  if(q) out=out.filter(function(m){return (m.n||"").toLowerCase().includes(q)||(m.store||"").toLowerCase().includes(q)||(m.note||"").toLowerCase().includes(q)||(m.wn||"").toLowerCase().includes(q);});
+  if(supplyHideDone) out=out.filter(function(m){return !purchased[m.id];});
+  if(!skipStore&&supplyStoreFilter) out=out.filter(function(m){return (m.store||"Без магазина")===supplyStoreFilter;});
+  return out;
+}
+
+// Список закупки текстом — для Telegram бригадиру или поставщику. Только некупленное:
+// купленное в сообщении — шум, из-за которого список перечитывают дважды. Одинаковые
+// позиции разных работ складываем, как в «Закупке».
+function supplyListText(mats, title){
+  const left=(mats||[]).filter(function(m){return !purchased[m.id];});
+  if(!left.length)return "";
+  const groups={}, order=[];
+  left.forEach(function(m){
+    const store=m.store||"Без магазина";
+    const name=normMatName(m);
+    const key=store+"|"+name+"|"+(m.mode||"piece")+"|"+(Number(m.cost)||0);
+    if(!groups[key]){ groups[key]={store:store,n:name,mode:m.mode,cost:Number(m.cost)||0,qty:0,url:""}; order.push(key); }
+    groups[key].qty+=(m.qty||1);
+    if(!groups[key].url&&m.url&&/^https?:\/\//.test(String(m.url)))groups[key].url=String(m.url);
+  });
+  const byStore={};
+  order.forEach(function(k){ const g=groups[k]; (byStore[g.store]=byStore[g.store]||[]).push(g); });
+  const lines=["📦 "+(title||"Закупка")];
+  Object.keys(byStore).sort(function(a,b){return a.localeCompare(b,"ru");}).forEach(function(store){
+    const list=byStore[store];
+    lines.push("", store+" — "+list.length+" поз. · "+supplyRub(list.reduce(function(a,g){return a+g.cost*g.qty;},0)));
+    list.forEach(function(g){
+      const mo=EXP_MODES.find(function(x){return x.k===(g.mode||"piece");})||EXP_MODES[0];
+      lines.push("• "+g.n+" — "+numRu(g.qty)+" "+mo.unit);
+      if(g.url)lines.push("  "+g.url);
+    });
+  });
+  return lines.join("\n");
+}
+
+// Отправить список: системное «Поделиться» (на телефоне это сразу Telegram), без него —
+// буфер обмена. Печатный лист PDF остался в меню «⋯»: он нужен реже.
+function supplyShare(text, title){
+  if(!text){ alert("Отправлять нечего — по текущему фильтру всё уже куплено."); return; }
+  const copy=function(){
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(function(){ alert("Список скопирован — вставьте его в Telegram."); },function(){ window.prompt("Скопируйте список:",text); });
+      return;
+    }
+    window.prompt("Скопируйте список:",text);
+  };
+  if(!navigator.share){ copy(); return; }
+  // Отмена в системном окне — не ошибка. Любой другой отказ (iOS роняет share без
+  // жеста пользователя) уводим в буфер, чтобы кнопка не «ничего не делала».
+  navigator.share({title:title||"Закупка",text:text}).catch(function(e){ if(!(e&&e.name==="AbortError"))copy(); });
+}
+
+// Правка материалов по id во всех объектах — неизменяемо и одной функцией: «заказано»,
+// «привезут» и «факт» пишутся одинаково, а три копии обхода дерева разошлись бы на
+// первой же правке. patch получает КОПИЮ материала и возвращает новую.
+function supplyPatchMats(ids, patch){
+  const set=(ids||[]).filter(Boolean);
+  if(!set.length)return;
+  objects=objects.map(function(o){ return Object.assign({},o,{ stages:(o.stages||[]).map(function(st){
+    return Object.assign({},st,{ works:(st.works||[]).map(function(w){
+      if(!(w.mats||[]).some(function(m){return set.indexOf(m.id)>=0;}))return w;
+      return Object.assign({},w,{ mats:w.mats.map(function(m){ return set.indexOf(m.id)<0?m:patch(Object.assign({},m)); })});
+    })});
+  })}); });
+}
+
+// Тост возврата в закупке поднимаем над корзиной магазина: на её месте он закрывал бы
+// ровно те кнопки, которыми только что нажали.
+function supplyToastOpts(){ return {bottom: supplyStoreFilter?"calc(var(--botbar,0px) + 122px)":"calc(var(--botbar,0px) + 14px)"}; }
+
+// «Куплено» — сразу, а пачка ещё и с возвратом. Спрашивать «вы уверены?» бессмысленно
+// (подтверждают не читая), а промах по «Отметить всё» молча переписывал 28 позиций.
+// silent — одиночная строка: повторный тап по ней сам и есть отмена, а тост на каждую
+// галочку закрывал бы корзину.
+function supplyMarkBought(ids, on, silent){
+  const list=(ids||[]).filter(Boolean);
+  if(!list.length)return;
+  const prev={};
+  list.forEach(function(id){ prev[id]=!!purchased[id]; });
+  const apply=function(stateOf){
+    const next=Object.assign({},purchased);
+    list.forEach(function(id){ if(stateOf(id))next[id]=true; else delete next[id]; });
+    purchased=next;
+    // Партии держим в согласии с галочкой, как и при одиночной отметке.
+    list.forEach(function(id){ syncNeedToBatch(id, stateOf(id)); });
+    rerenderTab();
+  };
+  apply(function(){ return !!on; });
+  const changed=list.filter(function(id){ return prev[id]!==!!on; }).length;
+  if(silent||!changed)return;
+  _undoToast((on?"✓ Куплено":"Снята отметка «куплено»")+": "+changed+" поз.", function(){
+    apply(function(id){ return prev[id]; });
+  }, supplyToastOpts());
+}
+
+// «На складе» пачкой (свайп влево) — тем же путём, что приёмка у мастера: флаг и партия
+// вместе (`receiveNeed`), и тоже с возвратом.
+function supplyMarkArrived(ids){
+  const list=(ids||[]).filter(Boolean);
+  if(!list.length)return;
+  const prev={};
+  list.forEach(function(id){ prev[id]=!!arrived[id]; });
+  const on=!list.every(function(id){ return prev[id]; });
+  const apply=function(stateOf){
+    arrived=Object.assign({},arrived);   // receiveNeed правит карту на месте — даём ему копию
+    list.forEach(function(id){ receiveNeed(id, stateOf(id)); });
+    rerenderTab();
+  };
+  apply(function(){ return on; });
+  _undoToast((on?"📥 На складе":"Снято со склада")+": "+list.length+" поз.", function(){
+    apply(function(id){ return prev[id]; });
+  }, supplyToastOpts());
+}
+
+// Высота нижней панели — в `--botbar`: к ней снизу липнет корзина магазина. Меряем по
+// факту: панели может не быть вовсе, а safe-area у iPhone добавляет к ней свои пиксели.
+function syncBottomBarVar(){
+  try{
+    const bb=document.getElementById("bottom-bar");
+    document.documentElement.style.setProperty("--botbar",(bb?Math.round(bb.getBoundingClientRect().height):0)+"px");
+  }catch(e){ /* без вёрстки (тестовый стенд) мерить нечего — остаётся запасное значение в CSS */ }
+}
+
+// ─── СВАЙП ПО СТРОКЕ ЗАКУПКИ ─────────────────────────────────────────────────
+// Вправо — «куплено», влево — «на склад». На pointer-событиях, как перетаскивание
+// плиток; строка несёт touch-action:pan-y — вертикальную прокрутку браузер оставляет
+// себе, горизонталь приходит нам. Мышью не смахивают: у мыши есть клик.
+const SUPPLY_SWIPE_PX=72;    // сколько протащить, чтобы жест засчитался
+const SUPPLY_SWIPE_MAX=120;  // дальше строка не едет — это подсказка, а не перенос
+const SUPPLY_SWIPE_SLOP=10;  // до этого сдвига ещё не ясно, прокрутка это или свайп
+function bindSupplySwipe(){
+  document.querySelectorAll('[data-swipe="1"]').forEach(function(el){
+    if(el._swBound||!el.addEventListener)return;
+    el._swBound=true;
+    let sx=0, sy=0, dx=0, active=false, horiz=false;
+    const reset=function(){ active=false; el.style.transform=""; el.style.boxShadow=""; };
+    el.addEventListener("pointerdown",function(e){
+      if(e.pointerType==="mouse")return;
+      sx=e.clientX; sy=e.clientY; dx=0; active=true; horiz=false;
+    });
+    el.addEventListener("pointermove",function(e){
+      if(!active)return;
+      const mx=e.clientX-sx, my=e.clientY-sy;
+      if(!horiz){
+        if(Math.abs(my)>SUPPLY_SWIPE_SLOP&&Math.abs(my)>=Math.abs(mx)){ reset(); return; }
+        if(Math.abs(mx)<SUPPLY_SWIPE_SLOP)return;
+        horiz=true;
+        try{ el.setPointerCapture(e.pointerId); }catch(_e){ /* захват не обязателен: жест доедет и без него */ }
+      }
+      dx=Math.max(-SUPPLY_SWIPE_MAX,Math.min(SUPPLY_SWIPE_MAX,mx));
+      el.style.transform="translateX("+dx+"px)";
+      el.style.boxShadow=dx>0?"inset 5px 0 0 #27ae60":"inset -5px 0 0 #16a085";
+    });
+    el.addEventListener("pointerup",function(){
+      if(!active)return;
+      const wasHoriz=horiz, dist=dx;
+      reset();
+      if(!wasHoriz)return;
+      // Следом браузер может прислать click по этой же строке — он не должен переключить её ещё раз.
+      el._swiped=true;
+      const ids=(el.dataset.ids||"").split(",").filter(Boolean);
+      // Действие — после click: перерисовка прямо здесь подменила бы строку под пальцем.
+      setTimeout(function(){
+        el._swiped=false;
+        if(dist>=SUPPLY_SWIPE_PX) supplyMarkBought(ids, !ids.every(function(id){ return !!purchased[id]; }));
+        else if(dist<=-SUPPLY_SWIPE_PX) supplyMarkArrived(ids);
+      },0);
+    });
+    el.addEventListener("pointercancel",reset);
+  });
+}
+
+// Лента статуса строки: нужно → заказано → куплено → на складе. Каждый шаг — кнопка
+// своего действия, поэтому пилюли «📥 на склад» и «✓ Куплено» больше не нужны: статус
+// и действие стоят в одном месте, а не в разных концах строки.
+const SUPPLY_STEP_UI={
+  need:   {t:"нужно",     c:"#9aabbf", a:""},
+  ordered:{t:"заказано",  c:"#2980b9", a:"supply-order"},
+  bought: {t:"куплено",   c:"#27ae60", a:"supply-stage-check"},
+  got:    {t:"на складе", c:"#16a085", a:"supply-arrived"} };
+function supplyStepper(ids, step, allBought, eta){
+  const at=SUPPLY_STEPS.indexOf(step);
+  const idsAttr=ids.join(",");
+  return '<div style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;margin-top:6px" onclick="event.stopPropagation()">'+
+    SUPPLY_STEPS.map(function(k,i){
+      const u=SUPPLY_STEP_UI[k], cur=i===at, passed=i<at;
+      const look=cur?'color:#fff;background:'+u.c+';border:1px solid '+u.c
+        :passed?'color:'+u.c+';background:'+u.c+'14;border:1px solid '+u.c+'33'
+        :'color:#9aabbf;background:#fff;border:1px dashed #d0dae8';
+      const label=u.t+(k==="ordered"&&eta&&at===1?' · до '+ruDate(eta):'');
+      const attrs=u.a?' data-a="'+u.a+'" data-ids="'+idsAttr+'"'+(k==="bought"?' data-done="'+(allBought?'1':'0')+'"':'')+' role="button"':'';
+      return (i?'<span style="font-size:9px;color:#c4cdd8">›</span>':'')+
+        '<span'+attrs+' style="font-size:10px;font-weight:700;border-radius:6px;padding:2px 7px;white-space:nowrap;'+look+(u.a?';cursor:pointer':'')+'">'+label+'</span>';
+    }).join('')+
+  '</div>';
+}
+
+function tSupplyDetail(sel, sortBy){
+  // Цвет магазина — из общего `SC`: две карты цветов на один магазин — это чип
+  // одного цвета в снабжении и другого в сверке, и человек считает их разными.
+  const STORECOL=SC;
+  // «Магазины» совпадали с «Закупкой» до строки (обе группируют по магазину и сливают
+  // одинаковые позиции), поэтому третий вид теперь «Работы». Старое значение из
+  // открытой вкладки ведём на «Закупку», а не в пустой экран.
+  const sortBy2=sortBy==="store"?"merge":(sortBy||"stage");
+  const multiMode=Object.values(sel).filter(Boolean).length>1;
+  const targetObjs=objects.filter(function(o){return!!sel[o.id];});
+  const collected=supplyCollect(targetObjs);
+  const labourMats=collected.labour;
   // Полный список до фильтров: структуру затрат считаем по всей смете объекта.
   // Иначе «только не куплено» или фильтр по магазину переписывали бы её на ходу,
   // и доли перестали бы складываться в 100 %.
-  const allMatsFull=allMats.slice();
+  const allMatsFull=collected.mats;
+  const totalCost=supplyLineSum(allMatsFull);
+  const oneObj=targetObjs.length===1?targetObjs[0]:null;
+  const payObjs=targetObjs.filter(objClientPays);
 
   // Header
   // Архивные объекты помечаем и здесь: снабженец мог зайти сюда прямо из фильтра,
   // минуя список выбора, и иначе закупал бы материалы по закрытому договору.
   const doneObjs=targetObjs.filter(function(o){return !!objDoneLabel(o.id);});
   let title=targetObjs.length===1?((objDoneLabel(targetObjs[0].id)?'📦':targetObjs[0].icon)+' '+targetObjs[0].name):('🗂️ '+targetObjs.length+' объектa/ов');
+  const iconBtn=function(a,label,hint,on){
+    return '<button data-a="'+a+'" title="'+hint+'" aria-label="'+hint+'" style="width:34px;height:34px;flex-shrink:0;border-radius:10px;cursor:pointer;font-size:15px;line-height:1;border:1px solid '+(on?'#2a3142':'#d0dae8')+';background:'+(on?'#2a3142':'#fff')+';color:'+(on?'#fff':'#5a7a9a')+'">'+label+'</button>';
+  };
   let html='<div>'+
-    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">'+
-      '<button data-a="supply-back" style="padding:6px 14px;background:transparent;border:1px solid #d0dae8;border-radius:20px;cursor:pointer;font-size:12px;color:#7a9aaa">← Назад</button>'+
+    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:'+(supplyMoreOpen?'8px':'14px')+'">'+
+      '<button data-a="supply-back" aria-label="Назад" style="padding:6px 12px;background:transparent;border:1px solid #d0dae8;border-radius:20px;cursor:pointer;font-size:12px;color:#7a9aaa;flex-shrink:0">←</button>'+
       '<div style="flex:1;min-width:0">'+
         '<div style="font-size:15px;font-weight:700;color:'+(doneObjs.length===targetObjs.length?'#7a9aaa':'#0d1b2e')+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+title+'</div>'+
         (doneObjs.length
@@ -20754,10 +20996,27 @@ function tSupplyDetail(sel, sortBy){
               ? doneBadge(objDoneLabel(targetObjs[0].id),true)
               : doneBadge('📦 Завершённых объектов: '+doneObjs.length,true))+'</div>'
           : '')+
-        '<div style="font-size:12px;color:#7a9aaa;margin-top:2px">'+allMats.length+' материалов · '+totalCost.toLocaleString("ru-RU")+' ₽</div>'+
+        '<div style="font-size:12px;color:#7a9aaa;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+allMatsFull.length+' материалов · '+supplyRub(totalCost)+'</div>'+
       '</div>'+
-      '<button data-a="supply-add-open" style="padding:6px 12px;background:#27ae60;border:none;border-radius:20px;cursor:pointer;font-size:12px;color:#fff;font-weight:700;white-space:nowrap;flex-shrink:0">+ Материал</button>'+
+      iconBtn("supply-share","📤","Отправить список",false)+
+      iconBtn("supply-more","⋯","Ещё",supplyMoreOpen)+
+      '<button data-a="supply-add-open" style="padding:6px 11px;background:#27ae60;border:none;border-radius:20px;cursor:pointer;font-size:12px;color:#fff;font-weight:700;white-space:nowrap;flex-shrink:0">+ Материал</button>'+
     '</div>';
+
+  // Меню «⋯»: то, что нужно раз в неделю, а не каждый заход, — печатный лист и
+  // договорённость об оплате заказчиком. На первом экране они отодвигали сам список.
+  if(supplyMoreOpen){
+    const item=function(attrs,label,hint){
+      return '<button '+attrs+' style="display:block;width:100%;text-align:left;padding:10px 12px;border:none;border-radius:9px;background:transparent;cursor:pointer;font-size:13px;font-weight:700;color:#1a2a3a">'+label+
+        (hint?'<div style="font-size:10.5px;font-weight:500;color:#9aabbf;margin-top:2px">'+hint+'</div>':'')+'</button>';
+    };
+    html+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:4px;margin-bottom:14px;box-shadow:0 6px 18px rgba(13,27,46,0.08)">'+
+      item('data-a="supply-list"','📄 Список для передачи (PDF)','Печатный лист по текущему фильтру')+
+      item('data-a="supply-share"','📤 Отправить списком','Некупленное текстом — в Telegram или в буфер обмена')+
+      // Переключатель — когда выбран РОВНО ОДИН объект: иначе непонятно, чей он.
+      (oneObj&&!objClientPays(oneObj)?item('data-a="supply-refund-on" data-oid="'+oneObj.id+'"','💰 Часть материалов оплачивает заказчик','Включить пометки в строках и счёт на оплату'):'')+
+    '</div>';
+  }
 
   // Search
   html+=
@@ -20767,42 +21026,41 @@ function tSupplyDetail(sel, sortBy){
         '" placeholder="Поиск по материалам..." style="width:100%;padding:10px 12px 10px 38px;border-radius:10px;border:1.5px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;background:#fff">'+
     '</div>';
 
-  const q=supplySearch.trim().toLowerCase();
-  if(q) allMats=allMats.filter(function(m){return m.n.toLowerCase().includes(q)||(m.store||'').toLowerCase().includes(q)||(m.note||'').toLowerCase().includes(q)||(m.wn||'').toLowerCase().includes(q);});
-  if(supplyStoreFilter) allMats=allMats.filter(function(m){return(m.store||'Без магазина')===supplyStoreFilter;});
-  if(supplyHideDone) allMats=allMats.filter(function(m){return !purchased[m.id];}); // только не купленное
-
-  // Sort tabs
+  // Виды списка: снабженец думает магазинами, прораб — этапами, сметчик — работами.
   const _sortBtn=function(k,label,col){return '<button data-a="supply-sort" data-s="'+k+'" style="flex:1;padding:11px 6px;border-radius:12px;cursor:pointer;font-size:12px;font-weight:700;border:2px solid '+(sortBy2===k?col:"#dde6f0")+';background:'+(sortBy2===k?col:"#fff")+';color:'+(sortBy2===k?"#fff":"#7a9aaa")+';transition:all 0.15s;white-space:nowrap">'+label+'</button>';};
   html+=
     '<div style="display:flex;gap:6px;margin-bottom:8px">'+
       _sortBtn("merge","🛒 Закупка","#e67e22")+
       _sortBtn("stage","📋 Этапы","#2980b9")+
-      _sortBtn("store","🏪 Магазины","#27ae60")+
+      _sortBtn("work","🔨 Работы","#8e44ad")+
     '</div>';
   // Фильтр «Не куплено»
-  html+='<div style="display:flex;justify-content:flex-end;margin-bottom:14px">'+
+  html+='<div style="display:flex;justify-content:flex-end;margin-bottom:12px">'+
     '<button data-a="supply-hide-done" style="display:inline-flex;align-items:center;gap:7px;padding:7px 13px;border-radius:9px;cursor:pointer;font-size:12px;font-weight:700;border:1.5px solid '+(supplyHideDone?"#e74c3c":"#dde6f0")+';background:'+(supplyHideDone?"#e74c3c":"#fff")+';color:'+(supplyHideDone?"#fff":"#7a9aaa")+'">'+
       '<span style="width:16px;height:16px;border-radius:4px;border:2px solid '+(supplyHideDone?"#fff":"#c8d8e8")+';background:'+(supplyHideDone?"rgba(255,255,255,0.25)":"#fff")+';display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff">'+(supplyHideDone?"✓":"")+'</span>'+
       '🛒 Только не куплено'+
     '</button>'+
   '</div>';
 
-  // Store summary — use full unfiltered mats for pills
-  const storesAll=[...new Set(allMats.map(function(m){return m.store||"Без магазина";}))];
-  html+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">';
-  storesAll.forEach(function(store){
-    const sm=allMats.filter(function(m){return(m.store||"Без магазина")===store;});
-    const sc=STORECOL[store]||"#555";
-    const isActive=supplyStoreFilter===store;
-    const safeStore=store.replace(/"/g,'&quot;');
-    html+='<div data-a="supply-store-filter" data-store="'+safeStore+'" style="display:flex;align-items:center;gap:6px;border-radius:10px;padding:7px 12px;cursor:pointer;border:2px solid '+(isActive?sc:sc+'55')+';background:'+(isActive?sc:'#fff')+';transition:all 0.15s">'+
-      '<span style="font-size:11px;font-weight:700;color:'+(isActive?'#fff':sc)+'">'+store+'</span>'+
-      '<span style="font-size:11px;color:'+(isActive?'rgba(255,255,255,0.85)':sc)+';background:'+(isActive?'rgba(255,255,255,0.2)':sc+'18')+';border-radius:6px;padding:0 6px">'+sm.length+'</span>'+
-      (isActive?'<span style="font-size:10px;color:rgba(255,255,255,0.8)">✕</span>':'')+
+  // Чипы магазинов — по списку ДО выбора магазина, с суммой и по убыванию суммы:
+  // «Озон 31» без денег не говорит, где основная закупка, а сравнивать надо сразу.
+  const matsForChips=supplyFilter(allMatsFull,true);
+  const allMats=supplyFilter(allMatsFull,false);
+  const storeRows=supplyCostRows(matsForChips,
+    function(m){return m.store||"Без магазина";},
+    function(m,k){return STORECOL[k]||"#7f8c8d";});
+  if(supplyStoreFilter&&!storeRows.some(function(r){return r.k===supplyStoreFilter;}))
+    storeRows.push({k:supplyStoreFilter,sum:0,cnt:0,done:0,color:STORECOL[supplyStoreFilter]||"#7f8c8d"});
+  const storeChip=function(storeVal,label,cnt,sum,isActive,sc){
+    return '<div data-a="supply-store-filter" data-store="'+esc(storeVal)+'" style="display:flex;align-items:center;gap:6px;border-radius:10px;padding:6px 10px;cursor:pointer;border:2px solid '+(isActive?sc:sc+'55')+';background:'+(isActive?sc:'#fff')+';transition:all 0.15s">'+
+      '<span style="font-size:11px;font-weight:700;color:'+(isActive?'#fff':sc)+'">'+esc(label)+'</span>'+
+      '<span style="font-size:10.5px;font-weight:700;white-space:nowrap;color:'+(isActive?'rgba(255,255,255,0.9)':sc)+';background:'+(isActive?'rgba(255,255,255,0.2)':sc+'18')+';border-radius:6px;padding:0 6px">'+cnt+' · '+supplyMoneyShort(sum)+' ₽</span>'+
     '</div>';
-  });
-  html+='</div>';
+  };
+  html+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">'+
+    storeChip("","Все",matsForChips.length,supplyLineSum(matsForChips),!supplyStoreFilter,"#2a3142")+
+    storeRows.map(function(r){ return storeChip(r.k,r.k,r.cnt,r.sum,supplyStoreFilter===r.k,r.color); }).join("")+
+  '</div>';
 
   // ── ТРУД МИМО ЗАКУПКИ ─────────────────────────────────────────────────────
   // Объекты, собранные до появления флага `own`, его не несут, и вручную помечать
@@ -20821,39 +21079,11 @@ function tSupplyDetail(sel, sortBy){
       '<button data-a="supply-labour-all" data-ids="'+labourHint.map(function(m){return m.id;}).join(',')+'" style="width:100%;padding:10px;border-radius:10px;border:none;cursor:pointer;font-size:12.5px;font-weight:700;color:#fff;background:#c0392b">Убрать из закупки '+labourHint.length+' поз.</button>'+
     '</div>';
   }
-  if(labourMats.length){
-    const labSum=labourMats.reduce(function(a,m){return a+(Number(m.cost)||0)*(m.qty||1);},0);
-    html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;margin-bottom:14px;overflow:hidden">'+
-      '<div data-a="supply-labour-open" style="display:flex;align-items:center;gap:8px;padding:11px 14px;cursor:pointer;user-select:none">'+
-        '<span style="font-size:10px;color:#9aabbf;transition:transform 0.15s;transform:rotate('+(supplyLabourOpen?'90':'0')+'deg)">▶</span>'+
-        '<span style="font-size:12px;font-weight:700;color:#1a2a3a;flex:1;min-width:0">🔨 Не покупаем — это работы</span>'+
-        '<span style="font-size:12px;font-weight:800;color:#9aabbf;white-space:nowrap">'+labourMats.length+' поз. · '+Math.round(labSum).toLocaleString("ru-RU")+' ₽</span>'+
-      '</div>'+
-      (supplyLabourOpen?'<div style="padding:0 12px 10px">'+labourMats.map(function(m){
-        return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:9px;background:#f8fafc;border:1px solid #eef2f7;margin-bottom:5px">'+
-          '<div style="flex:1;min-width:0">'+
-            '<div style="font-size:12.5px;font-weight:600;color:#7a9aaa">'+esc(m.n)+'</div>'+
-            '<div style="font-size:10px;color:#9aabbf;margin-top:2px">↳ '+esc(m.wn||"")+' · '+Math.round((Number(m.cost)||0)*(m.qty||1)).toLocaleString("ru-RU")+' ₽</div>'+
-          '</div>'+
-          '<span data-a="supply-labour-back" data-ids="'+m.id+'" style="font-size:10px;font-weight:700;cursor:pointer;border-radius:6px;padding:3px 9px;color:#2980b9;background:#fff;border:1px solid #2980b955;flex-shrink:0">↩ вернуть</span>'+
-        '</div>';
-      }).join('')+'</div>':'')+
-    '</div>';
-  }
 
   // ── ОПЛАТА ЗАКАЗЧИКОМ ────────────────────────────────────────────────
   // Договорённость про оплату бывает на одной стройке из десяти, поэтому она
-  // включается У ОБЪЕКТА: пока выключена, ни кнопок в строках, ни этой панели нет —
-  // лишний значок в каждой строке чужого объекта только мешает. Переключатель
-  // показываем, когда выбран РОВНО ОДИН объект: иначе непонятно, чей он.
-  const oneObj=targetObjs.length===1?targetObjs[0]:null;
-  const payObjs=targetObjs.filter(objClientPays);
-  if(oneObj&&!objClientPays(oneObj)){
-    html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:11px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px">'+
-      '<div style="flex:1;min-width:0;font-size:11.5px;color:#9aabbf;line-height:1.45">Часть материалов на этом объекте оплачивает заказчик?</div>'+
-      '<button data-a="supply-refund-on" data-oid="'+oneObj.id+'" style="padding:8px 13px;border-radius:9px;cursor:pointer;font-size:12px;font-weight:700;border:1.5px solid #8e44ad;background:#fff;color:#8e44ad;white-space:nowrap;flex-shrink:0">💰 Включить</button>'+
-    '</div>';
-  }
+  // включается У ОБЪЕКТА (пункт в меню «⋯»): пока выключена, ни кнопок в строках,
+  // ни этой панели нет — лишний значок в каждой строке чужого объекта только мешает.
   if(payObjs.length){
     // Считаем по ПОЛНОМУ списку объекта, а не по отфильтрованному: счёт собирают при
     // включённом фильтре магазина, а выставить надо всё помеченное.
@@ -20892,134 +21122,72 @@ function tSupplyDetail(sel, sortBy){
     '</div>';
   }
 
-  // Полный список объекта в PDF (для передачи снабженцу/подрядчику) — всегда доступен.
-  html+='<div style="margin-bottom:14px"><button data-a="supply-list" style="width:100%;padding:12px;border-radius:12px;border:1.5px solid #2980b9;cursor:pointer;font-size:13px;font-weight:700;color:#2980b9;background:#fff">📄 Скачать список для передачи (PDF)</button></div>';
-
-  // ТЗ поставщику (PDF) — когда отфильтровано по офлайн-магазину (Белка/Егорьевск/…).
-  // Суммирует одинаковые позиции всех выбранных объектов и открывает печать в PDF.
-  if(supplyStoreFilter && isTZStore(supplyStoreFilter)){
-    const _tzc=STORECOL[supplyStoreFilter]||"#555";
-    html+='<div style="margin-bottom:14px"><button data-a="supply-tz" data-store="'+supplyStoreFilter.replace(/"/g,'&quot;')+'" style="width:100%;padding:12px;border-radius:12px;border:none;cursor:pointer;font-size:13px;font-weight:700;color:#fff;background:'+_tzc+'">📄 Сформировать ТЗ поставщику «'+esc(supplyStoreFilter)+'» (PDF)</button></div>';
-  }
-
-  // Progress bar — in money. Покупаем ВСЁ мы, поэтому в счёт входит каждая позиция:
-  // пометка «платит заказчик» говорит, чьи это деньги, а не кто ходит в магазин.
-  // Вычесть её отсюда значило бы спрятать закупку, которую нам всё равно делать.
-  const costTotal=allMats.reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
-  const costDone=allMats.filter(function(m){return!!purchased[m.id];}).reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
+  // ── СВОДКА ЗАКУПКИ ─────────────────────────────────────────────────────────
+  // Прогресс, склад и структура затрат были тремя карточками про один вопрос — «где мы
+  // с закупкой» — и занимали весь первый экран. Теперь это одна карточка, а структура
+  // раскрывается тапом. Деньги везде до рубля: «744 257,51» в одном блоке и «744 258» в
+  // соседнем читались как две разные суммы.
+  // Покупаем ВСЁ мы, поэтому в счёт входит каждая позиция: пометка «платит заказчик»
+  // говорит, чьи это деньги, а не кто ходит в магазин.
+  const costTotal=supplyLineSum(allMats);
+  const costDone=supplyLineSum(allMats.filter(function(m){return !!purchased[m.id];}));
   const costLeft=costTotal-costDone;
   const pct=costTotal>0?Math.round(costDone/costTotal*100):0;
-  const allDone=costTotal>0&&costLeft===0;
-  html+=
-    '<div style="background:#fff;border-radius:12px;border:1px solid '+(allDone?'#27ae6044':'#dde6f0')+';padding:12px 14px;margin-bottom:14px">'+
-      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'+
-        '<span style="font-size:12px;font-weight:700;color:#1a2a3a">Прогресс закупки</span>'+
-        '<span style="font-size:12px;font-weight:700;color:'+(allDone?'#27ae60':'#2980b9')+'">'+pct+'%</span>'+
-      '</div>'+
-      '<div style="background:#e8eef5;border-radius:8px;height:10px;overflow:hidden;margin-bottom:10px">'+
-        '<div style="height:100%;border-radius:8px;background:'+(allDone?'#27ae60':'#2980b9')+';width:'+pct+'%;transition:width 0.4s"></div>'+
-      '</div>'+
-      '<div style="display:flex;gap:6px">'+
-        '<div style="flex:1;background:#27ae6010;border:1px solid #27ae6033;border-radius:9px;padding:8px 10px;text-align:center">'+
-          '<div style="font-size:10px;color:#27ae60;font-weight:700;letter-spacing:0.3px;margin-bottom:2px">КУПЛЕНО</div>'+
-          '<div style="font-size:14px;font-weight:700;color:#27ae60">'+costDone.toLocaleString("ru-RU")+' ₽</div>'+
-        '</div>'+
-        '<div style="flex:1;background:'+(allDone?'#27ae6010':'#e74c3c10')+';border:1px solid '+(allDone?'#27ae6033':'#e74c3c33')+';border-radius:9px;padding:8px 10px;text-align:center">'+
-          '<div style="font-size:10px;color:'+(allDone?'#27ae60':'#e74c3c')+';font-weight:700;letter-spacing:0.3px;margin-bottom:2px">'+(allDone?'ГОТОВО':'ОСТАЛОСЬ')+'</div>'+
-          '<div style="font-size:14px;font-weight:700;color:'+(allDone?'#27ae60':'#e74c3c')+'">'+(allDone?'✓ Всё куплено':costLeft.toLocaleString("ru-RU")+' ₽')+'</div>'+
-          (allDone?'':'<div style="font-size:10px;color:#aaa;margin-top:2px">из '+costTotal.toLocaleString("ru-RU")+' ₽</div>')+
-        '</div>'+
-      '</div>'+
-    '</div>';
-
-  // Структура затрат: куда уходит смета объекта — по магазинам и по этапам.
+  const allDone=costTotal>0&&costLeft<0.5;
+  const arrCount=allMats.filter(function(m){return !!arrived[m.id];}).length;
+  const facts=factTotals(allMats, purchased);
   const _byStore=supplyCostRows(allMatsFull,
     function(m){return m.store||"Без магазина";},
     function(m,k){return STORECOL[k]||"#7f8c8d";});
   const _byStage=supplyCostRows(allMatsFull,
     function(m){return m.sn||"Без этапа";},
     function(m){return m.sc||"#7f8c8d";});
-  if(_byStore.length>1||_byStage.length>1){
-    const _co=supplyCostOpen;
-    html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:'+(_co?'12px 14px':'10px 14px')+';margin-bottom:14px">'+
-      '<div data-a="supply-cost-toggle" style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none'+(_co?';margin-bottom:10px':'')+'">'+
-        '<span style="font-size:12px;font-weight:700;color:#1a2a3a;flex:1;min-width:0">📊 Структура затрат</span>'+
-        '<span style="font-size:14px;font-weight:800;color:#0d1b2e;white-space:nowrap">'+Math.round(totalCost).toLocaleString("ru-RU")+' ₽</span>'+
-        '<span style="font-size:10px;color:#c4cdd8;flex-shrink:0;display:inline-block;transition:transform 0.15s;transform:rotate('+(_co?"90":"0")+'deg)">▶</span>'+
-      '</div>'+
-      (_co?
-        supplyCostSection("🏪 ПО МАГАЗИНАМ · тап — фильтр списка",_byStore,totalCost,true)+
-        (_byStage.length>1?'<div style="height:12px"></div>'+supplyCostSection("📋 ПО ЭТАПАМ",_byStage,totalCost,false):'')
-      :'')+
+  const hasStruct=_byStore.length>1||_byStage.length>1;
+  const sumCell=function(label,val,c){
+    return '<div style="flex:1;min-width:0;background:'+c+'10;border:1px solid '+c+'33;border-radius:9px;padding:7px 6px;text-align:center">'+
+      '<div style="font-size:9.5px;color:'+c+';font-weight:700;letter-spacing:0.3px">'+label+'</div>'+
+      '<div style="font-size:13.5px;font-weight:800;color:'+c+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+val+'</div>'+
     '</div>';
-  }
-
-  // Наличие на складе (принято бригадиром/мастером) — обзор для снабженца.
-  const _arrCount=allMats.filter(function(m){return !!arrived[m.id];}).length;
-  html+='<div style="background:#fff;border-radius:10px;border:1px solid #dde6f0;padding:9px 12px;margin-bottom:14px;display:flex;align-items:center;gap:8px">'+
-    '<span style="font-size:14px">📥</span>'+
-    '<span style="font-size:12px;color:#5a7a9a;flex:1">На складе (принято бригадиром)</span>'+
-    '<span style="font-size:12px;font-weight:700;color:'+((_arrCount===allMats.length&&allMats.length>0)?'#27ae60':'#e67e22')+'">'+_arrCount+' / '+allMats.length+'</span>'+
+  };
+  html+='<div style="background:#fff;border-radius:12px;border:1px solid '+(allDone?'#27ae6044':'#dde6f0')+';padding:12px 14px;margin-bottom:10px">'+
+    '<div '+(hasStruct?'data-a="supply-cost-toggle" ':'')+'style="display:flex;align-items:center;gap:8px;margin-bottom:7px'+(hasStruct?';cursor:pointer;user-select:none':'')+'">'+
+      '<span style="font-size:12px;font-weight:700;color:#1a2a3a">Закупка</span>'+
+      '<span style="font-size:12px;font-weight:800;color:'+(allDone?'#27ae60':'#2980b9')+'">'+pct+'%</span>'+
+      '<span style="flex:1"></span>'+
+      (hasStruct?'<span style="font-size:11px;font-weight:700;color:#7a9aaa">📊 структура</span>'+
+        '<span style="font-size:10px;color:#c4cdd8;display:inline-block;transition:transform 0.15s;transform:rotate('+(supplyCostOpen?'90':'0')+'deg)">▶</span>':'')+
+    '</div>'+
+    '<div style="background:#e8eef5;border-radius:8px;height:8px;overflow:hidden;margin-bottom:10px">'+
+      '<div style="height:100%;border-radius:8px;background:'+(allDone?'#27ae60':'#2980b9')+';width:'+pct+'%;transition:width 0.4s"></div>'+
+    '</div>'+
+    '<div style="display:flex;gap:6px">'+
+      sumCell("КУПЛЕНО",supplyRub(costDone),"#27ae60")+
+      sumCell("НА СКЛАДЕ",arrCount+" / "+allMats.length,(arrCount===allMats.length&&allMats.length>0)?"#27ae60":"#e67e22")+
+      sumCell(allDone?"ГОТОВО":"ОСТАЛОСЬ",allDone?"✓ всё":supplyRub(costLeft),allDone?"#27ae60":"#e74c3c")+
+    '</div>'+
+    '<div style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:11px;color:#9aabbf;flex-wrap:wrap">'+
+      '<span>всего '+supplyRub(costTotal)+'</span>'+
+      // Разница с планом — только по позициям с записанным фактом (factTotals).
+      (facts.count&&Math.abs(facts.delta)>=0.5
+        ? '<span style="margin-left:auto;font-weight:800;color:'+(facts.delta>0?'#c0392b':'#27ae60')+'">'+(facts.delta>0?'перерасход +':'экономия −')+supplyRub(Math.abs(facts.delta))+'</span>'+
+          '<span style="font-size:10px">факт по '+facts.count+' поз.</span>'
+        : '')+
+    '</div>'+
+    (supplyCostOpen&&hasStruct
+      ? '<div style="margin-top:12px">'+
+          supplyCostSection("🏪 ПО МАГАЗИНАМ · тап — фильтр списка",_byStore,totalCost,true)+
+          (_byStage.length>1?'<div style="height:12px"></div>'+supplyCostSection("📋 ПО ЭТАПАМ",_byStage,totalCost,false):'')+
+        '</div>'
+      : '')+
   '</div>';
 
-  function matRow(m){
-    const sc=STORECOL[m.store||""]||"#555";
-    const byClient=clientPays(m);
-    const done=!!purchased[m.id];
-    const doneCol='#27ae60', doneBg='#f0fdf4';
-    const mode=EXP_MODES.find(function(x){return x.k===(m.mode||"piece");})||EXP_MODES[0];
-    const conv=matConv(m);
-    const idx=conv?(expView[m.id]==="1"?1:(expView[m.id]==="0"?0:conv.def)):0;
-    const price=conv?conv.views[idx].price:(Number(m.cost)||0);
-    const unit=conv?conv.views[idx].unit:mode.unit;
-    const qty=m.qty||1;
-    const on="background:#2a3142;color:#fff",off="background:transparent;color:#7a9aaa";
-    const lineTotal=((Number(m.cost)||0)*qty).toLocaleString("ru-RU");
-    // В режиме выделения тап по строке кладёт её в передачу, а не отмечает «куплено»:
-    // два смысла у одного жеста развести иначе нечем, поэтому режим виден баннером.
-    const inHo=clientPays(m)||!!supplyHandoff[m.id];
-    const rowA=supplyPickMode?'supply-pick':'supply-check';
-    const rowBg=supplyPickMode?(inHo?'#f6effa':'#f8fafc'):(done?doneBg:'#f8fafc');
-    const rowBd=supplyPickMode?(inHo?'#8e44ad':'#dde6f0'):(done?doneCol:'#dde6f0');
-    return '<div data-a="'+rowA+'" data-mid="'+m.id+'" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;margin-bottom:6px;background:'+rowBg+';border:1.5px solid '+rowBd+';cursor:pointer;transition:all 0.15s">'+
-      '<div style="flex-shrink:0;margin-top:1px">'+
-        '<div style="width:22px;height:22px;border-radius:6px;border:2px solid '+(supplyPickMode?(inHo?'#8e44ad':'#c8d8e8'):(done?'#27ae60':'#c8d8e8'))+';background:'+(supplyPickMode?(inHo?'#8e44ad':'#fff'):(done?'#27ae60':'#fff'))+';display:flex;align-items:center;justify-content:center;transition:all 0.15s">'+
-          ((supplyPickMode?inHo:done)?'<span style="color:#fff;font-size:13px;font-weight:700;line-height:1">✓</span>':'')+
-        '</div>'+
-      '</div>'+
-      '<div style="flex:1;min-width:0">'+
-        '<div style="font-size:13px;font-weight:600;color:'+(done?'#7a9aaa':'#1a2a3a')+';text-decoration:'+(done?'line-through':'none')+'">'+esc(m.n)+'</div>'+
-        '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:3px;align-items:center">'+
-          (multiMode?'<span style="font-size:10px;background:#e8f0fa;color:#2a5298;border-radius:4px;padding:1px 6px">'+m.objIcon+' '+esc(m.objName)+'</span>':'')+
-          '<span style="font-size:10px;color:#9aabbf">↳ '+esc(m.wn)+'</span>'+
-          (m.store?'<span style="font-size:10px;font-weight:700;background:'+sc+';color:#fff;border-radius:4px;padding:1px 6px;opacity:'+(done?'0.5':'1')+'">'+m.store+'</span>':'')+
-          '<span style="font-size:10px;font-weight:700;color:#5a7a9a;background:#eef2f7;border-radius:4px;padding:1px 6px">'+mode.icon+' '+mode.unit+'</span>'+
-          (m.cost>0?'<span style="font-size:11px;color:'+(done?'#b0c8b0':'#7a9aaa')+'">'+price.toLocaleString("ru-RU")+' ₽/'+unit+' × '+numRu(qty)+' = <b style="color:'+(done?'#b0c8b0':'#0d1b2e')+'">'+lineTotal+' ₽</b></span>':'')+
-          (m.note&&!(Array.isArray(m.breakdown)&&m.breakdown.length)?'<span style="font-size:10px;color:#9aabbf;font-style:italic">'+esc(m.note)+'</span>':'')+
-          (!done&&m.url?'<a href="'+m.url+'" target="_blank" style="font-size:10px;color:#fff;background:#2980b9;border-radius:4px;padding:1px 7px;text-decoration:none;font-weight:600" onclick="event.stopPropagation()">🔗 купить</a>':'')+
-          (done?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>':'')+
-          (byClient?'<span style="font-size:10px;font-weight:700;color:#8e44ad;background:#8e44ad18;border-radius:6px;padding:1px 8px">💰 платит заказчик</span>':'')+
-          _arrivedPill('data-mid="'+m.id+'"', !!arrived[m.id])+
-          _clientPill([m.id], clientPays(m))+
-          _labourPill([m.id])+
-          (matPendingChange(m.id)?MAT_PENDING_PILL:'')+
-          _stockPill([m.id])+
-          _selPill(m)+
-          '<button data-a="supply-edit-mat" data-mid="'+m.id+'" style="font-size:10px;color:#7a9aaa;background:#fff;border:1px solid #d0dae8;border-radius:5px;padding:1px 7px;cursor:pointer" onclick="event.stopPropagation()">✏️ изм.</button>'+
-        '</div>'+
-        ((Array.isArray(m.breakdown)&&m.breakdown.length)
-          ? (function(){var map={}; m.breakdown.forEach(function(r){var L=Number(r.len)||0,N=Number(r.n)||0; if(L>0&&N>0)map[L]=(map[L]||0)+N;}); return hlystBlock(bdRowsOf(map));})()
-          : (conv?'<div style="display:flex;align-items:center;gap:6px;margin-top:5px;flex-wrap:wrap">'+
-              '<span style="font-size:10px;font-weight:700;color:#e67e22;background:#fff3e0;border-radius:6px;padding:2px 8px">🛒 Купить: '+conv.altTotal(qty)+'</span>'+
-              '<div style="display:inline-flex;background:#e9eef4;border-radius:20px;padding:2px" onclick="event.stopPropagation()">'+
-                '<button data-a="objmat-view" data-mid="'+m.id+'" data-v="0" style="border:none;cursor:pointer;font-size:10px;font-weight:700;padding:3px 9px;border-radius:18px;'+(idx===0?on:off)+'">'+conv.views[0].unit+'</button>'+
-                '<button data-a="objmat-view" data-mid="'+m.id+'" data-v="1" style="border:none;cursor:pointer;font-size:10px;font-weight:700;padding:3px 9px;border-radius:18px;'+(idx===1?on:off)+'">'+conv.views[1].unit+'</button>'+
-              '</div>'+
-            '</div>':''))+
-      '</div>'+
-    '</div>';
+  if(allMats.length&&!supplyPickMode){
+    html+='<div style="font-size:10.5px;color:#a0b4c8;text-align:center;margin:0 0 10px">Смахните строку вправо — «куплено», влево — «на склад»</div>';
   }
-
+  if(!allMats.length){
+    html+='<div style="text-align:center;color:#9aabbf;font-size:13px;padding:22px;border:1px dashed #d0dae8;border-radius:12px;margin-bottom:14px">'+
+      (allMatsFull.length?'По фильтру ничего не найдено.':'На выбранных объектах материалов пока нет.')+'</div>';
+  }
   // «Выбор клиента» с бюджетом и сроком. Просроченный выбор — красным: он держит этап,
   // и это не наша нерасторопность, а незакрытое решение на стороне клиента.
   function _selPill(m){
@@ -21051,19 +21219,28 @@ function tSupplyDetail(sel, sortBy){
     '</div>';
   }
   function bdRowsOf(bdMap){ return Object.keys(bdMap||{}).map(function(L){return {len:Number(L),n:bdMap[L]};}).filter(function(r){return r.len>0&&r.n>0;}).sort(function(a,b){return b.len-a.len;}); }
-  // Объединённый список для закупки: одинаковые материалы (имя+магазин+режим+цена) — одной позицией с суммой количеств.
+  // Строка закупки: одинаковые материалы (имя+магазин+режим+цена) — одной позицией с
+  // суммой количеств. Статус — лентой шагов (`supplyStepper`); «куплено» — тапом по
+  // строке или свайпом вправо, «на склад» — свайпом влево или шагом ленты.
   function mergeRow(g){
     const sc=STORECOL[g.store||""]||"#555";
     const ids=g.ids;
+    const mats=ids.map(supplyFindMat).filter(Boolean);
     // Позицию покупаем МЫ — обычной галочкой «куплено». Пометка про оплату
     // ничего в закупке не меняет: она про то, кто вернёт деньги, а не кто их тратит.
     const byClient=ids.length>0&&ids.every(function(id){ const mm=supplyFindMat(id); return !!(mm&&mm.client); });
     const allDone=ids.length>0&&ids.every(function(id){return!!purchased[id];});
     const someDone=ids.some(function(id){return!!purchased[id];});
+    const allGot=ids.length>0&&ids.every(function(id){return !!arrived[id];});
+    const ordered=mats.length>0&&mats.every(isOrdered);
+    const step=allGot?"got":allDone?"bought":ordered?"ordered":"need";
+    const eta=(mats.find(function(mm){return !!mm.eta;})||{}).eta||"";
+    const fact=mats.length?factPrice(mats[0]):null;
     const mode=EXP_MODES.find(function(x){return x.k===(g.mode||"piece");})||EXP_MODES[0];
     const conv=matConv(g);
     const qty=g.qty;
-    const lineTotal=((Number(g.cost)||0)*qty).toLocaleString("ru-RU");
+    const planUnit=Number(g.cost)||0;
+    const lineTotal=Math.round(planUnit*qty).toLocaleString("ru-RU");
     // В режиме выделения слитая строка кладётся в передачу целиком: она склеена
     // из потребностей разных работ, и половинчатого выбора у неё быть не может.
     const inHo=ids.length>0&&ids.every(function(id){ const mm=supplyFindMat(id); return !!(mm&&mm.client)||!!supplyHandoff[id]; });
@@ -21072,7 +21249,8 @@ function tSupplyDetail(sel, sortBy){
     const rowBg=supplyPickMode?(inHo?'#f6effa':'#f8fafc'):(allDone?'#f0fdf4':'#f8fafc');
     const rowBd=supplyPickMode?(inHo?'#8e44ad':'#dde6f0'):(allDone?doneCol:'#dde6f0');
     const boxOn=supplyPickMode?inHo:allDone, boxHalf=supplyPickMode?false:someDone;
-    return '<div data-a="'+rowA+'" data-mid="'+ids[0]+'" data-ids="'+ids.join(',')+'" data-done="'+(allDone?'1':'0')+'" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;margin-bottom:6px;background:'+rowBg+';border:1.5px solid '+rowBd+';cursor:pointer">'+
+    const factDelta=fact!=null?(fact-planUnit)*qty:0;
+    return '<div data-a="'+rowA+'" data-mid="'+ids[0]+'" data-ids="'+ids.join(',')+'" data-done="'+(allDone?'1':'0')+'"'+(supplyPickMode?'':' data-swipe="1"')+' style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;margin-bottom:6px;background:'+rowBg+';border:1.5px solid '+rowBd+';cursor:pointer;touch-action:pan-y">'+
       '<div style="flex-shrink:0;margin-top:1px"><div style="width:22px;height:22px;border-radius:6px;border:2px solid '+(boxOn?(supplyPickMode?'#8e44ad':doneCol):boxHalf?'#e67e22':'#c8d8e8')+';background:'+(boxOn?(supplyPickMode?'#8e44ad':doneCol):boxHalf?'#e67e2233':'#fff')+';display:flex;align-items:center;justify-content:center">'+(boxOn?'<span style="color:#fff;font-size:13px;font-weight:700;line-height:1">✓</span>':boxHalf?'<span style="color:#e67e22;font-size:13px;font-weight:800;line-height:1">–</span>':'')+'</div></div>'+
       '<div style="flex:1;min-width:0">'+
         '<div style="font-size:13px;font-weight:600;color:'+(allDone?'#7a9aaa':'#1a2a3a')+';text-decoration:'+(allDone?'line-through':'none')+'">'+esc(g.n)+'</div>'+
@@ -21083,26 +21261,83 @@ function tSupplyDetail(sel, sortBy){
           ((g.works||[]).length
             ? '<span style="font-size:10px;color:#9aabbf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:190px" title="'+esc(g.works.join(", "))+'">↳ '+esc(g.works[0])+(g.works.length>1?' +'+(g.works.length-1):'')+'</span>'
             : '')+
-          (g.store?'<span style="font-size:10px;font-weight:700;background:'+sc+';color:#fff;border-radius:4px;padding:1px 6px">'+g.store+'</span>':'')+
+          // Магазин плашкой — когда нет ссылки: иначе его имя уже стоит на кнопке «Озон ↗».
+          (g.store&&(allDone||!g.url)?'<span style="font-size:10px;font-weight:700;background:'+sc+';color:#fff;border-radius:4px;padding:1px 6px">'+esc(g.store)+'</span>':'')+
           '<span style="font-size:10px;font-weight:700;color:#5a7a9a;background:#eef2f7;border-radius:4px;padding:1px 6px">'+mode.icon+' '+mode.unit+'</span>'+
-          (g.cost>0?'<span style="font-size:11px;color:#7a9aaa">'+(Number(g.cost)||0).toLocaleString("ru-RU")+' ₽/'+mode.unit+' × '+numRu(qty)+' = <b style="color:#0d1b2e">'+lineTotal+' ₽</b></span>':'')+
-          (!allDone&&g.url?'<a href="'+g.url+'" target="_blank" style="font-size:10px;color:#fff;background:#2980b9;border-radius:4px;padding:1px 7px;text-decoration:none;font-weight:600" onclick="event.stopPropagation()">🔗 купить</a>':'')+
-          (allDone?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#d4edda;border-radius:6px;padding:1px 8px">✓ Куплено</span>':'')+
+          (g.cost>0?'<span style="font-size:11px;color:#7a9aaa">'+planUnit.toLocaleString("ru-RU")+' ₽/'+mode.unit+' × '+numRu(qty)+' = <b style="color:#0d1b2e">'+lineTotal+' ₽</b></span>':'')+
           (byClient?'<span style="font-size:10px;font-weight:700;color:#8e44ad;background:#8e44ad18;border-radius:6px;padding:1px 8px">💰 платит заказчик</span>':'')+
-          _arrivedPill('data-ids="'+ids.join(',')+'"', ids.length>0&&ids.every(function(id){return !!arrived[id];}))+
+        '</div>'+
+        (function(){var rows=bdRowsOf(g.bd); if(rows.length)return hlystBlock(rows); return conv?'<div style="margin-top:5px"><span style="font-size:10px;font-weight:700;color:#e67e22;background:#fff3e0;border-radius:6px;padding:2px 8px">🛒 Купить: '+conv.altTotal(qty)+'</span></div>':'';})()+
+        (supplyPickMode?'':supplyStepper(ids,step,allDone,eta))+
+        // Заказано, но ещё не куплено: когда обещали привезти. Пишется по change.
+        (step==="ordered"&&!supplyPickMode
+          ? '<label onclick="event.stopPropagation()" style="display:inline-flex;align-items:center;gap:6px;margin-top:6px;font-size:10.5px;font-weight:700;color:#2980b9">🚚 привезут'+
+              '<input data-a="supply-eta" data-ids="'+ids.join(',')+'" type="date" value="'+esc(eta)+'" style="font-size:12px;padding:3px 6px;border:1px solid #2980b955;border-radius:6px;color:#1a2a3a;background:#fff">'+
+            '</label>'
+          : '')+
+        '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;align-items:center">'+
+          // Фактическая цена — у купленной строки, в одном ряду с «изм.»: отдельной строкой
+          // она делала каждую купленную позицию вдвое выше. Пусто — значит по смете.
+          (allDone&&!supplyPickMode&&planUnit>0
+            ? '<span onclick="event.stopPropagation()" style="display:inline-flex;align-items:center;gap:5px;margin-right:4px">'+
+                '<span style="font-size:10px;font-weight:700;color:#7a9aaa">факт</span>'+
+                '<input data-a="supply-fact" data-ids="'+ids.join(',')+'" type="number" inputmode="decimal" step="any" min="0" value="'+(fact!=null?fact:'')+'" placeholder="'+planUnit+'" title="Фактическая цена за единицу. Пусто — по смете." style="width:72px;padding:2px 6px;border:1px solid #d0dae8;border-radius:6px;font-size:12px;text-align:right;box-sizing:border-box;color:#1a2a3a">'+
+                '<span style="font-size:10px;color:#7a9aaa">₽/'+mode.unit+'</span>'+
+                (fact!=null&&Math.abs(factDelta)>=0.5
+                  ? '<span style="font-size:10px;font-weight:800;color:'+(factDelta>0?'#c0392b':'#27ae60')+'">'+(factDelta>0?'+':'−')+supplyRub(Math.abs(factDelta))+(factDelta>0?' дороже сметы':' дешевле сметы')+'</span>'
+                  : '')+
+              '</span>'
+            : '')+
+          (!allDone&&g.url?'<a href="'+esc(g.url)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:10.5px;color:#fff;background:'+sc+';border-radius:5px;padding:2px 8px;text-decoration:none;font-weight:700">'+esc(g.store||"Магазин")+' ↗</a>':'')+
           // Слитая строка помечается целиком: она склеена из потребностей разных
           // работ, и половина «заказчику», половина нам — это две разные строки,
           // а не одна с половинчатой отметкой.
-          _clientPill(ids, ids.length>0&&ids.every(function(id){ const mm=supplyFindMat(id); return !!(mm&&mm.client); }))+
-          _labourPill(ids)+
+          _clientPill(ids, byClient)+
           (ids.some(function(id){return !!matPendingChange(id);})?MAT_PENDING_PILL:'')+
           _stockPill(ids)+
+          (mats[0]?_selPill(mats[0]):'')+
           // Слитая строка правится целиком: одна замена вместо обхода всех работ,
           // где эта позиция встретилась. Сколько потребностей затронет — на кнопке.
           '<button data-a="supply-edit-mat" data-mid="'+ids[0]+'" data-ids="'+ids.join(',')+'" style="font-size:10px;color:#7a9aaa;background:#fff;border:1px solid #d0dae8;border-radius:5px;padding:1px 7px;cursor:pointer" onclick="event.stopPropagation()">✏️ изм.'+(ids.length>1?' ('+ids.length+')':'')+'</button>'+
         '</div>'+
-        (function(){var rows=bdRowsOf(g.bd); if(rows.length)return hlystBlock(rows); return conv?'<div style="margin-top:5px"><span style="font-size:10px;font-weight:700;color:#e67e22;background:#fff3e0;border-radius:6px;padding:2px 8px">🛒 Купить: '+conv.altTotal(qty)+'</span></div>':'';})()+
       '</div>'+
+    '</div>';
+  }
+
+  // Карточка группы (магазин / этап / работа). Шапка липкая (`--hdr` — высота шапки
+  // приложения): в списке из семидесяти строк иначе теряешь, в каком ты этапе и сколько
+  // в нём осталось. У карточки нет overflow:hidden — он делает её контейнером прокрутки,
+  // и липкость гаснет; углы скругляет сама шапка. Полностью закупленная группа
+  // свёрнута: делать с ней нечего, а её двадцать строк отодвигают то, что ещё купить.
+  function groupCard(o){
+    const sm=o.mats;
+    const mrows=_mergeMats(sm); // слить одинаковые материалы между объектами
+    const cost=supplyLineSum(sm);
+    const bought=supplyLineSum(sm.filter(function(m){return !!purchased[m.id];}));
+    const allDone=sm.length>0&&sm.every(function(m){return !!purchased[m.id];});
+    const mDone=mrows.filter(function(g){return g.ids.every(function(id){return !!purchased[id];});}).length;
+    const pctG=cost>0?Math.round(bought/cost*100):(allDone?100:0);
+    const open=supplyGroupOpen[o.gk]!=null?supplyGroupOpen[o.gk]:!allDone;
+    const c=allDone?"#27ae60":o.color;
+    const mark=o.mark==="dot"?'<div style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:'+c+'"></div>'
+      :o.mark==="square"?'<span style="width:10px;height:10px;border-radius:3px;flex-shrink:0;background:'+o.color+'"></span>':'';
+    return '<div style="background:#fff;border-radius:14px;border:1px solid '+(allDone?'#27ae6055':o.color+'44')+';margin-bottom:12px">'+
+      '<div data-a="supply-group-toggle" data-k="'+esc(o.gk)+'" data-open="'+(open?'1':'0')+'" style="position:sticky;top:var(--hdr,110px);z-index:4;display:flex;align-items:center;gap:8px;padding:9px 10px 9px 12px;cursor:pointer;user-select:none;border-radius:'+(open?'13px 13px 0 0':'13px')+';background:linear-gradient(135deg,'+c+'1c,'+c+'08),#fff'+(open?';border-bottom:1px solid '+c+'22':'')+'">'+
+        '<span style="font-size:10px;color:#9aabbf;flex-shrink:0;display:inline-block;transition:transform 0.15s;transform:rotate('+(open?'90':'0')+'deg)">▶</span>'+
+        mark+
+        '<div style="flex:1;min-width:0">'+
+          '<div style="font-size:13px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+o.title+'</div>'+
+          (o.sub?'<div style="font-size:10px;color:#9aabbf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+o.sub+'</div>':'')+
+          // Тонкая полоска видна и в свёрнутом виде — по ней сразу ясно, надо ли открывать
+          '<div style="height:4px;background:#e8eef5;border-radius:3px;overflow:hidden;margin-top:5px"><div style="height:100%;width:'+pctG+'%;background:'+c+';transition:width 0.4s"></div></div>'+
+        '</div>'+
+        '<div style="text-align:right;flex-shrink:0">'+
+          '<div style="font-size:11px;color:'+c+';font-weight:700;white-space:nowrap">'+mDone+'/'+mrows.length+' · '+supplyRub(cost)+'</div>'+
+          '<div style="font-size:10px;font-weight:600;white-space:nowrap;color:'+(allDone?'#27ae60':'#e74c3c')+'">'+(allDone?'✓ всё куплено':'осталось '+supplyRub(cost-bought))+'</div>'+
+        '</div>'+
+        '<button data-a="supply-stage-check" data-bulk="1" data-ids="'+sm.map(function(m){return m.id;}).join(',')+'" data-done="'+(allDone?'1':'0')+'" title="'+(allDone?'Снять отметку со всей группы':'Отметить всю группу купленной')+'" style="padding:5px 8px;border-radius:7px;cursor:pointer;font-size:11px;font-weight:700;flex-shrink:0;white-space:nowrap;border:1.5px solid '+(allDone?'#27ae60':'#c8d8e8')+';background:'+(allDone?'#27ae60':'#fff')+';color:'+(allDone?'#fff':'#7a9aaa')+'">'+(allDone?'✓ Всё':'☐ Всё')+'</button>'+
+      '</div>'+
+      (open?'<div style="padding:8px 10px">'+(o.tools?'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'+o.tools+'</div>':'')+mrows.map(mergeRow).join("")+'</div>':'')+
     '</div>';
   }
   // Слияние одинаковых материалов (магазин+имя+режим+цена) в одну строку с суммой
@@ -21127,108 +21362,88 @@ function tSupplyDetail(sel, sortBy){
   }
   // Кнопка «ТЗ (PDF)» для офлайн-поставщиков — единая вёрстка.
   function _tzBtn(store,sc){return isTZStore(store)?'<button data-a="supply-tz" data-store="'+store.replace(/"/g,"&quot;")+'" style="font-size:11px;color:#fff;background:'+sc+';border:none;border-radius:6px;padding:4px 10px;cursor:pointer;font-weight:700;flex-shrink:0">📄 ТЗ (PDF)</button>':'';}
+  const groupsBy=function(keyOf){
+    const map={}, order=[];
+    allMats.forEach(function(m){ const k=keyOf(m); if(!map[k]){ map[k]=[]; order.push(k); } map[k].push(m); });
+    return order.map(function(k){ return {k:k, mats:map[k]}; });
+  };
+  const siteOf=function(mats){
+    const u=mats.find(function(m){return m.url&&/^https?:\/\//.test(String(m.url));});
+    return u?(String(u.url).match(/https?:\/\/[^/]+/)||[""])[0]:"";
+  };
   if(sortBy2==="merge"){
-    const stores=[...new Set(allMats.map(function(m){return m.store||"Без магазина";}))];
-    stores.forEach(function(store){
-      const sm=allMats.filter(function(m){return(m.store||"Без магазина")===store;});
-      const sc=STORECOL[store]||"#555";
-      const rows=_mergeMats(sm);
-      const storeCost=rows.reduce(function(a,g){return a+(Number(g.cost)||0)*g.qty;},0);
-      const storeUrl=rows.find(function(g){return g.url&&String(g.url).startsWith("http");});
-      const baseUrl=storeUrl?(storeUrl.url.match(/https?:\/\/[^/]+/)||[""])[0]:"";
-      // Группа по магазину сворачивается так же, как этап: закупленный магазин закрыт
-      const storeAllDone=sm.length>0&&sm.every(function(m){return!!purchased[m.id];});
-      const gk="store|"+store;
-      const open=supplyGroupOpen[gk]!=null?supplyGroupOpen[gk]:!storeAllDone;
-      html+='<div style="background:#fff;border-radius:14px;border:1px solid '+sc+'44;margin-bottom:12px;overflow:hidden">'+
-        '<div data-a="supply-group-toggle" data-k="'+esc(gk)+'" data-open="'+(open?'1':'0')+'" style="display:flex;align-items:center;gap:8px;padding:10px 14px;cursor:pointer;user-select:none;background:'+sc+'10'+(open?';border-bottom:1px solid '+sc+'22':'')+'">'+
-          '<span style="font-size:10px;color:#9aabbf;flex-shrink:0;display:inline-block;transition:transform 0.15s;transform:rotate('+(open?'90':'0')+'deg)">▶</span>'+
-          '<span style="font-size:12px;font-weight:700;background:'+sc+';color:#fff;border-radius:6px;padding:2px 10px;flex-shrink:0">'+store+'</span>'+
-          (storeAllDone?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#27ae6015;border-radius:6px;padding:1px 7px;flex-shrink:0">✓</span>':'')+
-          '<span style="flex:1"></span>'+
-          '<span style="font-size:11px;color:'+sc+';font-weight:600;white-space:nowrap">'+rows.length+' поз. · '+storeCost.toLocaleString("ru-RU")+' ₽</span>'+
-          _tzBtn(store,sc)+
-          (baseUrl?'<a href="'+baseUrl+'" target="_blank" onclick="event.stopPropagation()" style="font-size:11px;color:#fff;background:'+sc+';border-radius:6px;padding:4px 10px;text-decoration:none;font-weight:600;flex-shrink:0">🛒 Открыть</a>':'')+
-        '</div>'+
-        (open?'<div style="padding:8px 12px">'+rows.map(mergeRow).join("")+'</div>':'')+
-      '</div>';
-    });
-  } else if(sortBy2==="stage"){
-    const stageNames=[...new Set(allMats.map(function(m){return m.sn;}))];
-    stageNames.forEach(function(sn){
-      const sm=allMats.filter(function(m){return m.sn===sn;});
-      const sc=sm[0]?sm[0].sc:"#7f8c8d";
-      const stageCost=sm.reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
-      const stageAllDone=sm.length>0&&sm.every(function(m){return!!purchased[m.id];});
-      const stageDoneCount=sm.filter(function(m){return!!purchased[m.id];}).length;
-      const stageBought=sm.filter(function(m){return!!purchased[m.id];}).reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
-      const stageLeft=stageCost-stageBought;
-      const stagePct=stageCost>0?Math.round(stageBought/stageCost*100):0;
-      const safeIds=sm.map(function(m){return m.id;}).join(',');
-      const mrows=_mergeMats(sm); // слить одинаковые материалы между объектами
-      const mDone=mrows.filter(function(g){return g.ids.every(function(id){return!!purchased[id];});}).length;
-      // Полностью закупленный этап сворачиваем: делать с ним больше нечего, а его
-      // список на 20+ позиций отодвигает вниз то, что ещё надо купить.
-      const gk="stage|"+sn;
-      const open=supplyGroupOpen[gk]!=null?supplyGroupOpen[gk]:!stageAllDone;
-      html+='<div style="background:#fff;border-radius:14px;border:1px solid '+(stageAllDone?'#27ae60':sc+'44')+';margin-bottom:12px;overflow:hidden;transition:border-color 0.2s">'+
-        '<div data-a="supply-group-toggle" data-k="'+esc(gk)+'" data-open="'+(open?'1':'0')+'" style="display:flex;align-items:center;gap:8px;padding:10px 14px;cursor:pointer;user-select:none;background:'+(stageAllDone?'linear-gradient(135deg,#27ae6018,transparent)':'linear-gradient(135deg,'+sc+'15,transparent)')+';border-bottom:1px solid '+(stageAllDone?'#27ae6022':sc+'22')+'">'+
-          '<span style="font-size:10px;color:#9aabbf;flex-shrink:0;display:inline-block;transition:transform 0.15s;transform:rotate('+(open?'90':'0')+'deg)">▶</span>'+
-          '<div style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:'+(stageAllDone?'#27ae60':sc)+'"></div>'+
-          '<span style="font-size:13px;font-weight:700;color:#1a2a3a;flex:1;min-width:0">'+esc(sn)+'</span>'+
-          '<span style="font-size:11px;color:'+(stageAllDone?'#27ae60':sc)+';font-weight:600;margin-right:6px;white-space:nowrap">'+mDone+'/'+mrows.length+' · '+stageCost.toLocaleString("ru-RU")+' ₽</span>'+
-          '<button data-a="supply-stage-check" data-ids="'+safeIds+'" data-done="'+(stageAllDone?'1':'0')+'" style="padding:4px 10px;border-radius:7px;cursor:pointer;font-size:11px;font-weight:700;border:1.5px solid '+(stageAllDone?'#27ae60':'#c8d8e8')+';background:'+(stageAllDone?'#27ae60':'#fff')+';color:'+(stageAllDone?'#fff':'#7a9aaa')+';transition:all 0.15s;white-space:nowrap">'+
-            (stageAllDone?'✓ Всё куплено':'☐ Отметить всё')+
-          '</button>'+
-        '</div>'+
-        // Тонкая полоска видна и в свёрнутом виде — по ней сразу ясно, надо ли открывать
-        '<div style="padding:8px 12px '+(open?'0':'8px')+'">'+
-          '<div style="background:#e8eef5;border-radius:6px;height:6px;overflow:hidden'+(open?';margin-bottom:6px':'')+'">'+
-            '<div style="height:100%;border-radius:6px;background:'+(stageAllDone?'#27ae60':sc)+';width:'+stagePct+'%;transition:width 0.4s"></div>'+
-          '</div>'+
-          (open?
-          '<div style="display:flex;gap:6px">'+
-            '<div style="flex:1;background:#27ae6010;border:1px solid #27ae6033;border-radius:8px;padding:5px 8px;text-align:center">'+
-              '<div style="font-size:9px;color:#27ae60;font-weight:700;letter-spacing:0.3px">КУПЛЕНО</div>'+
-              '<div style="font-size:12px;font-weight:700;color:#27ae60">'+stageBought.toLocaleString("ru-RU")+' ₽</div>'+
-            '</div>'+
-            '<div style="flex:1;background:'+(stageAllDone?'#27ae6010':'#e74c3c10')+';border:1px solid '+(stageAllDone?'#27ae6033':'#e74c3c33')+';border-radius:8px;padding:5px 8px;text-align:center">'+
-              '<div style="font-size:9px;color:'+(stageAllDone?'#27ae60':'#e74c3c')+';font-weight:700;letter-spacing:0.3px">'+(stageAllDone?'ГОТОВО':'ОСТАЛОСЬ')+'</div>'+
-              '<div style="font-size:12px;font-weight:700;color:'+(stageAllDone?'#27ae60':'#e74c3c')+'">'+(stageAllDone?'✓':stageLeft.toLocaleString("ru-RU")+' ₽')+'</div>'+
-            '</div>'+
-          '</div>':'')+
-        '</div>'+
-        (open?'<div style="padding:8px 12px">'+mrows.map(mergeRow).join("")+'</div>':'')+
-      '</div>';
+    // По магазинам, крупные сверху — тем же порядком, что чипы.
+    groupsBy(function(m){return m.store||"Без магазина";})
+      .sort(function(a,b){ return supplyLineSum(b.mats)-supplyLineSum(a.mats); })
+      .forEach(function(gr){
+        const sc=STORECOL[gr.k]||"#555";
+        const site=siteOf(gr.mats);
+        html+=groupCard({gk:"store|"+gr.k, mats:gr.mats, color:sc, title:esc(gr.k), mark:"square",
+          tools:_tzBtn(gr.k,sc)+(site?'<a href="'+esc(site)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:11px;color:#fff;background:'+sc+';border-radius:6px;padding:4px 10px;text-decoration:none;font-weight:600;flex-shrink:0">🛒 Открыть сайт</a>':'')});
+      });
+  } else if(sortBy2==="work"){
+    // По работам — вопрос прораба и сметчика «что нужно под эту работу». При нескольких
+    // объектах одноимённые работы не склеиваем: это разные стройки и разные бригады.
+    groupsBy(function(m){return (multiMode?m.objId+"|":"")+m.sn+"|"+(m.wn||"");}).forEach(function(gr){
+      const m0=gr.mats[0];
+      html+=groupCard({gk:"work|"+gr.k, mats:gr.mats, color:m0.sc||"#8e44ad", title:"🔨 "+esc(m0.wn||"Без работы"),
+        sub:(multiMode?esc(m0.objName)+" · ":"")+esc(m0.sn||""), mark:""});
     });
   } else {
-    const storesForGroup=[...new Set(allMats.map(function(m){return m.store||"Без магазина";}))]; 
-    storesForGroup.forEach(function(store){
-      const sm=allMats.filter(function(m){return(m.store||"Без магазина")===store;});
-      const sc=STORECOL[store]||"#555";
-      const rows=_mergeMats(sm); // слить одинаковые материалы между объектами
-      const storeCost=sm.reduce(function(a,m){return a+m.cost*(m.qty||1);},0);
-      const storeUrl=sm.find(function(m){return m.url&&m.url.startsWith("http");});
-      const baseUrl=storeUrl?(storeUrl.url.match(/https?:\/\/[^/]+/)||[""])[0]:"";
-      // Группа по магазину сворачивается так же, как этап: закупленный магазин закрыт
-      const storeAllDone=sm.length>0&&sm.every(function(m){return!!purchased[m.id];});
-      const gk="store|"+store;
-      const open=supplyGroupOpen[gk]!=null?supplyGroupOpen[gk]:!storeAllDone;
-      html+='<div style="background:#fff;border-radius:14px;border:1px solid '+sc+'44;margin-bottom:12px;overflow:hidden">'+
-        '<div data-a="supply-group-toggle" data-k="'+esc(gk)+'" data-open="'+(open?'1':'0')+'" style="display:flex;align-items:center;gap:8px;padding:10px 14px;cursor:pointer;user-select:none;background:'+sc+'10'+(open?';border-bottom:1px solid '+sc+'22':'')+'">'+
-          '<span style="font-size:10px;color:#9aabbf;flex-shrink:0;display:inline-block;transition:transform 0.15s;transform:rotate('+(open?'90':'0')+'deg)">▶</span>'+
-          '<span style="font-size:12px;font-weight:700;background:'+sc+';color:#fff;border-radius:6px;padding:2px 10px;flex-shrink:0">'+store+'</span>'+
-          (storeAllDone?'<span style="font-size:10px;font-weight:700;color:#27ae60;background:#27ae6015;border-radius:6px;padding:1px 7px;flex-shrink:0">✓</span>':'')+
-          '<span style="flex:1"></span>'+
-          '<span style="font-size:11px;color:'+sc+';font-weight:600;white-space:nowrap">'+rows.length+' поз. · '+storeCost.toLocaleString("ru-RU")+' ₽</span>'+
-          _tzBtn(store,sc)+
-          (baseUrl?'<a href="'+baseUrl+'" target="_blank" onclick="event.stopPropagation()" style="font-size:11px;color:#fff;background:'+sc+';border-radius:6px;padding:4px 10px;text-decoration:none;font-weight:600;flex-shrink:0">🛒 Открыть</a>':'')+
-        '</div>'+
-        (open?'<div style="padding:8px 12px">'+rows.map(mergeRow).join("")+'</div>':'')+
-      '</div>';
+    groupsBy(function(m){return m.sn;}).forEach(function(gr){
+      html+=groupCard({gk:"stage|"+gr.k, mats:gr.mats, color:(gr.mats[0]&&gr.mats[0].sc)||"#7f8c8d", title:esc(gr.k), mark:"dot"});
     });
   }
 
+  // ── КОРЗИНА МАГАЗИНА ─────────────────────────────────────────────────────
+  // Выбран магазин — снизу закреплена его корзина: сколько осталось и что с ней
+  // сделать. В магазине снабженец работает по магазину, а не по этапу, и «отправить»,
+  // «ТЗ», «сайт», «куплено всё» нужны ему под пальцем, а не в начале страницы.
+  if(supplyStoreFilter&&!supplyPickMode){
+    const left=allMats.filter(function(m){return !purchased[m.id];});
+    const csc=STORECOL[supplyStoreFilter]||"#7f8c8d";
+    const site=siteOf(allMats);
+    const cbtn='flex:1;min-width:0;padding:9px 6px;border-radius:9px;cursor:pointer;font-size:12px;font-weight:700;white-space:nowrap;text-align:center;text-decoration:none;box-sizing:border-box;';
+    const ghost='border:1px solid rgba(255,255,255,0.3);background:transparent;color:#fff';
+    html+='<div style="position:sticky;bottom:calc(var(--botbar,0px) + 10px);z-index:20;margin-top:4px;background:#0d1b2e;border-radius:14px;padding:10px 12px;box-shadow:0 8px 24px rgba(13,27,46,0.32)">'+
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
+        '<span style="width:10px;height:10px;border-radius:3px;flex-shrink:0;background:'+csc+'"></span>'+
+        '<span style="font-size:13px;font-weight:800;color:#fff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(supplyStoreFilter)+'</span>'+
+        '<span style="font-size:11.5px;color:rgba(255,255,255,0.75);white-space:nowrap">'+(left.length?'осталось '+left.length+' поз. · '+supplyRub(supplyLineSum(left)):'✓ всё куплено')+'</span>'+
+        '<button data-a="supply-store-filter" data-store="" aria-label="Снять фильтр магазина" style="width:26px;height:26px;flex-shrink:0;border-radius:50%;border:none;cursor:pointer;background:rgba(255,255,255,0.14);color:#fff;font-size:12px">✕</button>'+
+      '</div>'+
+      '<div style="display:flex;gap:6px">'+
+        '<button data-a="supply-share" style="'+cbtn+ghost+'">📤 Список</button>'+
+        // ТЗ (PDF) — для офлайн-поставщиков (Белка, Егорьевск…): им шлют спецификацию, а не корзину.
+        (isTZStore(supplyStoreFilter)?'<button data-a="supply-tz" data-store="'+esc(supplyStoreFilter)+'" style="'+cbtn+ghost+'">📄 ТЗ</button>':'')+
+        (site?'<a href="'+esc(site)+'" target="_blank" rel="noopener" style="'+cbtn+ghost+'">🛒 Сайт</a>':'')+
+        (left.length?'<button data-a="supply-stage-check" data-bulk="1" data-done="0" data-ids="'+left.map(function(m){return m.id;}).join(',')+'" style="'+cbtn+'border:none;background:#27ae60;color:#fff">✓ Куплено '+left.length+'</button>':'')+
+      '</div>'+
+    '</div>';
+  }
+
+  // ── НЕ ПОКУПАЕМ — ЭТО РАБОТЫ ──────────────────────────────────────────────
+  // Убранное остаётся на виду: исчезнувший материал не отличить от потерянного. Но
+  // внизу, а не над списком — это справка, а не то, с чего начинают заход.
+  if(labourMats.length){
+    const labSum=labourMats.reduce(function(a,m){return a+(Number(m.cost)||0)*(m.qty||1);},0);
+    html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;margin-top:14px;overflow:hidden">'+
+      '<div data-a="supply-labour-open" style="display:flex;align-items:center;gap:8px;padding:11px 14px;cursor:pointer;user-select:none">'+
+        '<span style="font-size:10px;color:#9aabbf;transition:transform 0.15s;transform:rotate('+(supplyLabourOpen?'90':'0')+'deg)">▶</span>'+
+        '<span style="font-size:12px;font-weight:700;color:#1a2a3a;flex:1;min-width:0">🔨 Не покупаем — это работы</span>'+
+        '<span style="font-size:12px;font-weight:800;color:#9aabbf;white-space:nowrap">'+labourMats.length+' поз. · '+Math.round(labSum).toLocaleString("ru-RU")+' ₽</span>'+
+      '</div>'+
+      (supplyLabourOpen?'<div style="padding:0 12px 10px">'+labourMats.map(function(m){
+        return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:9px;background:#f8fafc;border:1px solid #eef2f7;margin-bottom:5px">'+
+          '<div style="flex:1;min-width:0">'+
+            '<div style="font-size:12.5px;font-weight:600;color:#7a9aaa">'+esc(m.n)+'</div>'+
+            '<div style="font-size:10px;color:#9aabbf;margin-top:2px">↳ '+esc(m.wn||"")+' · '+Math.round((Number(m.cost)||0)*(m.qty||1)).toLocaleString("ru-RU")+' ₽</div>'+
+          '</div>'+
+          '<span data-a="supply-labour-back" data-ids="'+m.id+'" style="font-size:10px;font-weight:700;cursor:pointer;border-radius:6px;padding:3px 9px;color:#2980b9;background:#fff;border:1px solid #2980b955;flex-shrink:0">↩ вернуть</span>'+
+        '</div>';
+      }).join('')+'</div>':'')+
+    '</div>';
+  }
   // ─── СКЛАД ОСТАТКОВ ────────────────────────────────────────────────────────
   // Отдельным блоком внизу: это не то, что снабженец делает каждый день, но и прятать
   // нельзя — иначе остатки существуют только в голове у того, кто их складывал.
@@ -21379,6 +21594,9 @@ function tSupplyDetail(sel, sortBy){
           '<button id="sem-save" data-a="supply-mat-save" style="width:100%;padding:10px;background:#2980b9;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">Сохранить'+(multi?' во все '+ctxs.length:'')+'</button>'+
           // Удаление — отдельной строкой и приглушённое: рядом с «Сохранить» его
           // задевают пальцем, а материал уносит и отметки «куплено»/«на складе».
+          // «Это работа» — здесь, а не пилюлей в строке: решение редкое, а пилюля занимала
+          // место в каждой из семидесяти строк списка.
+          '<button data-a="supply-labour" data-ids="'+editIds.join(',')+'" style="width:100%;margin-top:8px;padding:9px;background:#fff;border:1px solid #c0392b44;border-radius:9px;cursor:pointer;color:#c0392b;font-size:12.5px;font-weight:700">🔨 Это работа, а не покупка — убрать из закупки</button>'+
           '<button data-a="supply-mat-del" data-mid="'+em.id+'" data-ids="'+editIds.join(',')+'" style="width:100%;margin-top:8px;padding:9px;background:#fff;border:1px solid #e74c3c55;border-radius:9px;cursor:pointer;color:#e74c3c;font-size:12.5px;font-weight:700">🗑 Удалить из закупки'+(multi?' ('+ctxs.length+')':'')+'</button>'+
           '<div style="font-size:10px;color:#a0b4c8;text-align:center;margin-top:6px">Материал исчезнет из объекта и из приёмки у мастера</div>'+
         '</div>'+
@@ -22155,20 +22373,27 @@ function tlWizardModal(){
 }
 
 // Тост с кнопкой «Отменить» (для мгновенных сохранений из шторки)
-function _undoToast(msg,undoFn){
+// Тост один на экран: новый заменяет прежний. Иначе две пачки подряд давали два тоста
+// друг на друге, и «Отменить» нижнего отменял не то, что человек видел.
+// opts.bottom — отступ снизу, когда на обычном месте тоста стоит что-то нужное.
+let _undoToastEl=null;
+function _undoToast(msg,undoFn,opts){
   try{
+    if(_undoToastEl){ try{document.body.removeChild(_undoToastEl);}catch(e){} _undoToastEl=null; }
     const t=document.createElement("div");
-    t.style.cssText="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#16a085;color:#fff;padding:9px 10px 9px 15px;border-radius:12px;font-size:13px;font-weight:600;z-index:9999;display:flex;align-items:center;gap:10px;max-width:92%;box-shadow:0 6px 18px rgba(22,160,133,0.4)";
+    t.style.cssText="position:fixed;bottom:"+((opts&&opts.bottom)||"80px")+";left:50%;transform:translateX(-50%);background:#16a085;color:#fff;padding:9px 10px 9px 15px;border-radius:12px;font-size:13px;font-weight:600;z-index:9999;display:flex;align-items:center;gap:10px;max-width:92%;box-shadow:0 6px 18px rgba(22,160,133,0.4)";
     const s=document.createElement("span");
     s.textContent=msg;
     s.style.cssText="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0";
     const b=document.createElement("button");
     b.textContent="Отменить";
     b.style.cssText="background:rgba(255,255,255,0.16);border:1px solid rgba(255,255,255,0.55);border-radius:8px;color:#fff;font-size:12px;font-weight:700;padding:6px 10px;cursor:pointer;flex-shrink:0";
-    b.onclick=function(){try{document.body.removeChild(t);}catch(e){} if(undoFn)undoFn();};
+    const drop=function(){ try{document.body.removeChild(t);}catch(e){} if(_undoToastEl===t)_undoToastEl=null; };
+    b.onclick=function(){ drop(); if(undoFn)undoFn(); };
     t.appendChild(s);t.appendChild(b);
     document.body.appendChild(t);
-    setTimeout(function(){try{document.body.removeChild(t);}catch(e){}},5000);
+    _undoToastEl=t;
+    setTimeout(drop,5000);
   }catch(e){}
 }
 
@@ -24545,6 +24770,8 @@ function bindNavDrag(){
 }
 
 function bind(){
+  bindSupplySwipe();
+  syncBottomBarVar();
   bindNavDrag();
   updateStageStickyTop();
   // Defensive: also bind real click listener to all _crmMove buttons (iOS Safari sometimes ignores onclick)
@@ -25112,7 +25339,7 @@ function bind(){
     else if(a==="obj-arch-toggle"){el.onclick=()=>{objArchOpen=el.dataset.open!=="1";render();};}
     else if(a==="receive-filter"){el.onclick=()=>{receiveOnlyLeft=el.dataset.v==="left";render();};}
     else if(a==="supply-view"){el.onclick=()=>{window._supplyViewing=true;render();};}
-    else if(a==="supply-back"){el.onclick=()=>{window._supplyViewing=false;supplySearch='';supplyStoreFilter='';supplyHideDone=false;render();};}
+    else if(a==="supply-back"){el.onclick=()=>{window._supplyViewing=false;supplySearch='';supplyStoreFilter='';supplyHideDone=false;supplyMoreOpen=false;render();};}
     else if(a==="supply-store-filter"){el.onclick=()=>{supplyStoreFilter=supplyStoreFilter===el.dataset.store?'':el.dataset.store;render();};}
     else if(a==="supply-hide-done"){el.onclick=()=>{supplyHideDone=!supplyHideDone;render();};}  
     // Постоянное решение по позиции: закупает заказчик. Пишем в САМ материал —
@@ -25156,7 +25383,7 @@ function bind(){
       ev&&ev.stopPropagation();
       const ids=(el.dataset.ids||"").split(',').filter(Boolean);
       if(!ids.length)return;
-      const back=(a==="supply-labour-back");
+      const back=(a==="supply-labour-back"); if(!back){ supplyEditMid=null; supplyEditIds=[]; }  // из формы правки — закрыть её
       objects=objects.map(function(o){ return Object.assign({},o,{ stages:(o.stages||[]).map(function(st){
         return Object.assign({},st,{ works:(st.works||[]).map(function(w){
           if(!(w.mats||[]).some(function(m){return ids.indexOf(m.id)>=0;}))return w;
@@ -25190,7 +25417,7 @@ function bind(){
     // Оплата заказчиком — свойство объекта: включается там, где о ней договорились.
     else if(a==="supply-refund-on"||a==="supply-refund-off"){el.onclick=(ev)=>{
       ev&&ev.stopPropagation();
-      const oid=el.dataset.oid, on=(a==="supply-refund-on");
+      const oid=el.dataset.oid, on=(a==="supply-refund-on"); supplyMoreOpen=false;
       objects=objects.map(function(o){
         if(o.id!==oid)return o;
         const no=Object.assign({},o);
@@ -25228,10 +25455,10 @@ function bind(){
     };}
     else if(a==="supply-stage-check"){el.onclick=(ev)=>{
       ev&&ev.stopPropagation();  // кнопка внутри кликабельной шапки — не сворачивать группу
-      const ids=el.dataset.ids.split(',');
-      const allDone=el.dataset.done==="1";
-      ids.forEach(function(id){if(id){ purchased[id]=!allDone; syncNeedToBatch(id, !allDone); }});
-      rerenderTab();
+      if(el._swiped)return;      // строку только что смахнули: клик следом — не новое нажатие
+      const ids=(el.dataset.ids||"").split(',').filter(Boolean);
+      // Пачка («Всё» в шапке группы, «Куплено N» в корзине) — с возвратом; строка — без.
+      supplyMarkBought(ids, el.dataset.done!=="1", el.dataset.bulk!=="1");
     };}
     else if(a==="work-mat-recv"){el.onclick=()=>{
       const mid=el.dataset.mid;
@@ -25306,6 +25533,62 @@ function bind(){
       rerenderTab();   // частичная перерисовка + автосейв
     };}
     else if(a==="supply-sort"){el.onclick=()=>{window._supplySort=el.dataset.s;render();};}
+    // Меню «⋯» в шапке закупки — только экран: в снимок не идёт, сохранять нечего.
+    else if(a==="supply-more"){el.onclick=(ev)=>{ ev&&ev.stopPropagation(); supplyMoreOpen=!supplyMoreOpen; ui(); };}
+    // «Отправить списком» — ровно то, что на экране: объекты, поиск, магазин, «не куплено».
+    else if(a==="supply-share"){el.onclick=(ev)=>{
+      ev&&ev.stopPropagation();
+      const objs=supplySelectedObjs();
+      const title="Закупка · "+objs.map(function(o){return o.name;}).join(", ")+(supplyStoreFilter?" · "+supplyStoreFilter:"");
+      supplyShare(supplyListText(supplyFilter(supplyCollect(objs).mats),title),title);
+    };}
+    // «Заказано» — шаг между «нужно» и «куплено». Повторный тап снимает заказ вместе со сроком.
+    else if(a==="supply-order"){el.onclick=(ev)=>{
+      ev&&ev.stopPropagation();
+      const ids=(el.dataset.ids||"").split(",").filter(Boolean);
+      if(!ids.length)return;
+      const allOn=ids.every(function(id){ return isOrdered(supplyFindMat(id)); });
+      const day=new Date(Date.now()+3*3600*1000).toISOString().slice(0,10);
+      supplyPatchMats(ids,function(m){
+        if(allOn){ delete m.ordAt; delete m.eta; }
+        else if(!m.ordAt) m.ordAt=day;
+        return m;
+      });
+      fl();
+    };}
+    // Срок доставки пишем по `change`: нативный календарь шлёт input на каждую цифру года,
+    // и перерисовка выбивала бы его из-под пальца.
+    else if(a==="supply-eta"){el.onchange=()=>{
+      const ids=(el.dataset.ids||"").split(",").filter(Boolean);
+      if(!ids.length)return;
+      const v=String(el.value||"");
+      const ok=/^\d{4}-\d{2}-\d{2}$/.test(v);
+      supplyPatchMats(ids,function(m){ if(ok)m.eta=v; else delete m.eta; return m; });
+      fl();
+    };}
+    // Фактическая цена за единицу. Равная смете — не факт, а шум: такую не храним.
+    else if(a==="supply-fact"){el.onchange=()=>{
+      const ids=(el.dataset.ids||"").split(",").filter(Boolean);
+      if(!ids.length)return;
+      const raw=String(el.value||"").replace(",",".").trim();
+      const v=Number(raw);
+      if(raw!==""&&!(isFinite(v)&&v>0)){ alert("Фактическая цена — число больше нуля, в рублях за единицу."); return; }
+      const price=raw===""?null:Math.round(v*100)/100;
+      supplyPatchMats(ids,function(m){
+        if(price==null||price===(Number(m.cost)||0))delete m.fact; else m.fact=price;
+        return m;
+      });
+      // В партии цена позиции и есть факт — держим их в согласии, как отметку «куплено».
+      purchases=purchases.map(function(p){
+        if(!(p.items||[]).some(function(it){return ids.indexOf(it.needId)>=0;}))return p;
+        return Object.assign({},p,{items:p.items.map(function(it){
+          if(ids.indexOf(it.needId)<0)return it;
+          const m=supplyFindMat(it.needId);
+          return Object.assign({},it,{price:price!=null?price:(Number(m&&m.cost)||0)});
+        })});
+      });
+      fl();
+    };}
     else if(a==="supply-tz"){el.onclick=(ev)=>{ ev&&ev.stopPropagation(); buildSupplyTZ(el.dataset.store); };}
     else if(a==="supply-list"){el.onclick=(ev)=>{ ev&&ev.stopPropagation(); buildSupplyList(); };}
     else if(a==="supply-edit-mat"){el.onclick=(ev)=>{
