@@ -85,7 +85,7 @@ function stmt(sql) {
 const env = { TG_BOT_TOKEN: "T", DB: { prepare: stmt, batch: async (xs) => xs } };
 globalThis.fetch = async (url, opts) => {
   const body = opts && opts.body ? JSON.parse(opts.body) : {};
-  if (String(url).includes("/sendMessage")) { sent.push({ chat: body.chat_id, text: body.text }); }
+  if (String(url).includes("/sendMessage")) { sent.push({ chat: body.chat_id, text: body.text, kb: body.reply_markup }); }
   return { json: async () => ({ ok: true }) };
 };
 
@@ -123,6 +123,13 @@ console.log("\n5. Повторный прогон в тот же день нич
 const was = sent.length;
 await runReminders(env, "0 6 * * *");
 check("новых сообщений нет", sent.length === was, sent.length - was);
+
+console.log("\n6. Напоминание приносит свежую нижнюю клавиатуру");
+// Telegram держит ту клавиатуру, что бот прислал последней. Кто привязался до появления
+// «❓ Вопрос», так и жил без кнопки: /start повторно никто не жмёт, а напоминания приходят каждый день.
+const kbTexts = (m) => ((m.kb && m.kb.keyboard) || []).flat().map(b => b.text);
+check("у каждого напоминания есть постоянная клавиатура", sent.length > 0 && sent.every(m => kbTexts(m).length > 0), sent.map(m => kbTexts(m).length));
+check("в ней кнопка «❓ Вопрос»", sent.every(m => kbTexts(m).includes("❓ Вопрос")), kbTexts(sent[0] || {}));
 
 Date.now = realNow;
 console.log("\n" + (fails ? "❌ ПРОВАЛЕНО: " + fails : "✅ Все проверки пройдены"));

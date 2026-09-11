@@ -5,7 +5,7 @@
 // Логика дедлайнов повторяет клиентскую (рабочие дни, штраф 2000 ₽/день): цифра в
 // напоминании должна совпадать с тем, что человек видит в карточке объекта.
 
-import { ensureNotifyTables, sendTg, defaultPrefs, escapeHtml } from "./notify.js";
+import { ensureNotifyTables, sendTg, defaultPrefs, escapeHtml, MAIN_KB } from "./notify.js";
 import { stagesNeedingAttention } from "./stages.js";
 import { pendingSelections } from "./supply.js";
 
@@ -80,7 +80,10 @@ async function sendOnce(env, who, kind, key, text) {
     .bind(who.uid, kind, key, Date.now()).run();
   const changed = res && res.meta && typeof res.meta.changes === "number" ? res.meta.changes : 1;
   if (!changed) { DIAG.push(kind + "/" + who.uid + ": уже слали сегодня"); return false; }
-  const ok = await sendTg(env, who.chat, text);
+  // Клавиатуру прикладываем к каждому напоминанию: Telegram показывает ту, что бот прислал
+  // последней, а /start после привязки никто не жмёт. Без этого новая кнопка (так вышло с
+  // «❓ Вопрос») не доезжает до тех, кто привязался раньше, чем она появилась.
+  const ok = await sendTg(env, who.chat, text, { reply_markup: MAIN_KB });
   if (!ok) {
     await env.DB.prepare("DELETE FROM notify_log WHERE uid=? AND kind=? AND k=?").bind(who.uid, kind, key).run();
     DIAG.push(kind + "/" + who.uid + ": Telegram не принял (chat " + who.chat + ")");
