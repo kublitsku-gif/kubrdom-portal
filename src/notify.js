@@ -29,6 +29,8 @@ export async function ensureNotifyTables(env) {
     env.DB.prepare("CREATE TABLE IF NOT EXISTS notify_prefs (uid TEXT PRIMARY KEY, prefs TEXT NOT NULL, updated_at INTEGER NOT NULL)"),
     // Защита от повторов: одно напоминание одного вида по одному поводу в сутки.
     env.DB.prepare("CREATE TABLE IF NOT EXISTS notify_log (uid TEXT NOT NULL, kind TEXT NOT NULL, k TEXT NOT NULL, sent_at INTEGER NOT NULL, PRIMARY KEY (uid, kind, k))"),
+    // Какую версию нижней клавиатуры человек уже получил — см. ensureKeyboard.
+    env.DB.prepare("CREATE TABLE IF NOT EXISTS tg_kb (uid TEXT PRIMARY KEY, ver TEXT NOT NULL, updated_at INTEGER NOT NULL)"),
   ]);
   _ready = true;
 }
@@ -49,6 +51,21 @@ export const MAIN_KB = {
 export const MAIN_BTNS = MAIN_KB.keyboard.reduce(function (a, row) {
   return a.concat(row.map(function (b) { return b.text; }));
 }, []);
+// Версия клавиатуры — сами подписи кнопок: поменяли набор — версия сменилась сама,
+// и помнить про «не забыть поднять номер» не нужно.
+export const KB_VER = MAIN_BTNS.join("|");
+
+// Адрес панели для мини-приложения. Раздел передаём в ?go=, а не в #хеше: хеш при
+// открытии занимает сам Telegram (#tgWebAppData=…), и наш маршрут в нём потерялся бы.
+export function portalUrl(env, go) {
+  const base = ((env && env.PUBLIC_BASE_URL) || "https://portal.kubrdom.ru").replace(/\/+$/, "");
+  return base + "/admin" + (go ? "?go=" + encodeURIComponent(go) : "");
+}
+// web_app, а не url: панель открывается внутри Telegram с подписью человека и входит
+// без PIN. Такие кнопки работают только в личке с ботом — напоминания туда и уходят.
+export function portalButton(env, go, label) {
+  return { inline_keyboard: [[{ text: label, web_app: { url: portalUrl(env, go) } }]] };
+}
 
 export async function sendTg(env, chatId, text, extra) {
   if (!env.TG_BOT_TOKEN || !chatId) return false;
@@ -60,6 +77,40 @@ export async function sendTg(env, chatId, text, extra) {
     const j = await r.json();
     return !!(j && j.ok);
   } catch { return false; }
+}
+
+// Кнопка «Портал» слева от поля ввода — вместо списка команд (команды по-прежнему
+// набираются через «/»). Без chat_id Telegram ставит её всем личным чатам бота сразу.
+// Вызов идемпотентный, но дёргать Telegram на каждое обновление незачем: раз на инстанс.
+let _menuSet = false;
+export async function ensureMenuButton(env) {
+  if (_menuSet || !env.TG_BOT_TOKEN) return _menuSet;
+  try {
+    const r = await fetch(TG_API + env.TG_BOT_TOKEN + "/setChatMenuButton", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ menu_button: { type: "web_app", text: "Портал", web_app: { url: portalUrl(env) } } }),
+    });
+    const j = await r.json();
+    _menuSet = !!(j && j.ok);
+  } catch { /* кнопка меню не критична — поставим при следующем обновлении */ }
+  return _menuSet;
+}
+
+// Нижняя клавиатура меняется у человека, только когда бот пришлёт её в чат. Кто
+// привязался раньше, чем появилась новая кнопка (так было с «❓ Вопрос»), живёт со старой:
+// /start повторно никто не жмёт. К напоминанию её не приложить — у сообщения одна
+// разметка, и там кнопка портала. Поэтому одно беззвучное сообщение, и только тем,
+// у кого версия устарела.
+export async function ensureKeyboard(env, uid, chatId) {
+  const row = await env.DB.prepare("SELECT ver FROM tg_kb WHERE uid=?").bind(uid).first();
+  if (row && row.ver === KB_VER) return false;
+  const ok = await sendTg(env, chatId, "⌨️ Обновил кнопки внизу чата.", { reply_markup: MAIN_KB, disable_notification: true });
+  if (ok) await markKeyboard(env, uid);
+  return ok;
+}
+export async function markKeyboard(env, uid) {
+  await env.DB.prepare("INSERT INTO tg_kb (uid, ver, updated_at) VALUES (?,?,?) ON CONFLICT(uid) DO UPDATE SET ver=excluded.ver, updated_at=excluded.updated_at")
+    .bind(uid, KB_VER, Date.now()).run();
 }
 
 let _botUser = null;
@@ -171,6 +222,7 @@ export function escapeHtml(s) {
 // импортирует отсюда sendTg — цикл модулей ни к чему.
 export async function tgWebhook(env, request, hooks) {
   let upd; try { upd = await request.json(); } catch { return { ok: true }; }
+  await ensureMenuButton(env);
 
   // Нажатие inline-кнопки
   const cb = upd && upd.callback_query;
@@ -226,10 +278,11 @@ export async function tgWebhook(env, request, hooks) {
   const code = m[1];
   if (!code) {
     const known = await env.DB.prepare("SELECT uid FROM tg_links WHERE chat_id=?").bind(String(chatId)).first();
-    await sendTg(env, chatId, known && known.uid
-      ? "С возвращением! Кнопки внизу: объекты, снабжение, финансы, внесение денег и ❓ вопрос по объекту."
+    const greeted = await sendTg(env, chatId, known && known.uid
+      ? "С возвращением! Кнопки внизу: объекты, снабжение, финансы, внесение денег и ❓ вопрос по объекту.\nПортал целиком — кнопка «Портал» слева от поля ввода."
       : "Привет! Откройте портал → 🔔 Напоминания → «Привязать Telegram» и нажмите кнопку — вернётесь сюда уже с кодом.",
       known && known.uid ? { reply_markup: MAIN_KB } : undefined);
+    if (greeted && known && known.uid) await markKeyboard(env, known.uid);
     return { ok: true };
   }
   const now = Date.now();
@@ -244,8 +297,9 @@ export async function tgWebhook(env, request, hooks) {
       .bind(row.uid, String(chatId), uname, now),
     env.DB.prepare("DELETE FROM tg_codes WHERE code=?").bind(code),
   ]);
-  await sendTg(env, chatId, "✅ <b>Готово!</b> Напоминания портала КубрДом будут приходить сюда.\n\nВнизу появились кнопки: посмотреть <b>объекты</b>, <b>снабжение</b> и <b>финансы</b>, а также записать аванс, зарплату или закупку и ❓ задать вопрос по объекту.",
+  const linked = await sendTg(env, chatId, "✅ <b>Готово!</b> Напоминания портала КубрДом будут приходить сюда.\n\nВнизу появились кнопки: посмотреть <b>объекты</b>, <b>снабжение</b> и <b>финансы</b>, а также записать аванс, зарплату или закупку и ❓ задать вопрос по объекту.\n\nСлева от поля ввода — кнопка <b>Портал</b>: открывает портал прямо здесь, без PIN.",
     { reply_markup: MAIN_KB });
+  if (linked) await markKeyboard(env, row.uid);
   return { ok: true };
 }
 
@@ -268,6 +322,8 @@ export async function tgSetupWebhook(env, publicBase) {
       ] }),
     });
   } catch { /* меню — не критично */ }
+  _menuSet = false;                  // админ перенастраивает бота — кнопку «Портал» ставим заново
+  await ensureMenuButton(env);
   const info = await (await fetch(TG_API + env.TG_BOT_TOKEN + "/getWebhookInfo")).json();
   return { success: !!(j && j.ok), url: url, telegram: j, info: info && info.result };
 }

@@ -50,6 +50,7 @@ const store = {
     { uid: "u_admin", chat_id: "333" },
   ],
   notify_log: new Set(),
+  tg_kb: {},             // uid → версия нижней клавиатуры, которую человек уже получил
 };
 
 const sent = [];
@@ -67,8 +68,12 @@ function stmt(sql) {
       }
       return { results: [] };
     },
-    async first() { return null; },
+    async first() {
+      if (sql.includes("FROM tg_kb")) return store.tg_kb[args[0]] ? { ver: store.tg_kb[args[0]] } : null;
+      return null;
+    },
     async run() {
+      if (sql.includes("INSERT INTO tg_kb")) { store.tg_kb[args[0]] = args[1]; return { meta: { changes: 1 } }; }
       // Страж «одно напоминание одного вида по одному поводу»: INSERT OR IGNORE.
       if (sql.includes("INSERT OR IGNORE INTO notify_log")) {
         const k = args.slice(0, 3).join("|");
@@ -85,7 +90,7 @@ function stmt(sql) {
 const env = { TG_BOT_TOKEN: "T", DB: { prepare: stmt, batch: async (xs) => xs } };
 globalThis.fetch = async (url, opts) => {
   const body = opts && opts.body ? JSON.parse(opts.body) : {};
-  if (String(url).includes("/sendMessage")) { sent.push({ chat: body.chat_id, text: body.text, kb: body.reply_markup }); }
+  if (String(url).includes("/sendMessage")) { sent.push({ chat: body.chat_id, text: body.text, kb: body.reply_markup, silent: body.disable_notification === true }); }
   return { json: async () => ({ ok: true }) };
 };
 
@@ -114,7 +119,7 @@ check("адресат получил", anyMatch("222", /Полок недове�
 check("нач. производства получил", anyMatch("666", /Полок недовезли/), to("666"));
 check("в подъёме указано, кому адресовано", anyMatch("666", /Адресовано снабженцу/), to("666"));
 check("автор узнал, что вопрос поднят", anyMatch("111", /Ваш вопрос ждёт 5 раб\. дн/), to("111"));
-check("ссылка в портал есть", anyMatch("666", /#tab=issues/), to("666"));
+check("кнопка в портал есть", sent.some(m => m.chat === "666" && m.kb && m.kb.inline_keyboard), to("666"));
 
 console.log("\n4. Закрытый вопрос не стареет");
 check("про закрытый молчим", !sent.some(m => /Давно закрыт/.test(m.text)));
@@ -124,12 +129,31 @@ const was = sent.length;
 await runReminders(env, "0 6 * * *");
 check("новых сообщений нет", sent.length === was, sent.length - was);
 
-console.log("\n6. Напоминание приносит свежую нижнюю клавиатуру");
+console.log("\n6. Кнопка под напоминанием открывает портал прямо в Telegram");
+const btnOf = (m) => (m.kb && m.kb.inline_keyboard && m.kb.inline_keyboard[0] && m.kb.inline_keyboard[0][0]) || null;
+const issueMsgs = sent.filter(m => /Вопрос без ответа|Ваш вопрос ждёт/.test(m.text));
+check("у напоминаний о вопросах есть кнопка мини-приложения", issueMsgs.length > 0 && issueMsgs.every(m => btnOf(m) && btnOf(m).web_app), issueMsgs.map(btnOf));
+check("кнопка ведёт во вкладку вопросов", issueMsgs.every(m => btnOf(m) && btnOf(m).web_app.url === "https://portal.kubrdom.ru/admin?go=tab%3Dissues"), btnOf(issueMsgs[0] || {}));
+check("адресату — «Ответить в портале»", sent.some(m => m.chat === "222" && btnOf(m) && btnOf(m).text === "Ответить в портале"));
+check("ссылка больше не дублируется текстом", issueMsgs.every(m => !/<a href=/.test(m.text)), issueMsgs.map(m => m.text.slice(-60)));
+
+console.log("\n7. Нижняя клавиатура доезжает до каждого — один раз");
 // Telegram держит ту клавиатуру, что бот прислал последней. Кто привязался до появления
-// «❓ Вопрос», так и жил без кнопки: /start повторно никто не жмёт, а напоминания приходят каждый день.
+// «❓ Вопрос», так и жил без кнопки: /start повторно никто не жмёт. К напоминанию её не
+// приложить — у сообщения одна разметка, и там теперь кнопка портала. Поэтому отдельное
+// беззвучное сообщение, но только тем, у кого версия клавиатуры устарела.
 const kbTexts = (m) => ((m.kb && m.kb.keyboard) || []).flat().map(b => b.text);
-check("у каждого напоминания есть постоянная клавиатура", sent.length > 0 && sent.every(m => kbTexts(m).length > 0), sent.map(m => kbTexts(m).length));
-check("в ней кнопка «❓ Вопрос»", sent.every(m => kbTexts(m).includes("❓ Вопрос")), kbTexts(sent[0] || {}));
+const kbMsgs = sent.filter(m => kbTexts(m).length > 0);
+const reached = [...new Set(sent.map(m => m.chat))].sort();
+const kbChats = kbMsgs.map(m => m.chat).sort();
+check("каждому, кому писали, пришла клавиатура", JSON.stringify([...new Set(kbChats)].sort()) === JSON.stringify(reached), { reached, kbChats });
+check("в ней кнопка «❓ Вопрос»", kbMsgs.length > 0 && kbMsgs.every(m => kbTexts(m).includes("❓ Вопрос")), kbTexts(kbMsgs[0] || {}));
+check("клавиатура — одно сообщение на человека, а не с каждым напоминанием", kbChats.length === new Set(kbChats).size, kbChats);
+check("служебное сообщение беззвучное", kbMsgs.every(m => m.silent), kbMsgs.map(m => m.silent));
+sent.length = 0;
+store.notify_log.clear();
+await runReminders(env, "0 6 * * *");
+check("на следующий день клавиатуру заново не шлём", sent.length > 0 && !sent.some(m => kbTexts(m).length > 0), sent.map(m => kbTexts(m).length));
 
 Date.now = realNow;
 console.log("\n" + (fails ? "❌ ПРОВАЛЕНО: " + fails : "✅ Все проверки пройдены"));

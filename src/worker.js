@@ -6,7 +6,8 @@
 //   env.DB — D1Database (banya-db)
 
 import { recordSnapshotDiff, readAudit, logEvent } from "./audit.js";
-import { tgStatus, tgMakeCode, tgUnlink, tgSavePrefs, tgTest, tgWebhook, tgSetupWebhook } from "./notify.js";
+import { tgStatus, tgMakeCode, tgUnlink, tgSavePrefs, tgTest, tgWebhook, tgSetupWebhook, ensureNotifyTables } from "./notify.js";
+import { verifyInitData } from "./tgauth.js";
 import { runReminders } from "./reminders.js";
 import { finText, finCallback, answerCb } from "./botfin.js";
 import { viewText, viewCallback } from "./botview.js";
@@ -176,6 +177,15 @@ function loginBlockedJson(secs) {
 // Пауза на неудачу — тормозит перебор ещё до порога и почти не заметна человеку.
 function loginPause() { return new Promise(function (r) { setTimeout(r, LOGIN_FAIL_DELAY_MS); }); }
 
+async function loadUsersPerms(env) {
+  const rows = await env.DB.prepare("SELECT work_id, data FROM work_states WHERE storage_key='admin_panel' AND work_id IN ('users','rolePermissions')").all();
+  let users = [], rolePerms = {};
+  for (const r of rows.results) {
+    try { const d = JSON.parse(r.data); if (r.work_id === "users") users = d || []; else rolePerms = d || {}; } catch {}
+  }
+  return { users: users, rolePerms: rolePerms };
+}
+
 async function loginUser(env, request) {
   let body; try { body = await request.json(); } catch { return json({ success: false, error: "bad json" }, 400); }
   const userId = String((body && body.userId) || "");
@@ -186,11 +196,7 @@ async function loginUser(env, request) {
   const keys = loginKeys(request, userId || norm(phone));
   const blocked = await loginBlockedFor(env, keys);
   if (blocked) return loginBlockedJson(blocked);
-  const rows = await env.DB.prepare("SELECT work_id, data FROM work_states WHERE storage_key='admin_panel' AND work_id IN ('users','rolePermissions')").all();
-  let users = [], rolePerms = {};
-  for (const r of rows.results) {
-    try { const d = JSON.parse(r.data); if (r.work_id === "users") users = d || []; else rolePerms = d || {}; } catch {}
-  }
+  const { users, rolePerms } = await loadUsersPerms(env);
   const u = userId
     ? users.find(function (x) { return x && x.id === userId; })
     : users.find(function (x) { return x && x.phone && norm(x.phone) === norm(phone) && norm(phone).length >= 10; });
@@ -205,12 +211,42 @@ async function loginUser(env, request) {
   const realPin = String(u.pin || "1111");
   if (!safeEqual(pin, realPin)) return await bad();
   await loginNoteOk(env, keys);
+  return await userSession(env, u, rolePerms, "вошёл в портал");
+}
+
+// Личный токен + профиль. Один путь для входа по PIN и через Telegram: права в токене
+// обязаны считаться одинаково, как бы человек ни вошёл.
+async function userSession(env, u, rolePerms, note) {
   const roles = u.roles || [];
   const adm = roles.indexOf("admin") >= 0;
   const fin = adm || roles.some(function (r) { return (rolePerms[r] || []).indexOf("finance") >= 0; });
   const token = await makeUserToken(env, { u: u.id, adm: adm, fin: fin, exp: Date.now() + 30 * 24 * 3600 * 1000 });
-  await logEvent(env, { uid: u.id }, "auth", "login", "вошёл в портал", null);
+  await logEvent(env, { uid: u.id }, "auth", "login", note, null);
   return json({ success: true, token: token, user: { id: u.id, name: u.name, roles: roles, av: u.av, c: u.c, mustChangePin: !!u.mustChangePin } });
+}
+
+// POST /api/tg-login { initData } — вход из мини-приложения Telegram без PIN.
+// Кто открыл, говорит подпись Telegram (src/tgauth.js); к сотруднику ведёт привязка
+// tg_links, которую человек сам сделал кнопкой «Привязать Telegram». Счётчик попыток,
+// как у PIN, не нужен: перебирать нечего — без токена бота подпись не собрать.
+async function tgLogin(env, request) {
+  let body; try { body = await request.json(); } catch { body = null; }
+  const initData = body && typeof body.initData === "string" ? body.initData : "";
+  if (!initData) return json({ success: false, error: "Нет данных Telegram" }, 400);
+  if (!env.TG_BOT_TOKEN) return json({ success: false, error: "Вход через Telegram не настроен" }, 503);
+  const v = await verifyInitData(initData, env.TG_BOT_TOKEN, Date.now());
+  if (!v.ok) return json({ success: false, error: "Telegram не подтвердил вход (" + v.reason + "). Закройте портал и откройте его кнопкой в боте ещё раз." }, 401);
+  const notLinked = function () {
+    return json({ success: false, error: "Этот Telegram не привязан к порталу. Войдите по PIN и нажмите 🔔 Напоминания → «Привязать Telegram»." }, 403);
+  };
+  await ensureNotifyTables(env);
+  // В личке с ботом chat_id совпадает с id пользователя Telegram — по нему и ищем привязку.
+  const link = await env.DB.prepare("SELECT uid FROM tg_links WHERE chat_id=?").bind(v.tgUserId).first();
+  if (!link || !link.uid) return notLinked();
+  const { users, rolePerms } = await loadUsersPerms(env);
+  const u = users.find(function (x) { return x && x.id === link.uid; });
+  if (!u) return notLinked();                        // привязка осталась, а сотрудника удалили
+  return await userSession(env, u, rolePerms, "вошёл через Telegram");
 }
 
 // POST /api/change-pin { oldPin, newPin } — сотрудник меняет СВОЙ PIN (auth = его личный токен).
@@ -1698,6 +1734,11 @@ export default {
     // Вход сотрудника (userId/телефон + PIN → персональный токен) — ДО авторизации: токен тут и выдаётся.
     if (url.pathname === "/api/login" && request.method === "POST") {
       try { return await loginUser(env, request); }
+      catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+    // Вход из мини-приложения Telegram (подпись Telegram → личный токен) — ДО авторизации.
+    if (url.pathname === "/api/tg-login" && request.method === "POST") {
+      try { return await tgLogin(env, request); }
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
     // Вход клиента (номер договора/фамилия + PIN → клиентский токен + срез) — ДО авторизации.

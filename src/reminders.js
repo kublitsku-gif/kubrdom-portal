@@ -5,7 +5,7 @@
 // Логика дедлайнов повторяет клиентскую (рабочие дни, штраф 2000 ₽/день): цифра в
 // напоминании должна совпадать с тем, что человек видит в карточке объекта.
 
-import { ensureNotifyTables, sendTg, defaultPrefs, escapeHtml, MAIN_KB } from "./notify.js";
+import { ensureNotifyTables, sendTg, defaultPrefs, escapeHtml, portalButton, ensureKeyboard, ensureMenuButton } from "./notify.js";
 import { stagesNeedingAttention } from "./stages.js";
 import { pendingSelections } from "./supply.js";
 
@@ -43,15 +43,9 @@ export function deadlineInfo(c, uid, today) {
 
 export const money = (v) => Math.round(v || 0).toLocaleString("ru-RU") + " ₽";
 
-// Ссылка прямо в нужное место панели. Хеш разбирает applyDeepLink() в admin.js:
-// #obj=<id> открывает объект, &view=receive — сразу режим «Приёмка», #tab=supply — вкладку.
-function portal(env, hash) {
-  const base = (env.PUBLIC_BASE_URL || "https://portal.kubrdom.ru").replace(/\/+$/, "");
-  return base + "/admin" + (hash || "");
-}
-function linkTo(env, hash, label) {
-  return '\n\n👉 <a href="' + portal(env, hash) + '">' + label + '</a>';
-}
+// Кнопка под напоминанием (portalButton) открывает панель прямо в Telegram и сразу в
+// нужном месте. Адрес разбирает applyDeepLink() в admin.js: obj=<id> открывает объект,
+// &view=receive — сразу режим «Приёмка», tab=supply — вкладку.
 
 // ─── Кому слать ──────────────────────────────────────────────────────────────
 // Привязанные чаты + персональные галочки. Роли берём из снимка: они же дают дефолт,
@@ -75,15 +69,13 @@ async function audience(env, users, kind) {
 // Одно напоминание одного вида по одному поводу — один раз. Ключ хранит дату, поэтому
 // «просрочка» повторится завтра, а «за 3 дня до дедлайна» — нет.
 const DIAG = [];                                    // причины, почему сообщение не ушло
-async function sendOnce(env, who, kind, key, text) {
+async function sendOnce(env, who, kind, key, text, btn) {
   const res = await env.DB.prepare("INSERT OR IGNORE INTO notify_log (uid, kind, k, sent_at) VALUES (?,?,?,?)")
     .bind(who.uid, kind, key, Date.now()).run();
   const changed = res && res.meta && typeof res.meta.changes === "number" ? res.meta.changes : 1;
   if (!changed) { DIAG.push(kind + "/" + who.uid + ": уже слали сегодня"); return false; }
-  // Клавиатуру прикладываем к каждому напоминанию: Telegram показывает ту, что бот прислал
-  // последней, а /start после привязки никто не жмёт. Без этого новая кнопка (так вышло с
-  // «❓ Вопрос») не доезжает до тех, кто привязался раньше, чем она появилась.
-  const ok = await sendTg(env, who.chat, text, { reply_markup: MAIN_KB });
+  await ensureKeyboard(env, who.uid, who.chat);
+  const ok = await sendTg(env, who.chat, text, btn ? { reply_markup: btn } : undefined);
   if (!ok) {
     await env.DB.prepare("DELETE FROM notify_log WHERE uid=? AND kind=? AND k=?").bind(who.uid, kind, key).run();
     DIAG.push(kind + "/" + who.uid + ": Telegram не принял (chat " + who.chat + ")");
@@ -141,9 +133,8 @@ async function runDeadlines(env, st, today) {
           ? "🔴 <b>Просрочка по объекту «" + escapeHtml(on) + "»</b>\nДедлайн был " + info.deadline + ", просрочено рабочих дней: " + info.overdue + ".\nШтраф на сегодня: <b>" + money(info.fine) + "</b> (" + money(FINE_PER_DAY) + "/день)."
           : (info.daysLeft === 0
             ? "🟠 <b>Сегодня дедлайн по объекту «" + escapeHtml(on) + "»</b>\nПосле него начинает капать штраф " + money(FINE_PER_DAY) + " в день."
-            : "🟡 <b>Дедлайн по объекту «" + escapeHtml(on) + "» через " + info.daysLeft + " раб. дн.</b>\nСрок: " + info.deadline + ".")
-          + linkTo(env, "#obj=" + c.objId, "Открыть объект");
-        if (await sendOnce(env, mine, "deadline", c.id + ":" + uid + ":" + today, text)) sent++;
+            : "🟡 <b>Дедлайн по объекту «" + escapeHtml(on) + "» через " + info.daysLeft + " раб. дн.</b>\nСрок: " + info.deadline + ".");
+        if (await sendOnce(env, mine, "deadline", c.id + ":" + uid + ":" + today, text, portalButton(env, "obj=" + c.objId, "Открыть объект"))) sent++;
       }
     }
   }
@@ -155,8 +146,8 @@ async function runDeadlines(env, st, today) {
         + (x.info.overdue > 0 ? "просрочка " + x.info.overdue + " дн, штраф " + money(x.info.fine) : "осталось " + x.info.daysLeft + " раб. дн");
     });
     for (const p of boss) {
-      const digest = "📋 <b>Дедлайны производства</b>\n" + lines.join("\n") + linkTo(env, "#tab=assign", "Открыть объекты");
-      if (await sendOnce(env, p, "deadline", "digest:" + today, digest)) sent++;
+      const digest = "📋 <b>Дедлайны производства</b>\n" + lines.join("\n");
+      if (await sendOnce(env, p, "deadline", "digest:" + today, digest, portalButton(env, "tab=assign", "Открыть объекты"))) sent++;
     }
   }
   return sent;
@@ -186,17 +177,16 @@ async function runStages(env, st, today) {
     const team = objTeam(st, x.obj.id);
     for (const p of people) {
       if (!team.has(p.uid)) continue;
-      const text = "🗓 <b>Срок этапа</b>\n" + line(x) + linkTo(env, "#obj=" + x.obj.id, "Открыть объект");
-      if (await sendOnce(env, p, "deadline", "stage:" + x.stage.id + ":" + x.sc.state + ":" + today, text)) sent++;
+      const text = "🗓 <b>Срок этапа</b>\n" + line(x);
+      if (await sendOnce(env, p, "deadline", "stage:" + x.stage.id + ":" + x.sc.state + ":" + today, text, portalButton(env, "obj=" + x.obj.id, "Открыть объект"))) sent++;
     }
   }
   const boss = people.filter(function (p) { return !isProd(p.user) || (p.user.roles || []).indexOf("prod_head") >= 0; });
   if (boss.length) {
     const digest = "🗓 <b>Этапы по срокам</b>\n" + hot.slice(0, 10).map(line).join("\n")
-      + (hot.length > 10 ? "\n… и ещё " + (hot.length - 10) : "")
-      + linkTo(env, "#tab=assign", "Открыть объекты");
+      + (hot.length > 10 ? "\n… и ещё " + (hot.length - 10) : "");
     for (const p of boss) {
-      if (await sendOnce(env, p, "deadline", "stages:digest:" + today, digest)) sent++;
+      if (await sendOnce(env, p, "deadline", "stages:digest:" + today, digest, portalButton(env, "tab=assign", "Открыть объекты"))) sent++;
     }
   }
   return sent;
@@ -223,10 +213,9 @@ async function runSelections(env, st, today) {
       + (x.due ? (x.overdue ? " — срок вышел " + x.due : " — выбрать до " + x.due) : "");
   });
   const text = "🎨 <b>Клиент ещё не выбрал</b>" + (late.length ? " · просрочено: " + late.length : "") + "\n"
-    + lines.join("\n") + (pend.length > 10 ? "\n… и ещё " + (pend.length - 10) : "")
-    + linkTo(env, "#tab=supply", "Открыть снабжение");
+    + lines.join("\n") + (pend.length > 10 ? "\n… и ещё " + (pend.length - 10) : "");
   for (const p of escort) {
-    if (await sendOnce(env, p, "deadline", "sel:" + today + ":" + pend.length + ":" + late.length, text)) sent++;
+    if (await sendOnce(env, p, "deadline", "sel:" + today + ":" + pend.length + ":" + late.length, text, portalButton(env, "tab=supply", "Открыть снабжение"))) sent++;
   }
   return sent;
 }
@@ -249,9 +238,8 @@ async function runHours(env, st, today) {
       if (!isProd(p.user)) continue;
       if (!team.has(p.uid)) continue;                            // только свой объект
       const text = "⏱ <b>Часы за сегодня не записаны</b>\nОбъект: «" + escapeHtml(o.name) + "», открытых работ: " + open.length + "."
-        + "\n<i>Без часов галочку «сделано» поставить нельзя.</i>"
-        + linkTo(env, "#obj=" + o.id + "&view=receive", "Записать часы");
-      if (await sendOnce(env, p, "hours", o.id + ":" + today, text)) sent++;
+        + "\n<i>Без часов галочку «сделано» поставить нельзя.</i>";
+      if (await sendOnce(env, p, "hours", o.id + ":" + today, text, portalButton(env, "obj=" + o.id + "&view=receive", "Записать часы"))) sent++;
     }
   }
   return sent;
@@ -292,9 +280,8 @@ async function runSupply(env, st, today) {
       return "• <b>" + escapeHtml(r.name) + "</b>: " + parts.join("; ");
     });
     const text = "📦 <b>Снабжение</b>\n" + lines.join("\n")
-      + (isMonday ? "\n\n<i>«Не принято» — отметьте приёмку в «Снабжение → Приёмка на складе».</i>" : "")
-      + linkTo(env, "#tab=supply", "Открыть снабжение");
-    if (await sendOnce(env, p, "supply", "digest:" + today, text)) sent++;
+      + (isMonday ? "\n\n<i>«Не принято» — отметьте приёмку в «Снабжение → Приёмка на складе».</i>" : "");
+    if (await sendOnce(env, p, "supply", "digest:" + today, text, portalButton(env, "tab=supply", "Открыть снабжение"))) sent++;
   }
   return sent;
 }
@@ -340,8 +327,7 @@ async function runFinance(env, st) {
   const text = "💰 <b>Финансы</b>\n"
     + "Клиенты должны: <b>" + money(debtTotal) + "</b>" + (debts.length > 5 ? " (показаны 5 крупнейших из " + debts.length + ")" : "") + "\n"
     + lines.join("\n")
-    + "\n\nЗарплата к выплате: <b>" + money(salLeft) + "</b> (план " + money(salPlan) + ", выплачено " + money(salPaid) + ")"
-    + linkTo(env, "#tab=finance", "Открыть финансы");
+    + "\n\nЗарплата к выплате: <b>" + money(salLeft) + "</b> (план " + money(salPlan) + ", выплачено " + money(salPaid) + ")";
 
   // Хеш цифр в ключе: сообщение повторится только когда суммы реально изменятся.
   const key = "fin:" + hashNums(String(debtTotal) + ":" + salLeft + ":" + debts.length);
@@ -350,7 +336,7 @@ async function runFinance(env, st) {
     const r = p.user.roles || [];
     const canFin = r.indexOf("admin") >= 0 || r.indexOf("financier") >= 0;
     if (!canFin) continue;         // личные деньги сотрудник смотрит кнопкой «💰 Финансы» в боте
-    if (await sendOnce(env, p, "finance", key, text)) sent++;
+    if (await sendOnce(env, p, "finance", key, text, portalButton(env, "tab=finance", "Открыть финансы"))) sent++;
   }
   return sent;
 }
@@ -409,11 +395,10 @@ async function runDaily(env, st, today) {
     + "Открытых работ всего: <b>" + openTotal + "</b>\n"
     + (openIss.length ? "❓ Вопросов без ответа: <b>" + openIss.length + "</b>"
         + (issOldest >= 2 ? " (старший ждёт " + issOldest + " раб. дн)" : "") + "\n" : "")
-    + (hot.length ? "🔴 Горит: " + hot.map(escapeHtml).join(", ") : "✅ Просрочек нет")
-    + linkTo(env, "#tab=history", "Открыть историю действий");
+    + (hot.length ? "🔴 Горит: " + hot.map(escapeHtml).join(", ") : "✅ Просрочек нет");
 
   let sent = 0;
-  for (const p of people) if (await sendOnce(env, p, "daily", "sum:" + today, text)) sent++;
+  for (const p of people) if (await sendOnce(env, p, "daily", "sum:" + today, text, portalButton(env, "tab=history", "Открыть историю действий"))) sent++;
   return sent;
 }
 
@@ -470,7 +455,7 @@ async function runIssues(env, st, today) {
     for (const uid of to) {
       const who = byUid[uid];
       if (!who) continue;
-      if (await sendOnce(env, who, "issues", key, head + linkTo(env, "#tab=issues", "Ответить в портале"))) sent++;
+      if (await sendOnce(env, who, "issues", key, head, portalButton(env, "tab=issues", "Ответить в портале"))) sent++;
     }
     if (!hot) continue;
 
@@ -484,15 +469,15 @@ async function runIssues(env, st, today) {
       const who = byUid[uid];
       if (!who || to.indexOf(uid) >= 0) continue;   // адресату уже ушло выше
       if (await sendOnce(env, who, "issues", key + ":esc", head
-        + "\n\nАдресовано " + (ISSUE_ADDR_NAME[issueRole(t)] || "—") + ", ответа нет " + age + " раб. дн."
-        + linkTo(env, "#tab=issues", "Открыть вопросы"))) sent++;
+        + "\n\nАдресовано " + (ISSUE_ADDR_NAME[issueRole(t)] || "—") + ", ответа нет " + age + " раб. дн.",
+        portalButton(env, "tab=issues", "Открыть вопросы"))) sent++;
     }
     // Автору: он вправе знать, что вопрос не забыт, а поднят наверх.
     const author = byUid[t.by];
     if (author && await sendOnce(env, author, "issues", key + ":auth",
       "🔴 <b>Ваш вопрос ждёт " + age + " раб. дн</b>\n«" + escapeHtml(objName(st.objects, t.objId)) + "»\n"
-      + escapeHtml(String(t.text || "").slice(0, 200)) + "\n\nПоднял начальнику производства."
-      + linkTo(env, "#tab=issues", "Открыть вопросы"))) sent++;
+      + escapeHtml(String(t.text || "").slice(0, 200)) + "\n\nПоднял начальнику производства.",
+      portalButton(env, "tab=issues", "Открыть вопросы"))) sent++;
   }
   return sent;
 }
@@ -501,6 +486,7 @@ async function runIssues(env, st, today) {
 // cronExpr — то, что пришло в scheduled(event.cron); разные часы = разные наборы.
 export async function runReminders(env, cronExpr, diag) {
   await ensureNotifyTables(env);
+  await ensureMenuButton(env);                       // кнопка «Портал» у поля ввода бота
   DIAG.length = 0;
   const today = mskToday();
   const st = await loadState(env, ["objects", "users", "contractDocs", "purchased", "arrived", "finTxns", "issues"]);

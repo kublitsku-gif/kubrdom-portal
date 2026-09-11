@@ -69,7 +69,7 @@ import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js"
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 import { plinthOptions, plinthPieceLen, isPlinthMat } from "../src/plinth.js";
 
-const APP_BUILD = "2026-09-11.9";
+const APP_BUILD = "2026-09-11.10";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -204,6 +204,38 @@ const TOKEN_KEY = "admin_token";
 function getToken(){ try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; } }
 function setToken(t){ try { localStorage.setItem(TOKEN_KEY, t); } catch {} }
 function clearToken(){ try { localStorage.removeItem(TOKEN_KEY); } catch {} }
+
+// ─── ПОРТАЛ ВНУТРИ TELEGRAM (мини-приложение) ───────────────────────────────
+// Кнопка «Портал» в боте и кнопки под напоминаниями открывают панель в Telegram, а тот
+// кладёт в хеш подписанные данные о человеке: #tgWebAppData=…. По ним сервер пускает без
+// PIN (/api/tg-login). Забираем их при загрузке — applyDeepLink потом стирает хеш.
+function tgInitData(){
+  try { return new URLSearchParams((location.hash||"").replace(/^#/,"")).get("tgWebAppData") || ""; } catch { return ""; }
+}
+const TG_INIT_DATA = tgInitData();
+async function tgLogin(initData){
+  try{
+    const r = await fetchT(API_BASE+"/api/tg-login", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ initData: initData }) }, 9000);
+    const j = await r.json().catch(function(){ return null; });
+    // Причину показываем на форме входа сотрудника, а не на выборе «Сотрудник/Клиент»:
+    // там ошибки не видно, и человек не понял бы, почему Telegram не пустил.
+    if(!j || !j.success || !j.token){ loginMode = "employee"; empPhoneError = (j && j.error) || "Не удалось войти через Telegram. Войдите по PIN."; return false; }
+    setToken(j.token);
+    return true;
+  }catch(e){ loginMode = "employee"; empPhoneError = "Нет связи с сервером — войдите по PIN или включите VPN."; return false; }
+}
+// Скрипт Telegram нужен только ради ready()/expand() — развернуть панель на весь экран.
+// Грузим его лишь внутри Telegram и асинхронно: в браузере он лишний, а у части провайдеров
+// telegram.org недоступен, и синхронный тег в admin.html повесил бы загрузку портала.
+function tgWebAppInit(){
+  try{
+    const s = document.createElement("script");
+    s.src = "https://telegram.org/js/telegram-web-app.js";
+    s.async = true;
+    s.onload = function(){ try{ const w = window.Telegram && window.Telegram.WebApp; if(w){ w.ready(); w.expand(); } }catch(e){} };
+    (document.head || document.body).appendChild(s);
+  }catch(e){}
+}
 // Персональный токен = "v1.<payloadB64url>.<sig>". Payload читаем на клиенте (подпись проверяет сервер),
 // чтобы на загрузке понять тип сессии (сотрудник uid / клиент cid) без лишнего запроса.
 function _decodeToken(t){
@@ -30735,19 +30767,23 @@ function _startLoops(){
   document.addEventListener("visibilitychange", function(){ if (!document.hidden) pollOnce(); });
 }
 
-// Переход из напоминания: ссылка вида /admin#obj=<id>&view=receive открывает нужный
-// объект сразу в нужном режиме. Хеш читаем ОДИН раз и сразу стираем — иначе обновление
-// страницы через час снова утащит человека в тот же объект.
+// Переход из напоминания: объект сразу в нужном режиме или вкладка. Старые ссылки несут
+// раздел в хеше (/admin#obj=<id>&view=receive), кнопки мини-приложения — в ?go=: хеш там
+// занимает Telegram (#tgWebAppData=…). Читаем ОДИН раз и сразу стираем — иначе обновление
+// страницы через час снова утащит человека в тот же объект, а подпись Telegram висела бы в адресе.
 function applyDeepLink(){
   try{
-    const h=(location.hash||"").replace(/^#/,"");
+    const qs=new URLSearchParams(location.search||"");
+    const h=qs.get("go")||(location.hash||"").replace(/^#/,"");
     if(!h)return;
     const q={};
     h.split("&").forEach(function(pair){
       const i=pair.indexOf("=");
       if(i>0)q[decodeURIComponent(pair.slice(0,i))]=decodeURIComponent(pair.slice(i+1));
     });
-    history.replaceState(null,"",location.pathname+location.search);
+    qs.delete("go");
+    const rest=qs.toString();
+    history.replaceState(null,"",location.pathname+(rest?"?"+rest:""));
     if(q.obj&&objects.some(function(o){return o.id===q.obj;})){ tab="assign"; openObject=q.obj; }
     else if(q.tab) tab=q.tab;
     if(q.view&&["works","money","receive"].indexOf(q.view)>=0) objWorkView=q.view;
@@ -30755,6 +30791,14 @@ function applyDeepLink(){
 }
 
 (async function boot(){
+  // Открыли из Telegram: входим по его подписи, если действующего токена сотрудника на
+  // этом устройстве нет. Не вышло (не привязан, нет сети) — обычный экран входа с причиной.
+  if (TG_INIT_DATA){
+    tgWebAppInit();
+    const cur = _decodeToken(getToken());
+    const alive = !!(cur && cur.u && typeof cur.exp === "number" && cur.exp > Date.now());
+    if (!alive) await tgLogin(TG_INIT_DATA);
+  }
   const tok = getToken();
   const decoded = tok ? _decodeToken(tok) : null;
 
