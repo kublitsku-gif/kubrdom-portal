@@ -503,12 +503,12 @@ function create(p, name) {
   const unkey = un.q('allPositions(projects[0], specCtx(projects[0]))[0].key')
   const undel = un.dom.node({ a: 'est-pos-del', k: unkey, n: 'Работа' })
   un.run('bind();'); undel.onclick()
-  t.ok('работа убрана без вопроса', !!un.q('projects[0].posOff'))
+  t.ok('работа удалена без вопроса', !!un.q('projects[0].posDel'))
   t.ok('и отмена предложена на экране', un.run('tProjects()').indexOf('data-a="est-undo"') >= 0)
   const undo = un.dom.node({ a: 'est-undo' }); un.run('bind();'); undo.onclick()
   t.ok('отмена вернула работу в дом',
     un.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(unkey) + ';}).length') === 1)
-  t.ok('и лист снова чист', !un.q('projects[0].posOff'))
+  t.ok('и лист снова чист', !un.q('projects[0].posDel'))
   t.ok('отменять больше нечего', un.run('tProjects()').indexOf('data-a="est-undo"') < 0)
   // Стек общий на экран, а лист у каждого дома свой: «отменить» в соседнем проекте
   // вернуло бы чужую правку.
@@ -524,37 +524,57 @@ function create(p, name) {
   t.ok('строка ушла из сметы',
     p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';}).length') === 0)
   t.ok('и деньги пересчитались', cost1 < cost0, cost0 + ' → ' + cost1)
-  // Молча выкинуть работу из сметы — это молча выкинуть её из стройки: убранное
-  // остаётся на виду, с ценой и кнопкой «вернуть».
-  // Шапка «убрано» видна всегда — со счётом и суммой; сам перечень свёрнут,
-  // потому что экран открывают ради сметы, а не ради убранного.
+  // ✕ — это «удалить», а не «выключить»: выключенная галочкой строка стоит на месте
+  // серой, а удалённой в списке нет вовсе. Иначе удалить работу было бы нечем.
+  t.ok('и из списка на экране тоже', after.indexOf('data-k="' + key + '"') < 0 || after.indexOf('data-a="est-pos-undel" data-k="' + key + '"') >= 0,
+    'строка осталась в списке')
+  t.ok('серой «не в итоге» не стала', after.indexOf('data-pos-off="' + key + '"') < 0)
+  t.ok('и галочку не сняла', !p.q('projects[0].posOff'))
+  // Молча выкинуть работу из сметы — это молча выкинуть её из стройки: удалённое
+  // остаётся на виду, с ценой и кнопкой «вернуть». Справочник общий на все дома,
+  // и строка, пропавшая без следа, вспоминается уже на площадке.
+  // Шапка «удалено» видна всегда — со счётом и суммой; сам перечень свёрнут,
+  // потому что экран открывают ради сметы, а не ради удалённого.
   // Красный минус «−175 000 ₽» читался как вычет из показанного итога: до вычета
-  // он или после — по экрану не понять. Убранная строка в смету просто не входит,
-  // и деньги никуда не уходили, поэтому подпись говорит это прямо, а тревожный
-  // цвет снят: убрать работу — решение человека, а не поломка.
-  t.ok('убранное показано отдельно', /НЕ В ИТОГЕ/.test(after))
+  // он или после — по экрану не понять. Удалённая строка в смету просто не входит,
+  // поэтому ни минуса, ни тревожного цвета.
+  t.ok('удалённое показано отдельно', /УДАЛЕНО · 1/.test(after), 'нет шапки «удалено»')
   t.ok('и не выглядит вычетом из итога', !/−[\d  ]+ ₽/.test(after), 'минус вернулся')
-  t.ok('перечень свёрнут', after.indexOf('data-a="est-pos-back"') < 0)
-  const dropHead = p.dom.node({ a: 'est-dropped-open' }); p.run('bind();'); dropHead.onclick()
-  const openDrop = p.run('tProjects()')
-  t.ok('и его можно вернуть', openDrop.indexOf('data-a="est-pos-back"') >= 0)
-  // Правило и справочник — общие на все дома, их выключение не трогает.
+  t.ok('перечень свёрнут', after.indexOf('data-a="est-pos-undel"') < 0)
+  const delHead = p.dom.node({ a: 'est-deleted-open' }); p.run('bind();'); delHead.onclick()
+  const openDel = p.run('tProjects()')
+  t.ok('и его можно вернуть', openDel.indexOf('data-a="est-pos-undel" data-k="' + key + '"') >= 0)
+  // Правило и справочник — общие на все дома, удаление их не трогает.
   t.ok('справочник не тронут', p.q('estimates.length') === 2)
   t.ok('правило на месте', p.q('buildRules.length') === 1)
 
-  const back = p.dom.node({ a: 'est-pos-back', k: key })
+  const back = p.dom.node({ a: 'est-pos-undel', k: key })
   p.run('bind();'); back.onclick()
   t.ok('вернулась на место',
     p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key===' + JSON.stringify(key) + ';}).length') === 1)
   t.ok('и деньги вернулись',
     p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost') === cost0)
-  t.ok('отметка из листа стёрта', !p.q('projects[0].posOff'))
+  t.ok('отметка из листа стёрта', !p.q('projects[0].posDel'))
 
-  // Состав объекта собирается ТЕМ ЖЕ списком: убранная работа не должна уехать
+  // Состав объекта собирается ТЕМ ЖЕ списком: удалённая работа не должна уехать
   // на стройку — иначе на экране одна смета, а в объекте другая.
   del.onclick()
   const inObj = p.q('allPositions(projects[0], specCtx(projects[0])).map(function(x){return x.key;})')
-  t.ok('в состав дома убранная работа не попадает', inObj.indexOf(key) < 0, JSON.stringify(inObj))
+  t.ok('в состав дома удалённая работа не попадает', inObj.indexOf(key) < 0, JSON.stringify(inObj))
+
+  // Серую строку «не в итоге» удаляют прямо с места: сняли галочку — и рядом
+  // «удалить», без захода в управление строкой.
+  const all = p.dom.node({ a: 'est-pos-undel', k: '' }); p.run('bind();'); all.onclick()
+  t.ok('«вернуть все» возвращает удалённое', !p.q('projects[0].posDel'))
+  const tick = p.dom.node({ a: 'est-pos-on', k: key }); p.run('bind();'); tick.onclick()
+  const offHtml = p.run('tProjects()')
+  const offRow = offHtml.slice(offHtml.indexOf('data-pos-off="' + key + '"'))
+  t.ok('у серой строки есть «удалить»', offHtml.indexOf('data-pos-off="' + key + '"') >= 0 &&
+    offRow.slice(0, offRow.indexOf('</div></div>') + 12).indexOf('data-a="est-pos-del" data-k="' + key + '"') >= 0,
+    offRow.slice(0, 600))
+  const delOff = p.dom.node({ a: 'est-pos-del', k: key, n: 'Работа' }); p.run('bind();'); delOff.onclick()
+  t.ok('удаление серой строки снимает «не в итоге»', !p.q('projects[0].posOff') && p.q('projects[0].posDel')[key] === 1)
+  t.ok('и убирает её с экрана', p.run('tProjects()').indexOf('data-pos-off="' + key + '"') < 0)
 }
 
 // ── Работу можно дописать в ЭТОТ дом ─────────────────────────────────────────
@@ -623,7 +643,7 @@ function create(p, name) {
   const del = p.dom.node({ a: 'est-pos-del', k: key })
   p.run('bind();'); del.onclick()
   t.ok('дописанная удаляется совсем', p.q('(projects[0].posAdd||[]).length') === 1)
-  t.ok('и в «убрано» не попадает', !p.q('projects[0].posOff'))
+  t.ok('и в «удалено» не попадает', !p.q('projects[0].posOff') && !p.q('projects[0].posDel'))
   t.ok('деньги вернулись к прежним + каталожная',
     p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost') > cost0)
 }

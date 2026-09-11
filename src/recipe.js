@@ -520,8 +520,8 @@ export function migrateMatAddrs(sheet) {
 // Едет только в НЕТРОНУТУЮ строку правила — только что заведённую. Если строку
 // под правилом уже правили, человек работает с тем, что видит, и воскрешать
 // поверх старые правки нельзя: клей «Стен спальни» вернулся бы с 1 на давние 12.
-// «Убрано из дома» (`posOff`) не везём вовсе: оно прячет работу целиком, и
-// молча спрятать то, что сейчас стоит в смете, — хуже, чем показать лишнее.
+// «Не в итоге» (`posOff`) и «удалено» (`posDel`) не везём вовсе: они прячут работу
+// целиком, и молча спрятать то, что сейчас стоит в смете, — хуже, чем показать лишнее.
 // Прогон идемпотентен.
 export const POS_EDIT_SECTIONS = ["matAdd", "matQty", "mats", "matOff", "matOrder", "posHours", "posK",
   "posCost", "posCostMode", "posStage", "posRoom", "posOrder", "qty"];
@@ -537,7 +537,7 @@ export function carryRuleEdits(sheet, rulePos) {
   const room = sheet.posRoom || {};
   // Какие строки правил уже правили — в них не везём ничего.
   const touched = {};
-  POS_EDIT_SECTIONS.concat(["posOff"]).forEach(function (sec) {
+  POS_EDIT_SECTIONS.concat(["posOff", "posDel"]).forEach(function (sec) {
     const map = sheet[sec];
     if (map && typeof map === "object" && !Array.isArray(map)) {
       Object.keys(map).forEach(function (k) { if (live[k]) touched[k] = true; });
@@ -1268,17 +1268,25 @@ export function applyStage(raw, sheet) {
 // `positions` — только то, что считается (деньги, договор, стройка); `shown` —
 // все строки в прежнем порядке, выключенные с пометкой `off`: по нему экран
 // рисует галочку снятой, не убирая строку с её места.
+//
+// `deleted` — удалённые ✕ (`posDel`): их нет ни в деньгах, ни на экране, только в
+// перечне «удалено», откуда их возвращают. Галочку прикидывают, удаление решают —
+// поэтому удаление главнее: строка с обеими отметками числится удалённой.
 export function dropOff(raw, sheet) {
   const off = (sheet && sheet.posOff) || {};
+  const del = (sheet && sheet.posDel) || {};
   const all = raw.positions || [];
-  if (!Object.keys(off).length) return Object.assign({ dropped: [] }, raw, { shown: all });
-  const kept = [], dropped = [], shown = [];
+  if (!Object.keys(off).length && !Object.keys(del).length) {
+    return Object.assign({ dropped: [], deleted: [] }, raw, { shown: all });
+  }
+  const kept = [], dropped = [], shown = [], deleted = [];
   all.forEach(function (p) {
+    if (del[p.key]) { deleted.push(Object.assign({}, p, { deleted: true })); return; }
     if (!off[p.key]) { kept.push(p); shown.push(p); return; }
     const o = Object.assign({}, p, { off: true });
     dropped.push(o); shown.push(o);
   });
-  return Object.assign({}, raw, { positions: kept, dropped: dropped, shown: shown });
+  return Object.assign({}, raw, { positions: kept, dropped: dropped, shown: shown, deleted: deleted });
 }
 
 // Позиция → работа объекта. ОДНА машинка на сборку объекта и на подпись состава:

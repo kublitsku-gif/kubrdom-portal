@@ -13763,6 +13763,21 @@ function optChipsHtml(pos, sh, w){
 // Работы больше нет — забываем всё, что лист про неё помнил. Иначе приписка к
 // комнате, этап и цена удалённой строки лежат в снимке вечно и всплывают на
 // следующей работе с тем же адресом.
+// Удалить работы справочника из листа. «Удалено» главнее «не в итоге», и галочку
+// снимаем: строка не должна числиться в двух перечнях сразу.
+function estDelKeys(sh, keys){
+  const off=Object.assign({}, sh.posOff||{}), del=Object.assign({}, sh.posDel||{});
+  (keys||[]).forEach(function(k){ delete off[k]; del[k]=1; });
+  if(Object.keys(off).length)sh.posOff=off; else delete sh.posOff;
+  if(Object.keys(del).length)sh.posDel=del; else delete sh.posDel;
+}
+// Снять отметку листа («не в итоге» или «удалено») с одной работы; пустой ключ —
+// «вернуть все».
+function estUnmark(sh, field, key){
+  if(!key){ delete sh[field]; return; }
+  const map=Object.assign({}, sh[field]||{}); delete map[key];
+  if(Object.keys(map).length)sh[field]=map; else delete sh[field];
+}
 function estForgetKey(sh, key){
   if(!sh||!key)return;
   ["posRoom","posStage","posCost","posCostMode","posOrder","posHours","posK","matQty","mats","matAdd","matOff","matOrder"].forEach(function(f){
@@ -14630,40 +14645,56 @@ function estImportDo(){
 // смета, из которой молча пропала строка, читается как смета без этой работы, и
 // вспоминают о ней на площадке.
 function estDroppedHtml(sh, canRule){
-  const off=(sh&&sh.posOff)||{};
-  const keys=Object.keys(off);
+  const del=(sh&&sh.posDel)||{};
+  const keys=Object.keys((sh&&sh.posOff)||{}).filter(function(k){ return !del[k]; });
   if(!keys.length)return "";
-  const dropped=(allPositionsRaw(sh, specCtx(sh)).dropped)||[];
-  const sum=dropped.reduce(function(a,p){ return a+(Number(p.cost)||0); },0);
-  // Свёрнут по умолчанию: сколько убрано и на сколько денег — в шапке, а сам
-  // перечень нужен, когда что-то возвращают.
-  // Красный минус читался как ВЫЧЕТ из показанного итога: «531 478 ₽» и рядом
-  // «−175 000 ₽» ставят вопрос, до вычета итог или после, — а он ни то, ни другое:
-  // убранная строка в смету просто не входит, и деньги никуда не уходили. Поэтому
-  // ни минуса, ни тревожного цвета: тон серый, а подпись говорит прямо, что этих
-  // денег в итоге нет. Тревога здесь была ложной — убрать строку это решение
-  // человека, а не поломка.
+  return estSetAsideHtml({ label:"НЕ В ИТОГЕ", title:"Эти работы не считаются в смете",
+    toggle:"est-dropped-open", back:"est-pos-back", open:droppedOpen, count:keys.length,
+    rows:(allPositionsRaw(sh, specCtx(sh)).dropped)||[], can:canRule });
+}
+// Удалённые ✕ работы (`posDel`): в смете и на экране их нет вовсе, но перечень с
+// «вернуть» держим — справочник общий на все дома, и работа, пропавшая из дома
+// без следа, вспоминается уже на площадке. Отдельно от «не в итоге»: там работу
+// прикидывают, здесь от неё отказались.
+let deletedOpen=false;
+function estDeletedHtml(sh, canRule){
+  const keys=Object.keys((sh&&sh.posDel)||{});
+  if(!keys.length)return "";
+  return estSetAsideHtml({ label:"УДАЛЕНО", title:"Удалённые из этого дома работы — их можно вернуть",
+    toggle:"est-deleted-open", back:"est-pos-undel", open:deletedOpen, count:keys.length,
+    rows:(allPositionsRaw(sh, specCtx(sh)).deleted)||[], can:canRule });
+}
+// Свёрнутый перечень отложенных работ: шапка со счётом и суммой, внутри — строки с
+// «вернуть». Свёрнут по умолчанию: сколько и на сколько денег — в шапке, а сам
+// перечень нужен, когда что-то возвращают.
+// Красный минус читался как ВЫЧЕТ из показанного итога: «531 478 ₽» и рядом
+// «−175 000 ₽» ставят вопрос, до вычета итог или после, — а он ни то, ни другое:
+// отложенная строка в смету просто не входит, и деньги никуда не уходили. Поэтому
+// ни минуса, ни тревожного цвета: тон серый, а подпись говорит прямо, что этих
+// денег в итоге нет.
+function estSetAsideHtml(o){
+  const sum=(o.rows||[]).reduce(function(a,p){ return a+(Number(p.cost)||0); },0);
   return '<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:9px 13px;margin-bottom:9px">'+
-    '<div data-a="est-dropped-open" title="Эти работы не считаются в смете" style="display:flex;align-items:baseline;gap:8px;cursor:pointer;padding:2px 0'+(droppedOpen?';margin-bottom:6px':'')+'">'+
+    '<div data-a="'+o.toggle+'" title="'+esc(o.title)+'" style="display:flex;align-items:baseline;gap:8px;cursor:pointer;padding:2px 0'+(o.open?';margin-bottom:6px':'')+'">'+
       // Подпись короткая не ради красоты: справка стоит в половине ширины рядом с
-      // «откуда числа», и «НЕ ВХОДИТ В ИТОГ · УБРАНО 1» обрезается многоточием
-      // ровно на том слове, ради которого её и переписывали.
-      '<span style="flex:1;min-width:0;font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(droppedOpen?"▾ ":"▸ ")+'НЕ В ИТОГЕ · '+keys.length+'</span>'+
+      // «откуда числа», и длинная подпись обрезается многоточием ровно на том
+      // слове, ради которого её и писали.
+      '<span style="flex:1;min-width:0;font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(o.open?"▾ ":"▸ ")+o.label+' · '+o.count+'</span>'+
       '<span style="font-size:11px;font-weight:700;color:#7a9aaa;white-space:nowrap">'+Math.round(sum).toLocaleString("ru-RU")+' ₽</span>'+
     '</div>'+
-    (!droppedOpen?'':
-    (dropped.length
-      ? dropped.map(function(p){
+    (!o.open?'':
+    ((o.rows||[]).length
+      ? o.rows.map(function(p){
           return '<div style="display:flex;align-items:baseline;gap:8px;padding:5px 0;border-top:1px solid #f4f7fb">'+
             '<span style="flex:1;min-width:0;font-size:12px;color:#7a9aaa">'+esc(p.name)+(p.room?' — '+esc(p.room):'')+'</span>'+
             '<span style="font-size:11.5px;color:#9aabbf;white-space:nowrap">'+Math.round(Number(p.cost)||0).toLocaleString("ru-RU")+' ₽</span>'+
-            (canRule?'<button data-a="est-pos-back" data-k="'+esc(p.key)+'" style="border:1px solid #16a08544;background:#fff;border-radius:7px;padding:3px 9px;font-size:10.5px;font-weight:700;color:#16a085;cursor:pointer">вернуть</button>':'')+
+            (o.can?'<button data-a="'+o.back+'" data-k="'+esc(p.key)+'" style="border:1px solid #16a08544;background:#fff;border-radius:7px;padding:3px 9px;font-size:10.5px;font-weight:700;color:#16a085;cursor:pointer">вернуть</button>':'')+
           '</div>';
         }).join("")
       // Работа могла уехать вместе с правилом или комнатой: ключа больше нет,
       // а отметка осталась. Показываем её честно и даём убрать отметку.
       : '<div style="font-size:11.5px;color:#9aabbf;padding:4px 0">Строк с такими ключами в смете больше нет — планировка изменилась.</div>')+
-    (canRule?'<div style="margin-top:7px"><button data-a="est-pos-back" data-k="" style="border:1px solid #d0dae8;background:#fff;border-radius:7px;padding:5px 10px;font-size:11px;color:#7a9aaa;cursor:pointer">Вернуть все</button></div>':''))+
+    (o.can?'<div style="margin-top:7px"><button data-a="'+o.back+'" data-k="" style="border:1px solid #d0dae8;background:#fff;border-radius:7px;padding:5px 10px;font-size:11px;color:#7a9aaa;cursor:pointer">Вернуть все</button></div>':''))+
   '</div>';
 }
 
@@ -15360,7 +15391,7 @@ function estRowsHtml(rows){
 // сразу по нескольким (убрали дописанную работу — это posAdd плюс её этап,
 // комната, цена и материалы), и откатывать их по одной значит собирать
 // полусостояние.
-const EST_EDIT_FIELDS=["posOrder","posOff","posAdd","posRoom","posStage","posCost","posCostMode",
+const EST_EDIT_FIELDS=["posOrder","posOff","posDel","posAdd","posRoom","posStage","posCost","posCostMode",
   "posHours","posK","hourRate","optPick","matOrder","matOff","matAdd","matQty","mats"];
 const EST_UNDO_MAX=20;
 let estUndo=[];
@@ -15411,9 +15442,10 @@ function estToolsHtml(sh){
 // половину санузла в чистовые. Отмечают чекбоксом, а решают один раз.
 function estPickCount(){ return Object.keys(estPick||{}).length; }
 // Галочка «считать в смете». Выключенная работа остаётся на своём месте серой —
-// её прикидывают, а не удаляют, — и включается тем же тапом. Хранится тем же
-// `posOff`, что и ✕: у «не в итоге» одна правда, и её уже уважают деньги, договор
-// и стройка. Зелёная и меньше фиолетовой отметки выбора — чтобы их не путали.
+// её прикидывают, а не удаляют, — и включается тем же тапом. Хранится в `posOff`,
+// который уважают деньги, договор и стройка. Удаление ✕ — отдельная отметка
+// (`posDel`): удалённой строки на экране нет вовсе. Зелёная и меньше фиолетовой
+// отметки выбора — чтобы их не путали.
 function estOnBoxHtml(key, on){
   return '<button data-a="est-pos-on" data-k="'+esc(key)+'" role="checkbox" aria-checked="'+(on?"true":"false")+'" '+
     'title="'+(on?"Считается в смете — снимите, чтобы выключить":"Не считается в смете — отметьте, чтобы включить")+'" '+
@@ -15421,6 +15453,8 @@ function estOnBoxHtml(key, on){
     'border-radius:6px;cursor:pointer;color:#fff;font-size:12px;font-weight:800;line-height:1;padding:0">'+(on?"✓":"")+'</button>';
 }
 // Выключенная строка: имя, её полная цена зачёркнутой и пометка «не в итоге».
+// Рядом с пометкой — «удалить»: сняли галочку и поняли, что работы в доме не будет,
+// — удаляют тут же, не раскрывая управление строкой.
 function estOffRowHtml(p, canRule){
   return '<div data-pos-off="'+esc(p.key)+'" style="padding:12px 0'+(p.added?';border-left:2px solid '+EST_COL.added+';padding-left:9px;margin-left:-2px':'')+'">'+
     '<div style="display:flex;align-items:flex-start;gap:8px">'+
@@ -15428,7 +15462,10 @@ function estOffRowHtml(p, canRule){
       '<span title="'+esc(p.name)+' · не считается в смете" style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#9aabbf;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+esc(p.name)+'</span>'+
       '<span style="font-size:13px;font-weight:700;color:#b8c5d3;white-space:nowrap;text-decoration:line-through">'+Math.round(Number(p.cost)||0).toLocaleString("ru-RU")+' ₽</span>'+
     '</div>'+
-    '<div style="margin:4px 0 0 '+(canRule?'30px':'0')+';font-size:10.5px;font-weight:700;color:#9aabbf">не в итоге'+(p.room?' · '+esc(p.room):'')+'</div>'+
+    '<div style="display:flex;align-items:center;gap:8px;margin:4px 0 0 '+(canRule?'30px':'0')+'">'+
+      '<span style="flex:1;min-width:0;font-size:10.5px;font-weight:700;color:#9aabbf">не в итоге'+(p.room?' · '+esc(p.room):'')+'</span>'+
+      (canRule?'<button data-a="est-pos-del" data-k="'+esc(p.key)+'" data-n="'+esc(p.name||"")+'" title="Удалить работу из сметы этого дома" style="border:1px solid #e74c3c44;background:#fff;border-radius:7px;padding:3px 9px;font-size:10.5px;font-weight:700;color:#e74c3c;cursor:pointer;white-space:nowrap">✕ удалить</button>':'')+
+    '</div>'+
   '</div>';
 }
 function estPickBoxHtml(key){
@@ -15966,6 +16003,7 @@ function estBodyHtml(sh, types, live, actions){
     const asides=[
       { html:spec2FactsHtml(w.facts, live), wide:!!factsOpen },
       { html:estDroppedHtml(sh, canRule),   wide:!!droppedOpen },
+      { html:estDeletedHtml(sh, canRule),   wide:!!deletedOpen },
     ].filter(function(x){ return !!x.html; });
     if(asides.length)h+='<div style="display:flex;flex-wrap:wrap;gap:0 9px;align-items:flex-start">'+
       asides.map(function(x){ return '<div style="flex:'+(x.wide?'1 1 100%':'1 1 210px')+';min-width:0">'+x.html+'</div>'; }).join("")+'</div>';
@@ -16222,7 +16260,7 @@ function estBodyHtml(sh, types, live, actions){
                   (canMove
                     ? '<button data-a="est-pos-room-pick" data-k="'+esc(p.key)+'" title="Приписать работу к помещению" style="width:28px;height:28px;background:'+(roomPickKey===p.key?RULE_COL:"#fff")+';border:1px solid '+(roomPickKey===p.key?RULE_COL:"#dde6f0")+';border-radius:7px;cursor:pointer;color:'+(roomPickKey===p.key?"#fff":"#7a9aaa")+';font-size:11px">⌂</button>'
                     : '')+
-                  '<button data-a="est-pos-del" data-k="'+esc(p.key)+'" data-n="'+esc(p.name||"")+'" title="'+(p.added?"Удалить дописанную работу":"Убрать эту работу из дома")+'" style="width:28px;height:28px;background:#fff;border:1px solid #e74c3c44;border-radius:7px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button>'+
+                  '<button data-a="est-pos-del" data-k="'+esc(p.key)+'" data-n="'+esc(p.name||"")+'" title="'+(p.added?"Удалить дописанную работу":"Удалить работу из сметы этого дома")+'" style="width:28px;height:28px;background:#fff;border:1px solid #e74c3c44;border-radius:7px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button>'+
                   '</span>'+
                 '</div>'
               : '')+
@@ -25726,6 +25764,7 @@ function bind(){
     else if(a==="est-find-clear"){el.onclick=()=>{ estFind=""; rerenderTab(); };}
     else if(a==="est-facts-open"){el.onclick=()=>{ factsOpen=!factsOpen; ui(); };}
     else if(a==="est-dropped-open"){el.onclick=()=>{ droppedOpen=!droppedOpen; ui(); };}
+    else if(a==="est-deleted-open"){el.onclick=()=>{ deletedOpen=!deletedOpen; ui(); };}
     else if(a==="est-gaps-open"){el.onclick=()=>{ gapsOpen=!gapsOpen; ui(); };}
     // Разбор площади — по строке комнаты. Раскрыта одна: три развёрнутых разбора
     // подряд это уже не ответ на вопрос «откуда 19,64», а вторая таблица.
@@ -26182,7 +26221,7 @@ function bind(){
       const sh=schemeSheet()||spec2Sheet(); const keys=Object.keys(estPick||{});
       if(!sh||!keys.length)return;
       estSnap(sh, "удаление "+keys.length+" работ");
-      let off=Object.assign({}, sh.posOff||{});
+      const gone=[];
       keys.forEach(function(key){
         if(key.indexOf("add:")===0){
           const id=key.slice(4);
@@ -26191,11 +26230,11 @@ function bind(){
           estForgetKey(sh, key);
           return;
         }
-        off[key]=1;
+        gone.push(key);
       });
-      if(Object.keys(off).length)sh.posOff=off;
+      if(gone.length)estDelKeys(sh, gone);
       estPick={}; estPickWhat=""; scheduleSave(); fl();
-      estFlash("Убрано работ: "+keys.length);
+      estFlash("Удалено работ: "+keys.length);
     };}
     else if(a==="est-pick-stage-set"){el.onclick=()=>{
       const sh=schemeSheet()||spec2Sheet(); const keys=Object.keys(estPick||{});
@@ -26368,13 +26407,14 @@ function bind(){
         estForgetKey(sh, key);
         scheduleSave(); fl(); estFlash("Работа"+nm+" удалена"); return;
       }
-      // Выключаем строку в ЭТОМ листе, не трогая правило и справочник: они общие
-      // на все дома, а решение «здесь этой работы нет» — про один дом.
-      sh.posOff=Object.assign({}, sh.posOff||{}, { [key]:1 });
-      scheduleSave(); fl(); estFlash("Работа"+nm+" убрана из дома");
+      // Удаляем строку из ЭТОГО листа, не трогая правило и справочник: они общие
+      // на все дома, а решение «здесь этой работы нет» — про один дом. В отличие
+      // от галочки строка уходит с экрана; вернуть — отменой или из «удалено».
+      estDelKeys(sh, [key]);
+      scheduleSave(); fl(); estFlash("Работа"+nm+" удалена");
     };}
-    // Галочка «считать в смете»: тот же `posOff`, что у ✕ и «вернуть», — одна
-    // отметка, и деньги, договор и стройка её уже уважают.
+    // Галочка «считать в смете»: `posOff`, который уважают деньги, договор и
+    // стройка. Строка остаётся на месте серой — это прикидка, а не удаление.
     else if(a==="est-pos-on"){el.onclick=()=>{
       const key=el.dataset.k||"";
       const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
@@ -26390,9 +26430,16 @@ function bind(){
       const sh=schemeSheet()||spec2Sheet();
       if(!sh||!sh.posOff)return;
       estSnap(sh, "возврат работы");
-      if(!key){ delete sh.posOff; }                 // «вернуть все»
-      else { const map=Object.assign({}, sh.posOff); delete map[key];
-        if(Object.keys(map).length)sh.posOff=map; else delete sh.posOff; }
+      estUnmark(sh, "posOff", key);                 // пустой ключ — «вернуть все»
+      scheduleSave(); fl();
+    };}
+    // Вернуть удалённую ✕ работу (или все — пустой ключ) из перечня «удалено».
+    else if(a==="est-pos-undel"){el.onclick=()=>{
+      const key=el.dataset.k||"";
+      const sh=schemeSheet()||spec2Sheet();
+      if(!sh||!sh.posDel)return;
+      estSnap(sh, "возврат удалённой работы");
+      estUnmark(sh, "posDel", key);
       scheduleSave(); fl();
     };}
     else if(a==="est-mat-add-del"){el.onclick=()=>{
