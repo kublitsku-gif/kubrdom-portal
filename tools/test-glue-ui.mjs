@@ -43,7 +43,7 @@ p.run('stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};')
 
 const POS = 'allPositions(projects[0], specCtx(projects[0]))'
 const rowOf = (estId) => p.q(`(function(){ const x=${POS}.filter(function(r){ return r.estId===${JSON.stringify(estId)}; })[0];
-  return x?{ key:x.key, glue:glueForRow(x), mats:x.mats.map(function(m){ return { k:matSwapKey(x,m), pid:m.pid, n:m.n, qty:m.qty, added:!!m.added }; }) }:null; })()`)
+  return x?{ key:x.key, glue:glueForRow(x, glueRateOf(settings)), mats:x.mats.map(function(m){ return { k:matSwapKey(x,m), pid:m.pid, n:m.n, qty:m.qty, added:!!m.added }; }) }:null; })()`)
 const listHtml = (key) => p.run(`matsOpen[${JSON.stringify(key)}]=true; tProjects()`)
 const plain = (html) => html.replace(/<[^>]*>/g, ' ').replace(/[  ]/g, ' ').replace(/\s+/g, ' ')
 
@@ -84,6 +84,30 @@ const plain = (html) => html.replace(/<[^>]*>/g, ' ').replace(/[  ]/g, ' ').r
   const html2 = listHtml(hall.key)
   t.ok('кнопка «＋» ушла', html2.indexOf('data-a="est-glue-add" data-k="' + hall.key + '"') < 0)
   t.ok('и стоит галочка', plain(html2).indexOf('✓ клей ' + hall.glue.tubes + ' шт') >= 0)
+}
+
+{
+  // Норма расхода правится в самой подсказке и одна на портал (settings.glueGPerM2).
+  t.section('Норма расхода — «⚙ 100 г/м²» у подсказки')
+  const bed = rowOf('e_bed')
+  const html = listHtml(bed.key)
+  t.ok('по умолчанию 100 г/м²', bed.glue.rate === 100 && plain(html).indexOf('⚙ 100 г/м²') >= 0, plain(html).slice(0, 300))
+  t.ok('кнопка нормы есть', html.indexOf('data-a="glue-rate"') >= 0)
+
+  p.run('prompt=function(){ return "200"; };')
+  const rate = p.dom.node({ a: 'glue-rate' }); p.run('bind();'); rate.onclick()
+  t.ok('норма записана в настройки', p.q('settings.glueGPerM2') === 200, String(p.q('settings.glueGPerM2')))
+  const bed2 = rowOf('e_bed')
+  t.ok('строка пересчитала клей', bed2.glue.rate === 200 && bed2.glue.tubes === Math.ceil(bed2.glue.area * 200 / 280 - 1e-9),
+    JSON.stringify(bed2.glue))
+  t.ok('подсказка показывает новое число', plain(listHtml(bed.key)).indexOf('⚙ 200 г/м²') >= 0)
+
+  p.run('prompt=function(){ return "много"; };'); rate.onclick()
+  t.ok('не число — норма прежняя', p.q('settings.glueGPerM2') === 200)
+  p.run('prompt=function(){ return null; };'); rate.onclick()
+  t.ok('отмена — норма прежняя', p.q('settings.glueGPerM2') === 200)
+  p.run('prompt=function(){ return "120,5"; };'); rate.onclick()
+  t.ok('дробная через запятую', p.q('settings.glueGPerM2') === 120.5)
 }
 
 {

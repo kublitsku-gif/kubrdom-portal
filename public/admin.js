@@ -56,7 +56,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
 import { totals2, issues2, works2 } from "../src/spec2.js";
 import { priceHist, priceWas, pricePush, priceStale, refreshPrices } from "../src/prices.js";
 import { UNIT_WORDS, PACK_AS_WORD, normProduct } from "../src/catalog.js";
-import { glueForRow, isGlueMat, glueProductOf, GLUE_G_PER_M2, GLUE_G_PER_TUBE } from "../src/glue.js";
+import { glueForRow, isGlueMat, glueProductOf, glueRateOf, glueRateParse, GLUE_G_PER_TUBE, GLUE_RATE_MAX } from "../src/glue.js";
 import { allPositions, allPositionsRaw, addedPositions, guessVolume, carryRuleEdits, matKeyOf, matAddKey, matAddrs, matAddrPid, matAddrSwap, migrateMatAddrs, rulePositions, positionWork, ruleText, ruleReady, ruleAreas, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
   pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
   optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf, ROOM_HOUSE, roomKeyOf, positionSplit,
@@ -13796,8 +13796,9 @@ function specMatsListHtml(pos, sh, live){
   // дописать материал по-прежнему можно: кнопка не должна пропадать вместе с ним.
   if(!mats.length&&!off.length)return can?matAddHtml(pos):"";
   const sw=matSwapsOf(sh, pos.key);
-  // Клей под фанеру и плитку на стенах: null — строка не про это.
-  const glue=glueForRow(pos);
+  // Клей под фанеру и плитку на стенах: null — строка не про это. Норма расхода —
+  // из настроек портала, её правят тут же, в подсказке.
+  const glue=glueForRow(pos, glueRateOf(settings));
   // Объёмы дома нужны только для сверки своего числа — считаем, лишь когда спросили.
   let volsMemo=null;
   const vols=function(){ if(!volsMemo)volsMemo=houseVolsOf(sh); return volsMemo; };
@@ -14001,20 +14002,31 @@ function matNeedHtml(pos, m, qty, can, vols){
   return '<button '+act+' title="Поставить количество по объёму строки" '+
     'style="border:1px solid #e67e2255;background:#fdf2e9;color:#d35400;border-radius:5px;padding:1px 6px;font-size:9.5px;font-weight:700;cursor:pointer">нужно '+what+' ⟵</button>';
 }
-// «Нужно 20 шт на 26,87 м²» у клея Tytan в строке стен, где клеят фанеру или
-// плитку. Считает `glueForRow`: 200 г на квадрат, 280 г в картридже. Тап ставит
-// число: дописанному — в сам лист, расчётному — ручным количеством строки.
+// «Нужно 10 шт на 26,87 м²» у клея Tytan в строке стен, где клеят фанеру или
+// плитку. Считает `glueForRow`: норма на квадрат (по умолчанию 100 г), 280 г в
+// картридже. Тап ставит число: дописанному — в сам лист, расчётному — ручным
+// количеством строки.
 function glueNeedHtml(pos, m, qty, can, glue){
   if(!glue||!m||m.own||!isGlueMat(m.n))return '';
-  const what=glue.tubes+' шт на '+numRu(glue.area)+' м² · '+GLUE_G_PER_M2+' г/м²';
-  const why=numRu(glue.area)+' м² × '+GLUE_G_PER_M2+' г = '+numRu(Math.round(glue.grams/10)/100)+' кг клея, в картридже '+GLUE_G_PER_TUBE+' г';
-  if(Math.abs((Number(qty)||0)-glue.tubes)<0.01)return '<span title="'+esc(why)+'" style="color:#16a085;font-weight:700">✓ клей '+what+'</span>';
+  const what=glue.tubes+' шт на '+numRu(glue.area)+' м²';
+  const why=numRu(glue.area)+' м² × '+numRu(glue.rate)+' г = '+numRu(Math.round(glue.grams/10)/100)+' кг клея, в картридже '+GLUE_G_PER_TUBE+' г';
+  if(Math.abs((Number(qty)||0)-glue.tubes)<0.01)return '<span title="'+esc(why)+'" style="color:#16a085;font-weight:700">✓ клей '+what+'</span>'+glueRateHtml(glue, can);
   const act=!can?'':(m.added
     ? 'data-a="est-mat-need" data-k="'+esc(pos.key)+'" data-m="'+esc(m.id||"")+'" data-q="'+glue.tubes+'"'
     : 'data-a="est-mat-qty-to" data-k="'+esc(matSwapKey(pos,m))+'" data-q="'+glue.tubes+'"');
-  if(!act)return '<span title="'+esc(why)+'" style="color:#e67e22;font-weight:700">клей: нужно '+what+'</span>';
+  if(!act)return '<span title="'+esc(why)+'" style="color:#e67e22;font-weight:700">клей: нужно '+what+'</span>'+glueRateHtml(glue, can);
   return '<button '+act+' title="'+esc(why+'. Тап — поставить количество')+'" '+
-    'style="border:1px solid #e67e2255;background:#fdf2e9;color:#d35400;border-radius:5px;padding:1px 6px;font-size:9.5px;font-weight:700;cursor:pointer">клей: нужно '+what+' ⟵</button>';
+    'style="border:1px solid #e67e2255;background:#fdf2e9;color:#d35400;border-radius:5px;padding:1px 6px;font-size:9.5px;font-weight:700;cursor:pointer">клей: нужно '+what+' ⟵</button>'+
+    glueRateHtml(glue, can);
+}
+// Норма расхода — тут же, у подсказки: где видно число, там его и правят. Норма
+// одна на портал (`settings.glueGPerM2`), и подпись говорит об этом прямо, чтобы
+// правка на одном доме не оказалась сюрпризом в другом.
+function glueRateHtml(glue, can){
+  const txt=numRu(glue.rate)+' г/м²';
+  if(!can)return '<span style="font-size:9.5px;color:#9aabbf">· '+txt+'</span>';
+  return '<button data-a="glue-rate" title="Расход клея на м² — общий для всех домов. Тап — поменять" '+
+    'style="border:1px dashed #d3540066;background:#fff;color:#d35400;border-radius:5px;padding:1px 6px;font-size:9.5px;font-weight:700;cursor:pointer;white-space:nowrap">⚙ '+txt+'</button>';
 }
 // Клея в строке нет вовсе — предлагаем Classic Fix с Леманы сразу нужным числом.
 // Убранный руками клей не навязываем обратно: это решение по этому дому.
@@ -14022,14 +14034,15 @@ function glueAddHtml(pos, mats, off, sh, can, glue){
   if(!glue||(mats||[]).some(function(m){ return isGlueMat(m.n); }))return '';
   if((off||[]).some(function(addr){ return isGlueMat(matOffName(pos, sh, addr)); }))return '';
   const prod=glueProductOf(expProducts);
-  const what=glue.tubes+' шт на '+numRu(glue.area)+' м² ('+GLUE_G_PER_M2+' г/м²)';
+  const what=glue.tubes+' шт на '+numRu(glue.area)+' м²';
   if(!can||!prod){
-    return '<div style="padding:6px 0 2px;font-size:10.5px;font-weight:700;color:#d35400">клей Tytan под обшивку: нужно '+what+'</div>';
+    return '<div style="padding:6px 0 2px;font-size:10.5px;font-weight:700;color:#d35400">клей Tytan под обшивку: нужно '+what+' '+glueRateHtml(glue, false)+'</div>';
   }
-  return '<div style="padding:6px 0 2px">'+
-    '<button data-a="est-glue-add" data-k="'+esc(pos.key)+'" data-q="'+glue.tubes+'" title="Фанеру и плитку на стены сажают на клей: '+GLUE_G_PER_M2+' г на м², в картридже '+GLUE_G_PER_TUBE+' г" '+
-      'style="width:100%;border:1px solid #e67e2255;background:#fdf2e9;color:#d35400;border-radius:8px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer;text-align:left">'+
+  return '<div style="padding:6px 0 2px;display:flex;align-items:center;gap:6px">'+
+    '<button data-a="est-glue-add" data-k="'+esc(pos.key)+'" data-q="'+glue.tubes+'" title="Фанеру и плитку на стены сажают на клей: '+numRu(glue.rate)+' г на м², в картридже '+GLUE_G_PER_TUBE+' г" '+
+      'style="flex:1;min-width:0;border:1px solid #e67e2255;background:#fdf2e9;color:#d35400;border-radius:8px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer;text-align:left">'+
       '＋ '+esc(prod.name)+' · '+what+'</button>'+
+    glueRateHtml(glue, true)+
   '</div>';
 }
 function matOffHtml(pos, off, sh){
@@ -25534,7 +25547,7 @@ function bind(){
       }
       fl();
     };}
-    // Тап по «клей: нужно 20 шт» у расчётного материала — число становится ручным
+    // Тап по «клей: нужно 10 шт» у расчётного материала — число становится ручным
     // количеством строки (дописанный клей идёт через est-mat-need выше).
     else if(a==="est-mat-qty-to"){el.onclick=()=>{
       const k=el.dataset.k||"", q=parseFloat(el.dataset.q||"0");
@@ -25543,7 +25556,18 @@ function bind(){
       estSnap(sh, "количество клея по площади");
       sh.matQty=matQtyWith(sh, k.slice(0,cut), k.slice(cut+1), q); fl();
     };}
-    // «＋ Tytan Classic Fix · 20 шт» — клей с Леманы в строку, сразу нужным числом.
+    // «⚙ 100 г/м²» у подсказки клея — норма расхода, одна на портал. Не число или
+    // вне разумного — норму не трогаем и говорим, какой она бывает.
+    else if(a==="glue-rate"){el.onclick=()=>{
+      const cur=glueRateOf(settings);
+      const txt=prompt("Расход клея Tytan, грамм на м² — для всех домов:", String(cur));
+      if(txt==null)return;
+      const v=glueRateParse(txt);
+      if(v==null){ alert("Расход — число от 1 до "+GLUE_RATE_MAX+" г на м²."); return; }
+      if(v===cur)return;
+      settings=Object.assign({},settings,{glueGPerM2:v}); fl();
+    };}
+    // «＋ Tytan Classic Fix · 10 шт» — клей с Леманы в строку, сразу нужным числом.
     else if(a==="est-glue-add"){el.onclick=()=>{
       const posKey=el.dataset.k||"", q=parseFloat(el.dataset.q||"0");
       const sh=schemeSheet()||spec2Sheet(); if(!sh||!posKey||!(q>0))return;
