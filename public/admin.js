@@ -9038,9 +9038,22 @@ function matOfferAddNew(p, o){
   // Имя магазина приводим здесь, а не только в форме: сюда же приходят обход
   // магазинов и вставленная ссылка, и вывеска должна быть одна на всех.
   const row={ id:gid(), store:normStore((o&&o.store)||""), seller:(o&&o.seller)||"", url:(o&&o.url)||"", unitCost:Number(o&&o.unitCost)||0 };
+  // Упаковка у предложения своя (`per`, см. shopPer): без неё сверка делила бы
+  // ценник оптовой упаковки на единицу, и цена двадцати штук ушла бы в цену одной.
+  if(Number(o&&o.per)>1)row.per=Number(o.per);
   p.offers=matOffers(p).concat([row]);
   matOfferPick(p, row.id);
   return row;
+}
+// Добавить магазин по ЦЕННИКУ. Опт — это не второй товар, а ещё одно предложение
+// той же карточки: Озон продаёт герметик штукой и упаковкой по 20. Вписывают то,
+// что написано у магазина, и сколько штук в покупке, — делит портал, как и сверка.
+// Упаковку не назвали — цена как есть: форма и раньше брала цену за нашу единицу.
+function matOfferAddShelf(p, s){
+  const per=Number(s&&s.per)>1?Number(s.per):0;
+  const price=Number(s&&s.price)||0;
+  const cost=per?Math.round(price/per*100)/100:price;
+  return matOfferAddNew(p, { store:(s&&s.store)||"", seller:(s&&s.seller)||"", url:(s&&s.url)||"", unitCost:cost, per:per });
 }
 // Завести товар в каталог. Один код на три двери: дописали материал в смету,
 // вставили ссылку из магазина, нашли в сверке материал без карточки. Каталог
@@ -9126,10 +9139,16 @@ function matOffersHtml(p){
       list.map(function(o){
         const on=o.id===cur;
         const col=SC[o.store]||"#16a085";
+        // Опт подписан прямо в предложении: два «Озон · …» рядом иначе не различить.
+        // Цена — за штуку (по ней считают сметы), рядом — сколько стоит вся упаковка:
+        // её и платят на кассе.
+        const per=Number(o.per)||0;
+        const unit=(EXP_MODES.find(function(x){return x.k===p.mode;})||EXP_MODES[0]).unit;
         return '<span style="display:inline-flex;align-items:center;gap:5px;border:1.5px solid '+(on?col:"#dde6f0")+';background:'+(on?col+"12":"#fff")+';border-radius:10px;padding:4px 8px">'+
           '<button data-mat-offer="'+esc(o.id)+'" style="border:none;background:transparent;cursor:pointer;font-size:11.5px;font-weight:700;color:'+(on?col:"#5a7a9a")+';padding:0">'+
-            (on?"● ":"○ ")+esc(o.store||"магазин")+' · '+(Number(o.unitCost)||0).toLocaleString("ru-RU")+' ₽'+
+            (on?"● ":"○ ")+esc(o.store||"магазин")+(per>1?' · опт ×'+numRu(per):'')+' · '+(Number(o.unitCost)||0).toLocaleString("ru-RU")+(per>1?' ₽/'+esc(unit):' ₽')+
           '</button>'+
+          (per>1?'<span title="Цена всей упаковки" style="font-size:10px;font-weight:600;color:#9aabbf;white-space:nowrap">упаковка '+Math.round((Number(o.unitCost)||0)*per).toLocaleString("ru-RU")+' ₽</span>':'')+
           (/^https?:\/\//i.test(o.url||"")?'<a href="'+esc(o.url)+'" target="_blank" rel="noopener" title="Открыть в магазине" style="font-size:10px;font-weight:700;color:'+col+';text-decoration:none">↗</a>':'')+
           (list.length>1?'<button data-mat-offer-del="'+esc(o.id)+'" title="Убрать магазин" style="border:none;background:transparent;cursor:pointer;color:#c0392b;font-size:11px;padding:0">✕</button>':'')+
         '</span>';
@@ -9140,14 +9159,15 @@ function matOffersHtml(p){
       ? '<div style="margin-top:7px;background:#eefaf6;border:1px solid #16a08544;border-radius:10px;padding:9px 10px">'+
           '<div style="display:flex;gap:5px;margin-bottom:6px">'+
             '<input id="mof-store" placeholder="Магазин" style="flex:1;min-width:0;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none">'+
-            '<input id="mof-cost" placeholder="Цена ₽" inputmode="decimal" style="width:96px;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none">'+
+            '<input id="mof-cost" placeholder="Цена ₽" title="Цена как на ценнике магазина" inputmode="decimal" style="width:96px;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none">'+
+            '<input id="mof-per" placeholder="шт в покупке" title="Опт упаковкой: сколько штук в одной покупке. Пусто — поштучно" inputmode="decimal" style="width:92px;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none">'+
           '</div>'+
           '<input id="mof-url" placeholder="Ссылка на товар" style="width:100%;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;margin-bottom:6px">'+
           '<div style="display:flex;gap:6px">'+
             '<button data-mat-offer-do="1" style="flex:1;padding:8px;background:#16a085;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Добавить магазин</button>'+
             '<button data-mat-offer-add="" style="padding:8px 12px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:12px">Отмена</button>'+
           '</div>'+
-          '<div style="font-size:10px;color:#7a9aaa;line-height:1.45;margin-top:6px">Цена и ссылка выбранного магазина становятся ценой товара — по ней считаются сметы.</div>'+
+          '<div style="font-size:10px;color:#7a9aaa;line-height:1.45;margin-top:6px">Цена и ссылка выбранного магазина становятся ценой товара — по ней считаются сметы. Опт упаковкой — впишите цену упаковки и сколько в ней штук: портал разделит.</div>'+
         '</div>'
       : '')+
   '</div>';
@@ -9363,8 +9383,9 @@ function bindExpEditor(p){
     const store=normStore(((document.getElementById("mof-store")||{}).value||""));
     const url=((document.getElementById("mof-url")||{}).value||"").trim();
     const cost=parseFloat(String(((document.getElementById("mof-cost")||{}).value||"")).replace(",","."))||0;
+    const per=parseFloat(String(((document.getElementById("mof-per")||{}).value||"")).replace(",","."))||0;
     if(!store&&!url){ alert("Впишите магазин или ссылку."); return; }
-    matOfferAddNew(p, { store:store, url:url, unitCost:cost });
+    matOfferAddShelf(p, { store:store, url:url, price:cost, per:per });
     matOfferAdd=""; scheduleSave(); renderExpCard();
   };
   const bindText=function(id,field,num){const i=document.getElementById(id);if(i)i.oninput=function(){p[field]=num?(parseFloat(this.value)||0):this.value;_expRecalc();};};

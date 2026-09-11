@@ -167,4 +167,47 @@ function panel() {
   t.ok('история записана', (p.q('expProducts[0].hist')||[]).length > 0)
 }
 
+// ── Опт — это предложение со своей упаковкой ───────────────────────────────
+// Тот же герметик Озон продаёт штукой и упаковкой по 20. Две карточки на один
+// товар — две правды (см. выше), поэтому опт — ещё одно предложение той же
+// карточки: ценник упаковки делится на `per`, в смету идёт цена за штуку, а в
+// «где купить» видно, что это опт и сколько стоит вся упаковка.
+{
+  t.section('Опт упаковкой — в той же карточке')
+  const p = boot({})
+  p.set({
+    expProducts: [{ id: 'p1', emoji: '📦', name: 'Герметик полиуретановый 780 г',
+      store: 'Озон', url: 'https://www.ozon.ru/product/638233495/', mode: 'piece', unitCost: 520, qty: 1 }],
+    estimates: [], dbPlans: [], crmClients: [], specSheets: [], specSheets2: [], projects: [],
+    buildRules: [], winTypes: [], objects: [], templates: [], contractDocs: [], purchases: [],
+    issues: [], users: [], stock: [], settings: {},
+  })
+  p.run('tab="db";dbTab="exp";expOpenId="p1";')
+  p.run('matOfferAddShelf(expProducts[0], { store:"Озон", url:"https://www.ozon.ru/product/679829577/", price:7354, per:20 });')
+  const prod = p.q('expProducts[0]')
+  const opt = (prod.offers || [])[1] || {}
+  t.ok('опт стал вторым предложением той же карточки', (prod.offers || []).length === 2, JSON.stringify(prod.offers))
+  t.ok('упаковка запомнена у предложения', opt.per === 20, JSON.stringify(opt))
+  t.ok('цена за штуку — ценник, делённый на упаковку', opt.unitCost === 367.7, String(opt.unitCost))
+  t.ok('розница осталась со своей ценой', prod.offers[0].unitCost === 520 && !prod.offers[0].per, JSON.stringify(prod.offers[0]))
+  t.ok('в смету идёт цена за штуку', prod.unitCost === 367.7, String(prod.unitCost))
+
+  const card = p.run('expEditorHtml(expProducts[0])')
+  const where = card.slice(card.indexOf('ГДЕ КУПИТЬ'), card.indexOf('ГДЕ КУПИТЬ') + 2500)
+  t.ok('в «где купить» опт подписан', /опт ×20/.test(where), where.replace(/<[^>]*>/g, ' ').slice(0, 400))
+  t.ok('и видна цена всей упаковки', /7[\s  ]354 ₽/.test(where))
+  t.ok('розница без пометки опта', (where.match(/опт ×/g) || []).length === 1)
+  // Сверка цен делит ценник упаковки тем же `per` — цена упаковки не уезжает в цену штуки.
+  t.ok('сверка делит ценник упаковки', p.q('priceToOurUnit(expProducts[0], 7354, expProducts[0].offers[1])') === 367.7)
+
+  // Форма «＋ магазин» спрашивает, сколько штук в покупке.
+  p.run('matOfferAdd="p1";')
+  t.ok('в форме магазина есть «шт в покупке»', p.run('expEditorHtml(expProducts[0])').indexOf('id="mof-per"') >= 0)
+
+  // Упаковку не указали — обычная покупка поштучно.
+  p.run('matOfferAddShelf(expProducts[0], { store:"Лемана ПРО", url:"https://lemanapro.ru/product/x/", price:610 });')
+  const third = p.q('expProducts[0].offers[2]')
+  t.ok('без упаковки — цена как на ценнике и без per', third.unitCost === 610 && !third.per, JSON.stringify(third))
+}
+
 t.done()
