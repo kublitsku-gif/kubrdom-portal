@@ -8,7 +8,7 @@
 import crypto from "node:crypto";
 import worker from "../src/worker.js";
 import { verifyInitData, TG_INIT_MAX_AGE_S } from "../src/tgauth.js";
-import { portalButton, ensureMenuButton } from "../src/notify.js";
+import { portalButton, ensureMenuButton, ensureChatUi, tgWebhook, KB_VER } from "../src/notify.js";
 
 const BOT = "123456:TEST-bot-token";
 let failed = 0;
@@ -139,6 +139,16 @@ const payloadOf = (token) => JSON.parse(Buffer.from(String(token).split(".")[1],
   const kb2 = portalButton({ PUBLIC_BASE_URL: "https://staging.example/" }, "obj=o1&view=receive", "Записать часы");
   ok("адрес берётся из PUBLIC_BASE_URL", kb2.inline_keyboard[0][0].web_app.url === "https://staging.example/admin?go=obj%3Do1%26view%3Dreceive", kb2.inline_keyboard[0][0].web_app.url);
 
+  // Отказ Telegram не должен тонуть молча: без лога не отличить отказ от кэша телефона.
+  const errors = [];
+  const realError = console.error;
+  console.error = (...a) => errors.push(a.map(String).join(" "));
+  globalThis.fetch = async () => ({ json: async () => ({ ok: false, error_code: 400, description: "Bad Request: test refusal" }) });
+  const failedSet = await ensureMenuButton({ TG_BOT_TOKEN: BOT });
+  console.error = realError;
+  ok("отказ Telegram — кнопка не считается поставленной", failedSet === false, failedSet);
+  ok("отказ виден в логе Worker'а с причиной", errors.some((e) => /setChatMenuButton/.test(e) && /test refusal/.test(e)), errors);
+
   const calls = [];
   globalThis.fetch = async (url, opts) => {
     calls.push({ url: String(url), body: opts && opts.body ? JSON.parse(opts.body) : null });
@@ -153,6 +163,57 @@ const payloadOf = (token) => JSON.parse(Buffer.from(String(token).split(".")[1],
   ok("это кнопка мини-приложения «Портал»", mb && mb.type === "web_app" && mb.text === "Портал", mb);
   ok("ведёт на портал без раздела", mb && mb.web_app && mb.web_app.url === "https://portal.kubrdom.ru/admin", mb);
   ok("ставится всем личным чатам сразу (без chat_id)", menu[0] && menu[0].body && menu[0].body.chat_id === undefined, menu[0] && menu[0].body);
+}
+
+// ── 4. Кнопка «Портал» в конкретном чате ─────────────────────────────────────
+// Кнопку «по умолчанию» Telegram в приложения не рассылает: телефон узнаёт о ней, когда
+// сам обновит сведения о боте. У Юрия после деплоя и /start её так и не было. Кнопка,
+// поставленная конкретному чату, приходит в приложение сразу.
+{
+  console.log("Кнопка «Портал» в конкретном чате");
+  const kb = {};                                          // uid → записанная версия
+  const calls = [];
+  globalThis.fetch = async (url, opts) => {
+    calls.push({ url: String(url), body: opts && opts.body ? JSON.parse(opts.body) : null });
+    return { json: async () => ({ ok: true, result: true }) };
+  };
+  const prepare = (sql) => {
+    const make = (args) => ({
+      bind: (...a) => make(a),
+      async first() {
+        if (/FROM tg_kb/.test(sql)) return kb[args[0]] ? { ver: kb[args[0]] } : null;
+        if (/FROM tg_links/.test(sql)) return String(args[0]) === "317208397" ? { uid: "yuriy" } : null;
+        return null;
+      },
+      async run() { if (/INSERT INTO tg_kb/.test(sql)) kb[args[0]] = args[1]; return { meta: { changes: 1 } }; },
+      async all() { return { results: [] }; },
+    });
+    return make([]);
+  };
+  const env = { TG_BOT_TOKEN: BOT, DB: { prepare, async batch(list) { return Promise.all(list.map((s) => s.run())); } } };
+  const perChat = () => calls.filter((c) => /setChatMenuButton/.test(c.url) && c.body && c.body.chat_id !== undefined);
+  const kbMsgs = () => calls.filter((c) => /sendMessage/.test(c.url) && c.body && c.body.reply_markup && c.body.reply_markup.keyboard);
+
+  kb.yuriy = KB_VER;                                      // так запись выглядела после прошлого деплоя
+  await ensureChatUi(env, "yuriy", "317208397");
+  ok("клавиатура уже свежая — кнопку ставим в его чат", perChat().length === 1 && String(perChat()[0].body.chat_id) === "317208397", perChat());
+  ok("это «Портал» мини-приложения", perChat()[0] && perChat()[0].body.menu_button.type === "web_app" && perChat()[0].body.menu_button.text === "Портал", perChat()[0]);
+  ok("клавиатуру повторно не шлём", kbMsgs().length === 0, kbMsgs());
+  ok("версия чата обновлена", !!kb.yuriy && kb.yuriy !== KB_VER, kb.yuriy);
+  calls.length = 0;
+  await ensureChatUi(env, "yuriy", "317208397");
+  ok("второй раз Telegram не дёргаем", calls.length === 0, calls.map((c) => c.url));
+
+  calls.length = 0;
+  await ensureChatUi(env, "inna", "111");
+  ok("новичку — и клавиатура, и кнопка в чат", kbMsgs().length === 1 && perChat().some((c) => String(c.body.chat_id) === "111"), calls.map((c) => c.url));
+
+  calls.length = 0;
+  delete kb.yuriy;
+  const upd = { message: { message_id: 1, chat: { id: 317208397, type: "private" }, from: { id: 317208397 }, text: "/start" } };
+  await tgWebhook(env, new Request("https://portal.kubrdom.ru/api/tg/webhook", { method: "POST", body: JSON.stringify(upd) }), {});
+  ok("/start сразу ставит кнопку «Портал» в чат", perChat().some((c) => String(c.body.chat_id) === "317208397"), calls.map((c) => c.url));
+  ok("после /start чат помечен свежим", !!kb.yuriy && kb.yuriy !== KB_VER, kb.yuriy);
 }
 
 console.log("\n" + (failed ? "❌ ПРОВАЛЕНО: " + failed : "✅ Все проверки пройдены"));

@@ -80,37 +80,60 @@ export async function sendTg(env, chatId, text, extra) {
 }
 
 // Кнопка «Портал» слева от поля ввода — вместо списка команд (команды по-прежнему
-// набираются через «/»). Без chat_id Telegram ставит её всем личным чатам бота сразу.
-// Вызов идемпотентный, но дёргать Telegram на каждое обновление незачем: раз на инстанс.
+// набираются через «/»). Ставим её двумя способами, и нужны оба:
+//  • по умолчанию (без chat_id) — для тех, кто привяжется потом;
+//  • в конкретный чат — такое изменение Telegram присылает в приложение сразу, а кнопку
+//    по умолчанию телефон узнаёт, только когда сам обновит сведения о боте. У Юрия после
+//    деплоя и /start её так и не появилось.
+const MENU_BTN_TEXT = "Портал";
+async function setMenuButton(env, chatId) {
+  if (!env.TG_BOT_TOKEN) return false;
+  const body = { menu_button: { type: "web_app", text: MENU_BTN_TEXT, web_app: { url: portalUrl(env) } } };
+  if (chatId !== undefined && chatId !== null) body.chat_id = String(chatId);
+  const where = body.chat_id ? "chat " + body.chat_id : "default";
+  try {
+    const r = await fetch(TG_API + env.TG_BOT_TOKEN + "/setChatMenuButton", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const j = await r.json();
+    if (j && j.ok) return true;
+    // Отказ не глотаем: без лога его не отличить от кэша в телефоне.
+    console.error("setChatMenuButton (" + where + ") refused: " + ((j && j.description) || "no description"));
+  } catch (e) {
+    console.error("setChatMenuButton (" + where + ") failed: " + String((e && e.message) || e));
+  }
+  return false;
+}
+// По умолчанию — раз на инстанс Worker'а: вызов идемпотентный, дёргать его на каждое обновление незачем.
 let _menuSet = false;
 export async function ensureMenuButton(env) {
   if (_menuSet || !env.TG_BOT_TOKEN) return _menuSet;
-  try {
-    const r = await fetch(TG_API + env.TG_BOT_TOKEN + "/setChatMenuButton", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ menu_button: { type: "web_app", text: "Портал", web_app: { url: portalUrl(env) } } }),
-    });
-    const j = await r.json();
-    _menuSet = !!(j && j.ok);
-  } catch { /* кнопка меню не критична — поставим при следующем обновлении */ }
+  _menuSet = await setMenuButton(env);
   return _menuSet;
 }
 
-// Нижняя клавиатура меняется у человека, только когда бот пришлёт её в чат. Кто
-// привязался раньше, чем появилась новая кнопка (так было с «❓ Вопрос»), живёт со старой:
-// /start повторно никто не жмёт. К напоминанию её не приложить — у сообщения одна
-// разметка, и там кнопка портала. Поэтому одно беззвучное сообщение, и только тем,
-// у кого версия устарела.
-export async function ensureKeyboard(env, uid, chatId) {
+// Что у человека в чате с ботом: нижняя клавиатура и кнопка «Портал». Оба меняются, только
+// когда бот сам пришлёт их в этот чат, а /start повторно никто не жмёт — так «❓ Вопрос» не
+// доехал до Валеры. Версию храним в tg_kb. Клавиатура уходит отдельным беззвучным сообщением
+// (к напоминанию её не приложить: у сообщения одна разметка, там кнопка раздела), кнопка
+// «Портал» — в чат напрямую.
+export const CHAT_UI_VER = KB_VER + "|menu=" + MENU_BTN_TEXT;
+export async function ensureChatUi(env, uid, chatId) {
   const row = await env.DB.prepare("SELECT ver FROM tg_kb WHERE uid=?").bind(uid).first();
-  if (row && row.ver === KB_VER) return false;
-  const ok = await sendTg(env, chatId, "⌨️ Обновил кнопки внизу чата.", { reply_markup: MAIN_KB, disable_notification: true });
-  if (ok) await markKeyboard(env, uid);
-  return ok;
+  const ver = row && typeof row.ver === "string" ? row.ver : "";
+  if (ver === CHAT_UI_VER) return false;
+  const kbFresh = ver === KB_VER || ver.indexOf(KB_VER + "|") === 0;
+  const kbOk = kbFresh || await sendTg(env, chatId, "⌨️ Обновил кнопки внизу чата.", { reply_markup: MAIN_KB, disable_notification: true });
+  if (!kbOk) return false;
+  const menuOk = await setMenuButton(env, chatId);
+  await markChatUi(env, uid, menuOk);
+  return menuOk;
 }
-export async function markKeyboard(env, uid) {
+// Клавиатура в чате уже свежая; menuOk — встала ли кнопка «Портал». Не встала — пишем
+// версию без неё, и следующее напоминание попробует снова (а отказ уже в логе).
+export async function markChatUi(env, uid, menuOk) {
   await env.DB.prepare("INSERT INTO tg_kb (uid, ver, updated_at) VALUES (?,?,?) ON CONFLICT(uid) DO UPDATE SET ver=excluded.ver, updated_at=excluded.updated_at")
-    .bind(uid, KB_VER, Date.now()).run();
+    .bind(uid, menuOk ? CHAT_UI_VER : KB_VER, Date.now()).run();
 }
 
 let _botUser = null;
@@ -282,7 +305,7 @@ export async function tgWebhook(env, request, hooks) {
       ? "С возвращением! Кнопки внизу: объекты, снабжение, финансы, внесение денег и ❓ вопрос по объекту.\nПортал целиком — кнопка «Портал» слева от поля ввода."
       : "Привет! Откройте портал → 🔔 Напоминания → «Привязать Telegram» и нажмите кнопку — вернётесь сюда уже с кодом.",
       known && known.uid ? { reply_markup: MAIN_KB } : undefined);
-    if (greeted && known && known.uid) await markKeyboard(env, known.uid);
+    if (greeted && known && known.uid) await markChatUi(env, known.uid, await setMenuButton(env, chatId));
     return { ok: true };
   }
   const now = Date.now();
@@ -299,7 +322,7 @@ export async function tgWebhook(env, request, hooks) {
   ]);
   const linked = await sendTg(env, chatId, "✅ <b>Готово!</b> Напоминания портала КубрДом будут приходить сюда.\n\nВнизу появились кнопки: посмотреть <b>объекты</b>, <b>снабжение</b> и <b>финансы</b>, а также записать аванс, зарплату или закупку и ❓ задать вопрос по объекту.\n\nСлева от поля ввода — кнопка <b>Портал</b>: открывает портал прямо здесь, без PIN.",
     { reply_markup: MAIN_KB });
-  if (linked) await markKeyboard(env, row.uid);
+  if (linked) await markChatUi(env, row.uid, await setMenuButton(env, chatId));
   return { ok: true };
 }
 

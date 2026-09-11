@@ -5,7 +5,7 @@
 // Логика дедлайнов повторяет клиентскую (рабочие дни, штраф 2000 ₽/день): цифра в
 // напоминании должна совпадать с тем, что человек видит в карточке объекта.
 
-import { ensureNotifyTables, sendTg, defaultPrefs, escapeHtml, portalButton, ensureKeyboard, ensureMenuButton } from "./notify.js";
+import { ensureNotifyTables, sendTg, defaultPrefs, escapeHtml, portalButton, ensureChatUi, ensureMenuButton } from "./notify.js";
 import { stagesNeedingAttention } from "./stages.js";
 import { pendingSelections } from "./supply.js";
 
@@ -74,7 +74,7 @@ async function sendOnce(env, who, kind, key, text, btn) {
     .bind(who.uid, kind, key, Date.now()).run();
   const changed = res && res.meta && typeof res.meta.changes === "number" ? res.meta.changes : 1;
   if (!changed) { DIAG.push(kind + "/" + who.uid + ": уже слали сегодня"); return false; }
-  await ensureKeyboard(env, who.uid, who.chat);
+  await ensureChatUi(env, who.uid, who.chat);
   const ok = await sendTg(env, who.chat, text, btn ? { reply_markup: btn } : undefined);
   if (!ok) {
     await env.DB.prepare("DELETE FROM notify_log WHERE uid=? AND kind=? AND k=?").bind(who.uid, kind, key).run();
