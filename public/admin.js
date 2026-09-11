@@ -21442,18 +21442,45 @@ function tSupplyDetail(sel, sortBy){
         '</div>'+
         '<button data-a="supply-stage-check" data-bulk="1" data-ids="'+sm.map(function(m){return m.id;}).join(',')+'" data-done="'+(allDone?'1':'0')+'" title="'+(allDone?'Снять отметку со всей группы':'Отметить всю группу купленной')+'" style="padding:5px 8px;border-radius:7px;cursor:pointer;font-size:11px;font-weight:700;flex-shrink:0;white-space:nowrap;border:1.5px solid '+(allDone?'#27ae60':'#c8d8e8')+';background:'+(allDone?'#27ae60':'#fff')+';color:'+(allDone?'#fff':'#7a9aaa')+'">'+(allDone?'✓ Всё':'☐ Всё')+'</button>'+
       '</div>'+
-      (open?'<div style="padding:8px 10px">'+(o.tools?'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'+o.tools+'</div>':'')+mrows.map(mergeRow).join("")+'</div>':'')+
+      (open?'<div style="padding:8px 10px">'+(o.tools?'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'+o.tools+'</div>':'')+rowsByWork(mrows)+'</div>':'')+
     '</div>';
   }
+  // Строки группы — блоками по работам, над блоком подпись «↳ Водоснабжение · 6 поз.».
+  // Раньше строки шли по алфавиту, и материалы одной работы (водорозетка, фитинги,
+  // труба) разъезжались между гвоздями и гофрой — закупать и сверять по работе было
+  // нельзя. Подпись ставим, только когда работ в группе больше одной: в виде «Работы»
+  // и в группе из одной работы она повторяла бы шапку.
+  function rowsByWork(mrows){
+    const firsts=mrows.map(function(g){ return (g.works||[])[0]||""; });
+    const kinds=firsts.filter(function(w,i){ return firsts.indexOf(w)===i; });
+    if(kinds.length<2)return mrows.map(mergeRow).join("");
+    let out="";
+    for(let i=0;i<mrows.length;){
+      let j=i;
+      while(j<mrows.length&&firsts[j]===firsts[i])j++;
+      out+='<div style="display:flex;align-items:center;gap:6px;margin:'+(i?'12px':'2px')+' 2px 6px;font-size:10.5px;font-weight:700;color:#7a9aaa">'+
+          '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">↳ '+esc(firsts[i]||"Без работы")+'</span>'+
+          '<span style="flex-shrink:0;color:#a0b4c8;font-weight:600">· '+(j-i)+' поз.</span>'+
+          '<span style="flex:1;height:1px;background:#e6ecf3"></span>'+
+        '</div>'+
+        mrows.slice(i,j).map(mergeRow).join("");
+      i=j;
+    }
+    return out;
+  }
   // Слияние одинаковых материалов (магазин+имя+режим+цена) в одну строку с суммой
-  // количеств — единый помощник для «Закупки», «Этапов» и «Магазинов» при
+  // количеств — единый помощник для «Закупки», «Этапов» и «Работ» при
   // объединении объектов (ОСП Любови + ОСП Олега → одна строка на 40 листов).
+  // Порядок — как в смете, а не по алфавиту: сначала по работе (в том порядке, в каком
+  // работы идут в смете; одноимённые работы разных объектов — одним блоком), внутри
+  // работы — как материалы стоят в ней. Слитая строка встаёт к своей первой работе.
   function _mergeMats(mats){
-    const gm={};
-    mats.forEach(function(m){
+    const gm={}, workRank={};
+    mats.forEach(function(m,i){
       const nn=normMatName(m);
       const key=(m.store||"")+'|'+nn+'|'+(m.mode||"piece")+'|'+(Number(m.cost)||0);
-      if(!gm[key])gm[key]={n:nn,mode:m.mode,cost:m.cost,store:m.store,packPer:m.packPer,packBase:m.packBase,sheetM2:m.sheetM2,lenPer:m.lenPer,url:m.url,sn:m.sn,sc:m.sc,qty:0,ids:[],notes:[],works:[],bd:{}};
+      if(!gm[key])gm[key]={n:nn,mode:m.mode,cost:m.cost,store:m.store,packPer:m.packPer,packBase:m.packBase,sheetM2:m.sheetM2,lenPer:m.lenPer,url:m.url,sn:m.sn,sc:m.sc,qty:0,ids:[],notes:[],works:[],bd:{},ord:i};
+      if(workRank[m.wn||""]==null)workRank[m.wn||""]=i;
       const g=gm[key]; g.qty+=(m.qty||1); g.ids.push(m.id);
       // Работы, ради которых эту позицию берут. Строка склеена из потребностей
       // разных работ, поэтому имён бывает несколько: снабженец должен понимать,
@@ -21463,7 +21490,8 @@ function tSupplyDetail(sel, sortBy){
       if(m.note&&String(m.note).trim()&&g.notes.indexOf(m.note)<0)g.notes.push(m.note);
       (Array.isArray(m.breakdown)?m.breakdown:[]).forEach(function(r){ const L=Number(r.len)||0,N=Number(r.n)||0; if(L>0&&N>0)g.bd[L]=(g.bd[L]||0)+N; });
     });
-    return Object.keys(gm).map(function(k){return gm[k];}).sort(function(a,b){return (a.n||"").localeCompare(b.n||"","ru");});
+    const rankOf=function(g){ const r=workRank[(g.works||[])[0]||""]; return r!=null?r:g.ord; };
+    return Object.keys(gm).map(function(k){return gm[k];}).sort(function(a,b){ return (rankOf(a)-rankOf(b))||(a.ord-b.ord); });
   }
   // Кнопка «ТЗ (PDF)» для офлайн-поставщиков — единая вёрстка.
   function _tzBtn(store,sc){return isTZStore(store)?'<button data-a="supply-tz" data-store="'+store.replace(/"/g,"&quot;")+'" style="font-size:11px;color:#fff;background:'+sc+';border:none;border-radius:6px;padding:4px 10px;cursor:pointer;font-weight:700;flex-shrink:0">📄 ТЗ (PDF)</button>':'';}
