@@ -57,6 +57,7 @@ import { totals2, issues2, works2 } from "../src/spec2.js";
 import { priceHist, priceWas, pricePush, priceStale, refreshPrices } from "../src/prices.js";
 import { UNIT_WORDS, PACK_AS_WORD, normProduct } from "../src/catalog.js";
 import { glueForRow, isGlueMat, glueProductOf, glueRateOf, glueRateParse, GLUE_G_PER_TUBE, GLUE_RATE_MAX } from "../src/glue.js";
+import { dateRu, CT_STEPS, ctStep, ctMissing, objPickList, mainContractOf, ctObjName, ctTemplateFor, objProgress } from "../src/contract-card.js";
 import { allPositions, allPositionsRaw, addedPositions, guessVolume, carryRuleEdits, matKeyOf, matAddKey, matAddrs, matAddrPid, matAddrSwap, migrateMatAddrs, rulePositions, positionWork, ruleText, ruleReady, ruleAreas, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
   pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
   optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf, ROOM_HOUSE, roomKeyOf, positionSplit,
@@ -5514,6 +5515,41 @@ function objSection(oid,key,title,color,summary,body,defaultOpen){
   '</div>';
 }
 
+// Договоры объекта — прямо в его карточке: связь видна с обеих сторон, и привязать
+// договор можно оттуда, где человек сейчас смотрит на стройку. Суммы договоров —
+// только тем, кто и так видит договоры.
+function objContractsHtml(obj, isAdmin){
+  if(!isAdmin)return "";
+  const cts=contractDocs.filter(function(d){return d.objId===obj.id&&!d.archived;})
+    .sort(function(a,b){ return ((a.type||"main")==="main"?0:1)-((b.type||"main")==="main"?0:1); });
+  const picking=objCtPick===obj.id;
+  let h='<div style="padding:8px 14px;border-top:1px solid #f4f6f9">'+
+    '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'+
+      '<span style="font-size:10px;font-weight:700;color:#7a9aaa;letter-spacing:0.3px">📄 ДОГОВОРЫ'+(cts.length?' · '+cts.length:'')+'</span>'+
+      '<button data-a="obj-ct-pick" data-oid="'+obj.id+'" style="border:1px dashed #2980b966;background:'+(picking?"#2980b9":"#fff")+';color:'+(picking?"#fff":"#2980b9")+';border-radius:7px;padding:2px 8px;font-size:10.5px;font-weight:700;cursor:pointer">'+(picking?'✕ отмена':'＋ привязать договор')+'</button>'+
+    '</div>'+
+    cts.map(function(d){
+      return '<button data-a="obj-ct-open" data-cid="'+d.id+'" style="display:flex;align-items:center;gap:6px;width:100%;padding:6px 0 2px;border:none;background:transparent;cursor:pointer;text-align:left">'+
+        '<span style="flex:1;min-width:0;font-size:12px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(d.name||"Договор")+'</span>'+
+        '<span style="font-size:10px;color:#7a9aaa;white-space:nowrap">'+((d.type||"main")==="main"?"основной":"доп.")+' · '+(CT_STATUS_LABEL[d.status]||"")+(Number(d.amount)?' · '+fmt(Number(d.amount)):'')+'</span>'+
+        '<span style="color:#9aabbf">›</span>'+
+      '</button>';
+    }).join("")+
+    (!cts.length&&!picking?'<div style="font-size:11px;color:#e67e22;margin-top:3px">Договор не привязан — финансы объекта его не увидят</div>':'');
+  if(picking){
+    const free=contractDocs.filter(function(d){return !d.objId&&!d.archived;});
+    h+='<div style="margin-top:6px;background:#f7fafc;border-radius:9px;padding:4px 8px">'+
+      (free.length?free.map(function(d){
+        return '<button data-a="obj-ct-link" data-oid="'+obj.id+'" data-cid="'+d.id+'" style="display:flex;align-items:center;gap:6px;width:100%;padding:7px 2px;border:none;border-bottom:1px solid #eef2f7;background:transparent;cursor:pointer;text-align:left">'+
+          '<span style="flex:1;min-width:0;font-size:12px;font-weight:700;color:#0d1b2e">'+esc(d.name||"Договор")+
+            '<span style="display:block;font-size:10px;font-weight:600;color:#9aabbf">'+esc(ctClientName(d)||"")+'</span></span>'+
+          '<span style="font-size:11px;font-weight:700;color:#2980b9">привязать</span>'+
+        '</button>';
+      }).join(""):'<div style="font-size:11px;color:#9aabbf;padding:5px 2px">Все договоры уже привязаны к объектам</div>')+
+    '</div>';
+  }
+  return h+'</div>';
+}
 function renderObjCard(obj, isAdmin){
   const allWorks=obj.stages.flatMap(function(s){return s.works;});
   const allMats=allWorks.flatMap(function(w){return w.mats||[];});
@@ -5593,6 +5629,7 @@ function renderObjCard(obj, isAdmin){
   html+='<button data-a="open-obj" data-oid="'+obj.id+'" style="padding:7px 14px;background:#e8f0fa;border:1px solid #4a7ac844;border-radius:8px;cursor:pointer;font-size:12px;color:#2a5298;font-weight:600;flex-shrink:0;white-space:nowrap">✏️ Открыть</button>';
   html+='</div>';
   if(!_exp){ html+='</div>'; return html; } // свёрнуто — показываем только шапку
+  html+=objContractsHtml(obj, isAdmin);
   // Purchase progress with money amounts
   if(st){
     html+='<div style="padding:7px 14px 8px;border-top:1px solid #f4f6f9">';
@@ -10054,6 +10091,194 @@ function ctClientName(c){
   const cl=crmClients.find(function(x){return x.id===c.crmClientId;});
   return (cl&&cl.name)||"";
 }
+// ── КАРТОЧКА ДОГОВОРА: объект, сводка, шаги ────────────────────────────────
+// Договор без объекта не видят ни стройка, ни закупки, ни финансы объекта. Поэтому
+// «что сделать с договором» стоит выше всего остального, а привязать объект можно
+// в один-два тапа: создать его из договора или выбрать готовый из списка, где
+// подходящие и свободные — сверху. Логика — в src/contract-card.js.
+const CT_STATUS_LABEL={draft:"Черновик",signed:"Подписан",closed:"Закрыт"};
+function ctTotals(c){
+  const extra=(c.extraWorks||[]).reduce(function(a,w){
+    return a+(w.cost||0)+(w.mats||[]).reduce(function(b,m){return b+(m.cost||0)*(m.qty||1);},0);
+  },0);
+  const main=Number(c.amount)||0;
+  return { main:main, extra:extra, total:main+extra };
+}
+// Объект из шаблона — один код на «+ Новый объект» и на «объект из договора».
+// Слепок шаблона на момент создания — база сравнения для «в шаблоне изменилось».
+function objFromTemplate(tmpl, name, icon, extra){
+  return Object.assign({ id:gid(), name:name, icon:icon||tmpl.icon||"🏠", templateId:tmpl.id,
+    stages:reidStages(tmpl.stages||[]), specs:deepCopy(tmpl.specs||{rooms:[],openings:[]}), tplBase:tplBaseline(tmpl) }, extra||{});
+}
+// Привязать объект к договору (пустой oid — отвязать). Второй основной договор на
+// объекте спрашиваем: согласились — договор становится доп. работами.
+function ctLinkObject(cid, oid){
+  const c=contractDocs.find(function(x){return x.id===cid;});
+  if(!c)return false;
+  let type=c.type||"main";
+  if(oid&&type==="main"){
+    const other=mainContractOf(contractDocs, oid, cid);
+    if(other){
+      const o=objects.find(function(x){return x.id===oid;})||{};
+      if(!confirm("У объекта «"+(o.name||"")+"» уже есть основной договор «"+(other.name||"")+"».\n\nПривязать этот договор как доп. работы?"))return false;
+      type="extra";
+    }
+  }
+  contractDocs=contractDocs.map(function(x){ return x.id===cid?Object.assign({},x,{objId:oid,type:type}):x; });
+  return true;
+}
+// Объект из договора: этапы из шаблона, имя и клиент — из договора. Клиента объект
+// помнит, чтобы в следующий раз подойти к договорам этого клиента в выборе.
+function ctMakeObject(cid, name, tid){
+  const c=contractDocs.find(function(x){return x.id===cid;});
+  const tmpl=templates.find(function(t){return t.id===tid;});
+  if(!c)return "";
+  if(!tmpl){ alert("Выберите шаблон — из него объект возьмёт этапы и работы."); return ""; }
+  const o=objFromTemplate(tmpl, name, tmpl.icon, { crmClientId:c.crmClientId||"" });
+  objects=objects.concat([o]);
+  contractDocs=contractDocs.map(function(x){ return x.id===cid?Object.assign({},x,{objId:o.id}):x; });
+  return o.id;
+}
+function ctNoObjPlateHtml(c, obj){
+  if(obj||c.status==="draft")return "";
+  return '<div style="background:#fff7ec;border:1.5px solid #e67e22;border-radius:12px;padding:11px 13px;margin-bottom:10px">'+
+    '<div style="font-size:13px;font-weight:800;color:#d35400;margin-bottom:3px">⚠️ Договор без объекта</div>'+
+    '<div style="font-size:11.5px;color:#8a5a2b;line-height:1.4;margin-bottom:9px">Стройка, закупки и финансы объекта этот договор не видят. Создайте объект из договора или привяжите готовый.</div>'+
+    '<div style="display:flex;gap:7px;flex-wrap:wrap">'+
+      '<button data-a="ct-mkobj-open" data-cid="'+c.id+'" style="flex:1;min-width:130px;padding:9px;background:#e67e22;border:none;border-radius:9px;color:#fff;font-size:12.5px;font-weight:700;cursor:pointer">＋ Создать объект</button>'+
+      '<button data-a="ct-objpick-open" data-cid="'+c.id+'" style="flex:1;min-width:130px;padding:9px;background:#fff;border:1.5px solid #e67e22;border-radius:9px;color:#d35400;font-size:12.5px;font-weight:700;cursor:pointer">📎 Привязать</button>'+
+    '</div>'+
+  '</div>';
+}
+// Сводка — то, ради чего открывают договор: сколько, по какому объекту, когда и
+// как идёт стройка. Раньше сумма и объект стояли на третьем экране, под PIN и архивом.
+function ctSummaryHtml(c, obj){
+  const t=ctTotals(c);
+  const dl=contractDeadlineInfo(c.deadlineDate);
+  const prog=obj?objProgress(obj, todayISO()):null;
+  let h='<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:12px 14px;margin-bottom:10px">'+
+    '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap">'+
+      '<span style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px">ИТОГО</span>'+
+      '<span style="font-size:20px;font-weight:800;color:#27ae60">'+(t.total?fmt(t.total):"—")+'</span>'+
+    '</div>'+
+    (t.extra>0?'<div style="text-align:right;font-size:11px;color:#7a9aaa">договор '+fmt(t.main)+' · доп. работы +'+fmt(t.extra)+'</div>':'')+
+    '<button data-a="ct-objpick-open" data-cid="'+c.id+'" style="display:flex;align-items:center;gap:8px;width:100%;margin-top:9px;padding:9px 11px;border-radius:10px;border:1px '+(obj?'solid #dde6f0':'dashed #e67e22')+';background:'+(obj?'#f7fafc':'#fff')+';cursor:pointer;text-align:left">'+
+      '<span style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:0.5px">ОБЪЕКТ</span>'+
+      '<span style="flex:1;min-width:0;font-size:13px;font-weight:700;color:'+(obj?'#0d1b2e':'#d35400')+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(obj?(obj.icon||"🏠")+' '+esc(obj.name):'📎 Привязать объект')+'</span>'+
+      '<span style="color:#9aabbf;font-size:14px">›</span>'+
+    '</button>'+
+    '<div style="display:flex;gap:8px;margin-top:9px;flex-wrap:wrap">'+
+      '<div style="flex:1;min-width:120px"><div style="font-size:9px;color:#7a9aaa;font-weight:700;letter-spacing:0.5px">📅 ПОДПИСАНИЕ</div><div style="font-size:13px;font-weight:700;color:#1a2a3a">'+(dateRu(c.signDate)||"—")+'</div></div>'+
+      '<div style="flex:1;min-width:120px"><div style="font-size:9px;color:#e67e22;font-weight:700;letter-spacing:0.5px">🏁 ДЕДЛАЙН</div><div style="font-size:13px;font-weight:700;color:#1a2a3a">'+(dateRu(c.deadlineDate)||"—")+'</div>'+
+        (dl?'<div style="font-size:10px;font-weight:700;color:'+dl.color+'">'+(dl.overdue?"🔴 ":(dl.color==="#f39c12"?"🟡 ":"🟢 "))+dl.label+'</div>':'')+
+      '</div>'+
+    '</div>';
+  if(prog){
+    const col=prog.late>0?"#e74c3c":(prog.started?"#27ae60":"#9aabbf");
+    const pct=Math.round(prog.done/prog.total*100);
+    const where=prog.cur?('Этап '+prog.cur.n+' из '+prog.total+' · '+esc(prog.cur.name)):'Все этапы закрыты';
+    const state=!prog.started?'⏳ стройка не начата':(prog.late>0?'🔴 отставание '+prog.late+' раб. дн':(prog.hasPlan?'🟢 в графике':'сроки этапов не заданы'));
+    h+='<div style="margin-top:10px">'+
+      '<div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;margin-bottom:4px;flex-wrap:wrap">'+
+        '<span style="font-weight:700;color:#1a2a3a">🏗 '+where+'</span>'+
+        '<span style="font-weight:700;color:'+col+'">'+state+'</span>'+
+      '</div>'+
+      '<div style="background:#e8eef5;border-radius:6px;height:5px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+col+'"></div></div>'+
+    '</div>';
+  }
+  return h+'</div>';
+}
+// Выбор объекта — тапом по строке «Объект», без режима правки. Сверху текущий и
+// подходящие, занятые — внизу серым и с тем договором, у которого они.
+function ctObjPickHtml(c){
+  if(ctObjPick!==c.id)return "";
+  const q=String(ctObjPickQ||"").trim().toLowerCase();
+  const rows=objPickList(objects, contractDocs, c, ctClientName(c)).filter(function(r){
+    return !q||String(r.o.name||"").toLowerCase().indexOf(q)>=0;
+  });
+  const chip=function(txt,col){ return '<span style="font-size:9.5px;font-weight:700;color:'+col+';background:'+col+'15;border-radius:5px;padding:1px 6px">'+txt+'</span>'; };
+  return '<div style="background:#fff;border:1.5px solid #2980b9;border-radius:12px;padding:10px 12px;margin-bottom:10px">'+
+    '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">'+
+      '<input id="ct-objpick-q" data-a="ct-objpick-q" value="'+esc(ctObjPickQ||"")+'" placeholder="Найти объект…" autocomplete="off" style="flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none">'+
+      '<button data-a="ct-objpick-open" data-cid="'+c.id+'" title="Закрыть" style="width:32px;height:32px;border:1px solid #dde6f0;background:#fff;border-radius:8px;color:#9aabbf;cursor:pointer">✕</button>'+
+    '</div>'+
+    (rows.length?rows.map(function(r){
+      const tags=(r.current?chip("✓ сейчас","#2980b9"):"")+(r.match?chip("подходит","#16a085"):"")+
+        (r.free?"":chip("у договора "+esc(r.busy.map(function(x){return x.name||"";}).join(", ")),"#8a97a6"));
+      return '<button data-a="ct-objpick-do" data-cid="'+c.id+'" data-oid="'+esc(r.o.id)+'" style="display:flex;align-items:center;gap:8px;width:100%;padding:8px 4px;border:none;border-top:1px solid #f0f4f8;background:transparent;cursor:pointer;text-align:left;opacity:'+(r.free||r.current?1:0.65)+'">'+
+        '<span style="font-size:18px">'+(r.o.icon||"🏠")+'</span>'+
+        '<span style="flex:1;min-width:0"><span style="display:block;font-size:12.5px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.o.name||"Объект")+'</span>'+
+          (tags?'<span style="display:flex;gap:4px;flex-wrap:wrap;margin-top:2px">'+tags+'</span>':'')+'</span>'+
+      '</button>';
+    }).join(""):'<div style="font-size:11.5px;color:#9aabbf;padding:6px 2px">Ничего не нашлось</div>')+
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">'+
+      '<button data-a="ct-mkobj-open" data-cid="'+c.id+'" style="flex:1;min-width:150px;padding:8px;border:1px dashed #16a085;background:#eefaf6;border-radius:8px;color:#16a085;font-size:12px;font-weight:700;cursor:pointer">＋ Новый объект из договора</button>'+
+      (c.objId?'<button data-a="ct-objpick-do" data-cid="'+c.id+'" data-oid="" style="padding:8px 10px;border:1px solid #dde6f0;background:#fff;border-radius:8px;color:#9aabbf;font-size:12px;cursor:pointer">Отвязать</button>':'')+
+    '</div>'+
+  '</div>';
+}
+function ctMkObjHtml(c){
+  if(!ctMkObj||ctMkObj.cid!==c.id)return "";
+  return '<div style="background:#fff;border:1.5px solid #16a085;border-radius:12px;padding:11px 12px;margin-bottom:10px">'+
+    '<div style="font-size:10px;font-weight:800;color:#16a085;letter-spacing:0.5px;margin-bottom:7px">＋ НОВЫЙ ОБЪЕКТ ИЗ ДОГОВОРА</div>'+
+    '<input id="ct-mkobj-name" data-a="ct-mkobj-name" value="'+esc(ctMkObj.name||"")+'" placeholder="Название объекта" style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none;margin-bottom:8px">'+
+    '<div style="font-size:9.5px;color:#7a9aaa;font-weight:700;letter-spacing:0.4px;margin-bottom:5px">ШАБЛОН — ЭТАПЫ И РАБОТЫ</div>'+
+    '<div style="display:flex;flex-direction:column;gap:5px;margin-bottom:9px">'+
+      (templates||[]).map(function(t){
+        const on=ctMkObj.tid===t.id;
+        const works=(t.stages||[]).reduce(function(a,s){return a+(s.works||[]).length;},0);
+        return '<button data-a="ct-mkobj-tpl" data-cid="'+c.id+'" data-tid="'+esc(t.id)+'" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:9px;border:1.5px solid '+(on?"#16a085":"#dde6f0")+';background:'+(on?"#eefaf6":"#fff")+';cursor:pointer;text-align:left">'+
+          '<span style="font-size:18px">'+(t.icon||"🏠")+'</span>'+
+          '<span style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#0d1b2e">'+esc(t.name||"Шаблон")+
+            '<span style="display:block;font-size:10px;font-weight:600;color:#9aabbf">'+(t.stages||[]).length+' этап. · '+works+' работ</span></span>'+
+          (on?'<span style="color:#16a085;font-weight:800">✓</span>':'')+
+        '</button>';
+      }).join("")+
+    '</div>'+
+    '<div style="display:flex;gap:6px">'+
+      '<button data-a="ct-mkobj-do" data-cid="'+c.id+'" style="flex:1;padding:9px;background:#16a085;border:none;border-radius:9px;color:#fff;font-size:13px;font-weight:700;cursor:pointer">Создать и привязать</button>'+
+      '<button data-a="ct-mkobj-open" data-cid="'+c.id+'" style="padding:9px 12px;background:#fff;border:1px solid #d0dae8;border-radius:9px;color:#7a9aaa;font-size:12px;cursor:pointer">Отмена</button>'+
+    '</div>'+
+  '</div>';
+}
+// Шаги договора вместо трёх кнопок статуса: видно, где договор и что сделать дальше.
+// «В работе» — не кнопка: шаг ставится сам, когда на объекте появилась первая работа.
+function ctStepsHtml(c, obj){
+  const cur=ctStep(c, obj);
+  const idx=CT_STEPS.findIndex(function(s){return s.k===cur;});
+  const miss=ctMissing(c, obj);
+  let h='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:11px 12px;margin-bottom:10px"><div style="display:flex;gap:4px">';
+  CT_STEPS.forEach(function(s,i){
+    const done=i<idx, on=i===idx;
+    const style='flex:1;min-width:0;padding:7px 2px;border-radius:8px;border:none;font-size:10.5px;font-weight:700;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'+
+      'background:'+(on?"#2980b9":(done?"#27ae6018":"#f0f4f8"))+';color:'+(on?"#fff":(done?"#27ae60":"#9aabbf"));
+    const label=(done?"✓ ":"")+s.label;
+    h+=s.k==="work"
+      ? '<span title="Шаг ставится сам: договор подписан, объект привязан и на нём появилась первая работа" style="'+style+';display:block">'+label+'</span>'
+      : '<button data-a="ct-status" data-cid="'+c.id+'" data-s="'+s.k+'" style="'+style+';cursor:pointer">'+label+'</button>';
+  });
+  h+='</div>';
+  if(miss.next){
+    const items=miss.missing.map(function(m){
+      return m.k==="obj"
+        ? '<button data-a="ct-objpick-open" data-cid="'+c.id+'" style="border:none;background:transparent;padding:0;color:#d35400;font-size:11px;font-weight:700;cursor:pointer;text-decoration:underline">объект</button>'
+        : esc(m.t);
+    });
+    h+='<div style="font-size:11px;color:#5a7a9a;margin-top:8px;line-height:1.45">Дальше — «'+esc(miss.next)+'»'+
+      (items.length?': не хватает: '+items.join(", "):' — всё готово')+'</div>';
+  }
+  return h+'</div>';
+}
+// Длинное примечание — две строки и «ещё»: целиком оно нужно, когда его читают, а
+// не каждый раз, когда открывают договор.
+function ctNoteHtml(c){
+  if(!c.note)return "";
+  const long=c.note.length>120, open=!!ctNoteOpen[c.id];
+  const text=long&&!open?c.note.slice(0,120).replace(/\s+\S*$/,"")+"…":c.note;
+  return '<div style="margin-top:8px;font-size:12px;color:#5a7a9a;background:#f8fafc;border-radius:8px;padding:8px;line-height:1.45">'+esc(text)+
+    (long?' <button data-a="ct-note-open" data-cid="'+c.id+'" style="border:none;background:transparent;padding:0;color:#2980b9;font-size:12px;font-weight:700;cursor:pointer">'+(open?'свернуть':'ещё')+'</button>':'')+
+  '</div>';
+}
 function tContractDetail(cid){
   const c=contractDocs.find(function(x){return x.id===cid;});
   if(!c)return tContractList();
@@ -10069,28 +10294,23 @@ function tContractDetail(cid){
 
   let html='<div>';
 
-  // Header
+  // Header. Архив — редкое действие, ему место в «⋯», а не отдельный блок в карточке.
   html+=
     '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">'+
       '<button data-a="ct-back" style="padding:6px 14px;background:transparent;border:1px solid #d0dae8;border-radius:20px;cursor:pointer;font-size:12px;color:#7a9aaa">← Договора</button>'+
       '<div style="font-size:14px;font-weight:700;color:#0d1b2e;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.name)+'</div>'+
-    '</div>';
+      '<button data-a="ct-menu" data-cid="'+c.id+'" title="Ещё" style="width:34px;height:34px;flex-shrink:0;border:1px solid #d0dae8;background:'+(ctMenuOpen===c.id?"#f0f4f8":"#fff")+';border-radius:10px;cursor:pointer;font-size:16px;color:#5a7a9a;line-height:1">⋯</button>'+
+    '</div>'+
+    (ctMenuOpen===c.id
+      ? '<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:8px;margin:-6px 0 10px;box-shadow:0 6px 18px #0d1b2e14">'+
+          '<button data-a="ct-archive-toggle" data-cid="'+c.id+'" style="width:100%;padding:9px;border-radius:9px;cursor:pointer;font-size:12px;font-weight:700;border:1px solid '+(c.archived?'#27ae6055':'#dde6f0')+';background:'+(c.archived?'#eaf6ee':'#f7f9fb')+';color:'+(c.archived?'#27ae60':'#8a97a6')+'">'+(c.archived?'↩️ Вернуть из архива':'📦 Отправить в архив')+'</button>'+
+          '<div style="font-size:10px;color:#9aabbf;text-align:center;margin-top:5px">'+(c.archived?'Договор в архиве — скрыт из активного списка':'Уберёт из активного списка, договор останется во вкладке «Архив»')+'</div>'+
+        '</div>'
+      : '');
 
-  // Важные даты — подписание и дедлайн
-  (function(){
-    const dlInfo=contractDeadlineInfo(c.deadlineDate);
-    html+='<div style="display:flex;gap:8px;margin-bottom:10px">'+
-      '<div style="flex:1;background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:10px 12px">'+
-        '<div style="font-size:9px;color:#7a9aaa;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">📅 ПОДПИСАНИЕ</div>'+
-        '<div style="font-size:14px;font-weight:700;color:#1a2a3a">'+(c.signDate||"—")+'</div>'+
-      '</div>'+
-      '<div style="flex:1;background:#fff;border:1px solid '+(dlInfo?dlInfo.color+"44":"#dde6f0")+';border-radius:12px;padding:10px 12px">'+
-        '<div style="font-size:9px;color:#e67e22;font-weight:700;letter-spacing:0.5px;margin-bottom:3px">🏁 ДЕДЛАЙН</div>'+
-        '<div style="font-size:14px;font-weight:700;color:#1a2a3a">'+(c.deadlineDate||"—")+'</div>'+
-        (dlInfo?'<div style="font-size:9px;font-weight:700;color:'+dlInfo.color+';margin-top:2px">'+(dlInfo.overdue?"🔴 ":(dlInfo.color==="#f39c12"?"🟡 ":"🟢 "))+dlInfo.label+'</div>':'')+
-      '</div>'+
-    '</div>';
-  })();
+  // Что сделать с договором прямо сейчас — выше всего остального: без объекта его
+  // не видят стройка, закупки и финансы. Дальше сводка и шаги.
+  html+=ctNoObjPlateHtml(c, obj)+ctMkObjHtml(c)+ctSummaryHtml(c, obj)+ctObjPickHtml(c)+ctStepsHtml(c, obj);
 
   // PIN клиента для входа в кабинет — только админ и менеджер по сопровождению
   (function(){
@@ -10098,8 +10318,19 @@ function tContractDetail(cid){
     if(!canSee) return;
     const eff=effectiveClientPin(c);
     const isCustom=c.clientPin&&c.clientPin.trim();
+    // PIN нужен раз — когда клиенту дают вход. Свёрнут в строку: сам PIN виден,
+    // поле и пояснение — по тапу.
+    if(!ctPinOpen[c.id]){
+      html+='<button data-a="ct-pin-open" data-cid="'+c.id+'" style="display:flex;align-items:center;gap:8px;width:100%;background:#fff;border:1px solid #d6890033;border-radius:12px;padding:9px 14px;margin-bottom:10px;cursor:pointer;text-align:left">'+
+        '<span style="font-size:10px;color:#d68910;font-weight:700;letter-spacing:0.5px">🔑 PIN КЛИЕНТА</span>'+
+        '<span style="flex:1;font-size:13px;font-weight:700;color:#1a2a3a;letter-spacing:2px">'+esc((isCustom?c.clientPin:eff)||"—")+'</span>'+
+        '<span style="color:#9aabbf;font-size:11px">изменить ›</span>'+
+      '</button>';
+      return;
+    }
     html+='<div style="background:#fff;border:1px solid #d6890044;border-radius:12px;padding:12px 14px;margin-bottom:10px">'+
-      '<div style="font-size:10px;color:#d68910;font-weight:700;letter-spacing:0.5px;margin-bottom:6px">🔑 PIN КЛИЕНТА ДЛЯ ВХОДА</div>'+
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><span style="font-size:10px;color:#d68910;font-weight:700;letter-spacing:0.5px">🔑 PIN КЛИЕНТА ДЛЯ ВХОДА</span>'+
+        '<button data-a="ct-pin-open" data-cid="'+c.id+'" style="border:none;background:transparent;color:#9aabbf;font-size:11px;cursor:pointer;padding:0">свернуть</button></div>'+
       '<div style="font-size:11px;color:#7a9aaa;margin-bottom:8px">Клиент входит по номеру договора или фамилии + этот PIN. По умолчанию — последние 4 цифры его телефона'+(eff?' ('+eff+')':' (телефон не указан)')+'.</div>'+
       '<div style="display:flex;gap:6px">'+
         '<input id="ct-clientpin-'+c.id+'" type="text" inputmode="numeric" maxlength="6" value="'+(isCustom?c.clientPin:"")+'" placeholder="'+(eff||"PIN")+'" style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:14px;outline:none;letter-spacing:3px;box-sizing:border-box">'+
@@ -10127,21 +10358,7 @@ function tContractDetail(cid){
       '</div>';
   }
 
-  // Status
-  html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:10px">';
-  html+='<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">СТАТУС</div>';
-  html+='<div style="display:flex;gap:6px">';
-  Object.keys(STATUS).forEach(function(k){
-    const s=STATUS[k];
-    html+='<button data-a="ct-status" data-cid="'+c.id+'" data-s="'+k+'" style="flex:1;padding:7px 4px;border-radius:8px;border:none;cursor:pointer;font-size:11px;font-weight:700;background:'+(c.status===k?s.color:'#f0f4f8')+';color:'+(c.status===k?'#fff':'#7a9aaa')+'">'+s.label+'</button>';
-  });
-  html+='</div></div>';
-
-  // Архив: убрать завершённый/закрытый договор из активного списка (уходит в подвкладку «Архив»)
-  html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:10px">'+
-    '<button data-a="ct-archive-toggle" data-cid="'+c.id+'" style="width:100%;padding:9px;border-radius:9px;cursor:pointer;font-size:12px;font-weight:700;border:1px solid '+(c.archived?'#27ae6055':'#dde6f0')+';background:'+(c.archived?'#eaf6ee':'#f7f9fb')+';color:'+(c.archived?'#27ae60':'#8a97a6')+'">'+(c.archived?'↩️ Вернуть из архива':'📦 Отправить в архив')+'</button>'+
-    '<div style="font-size:10px;color:#9aabbf;text-align:center;margin-top:6px">'+(c.archived?'Договор в архиве — скрыт из активного списка':'Уберёт из активного списка, договор останется во вкладке «Архив»')+'</div>'+
-  '</div>';
+  // Статус — шагами наверху (ctStepsHtml), архив — в «⋯» шапки.
 
   // Details — editable or view
   const isEditing=contractEditId===cid;
@@ -10154,11 +10371,10 @@ function tContractDetail(cid){
   '</div>';
 
   if(isEditing){
+    // Объект выбирается тапом по строке «Объект» в сводке, не здесь: в форме с
+    // кнопкой «Сохранить» он читался как несохранённый, а сохранение формы затирало
+    // привязку, сделанную в обход неё.
     html+=
-      '<select id="ct-edit-obj" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;margin-bottom:8px;outline:none;background:#fff;box-sizing:border-box">'+
-        '<option value=""'+(!ed.objId?' selected':'')+'>— Без объекта —</option>'+
-        objects.map(function(o){return'<option value="'+o.id+'"'+(ed.objId===o.id?' selected':'')+'>'+o.icon+' '+esc(o.name)+'</option>';}).join("")+
-      '</select>'+
       '<div style="display:flex;gap:6px;margin-bottom:8px">'+
         '<button data-a="ct-edit-type" data-cid="'+cid+'" data-t="main" style="flex:1;padding:6px;border-radius:7px;border:none;cursor:pointer;font-size:12px;font-weight:700;background:'+(c.type==="main"?'#2980b9':'#f0f4f8')+';color:'+(c.type==="main"?'#fff':'#7a9aaa')+'">Основной</button>'+
         '<button data-a="ct-edit-type" data-cid="'+cid+'" data-t="extra" style="flex:1;padding:6px;border-radius:7px;border:none;cursor:pointer;font-size:12px;font-weight:700;background:'+(c.type==="extra"?'#8e44ad':'#f0f4f8')+';color:'+(c.type==="extra"?'#fff':'#7a9aaa')+'">Доп. работы</button>'+
@@ -10175,49 +10391,20 @@ function tContractDetail(cid){
       '<textarea id="ct-edit-note" placeholder="Примечания" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;height:60px;resize:none;outline:none;margin-bottom:10px;box-sizing:border-box">'+esc(ed.note||'')+'</textarea>'+
       '<button data-a="ct-edit-save" data-cid="'+cid+'" style="width:100%;padding:9px;background:#27ae60;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">💾 Сохранить изменения</button>';
   } else {
-    // Calculate extra works total
-    const ewTotal=(c.extraWorks||[]).reduce(function(a,w){
-      return a+(w.cost||0)+(w.mats||[]).reduce(function(b,m){return b+(m.cost||0)*(m.qty||1);},0);
-    },0);
-    const mainAmount=c.amount||0;
-    const grandTotal=mainAmount+ewTotal;
-
-    const rows=[
-      {label:"Объект", val:obj?obj.icon+" "+obj.name:"—"},
+    // Сумма, объект и даты — в сводке наверху. Здесь то, что правят реже: тип, клиент
+    // и примечание. Сумма «основной договор» рядом с «итого» повторяла одно число,
+    // когда доп. работ нет, — теперь раскладка есть только там, где она что-то говорит.
+    [
       {label:"Тип",    val:c.type==="main"?"Основной":"Доп. работы"},
-      {label:"Клиент", val:ctClientName(c)||"—"},
-      {label:"Дата",   val:c.signDate||"—"},
-    ];
-    rows.forEach(function(row){
+      {label:"Клиент", val:esc(ctClientName(c)||"—")},
+    ].forEach(function(row){
       html+=
         '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f4f6f9">'+
           '<span style="font-size:12px;color:#7a9aaa">'+row.label+'</span>'+
           '<span style="font-size:12px;font-weight:600;color:#1a2a3a">'+row.val+'</span>'+
         '</div>';
     });
-
-    // Sum breakdown
-    html+='<div style="margin-top:8px;padding-top:8px;border-top:2px solid #e8eef5">';
-    html+=
-      '<div style="display:flex;justify-content:space-between;padding:4px 0">'+
-        '<span style="font-size:12px;color:#7a9aaa">Основной договор</span>'+
-        '<span style="font-size:13px;font-weight:700;color:#2980b9">'+(mainAmount?fmt(mainAmount):"—")+'</span>'+
-      '</div>';
-    if(ewTotal>0){
-      html+=
-        '<div style="display:flex;justify-content:space-between;padding:4px 0">'+
-          '<span style="font-size:12px;color:#7a9aaa">Доп. работы</span>'+
-          '<span style="font-size:13px;font-weight:700;color:#8e44ad">+'+fmt(ewTotal)+'</span>'+
-        '</div>';
-    }
-    html+=
-      '<div style="display:flex;justify-content:space-between;padding:6px 0;margin-top:4px;border-top:1px dashed #d0dae8">'+
-        '<span style="font-size:13px;font-weight:700;color:#1a2a3a">ИТОГО</span>'+
-        '<span style="font-size:15px;font-weight:700;color:#27ae60">'+(grandTotal?fmt(grandTotal):"—")+'</span>'+
-      '</div>';
-    html+='</div>';
-
-    if(c.note) html+='<div style="margin-top:8px;font-size:12px;color:#5a7a9a;background:#f8fafc;border-radius:8px;padding:8px">'+esc(c.note)+'</div>';
+    html+=ctNoteHtml(c);
   }
   html+='</div>';
 
@@ -21571,6 +21758,10 @@ let contractEditId=null; // id being edited
 // перерисовке (выбор клиента, файл, фоновый рендер) — поэтому рендерим их из черновика
 // и синкаем на каждый ввод. «Отмена» просто выбрасывает черновик, договор не тронут.
 let ctEditDraft=null; // {cid,name,amount,signDate,deadlineDate,note,objId}
+// Карточка договора: выбор объекта (id договора) и поиск в нём, панель «новый объект
+// из договора» {cid,name,tid}, меню «⋯», раскрытые PIN и примечание, выбор договора
+// в карточке объекта (id объекта).
+let ctObjPick=null, ctObjPickQ="", ctMkObj=null, ctMenuOpen=null, ctPinOpen={}, ctNoteOpen={}, objCtPick=null;
 
 // Синк текстовых/date-полей форм договора в буферы (add → contractNew, edit → ctEditDraft).
 // Без него любой render() сбрасывал всё, что набрано, но не сохранено (сумма выживала,
@@ -21596,14 +21787,6 @@ function _bindContractFormSync(){
     bind("ct-edit-deadline",function(v){ctEditDraft.deadlineDate=v;});
     bind("ct-edit-note",function(v){ctEditDraft.note=v;});
     bind("ct-edit-amount",function(v){ctEditDraft.amount=unfmtMoney(v);});
-    bind("ct-edit-obj",function(v){
-      ctEditDraft.objId=v;
-      // Привязываем объект к договору СРАЗУ (не ждём «Сохранить»), иначе статус «Подписан»
-      // блокируется (он проверяет сохранённый c.objId). Без ре-рендера (scheduleSave) —
-      // чтобы не сбить остальные незасохранённые правки формы ДЕТАЛИ.
-      contractDocs=contractDocs.map(function(c){return c.id===ctEditDraft.cid?Object.assign({},c,{objId:v}):c;});
-      scheduleSave();
-    });
   }
 }
 let ctClientSearch=""; // search in client dropdown
@@ -23929,6 +24112,26 @@ function tCRMFunnel(){
   return html;
 }
 
+// Договор и объект клиента — в его карточке CRM: менеджер видит, дошёл ли клиент до
+// стройки, и с какого договора её не видно, не открывая вкладку «Договора».
+function crmContractsHtml(cl){
+  const cts=contractDocs.filter(function(d){ return d.crmClientId?d.crmClientId===cl.id:(!!d.client&&d.client===cl.name); });
+  if(!cts.length)return "";
+  return '<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:12px">'+
+    '<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:4px">ДОГОВОР И ОБЪЕКТ</div>'+
+    cts.map(function(d){
+      const o=d.objId?objects.find(function(x){return x.id===d.objId;}):null;
+      return '<button data-a="obj-ct-open" data-cid="'+d.id+'" style="display:block;width:100%;padding:7px 0;border:none;border-top:1px solid #f4f6f9;background:transparent;cursor:pointer;text-align:left">'+
+        '<span style="display:flex;align-items:center;gap:6px">'+
+          '<span style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📄 '+esc(d.name||"Договор")+'</span>'+
+          '<span style="font-size:10px;color:#7a9aaa;white-space:nowrap">'+(CT_STATUS_LABEL[d.status]||"")+(Number(d.amount)?' · '+fmt(Number(d.amount)):'')+'</span>'+
+          '<span style="color:#9aabbf">›</span>'+
+        '</span>'+
+        '<span style="display:block;margin-top:3px;font-size:11px;font-weight:700;color:'+(o?"#27ae60":"#e67e22")+'">'+(o?(o.icon||"🏠")+' '+esc(o.name):'⚠️ без объекта')+'</span>'+
+      '</button>';
+    }).join("")+
+  '</div>';
+}
 function tCRMClient(cid){
   const c=crmClients.find(function(x){return x.id===cid;});
   if(!c) return tCRMFunnel();
@@ -23970,6 +24173,7 @@ function tCRMClient(cid){
     html+='</div>';
   }
   html+='</div>';
+  html+=crmContractsHtml(c);
   // Quick contact buttons (only if phone exists)
   const phoneRaw=(c.phone||"").replace(/[^0-9+]/g,"");
   const phoneDigits=phoneRaw.replace(/[^0-9]/g,"");
@@ -24565,9 +24769,7 @@ function bind(){
       const tmpl=templates.find(t=>t.id===nobj.templateId);
       if(!name){ alert("Введите название объекта."); return; }
       if(!tmpl){ alert("Выберите шаблон."); return; }
-      const newId=gid();
-      // Слепок шаблона на момент создания — база сравнения для «в шаблоне изменилось».
-      objects=objects.concat([{id:newId,name,icon,templateId:nobj.templateId,stages:reidStages(tmpl.stages),specs:deepCopy(tmpl.specs||{rooms:[],openings:[]}),tplBase:tplBaseline(tmpl)}]);
+      objects=objects.concat([objFromTemplate(tmpl, name, icon)]);
       // Сотрудники не назначаются здесь — только через ответственных по договору (вкладка «Договора»).
       showNObj=false;fl();
     };}
@@ -27745,7 +27947,7 @@ function bind(){
       fl();
     };}
     else if(a==="ct-open"){el.onclick=()=>{contractView=el.dataset.cid;render();};}
-    else if(a==="ct-back"){el.onclick=()=>{contractView=null;render();};}
+    else if(a==="ct-back"){el.onclick=()=>{contractView=null;ctObjPick=null;ctMkObj=null;ctMenuOpen=null;render();};}
     // ─── Шаблон договора (подвкладка) ───
     else if(a==="ct-subtab"){el.onclick=()=>{ctSubTab=el.dataset.st;render();};}
     else if(a==="ct-tpl-exec"){el.onclick=()=>{ctTplGet().execKey=el.dataset.k;ctTplPersist();render();};}
@@ -27841,6 +28043,8 @@ function bind(){
           document.body.appendChild(toast);
           setTimeout(function(){try{document.body.removeChild(toast);}catch(e){}},2600);
         }catch(e){}
+        // Не тупик, а следующий шаг: сразу открываем выбор объекта.
+        ctObjPick=cid; ctObjPickQ=""; ctMkObj=null; render();
         return;
       }
       contractDocs=contractDocs.map(function(c){return c.id===cid?Object.assign({},c,{status:s}):c;});
@@ -27851,6 +28055,7 @@ function bind(){
       if(ev&&ev.stopPropagation)ev.stopPropagation();
       const cid=el.dataset.cid;
       contractDocs=contractDocs.map(function(c){return c.id===cid?Object.assign({},c,{archived:!c.archived}):c;});
+      ctMenuOpen=null;
       fl();
     };}
     else if(a==="ct-pick-client"){/* handled by window._ctPick */}
@@ -27858,14 +28063,78 @@ function bind(){
       const crmid=el.dataset.crmid;
       tab="crm"; crmView="client"; crmOpenId=crmid; render();
     };}
+    // «📎 Без объекта · привязать» в списке — открываем договор сразу на выборе объекта.
     else if(a==="ct-link-obj"){el.onclick=function(ev){
       if(ev){ev.stopPropagation();}
       const cid=el.dataset.cid;
-      contractView=cid; contractEditId=cid;
-      const c0=contractDocs.find(function(x){return x.id===cid;})||{};
-      ctEditDraft={cid:cid,name:c0.name||"",amount:c0.amount||0,signDate:c0.signDate||"",deadlineDate:c0.deadlineDate||"",note:c0.note||"",objId:c0.objId||""};
+      contractView=cid; contractEditId=null; ctEditDraft=null;
+      ctObjPick=cid; ctObjPickQ=""; ctMkObj=null;
       render();
-      setTimeout(function(){const s=document.getElementById("ct-edit-obj");if(s){s.scrollIntoView({block:"center"});s.focus();}},60);
+    };}
+    // ── Карточка договора: меню, PIN, примечание, объект ─────────────────────
+    else if(a==="ct-menu"){el.onclick=()=>{ const cid=el.dataset.cid; ctMenuOpen=(ctMenuOpen===cid)?null:cid; render(); };}
+    else if(a==="ct-pin-open"){el.onclick=()=>{ const cid=el.dataset.cid; ctPinOpen=Object.assign({},ctPinOpen,{[cid]:!ctPinOpen[cid]}); render(); };}
+    else if(a==="ct-note-open"){el.onclick=()=>{ const cid=el.dataset.cid; ctNoteOpen=Object.assign({},ctNoteOpen,{[cid]:!ctNoteOpen[cid]}); render(); };}
+    else if(a==="ct-objpick-open"){el.onclick=(ev)=>{
+      if(ev&&ev.stopPropagation)ev.stopPropagation();
+      const cid=el.dataset.cid;
+      ctObjPick=(ctObjPick===cid)?null:cid; ctObjPickQ=""; ctMkObj=null;
+      render();
+    };}
+    // Поиск перерисовывает список — курсор возвращаем в новое поле сами.
+    else if(a==="ct-objpick-q"){el.oninput=()=>{
+      ctObjPickQ=el.value;
+      const pos=el.selectionStart;
+      render();
+      const n=document.getElementById("ct-objpick-q");
+      if(n&&n.focus){ n.focus(); try{ n.setSelectionRange(pos,pos); }catch(e){} }
+    };}
+    else if(a==="ct-objpick-do"){el.onclick=(ev)=>{
+      if(ev&&ev.stopPropagation)ev.stopPropagation();
+      if(!ctLinkObject(el.dataset.cid, el.dataset.oid||""))return;
+      ctObjPick=null; ctObjPickQ=""; fl();
+    };}
+    else if(a==="ct-mkobj-open"){el.onclick=(ev)=>{
+      if(ev&&ev.stopPropagation)ev.stopPropagation();
+      const cid=el.dataset.cid;
+      if(ctMkObj&&ctMkObj.cid===cid){ ctMkObj=null; render(); return; }
+      const c0=contractDocs.find(function(x){return x.id===cid;});
+      if(!c0)return;
+      const tp=ctTemplateFor(c0, templates);
+      ctMkObj={ cid:cid, name:ctObjName(c0, ctClientName(c0)), tid:(tp&&tp.id)||"" };
+      ctObjPick=null; render();
+    };}
+    else if(a==="ct-mkobj-name"){el.oninput=()=>{ if(ctMkObj)ctMkObj=Object.assign({},ctMkObj,{name:el.value}); };}
+    else if(a==="ct-mkobj-tpl"){el.onclick=()=>{
+      if(!ctMkObj)return;
+      const n=document.getElementById("ct-mkobj-name");
+      ctMkObj=Object.assign({},ctMkObj,{ name:n?n.value:ctMkObj.name, tid:el.dataset.tid||"" });
+      render();
+    };}
+    else if(a==="ct-mkobj-do"){el.onclick=()=>{
+      if(!ctMkObj)return;
+      const n=document.getElementById("ct-mkobj-name");
+      const name=String((n&&n.value)||ctMkObj.name||"").trim();
+      if(!name){ alert("Впишите название объекта."); return; }
+      if(!ctMakeObject(ctMkObj.cid, name, ctMkObj.tid))return;
+      ctMkObj=null; fl();
+      fileToast("✓ Объект создан и привязан к договору");
+    };}
+    // Договоры в карточке объекта: открыть договор и привязать договор без объекта.
+    else if(a==="obj-ct-pick"){el.onclick=(ev)=>{
+      if(ev&&ev.stopPropagation)ev.stopPropagation();
+      const oid=el.dataset.oid; objCtPick=(objCtPick===oid)?null:oid; render();
+    };}
+    else if(a==="obj-ct-link"){el.onclick=(ev)=>{
+      if(ev&&ev.stopPropagation)ev.stopPropagation();
+      if(!ctLinkObject(el.dataset.cid, el.dataset.oid))return;
+      objCtPick=null; fl();
+    };}
+    else if(a==="obj-ct-open"){el.onclick=(ev)=>{
+      if(ev&&ev.stopPropagation)ev.stopPropagation();
+      tab="contracts"; ctSubTab="list"; contractView=el.dataset.cid; contractEditId=null; ctEditDraft=null;
+      render();
+      if(window.scrollTo)window.scrollTo(0,0);
     };}
     else if(a==="ct-edit-toggle"){el.onclick=()=>{
       contractEditId=contractEditId===el.dataset.cid?null:el.dataset.cid;
@@ -27888,8 +28157,8 @@ function bind(){
       const date=(document.getElementById("ct-edit-date")||{}).value||"";
       const deadlineDate=(document.getElementById("ct-edit-deadline")||{}).value||"";
       const note=(document.getElementById("ct-edit-note")||{}).value||"";
-      const objId=(document.getElementById("ct-edit-obj")||{}).value||"";
-      contractDocs=contractDocs.map(function(c){return c.id===cid?Object.assign({},c,{name:name.trim()||c.name,client,amount,signDate:date,deadlineDate,note,objId}):c;});
+      // Объект форма не трогает: он выбирается в сводке и сохраняется сразу.
+      contractDocs=contractDocs.map(function(c){return c.id===cid?Object.assign({},c,{name:name.trim()||c.name,client,amount,signDate:date,deadlineDate,note}):c;});
       contractEditId=null;ctEditDraft=null;fl();
     };}
     else if(a==="ct-resp-toggle"){el.onclick=()=>{
