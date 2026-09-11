@@ -56,6 +56,7 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
 import { totals2, issues2, works2 } from "../src/spec2.js";
 import { priceHist, priceWas, pricePush, priceStale, refreshPrices } from "../src/prices.js";
 import { UNIT_WORDS, PACK_AS_WORD, normProduct } from "../src/catalog.js";
+import { glueForRow, isGlueMat, glueProductOf, GLUE_G_PER_M2, GLUE_G_PER_TUBE } from "../src/glue.js";
 import { allPositions, allPositionsRaw, addedPositions, guessVolume, carryRuleEdits, matKeyOf, matAddKey, matAddrs, matAddrPid, matAddrSwap, migrateMatAddrs, rulePositions, positionWork, ruleText, ruleReady, ruleAreas, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
   pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
   optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf, ROOM_HOUSE, roomKeyOf, positionSplit,
@@ -13745,6 +13746,17 @@ function matAddrsAt(sh, posKey, addr){
   }catch(e){}
   return [addr];
 }
+// Ручные количества листа с новым числом у материала строки. Прежний адрес того
+// же материала стираем: иначе он остался бы лежать в снимке и всплыл бы, как
+// только ручное число вернут к расчётному. Пустое число — правка снимается.
+function matQtyWith(sh, posKey, addr, v){
+  const map=Object.assign({}, sh.matQty||{});
+  const row=Object.assign({}, map[posKey]||{});
+  matAddrsAt(sh, posKey, addr).forEach(function(a){ delete row[a]; });
+  if(isFinite(v)&&v>0)row[addr]=v;
+  if(Object.keys(row).length)map[posKey]=row; else delete map[posKey];
+  return map;
+}
 // Цена материала в строке — КОПИЯ: у дописанного руками товара она застыла в тот
 // момент, когда его вписали, а каталог с тех пор мог подорожать. Показываем обе
 // стороны: «в базе 1 200 ₽» с обновлением одним тапом (правим только копию — у
@@ -13784,6 +13796,8 @@ function specMatsListHtml(pos, sh, live){
   // дописать материал по-прежнему можно: кнопка не должна пропадать вместе с ним.
   if(!mats.length&&!off.length)return can?matAddHtml(pos):"";
   const sw=matSwapsOf(sh, pos.key);
+  // Клей под фанеру и плитку на стенах: null — строка не про это.
+  const glue=glueForRow(pos);
   // Объёмы дома нужны только для сверки своего числа — считаем, лишь когда спросили.
   let volsMemo=null;
   const vols=function(){ if(!volsMemo)volsMemo=houseVolsOf(sh); return volsMemo; };
@@ -13856,6 +13870,7 @@ function specMatsListHtml(pos, sh, live){
               // числом, а не в уме у того, кто читает смету.
               matAltQtyHtml(m, qty)+
               matNeedHtml(pos, m, qty, can, vols)+
+              glueNeedHtml(pos, m, qty, can, glue)+
               (m.qtySet
                 ? '<button data-a="est-mat-qty-reset" data-k="'+esc(matSwapKey(pos,m))+'" title="Вернуть расчётное количество" style="border:none;background:transparent;color:#8e44ad;font-size:10px;font-weight:700;cursor:pointer;padding:0 2px">вручную ⟲</button>'
                 : '')+
@@ -13878,6 +13893,7 @@ function specMatsListHtml(pos, sh, live){
         (open?matSwapEditor(pos, m, sh, was):'')+
       '</div>';
     }).join("")+
+    glueAddHtml(pos, mats, off, sh, can, glue)+
     matOffHtml(pos, off, sh)+
     // Смета из справочника описывает типовой дом, а на этом бывает лишний уголок
     // или вторая коробка: дописать его в строке честнее, чем править справочник
@@ -13984,6 +14000,37 @@ function matNeedHtml(pos, m, qty, can, vols){
   if(!act)return '<span style="color:#e67e22;font-weight:700">нужно '+what+'</span>';
   return '<button '+act+' title="Поставить количество по объёму строки" '+
     'style="border:1px solid #e67e2255;background:#fdf2e9;color:#d35400;border-radius:5px;padding:1px 6px;font-size:9.5px;font-weight:700;cursor:pointer">нужно '+what+' ⟵</button>';
+}
+// «Нужно 20 шт на 26,87 м²» у клея Tytan в строке стен, где клеят фанеру или
+// плитку. Считает `glueForRow`: 200 г на квадрат, 280 г в картридже. Тап ставит
+// число: дописанному — в сам лист, расчётному — ручным количеством строки.
+function glueNeedHtml(pos, m, qty, can, glue){
+  if(!glue||!m||m.own||!isGlueMat(m.n))return '';
+  const what=glue.tubes+' шт на '+numRu(glue.area)+' м² · '+GLUE_G_PER_M2+' г/м²';
+  const why=numRu(glue.area)+' м² × '+GLUE_G_PER_M2+' г = '+numRu(Math.round(glue.grams/10)/100)+' кг клея, в картридже '+GLUE_G_PER_TUBE+' г';
+  if(Math.abs((Number(qty)||0)-glue.tubes)<0.01)return '<span title="'+esc(why)+'" style="color:#16a085;font-weight:700">✓ клей '+what+'</span>';
+  const act=!can?'':(m.added
+    ? 'data-a="est-mat-need" data-k="'+esc(pos.key)+'" data-m="'+esc(m.id||"")+'" data-q="'+glue.tubes+'"'
+    : 'data-a="est-mat-qty-to" data-k="'+esc(matSwapKey(pos,m))+'" data-q="'+glue.tubes+'"');
+  if(!act)return '<span title="'+esc(why)+'" style="color:#e67e22;font-weight:700">клей: нужно '+what+'</span>';
+  return '<button '+act+' title="'+esc(why+'. Тап — поставить количество')+'" '+
+    'style="border:1px solid #e67e2255;background:#fdf2e9;color:#d35400;border-radius:5px;padding:1px 6px;font-size:9.5px;font-weight:700;cursor:pointer">клей: нужно '+what+' ⟵</button>';
+}
+// Клея в строке нет вовсе — предлагаем Classic Fix с Леманы сразу нужным числом.
+// Убранный руками клей не навязываем обратно: это решение по этому дому.
+function glueAddHtml(pos, mats, off, sh, can, glue){
+  if(!glue||(mats||[]).some(function(m){ return isGlueMat(m.n); }))return '';
+  if((off||[]).some(function(addr){ return isGlueMat(matOffName(pos, sh, addr)); }))return '';
+  const prod=glueProductOf(expProducts);
+  const what=glue.tubes+' шт на '+numRu(glue.area)+' м² ('+GLUE_G_PER_M2+' г/м²)';
+  if(!can||!prod){
+    return '<div style="padding:6px 0 2px;font-size:10.5px;font-weight:700;color:#d35400">клей Tytan под обшивку: нужно '+what+'</div>';
+  }
+  return '<div style="padding:6px 0 2px">'+
+    '<button data-a="est-glue-add" data-k="'+esc(pos.key)+'" data-q="'+glue.tubes+'" title="Фанеру и плитку на стены сажают на клей: '+GLUE_G_PER_M2+' г на м², в картридже '+GLUE_G_PER_TUBE+' г" '+
+      'style="width:100%;border:1px solid #e67e2255;background:#fdf2e9;color:#d35400;border-radius:8px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer;text-align:left">'+
+      '＋ '+esc(prod.name)+' · '+what+'</button>'+
+  '</div>';
 }
 function matOffHtml(pos, off, sh){
   if(!off||!off.length)return '';
@@ -14131,6 +14178,19 @@ function estSplitHtml(pos, count, open){
         '<span style="'+(sp.labor?on:dim)+'">'+money(sp.labor)+'</span>'+
       '</button>')+
   '</span>';
+}
+// Дописанный в строку материал — копия товара базы: цена, единица, магазин и
+// фасовка берутся из карточки, чтобы не перебивать характеристики руками.
+// Цена и количество из формы главнее, пустые — из карточки и одна штука.
+function addedMatOf(prod, name, cost, qty){
+  const m={ id:gid(), pid:(prod&&prod.id)||"", n:(prod&&prod.name)||name,
+    store:(prod&&prod.store)||"", url:(prod&&prod.url)||"", note:"",
+    mode:(prod&&prod.mode)||"piece",
+    cost:isFinite(cost)&&cost>=0?cost:(Number(prod&&prod.unitCost)||0),
+    qty:isFinite(qty)&&qty>0?qty:1 };
+  m.unitCost=m.cost;
+  if(prod)["packBase","packPer","lenPer","sheetM2","packName"].forEach(function(k){ if(prod[k]!=null)m[k]=prod[k]; });
+  return m;
 }
 function matAddHtml(pos){
   if(matAddOpen!==pos.key){
@@ -25440,13 +25500,7 @@ function bind(){
       }
       // Название из базы подтягивает цену, единицу и магазин — ровно как при
       // добавлении материала в объект, чтобы не перебивать характеристики руками.
-      const m={ id:gid(), pid:(prod&&prod.id)||"", n:(prod&&prod.name)||name,
-        store:(prod&&prod.store)||"", url:(prod&&prod.url)||"", note:"",
-        mode:(prod&&prod.mode)||"piece",
-        cost:isFinite(cv)&&cv>=0?cv:(Number(prod&&prod.unitCost)||0),
-        qty:isFinite(qv)&&qv>0?qv:1 };
-      m.unitCost=m.cost;
-      if(prod)["packBase","packPer","lenPer","sheetM2","packName"].forEach(function(k){ if(prod[k]!=null)m[k]=prod[k]; });
+      const m=addedMatOf(prod, name, cv, qv);
       // Количество не вписано — берём по объёму строки (12 листов на 26,87 м²).
       // Посчитать не от чего (штучный товар, нет площади) — остаётся одна штука.
       if(!(isFinite(qv)&&qv>0)){
@@ -25476,6 +25530,26 @@ function bind(){
         if(Object.keys(row).length)next[posKey]=row; else delete next[posKey];
         sh.matQty=next;
       }
+      fl();
+    };}
+    // Тап по «клей: нужно 20 шт» у расчётного материала — число становится ручным
+    // количеством строки (дописанный клей идёт через est-mat-need выше).
+    else if(a==="est-mat-qty-to"){el.onclick=()=>{
+      const k=el.dataset.k||"", q=parseFloat(el.dataset.q||"0");
+      const cut=k.lastIndexOf("|");
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||cut<0||!(q>0))return;
+      estSnap(sh, "количество клея по площади");
+      sh.matQty=matQtyWith(sh, k.slice(0,cut), k.slice(cut+1), q); fl();
+    };}
+    // «＋ Tytan Classic Fix · 20 шт» — клей с Леманы в строку, сразу нужным числом.
+    else if(a==="est-glue-add"){el.onclick=()=>{
+      const posKey=el.dataset.k||"", q=parseFloat(el.dataset.q||"0");
+      const sh=schemeSheet()||spec2Sheet(); if(!sh||!posKey||!(q>0))return;
+      const prod=glueProductOf(expProducts);
+      if(!prod){ alert("Клея Tytan Classic Fix нет в базе материалов — заведите карточку с Леманы."); return; }
+      estSnap(sh, "клей под обшивку");
+      const m=addedMatOf(prod, prod.name, NaN, q);
+      sh.matAdd=Object.assign({}, sh.matAdd||{}, { [posKey]:((sh.matAdd||{})[posKey]||[]).concat([m]) });
       fl();
     };}
     else if(a==="est-pos-hours-set"){el.onclick=()=>{
@@ -26343,14 +26417,7 @@ function bind(){
       const posKey=k.slice(0,cut), pid=k.slice(cut+1);
       const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
       const v=parseFloat(String(el.value).replace(",","."));
-      const map=Object.assign({}, sh.matQty||{});
-      const row=Object.assign({}, map[posKey]||{});
-      // Прежний адрес того же материала стираем: иначе он остался бы лежать в
-      // снимке и всплыл бы, как только ручное число вернут к расчётному.
-      matAddrsAt(sh, posKey, pid).forEach(function(a){ delete row[a]; });
-      if(isFinite(v)&&v>0)row[pid]=v;
-      if(Object.keys(row).length)map[posKey]=row; else delete map[posKey];
-      sh.matQty=map; fl();
+      sh.matQty=matQtyWith(sh, posKey, pid, v); fl();
     };}
     // Порядок материалов внутри строки — тот же жест, что у работ.
     else if(a==="est-mat-drag"){el.onpointerdown=(ev)=>{
