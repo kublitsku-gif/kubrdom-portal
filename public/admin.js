@@ -66,7 +66,7 @@ import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
-const APP_BUILD = "2026-09-11.4";
+const APP_BUILD = "2026-09-11.5";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -16170,7 +16170,7 @@ function estBodyHtml(sh, types, live, actions){
                     // видно, а сколько это времени — нет, а по нему считают сроки.
                     // Факт часов ведут на объекте, здесь только план.
                     (function(){ const hv=((sh&&sh.posHours)||{})[p.key]; const hset=hv!=null&&Number(hv)>0;
-                      return '<input data-a="est-pos-hours" data-k="'+esc(p.key)+'" value="'+(hset?numRu(Number(hv)):"")+'" placeholder="ч" inputmode="decimal" title="План работ в человеко-часах — сколько времени закладываем на эту работу" style="width:52px;height:28px;padding:0 7px;margin-left:6px;border:1px solid '+(hset?"#2980b9":"#dde6f0")+';border-radius:7px;font-size:12px;font-weight:700;text-align:right;outline:none;color:'+(hset?"#2980b9":"#0d1b2e")+';background:#fff;box-sizing:border-box">'+
+                      return '<input id="ph-'+esc(p.key)+'" data-a="est-pos-hours" data-k="'+esc(p.key)+'" value="'+(hset?numRu(Number(hv)):"")+'" placeholder="ч" inputmode="decimal" title="План работ в человеко-часах — сколько времени закладываем на эту работу" style="width:52px;height:28px;padding:0 7px;margin-left:6px;border:1px solid '+(hset?"#2980b9":"#dde6f0")+';border-radius:7px;font-size:12px;font-weight:700;text-align:right;outline:none;color:'+(hset?"#2980b9":"#0d1b2e")+';background:#fff;box-sizing:border-box">'+
                         '<span style="font-size:12px;font-weight:700;color:#0d1b2e">ч</span>'+
                         // Факт со стройки — рядом с планом: расхождение видно там же,
                         // где план и ставили, а не в отдельном отчёте.
@@ -25648,8 +25648,17 @@ function bind(){
     };}
     else if(a==="est-pos-hours"){
       // Тап по полю показывает готовые часы: набирать «6» на телефоне в поле рядом
-      // с полем цены — способ поставить план не в ту строку.
-      el.onclick=()=>{ const key=el.dataset.k||""; hoursPickKey=(hoursPickKey===key)?"":key; ui(); };
+      // с полем цены — способ поставить план не в ту строку. Ряд ОТКРЫВАЕТ тап, а
+      // закрывают выбор или ввод: повторный тап в том же поле — человек пришёл
+      // печатать. Перерисовка заменяет поле новым, поэтому курсор возвращаем в него
+      // сами (как у поиска по смете) — иначе вписать часы руками было нельзя.
+      el.onclick=()=>{
+        const key=el.dataset.k||"";
+        if(hoursPickKey===key)return;
+        hoursPickKey=key; ui();
+        const n=document.getElementById("ph-"+key);
+        if(n&&n.focus){ n.focus(); try{ n.select(); }catch(e){} }
+      };
       el.onchange=()=>{
       const key=el.dataset.k||"";
       const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;

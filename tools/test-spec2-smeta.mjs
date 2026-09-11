@@ -936,7 +936,12 @@ const SHEET = {
   openRow(p, key)
   t.ok('пока не тапнули — ряда нет', p.run('tSpec2()').indexOf('data-a="est-pos-hours-set"') < 0)
 
-  const inp = p.dom.node({ a: 'est-pos-hours', k: key })
+  // Поле зарегистрировано и по id: тап перерисовывает строку, и курсор должен
+  // вернуться в НОВОЕ поле — ловим это подменённым focus.
+  const inp = p.dom.node({ a: 'est-pos-hours', k: key }, 'ph-' + key)
+  let focused = 0
+  inp.focus = () => { focused++ }
+  inp.select = () => {}
   p.run('bind();'); inp.onclick()
   const opened = p.run('tSpec2()')
   const chips = opened.match(/data-a="est-pos-hours-set"/g) || []
@@ -944,6 +949,12 @@ const SHEET = {
   t.ok('есть и 1, и 10', /data-h="1"/.test(opened) && /data-h="10"/.test(opened))
   t.ok('и полчаса для мелких работ', /data-h="0.5"/.test(opened))
   t.ok('поле для ручного ввода осталось', opened.indexOf('data-a="est-pos-hours"') >= 0)
+  // Вписать часы руками: раньше тап перерисовывал строку, поле теряло курсор, а
+  // повторный тап закрывал ряд — напечатать число было нельзя.
+  t.ok('у поля есть адрес для курсора', opened.indexOf('id="ph-' + key + '"') >= 0)
+  t.ok('после тапа курсор в поле — можно печатать', focused === 1, 'focus вызван ' + focused + ' раз')
+  p.run('bind();'); inp.onclick()
+  t.ok('повторный тап ряд не закрывает', p.run('tSpec2()').indexOf('data-a="est-pos-hours-set"') >= 0)
 
   const chip = p.dom.node({ a: 'est-pos-hours-set', k: key, h: '6' })
   p.run('bind();'); chip.onclick()
