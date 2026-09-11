@@ -66,7 +66,7 @@ import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
-const APP_BUILD = "2026-09-11.1";
+const APP_BUILD = "2026-09-11.2";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -14058,7 +14058,9 @@ function estOwnNormLine(p, k){
       ? 'сумма вписана до нормы-часа: <b style="color:#0d1b2e">'+was.toLocaleString("ru-RU")+' ₽</b> — впишите часы, и работа посчитается по ставке'
       : 'впишите часы — работа посчитается по ставке из «Деньги»';
   }
-  return numRu(typed)+' ч'+(k!==1?' × '+numRu(k):'')+' = <b style="color:#0d1b2e">'+numRu(Number(p.hours)||0)+' ч</b>';
+  // При ×1 умножать нечего: «5 ч = 5 ч» читается как опечатка.
+  const total='<b style="color:#0d1b2e">'+numRu(Number(p.hours)||0)+' ч</b>';
+  return k!==1?numRu(typed)+' ч × '+numRu(k)+' = '+total:total;
 }
 function estNormHtml(p, sh){
   const est=p.own?null:(estimates||[]).find(function(e){ return e&&e.id===p.estId; });

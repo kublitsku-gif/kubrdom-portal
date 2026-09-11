@@ -1145,6 +1145,11 @@ function create(p, name) {
   p.run('bind();'); hoursIn.value = '0,9'; hoursIn.onchange()
   t.ok('правка часов двигает работу', own().cost === 900 + 200, String(own().cost))
   t.ok('в строку суммы не пишется ничего', !p.q('projects[0].posAdd[0].cost') && !p.q('projects[0].posCost'))
+  // При ×1 часы не повторяются: «0,9 ч = 0,9 ч» читалось как опечатка.
+  const plainK1 = p.run('tProjects()').replace(/<[^>]*>/g, '').replace(/[\u00a0\u202f]/g, ' ')
+  t.ok('при ×1 формула без повтора часов',
+    /0,9 ч × 1 000 ₽ = 900 ₽/.test(plainK1) && plainK1.indexOf('0,9 ч = 0,9 ч') < 0,
+    (plainK1.match(/[^·]{0,30}0,9 ч[^·]{0,40}/) || [''])[0])
   const hard = p.dom.node({ a: 'est-pos-k', k: key, v: '2' })
   p.run('bind();'); hard.onclick()
   t.ok('коэффициент сложности поднимает часы и деньги',
