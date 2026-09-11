@@ -572,6 +572,11 @@ function create(p, name) {
   t.ok('у серой строки есть «удалить»', offHtml.indexOf('data-pos-off="' + key + '"') >= 0 &&
     offRow.slice(0, offRow.indexOf('</div></div>') + 12).indexOf('data-a="est-pos-del" data-k="' + key + '"') >= 0,
     offRow.slice(0, 600))
+  // Крестик серый и квадратный, как у материалов, — без слова и без красного.
+  t.ok('«удалить» — серый квадратный крестик, как у материалов',
+    /data-a="est-pos-del" data-k="[^"]*" data-n="[^"]*" title="[^"]*" style="width:28px;height:28px;background:transparent;border:1px solid #dde6f0[^"]*">✕<\/button>/
+      .test(offRow.slice(0, offRow.indexOf('</div></div>') + 12)),
+    offRow.slice(0, 900))
   const delOff = p.dom.node({ a: 'est-pos-del', k: key, n: 'Работа' }); p.run('bind();'); delOff.onclick()
   t.ok('удаление серой строки снимает «не в итоге»', !p.q('projects[0].posOff') && p.q('projects[0].posDel')[key] === 1)
   t.ok('и убирает её с экрана', p.run('tProjects()').indexOf('data-pos-off="' + key + '"') < 0)
@@ -1294,12 +1299,14 @@ function create(p, name) {
   // Переключателя «под ключ» в строке тоже нет — назначать цену там больше нечем.
   t.ok('переключателя режима цены в строке нет',
     p.run('tProjects()').indexOf('data-a="est-pos-cost-mode"') < 0)
-  // Крестик работы красный, крестик материала приглушён: рядом стоящие одинаковые
-  // стирали всю работу вместо одного материала.
+  // Оба крестика серые (так попросил Юрий, 11.09.2026), но работы — крупнее: рядом
+  // стоящие одинаковые стирали всю работу вместо одного материала. Промах теперь и
+  // так поправим — удалённая работа лежит в «удалено» и возвращается отменой.
   p.run('matsOpen[' + JSON.stringify(key) + ']=1;')
   const marks = p.run('tProjects()')
-  t.ok('✕ материала приглушён', /data-a="est-mat-off"[^>]*color:#9aabbf/.test(marks))
-  t.ok('✕ работы остаётся красным', /data-a="est-pos-del"[^>]*color:#e74c3c/.test(marks))
+  t.ok('✕ материала приглушён', /data-a="est-mat-off"[^>]*width:24px[^>]*color:#9aabbf/.test(marks))
+  t.ok('✕ работы серый, но крупнее материального', /data-a="est-pos-del"[^>]*width:28px[^>]*color:#9aabbf/.test(marks)
+    && !/data-a="est-pos-del"[^>]*color:#e74c3c/.test(marks))
   t.ok('«+ материал» во всю ширину', /est-mat-add-open[^>]*width:100%/.test(marks))
 
   t.ok('подытоги видны в шапке этапа',

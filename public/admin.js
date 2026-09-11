@@ -15487,9 +15487,16 @@ function estOnBoxHtml(key, on){
     'style="width:22px;height:22px;margin-top:1px;flex-shrink:0;background:'+(on?"#16a085":"#fff")+';border:1.5px solid '+(on?"#16a085":"#c0ccd8")+';'+
     'border-radius:6px;cursor:pointer;color:#fff;font-size:12px;font-weight:800;line-height:1;padding:0">'+(on?"✓":"")+'</button>';
 }
+// Крестик «удалить работу» — тот же серый квадрат, что у материалов: удаление не
+// тревога (есть «удалено» и отмена), а красная кнопка в смете читалась как ошибка.
+// Один на серую строку и на управление строкой — чтобы крестики не разъехались.
+function estDelBtn(p){
+  return '<button data-a="est-pos-del" data-k="'+esc(p.key)+'" data-n="'+esc(p.name||"")+'" title="'+(p.added?"Удалить дописанную работу":"Удалить работу из сметы этого дома")+'" '+
+    'style="width:28px;height:28px;background:transparent;border:1px solid #dde6f0;border-radius:7px;cursor:pointer;color:#9aabbf;font-size:12px;flex-shrink:0;padding:0">✕</button>';
+}
 // Выключенная строка: имя, её полная цена зачёркнутой и пометка «не в итоге».
-// Рядом с пометкой — «удалить»: сняли галочку и поняли, что работы в доме не будет,
-// — удаляют тут же, не раскрывая управление строкой.
+// Рядом с пометкой — крестик «удалить»: сняли галочку и поняли, что работы в доме
+// не будет, — удаляют тут же, не раскрывая управление строкой.
 function estOffRowHtml(p, canRule){
   return '<div data-pos-off="'+esc(p.key)+'" style="padding:12px 0'+(p.added?';border-left:2px solid '+EST_COL.added+';padding-left:9px;margin-left:-2px':'')+'">'+
     '<div style="display:flex;align-items:flex-start;gap:8px">'+
@@ -15499,7 +15506,7 @@ function estOffRowHtml(p, canRule){
     '</div>'+
     '<div style="display:flex;align-items:center;gap:8px;margin:4px 0 0 '+(canRule?'30px':'0')+'">'+
       '<span style="flex:1;min-width:0;font-size:10.5px;font-weight:700;color:#9aabbf">не в итоге'+(p.room?' · '+esc(p.room):'')+'</span>'+
-      (canRule?'<button data-a="est-pos-del" data-k="'+esc(p.key)+'" data-n="'+esc(p.name||"")+'" title="Удалить работу из сметы этого дома" style="border:1px solid #e74c3c44;background:#fff;border-radius:7px;padding:3px 9px;font-size:10.5px;font-weight:700;color:#e74c3c;cursor:pointer;white-space:nowrap">✕ удалить</button>':'')+
+      (canRule?estDelBtn(p):'')+
     '</div>'+
   '</div>';
 }
@@ -16295,7 +16302,7 @@ function estBodyHtml(sh, types, live, actions){
                   (canMove
                     ? '<button data-a="est-pos-room-pick" data-k="'+esc(p.key)+'" title="Приписать работу к помещению" style="width:28px;height:28px;background:'+(roomPickKey===p.key?RULE_COL:"#fff")+';border:1px solid '+(roomPickKey===p.key?RULE_COL:"#dde6f0")+';border-radius:7px;cursor:pointer;color:'+(roomPickKey===p.key?"#fff":"#7a9aaa")+';font-size:11px">⌂</button>'
                     : '')+
-                  '<button data-a="est-pos-del" data-k="'+esc(p.key)+'" data-n="'+esc(p.name||"")+'" title="'+(p.added?"Удалить дописанную работу":"Удалить работу из сметы этого дома")+'" style="width:28px;height:28px;background:#fff;border:1px solid #e74c3c44;border-radius:7px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button>'+
+                  estDelBtn(p)+
                   '</span>'+
                 '</div>'
               : '')+

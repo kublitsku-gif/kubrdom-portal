@@ -867,8 +867,11 @@ const SHEET = {
   t.ok('строки разделяет воздух', /padding:12px 0/.test(html2))
   p.run('matsOpen[' + JSON.stringify(key) + ']=1;')
   const marks2 = p.run('tSpec2()')
-  t.ok('✕ материала приглушён', /data-a="est-mat-off"[^>]*color:#9aabbf/.test(marks2))
-  t.ok('✕ работы красный', /data-a="est-pos-del"[^>]*color:#e74c3c/.test(marks2))
+  // Оба крестика серые (просьба Юрия, 11.09.2026), но у работы крупнее: одинаковые
+  // рядом стирали работу вместо материала. Удалённое к тому же возвращается.
+  t.ok('✕ материала приглушён', /data-a="est-mat-off"[^>]*width:24px[^>]*color:#9aabbf/.test(marks2))
+  t.ok('✕ работы серый, но крупнее материального', /data-a="est-pos-del"[^>]*width:28px[^>]*color:#9aabbf/.test(marks2)
+    && !/data-a="est-pos-del"[^>]*color:#e74c3c/.test(marks2))
 }
 
 // ── 9. План в человеко-часах ────────────────────────────────────────────────
