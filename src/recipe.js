@@ -1159,7 +1159,9 @@ export function applyCost(raw, sheet) {
 //   `sheet.hourRate` / `ctx.hourRate` — ставка объекта и портала.
 //
 // Руками вписанное главнее расчёта — как и везде в портале: свои часы (`posHours`)
-// перебивают норму, своя цена (`posCost`) перебивает и её, и ставку.
+// перебивают норму, своя цена (`posCost`) перебивает и её, и ставку. У СВОЕЙ
+// работы нормы нет вовсе: её часы — вписанные руками, дальше тот же коэффициент и
+// та же ставка (`normOwn`).
 //
 // Единица объёма — та же, которой меряется строка: площадь, если считали по
 // площади, число точек, если по точкам, и сама строка, если она «один раз на дом».
@@ -1181,14 +1183,35 @@ export function hourRateOf(sheet, ctx) {
   if (own > 0) return own;
   return Number((ctx || {}).hourRate) || 0;
 }
+// Своя работа: нормы в справочнике у неё нет, часы вписывают в строке руками, а
+// коэффициент и ставка — те же, что у всех: работа = часы × коэффициент × ставка.
+// Деньги кладём в её «материал» (см. `addedPositions`), а не в `labor`: стройка
+// складывает `labor` с материалами (workTotal), и цена посчиталась бы дважды.
+// Сумма, вписанная в строку до нормы-часа, остаётся работой, пока нет часов или
+// ставки: терять её молча нельзя — это договорённость с бригадой.
+function normOwn(p, sheet, rate) {
+  if (!(p.hoursSet && Number(p.hours) > 0)) return p;
+  const k = hourKOf(sheet, null, p.key);
+  const typed = Number(p.hours);
+  const hours = Math.round(typed * k * 10) / 10;
+  const next = Object.assign({}, p, { hours: hours, hourK: k, hourRate: rate, ownHours: typed });
+  if (!(rate > 0)) return next;
+  const labor = Math.round(hours * rate);
+  const had = (p.mats || []).some(function (m) { return m && m.own; });
+  const mats = had
+    ? p.mats.map(function (m) { return m && m.own ? Object.assign({}, m, { cost: labor, qty: 1 }) : m; })
+    : [{ id: "own:" + String(p.key || "").slice(4), pid: "", own: true, n: String(p.name || "Работа"),
+      store: "", mode: "piece", cost: labor, qty: 1 }].concat(p.mats || []);
+  const cost = mats.reduce(function (a, m) { return a + (Number(m && m.cost) || 0) * (Number(m && m.qty) || 0); }, 0);
+  return Object.assign(next, { mats: mats, cost: Math.round(cost), laborCalc: true });
+}
 export function applyNorm(raw, sheet, ctx) {
   const rate = hourRateOf(sheet, ctx);
   const byId = {};
   ((ctx || {}).estimates || []).forEach(function (e) { if (e && e.id) byId[e.id] = e; });
   return Object.assign({}, raw, {
     positions: (raw.positions || []).map(function (p) {
-      // У своей работы цена — это она сама, нормировать нечего.
-      if (p.own) return p;
+      if (p.own) return normOwn(p, sheet, rate);
       const est = byId[p.estId];
       const k = hourKOf(sheet, est, p.key);
       const norm = Number(est && est.hourNorm) || 0;

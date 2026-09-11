@@ -65,7 +65,7 @@ import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 
-const APP_BUILD = "2026-09-09.13";
+const APP_BUILD = "2026-09-11.1";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -14000,20 +14000,33 @@ function matOffHtml(pos, off, sh){
 // коэффициент ЭТОГО дома: в справочнике записано, сколько работа стоит обычно, а
 // здесь она бывает сложнее — и правка не должна уезжать во все дома сразу.
 const POS_K=[1,1.15,1.25,1.5,2];
+// Своя работа: нормы у неё нет, часы вписаны в строке, дальше тот же коэффициент
+// и ставка (`normOwn`). Сумма, вписанная до нормы-часа, видна, пока часов нет, —
+// чтобы было понятно, откуда цифра и как перевести строку на часы.
+function estOwnNormLine(p, k){
+  const typed=Number(p.ownHours)||0;
+  if(!(typed>0)){
+    const was=positionSplit(p).labor;
+    return was>0
+      ? 'сумма вписана до нормы-часа: <b style="color:#0d1b2e">'+was.toLocaleString("ru-RU")+' ₽</b> — впишите часы, и работа посчитается по ставке'
+      : 'впишите часы — работа посчитается по ставке из «Деньги»';
+  }
+  return numRu(typed)+' ч'+(k!==1?' × '+numRu(k):'')+' = <b style="color:#0d1b2e">'+numRu(Number(p.hours)||0)+' ч</b>';
+}
 function estNormHtml(p, sh){
-  if(p.own)return '';
-  const est=(estimates||[]).find(function(e){ return e&&e.id===p.estId; });
+  const est=p.own?null:(estimates||[]).find(function(e){ return e&&e.id===p.estId; });
   const norm=Number(est&&est.hourNorm)||0;
   const own=Number(((sh&&sh.posK)||{})[p.key])||0;
   const k=Number(p.hourK)||1;
-  if(!norm&&!own&&!(Number(p.hours)>0))return '';
+  if(!p.own&&!norm&&!own&&!(Number(p.hours)>0))return '';
   const rate=Number(p.hourRate)||0;
-  const line=p.hoursNorm
+  const noOwnHours=p.own&&!(Number(p.ownHours)>0);
+  const line=p.own?estOwnNormLine(p, k):(p.hoursNorm
     ? numRu(norm)+' ч/ед × '+numRu(Number(p.normUnits)||0)+(k!==1?' × '+numRu(k):'')+' = <b style="color:#0d1b2e">'+numRu(Number(p.hours)||0)+' ч</b>'
-    : (Number(p.hours)>0?'часы вписаны руками: <b style="color:#0d1b2e">'+numRu(Number(p.hours)||0)+' ч</b>':'нормы нет');
+    : (Number(p.hours)>0?'часы вписаны руками: <b style="color:#0d1b2e">'+numRu(Number(p.hours)||0)+' ч</b>':'нормы нет'));
   const money=(rate>0&&Number(p.hours)>0)
     ? ' × '+Math.round(rate).toLocaleString("ru-RU")+' ₽ = <b style="color:#0d1b2e">'+Math.round((Number(p.hours)||0)*rate).toLocaleString("ru-RU")+' ₽</b>'
-    : ' · <span style="color:#c0392b">норма-час не задан</span>';
+    : (noOwnHours?'':' · <span style="color:#c0392b">норма-час не задан</span>');
   return '<div style="flex-basis:100%;background:#f7fafc;border:1px solid #e6ecf3;border-radius:9px;padding:7px 9px;margin-top:2px">'+
     '<div style="font-size:10.5px;color:#5a7a9a;line-height:1.5">'+line+(p.costSet?' · <span style="color:#8e44ad">цена назначена руками — снимите её кнопкой ⟲, и работа посчитается по часам</span>':money)+'</div>'+
     '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;align-items:center">'+
@@ -14022,7 +14035,7 @@ function estNormHtml(p, sh){
         const on=own?own===x:(!own&&k===x);
         return '<button data-a="est-pos-k" data-k="'+esc(p.key)+'" data-v="'+x+'" style="border:1px solid '+(on?"#8e44ad":"#dde6f0")+';background:'+(on?"#8e44ad":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:7px;padding:3px 8px;font-size:10.5px;font-weight:700;cursor:pointer">×'+numRu(x)+'</button>';
       }).join("")+
-      (own?'<button data-a="est-pos-k" data-k="'+esc(p.key)+'" data-v="" title="Вернуть коэффициент из справочника" style="border:1px solid #8e44ad33;background:#fff;color:#8e44ad;border-radius:7px;padding:3px 8px;font-size:10.5px;font-weight:700;cursor:pointer">⟲ по справочнику</button>':'')+
+      (own&&!p.own?'<button data-a="est-pos-k" data-k="'+esc(p.key)+'" data-v="" title="Вернуть коэффициент из справочника" style="border:1px solid #8e44ad33;background:#fff;color:#8e44ad;border-radius:7px;padding:3px 8px;font-size:10.5px;font-weight:700;cursor:pointer">⟲ по справочнику</button>':'')+
     '</div>'+
   '</div>';
 }
@@ -14036,7 +14049,7 @@ function estPosSetChips(p, sh, fact){
   };
   const out=[];
   const sp=positionSplit(p);
-  if(p.own||p.costSet||p.laborCalc){
+  if((p.own&&sp.labor>0)||p.costSet||p.laborCalc){
     const all=p.costSet&&p.costMode!=="labor";
     const sum=p.own?sp.labor:Math.round(all?p.cost:(Number(p.labor)||0));
     // «По норме» отличаем от назначенной руками цены: одно считается и поедет за
@@ -14374,7 +14387,7 @@ function estAddFormHtml(sh, tag, where){
     '<input id="pad-n" list="pad-catalog" autocomplete="off" placeholder="Название — можно выбрать из справочника работ" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12.5px;margin-bottom:6px;outline:none;box-sizing:border-box">'+
     '<datalist id="pad-catalog">'+list.map(function(e){return '<option value="'+esc(e.name||"").replace(/"/g,"&quot;")+'"></option>';}).join("")+'</datalist>'+
     '<div style="display:flex;gap:6px;margin-bottom:7px">'+
-      '<input id="pad-cost" placeholder="Сумма ₽ — для своей строки" inputmode="decimal" style="flex:2;min-width:0;padding:8px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12.5px;outline:none">'+
+      '<input id="pad-hours" placeholder="Часы — для своей строки" inputmode="decimal" title="Сколько человеко-часов займёт работа. Деньги посчитаются по ставке из «Деньги»" style="flex:2;min-width:0;padding:8px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12.5px;outline:none">'+
       (fixed?'':'<select id="pad-stage" style="flex:1;min-width:0;padding:8px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12.5px;outline:none;background:#fff">'+
         EST_STAGES.map(function(st){return '<option value="'+st.n+'">'+esc(st.short)+'</option>';}).join("")+
       '</select>')+
@@ -14383,7 +14396,7 @@ function estAddFormHtml(sh, tag, where){
       '<button data-a="est-pos-add-do" data-k="'+esc(tag)+'" style="flex:1;padding:9px;background:#16a085;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700">Добавить</button>'+
       '<button data-a="est-pos-add-open" data-k="" style="padding:9px 13px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:12.5px">Отмена</button>'+
     '</div>'+
-    '<div style="font-size:10px;color:#7a9aaa;line-height:1.45;margin-top:7px">Имя из справочника подтянет материалы, цену и этап — сумма'+(fixed?'':' и этап')+' тогда не нужны. Работа живёт в этом доме, справочник не меняется.</div>'+
+    '<div style="font-size:10px;color:#7a9aaa;line-height:1.45;margin-top:7px">Имя из справочника подтянет материалы, норму и этап — часы'+(fixed?'':' и этап')+' тогда не нужны. Своя работа считается как часы × ставка из «Деньги». Работа живёт в этом доме, справочник не меняется.</div>'+
     // Вторая дверь в тот же перенос — прямо из формы: работу добавляют здесь, и
     // «а в Мордвесе она уже собрана» вспоминают именно в этот момент. Этап формы
     // едет с кнопкой: открылись из «+» этапа 2 — показываем работы этапа 2.
@@ -16011,18 +16024,12 @@ function estBodyHtml(sh, types, live, actions){
             (canRule&&rowOpen
               ? '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:7px">'+
                   (function(){
-                    // Цену бригаде в строке больше не вбивают: работа считается по
-                    // часам и ставке, и второе поле для того же числа означало бы
-                    // два ответа на один вопрос. Осталось поле у СВОЕЙ работы: у неё
-                    // цена и есть смысл строки (она лежит в самой строке, а не в
-                    // `posCost`), нормы у неё нет и взяться ей неоткуда.
-                    const sp=positionSplit(p);
-                    const shown=p.own?sp.labor:"";
+                    // Цену бригаде в строке не вбивают — ни у строки справочника, ни у
+                    // своей работы: в строке часы и коэффициент сложности, ставка
+                    // живёт в «Деньгах». Поле ₽ рядом с часами было вторым ответом на
+                    // тот же вопрос — и в «Пол на весь дом» стоял 1 ₽ при пяти часах.
                     const all=p.costSet&&p.costMode!=="labor";
-                    return (p.own
-                      ? '<input id="pc-'+esc(p.key)+'" data-a="est-pos-cost" data-k="'+esc(p.key)+'" value="'+shown+'" placeholder="работа" inputmode="numeric" title="Цена своей работы — её и платим" style="width:86px;height:28px;padding:0 7px;border:1px solid #8e44ad;border-radius:7px;font-size:12px;font-weight:700;text-align:right;outline:none;color:#8e44ad;background:#fff;box-sizing:border-box">'+
-                        '<span style="font-size:12px;font-weight:700;color:#0d1b2e">₽</span>'
-                      : '')+
+                    return ''+
                     // План в человеко-часах — рядом с деньгами: сколько платим уже
                     // видно, а сколько это времени — нет, а по нему считают сроки.
                     // Факт часов ведут на объекте, здесь только план.
@@ -16332,7 +16339,7 @@ function projMoneyHtml(p){
       '<input data-a="hour-rate-base" inputmode="numeric" value="'+(hourRateBase()>0?String(hourRateBase()):"")+'" placeholder="база" title="Базовая ставка портала — по ней считаются все дома, где своя не задана" style="width:96px;padding:8px 10px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box">'+
       '<span style="font-size:11.5px;color:#7a9aaa">база портала</span>'+
     '</div>'+
-    '<div style="font-size:10.5px;color:#9aabbf;line-height:1.45;margin-top:6px">Работа бригады = часы × ставка. Часы берутся из нормы работы (справочник смет) или вписываются в строке руками. Своя цена в строке главнее любого расчёта.</div>'+
+    '<div style="font-size:10.5px;color:#9aabbf;line-height:1.45;margin-top:6px">Работа бригады = часы × коэффициент сложности × ставка. Часы берутся из нормы работы (справочник смет) или вписываются в строке руками — у своей работы тоже. В строке только часы и коэффициент, цену там не вписывают.</div>'+
   '</div>';
   // Объект и договор — отсюда: это единственное место, где «что построить»
   // встречается с «за сколько».
@@ -25501,19 +25508,6 @@ function bind(){
       estSnap(sh, "цену работы");
       const v=parseFloat(String(el.value).replace(/\s/g,"").replace(",","."));
       if(!isFinite(v)||v<0){ fl(); return; }
-      // У СВОЕЙ работы цена живёт в самой строке (`posAdd[].cost`), а не отметкой
-      // поверх расчёта: её там и правим — иначе к вписанной руками цифре
-      // прибавилась бы вторая, и строка стоила бы вдвое.
-      if(key.indexOf("add:")===0){
-        const id=key.slice(4);
-        const rows=(sh.posAdd||[]);
-        const at=rows.findIndex(function(x){ return String(x.id)===id&&!x.estId; });
-        if(at>=0){
-          const next=rows.slice();
-          next[at]=Object.assign({}, next[at], { cost:Math.round(v) });
-          sh.posAdd=next; scheduleSave(); fl(); return;
-        }
-      }
       sh.posCost=Object.assign({}, sh.posCost||{}, { [key]:Math.round(v) });
       // Новая цена по умолчанию — оплата бригаде: так её и назначают, а материалы
       // остаются своей строкой. Уже введённые цифры смысла не меняют.
@@ -26144,13 +26138,16 @@ function bind(){
       // Имя из справочника — берём строку целиком: материалы, цена и этап уже
       // решены там, и списывать их вручную значит заводить вторую правду.
       const est=(estimates||[]).find(function(e){ return e&&(e.kind||"banya")===kind&&String(e.name||"").trim()===name; });
-      const cost=parseFloat(String((document.getElementById("pad-cost")||{}).value||"").replace(",","."))||0;
-      if(!est&&!cost){ alert("Такой работы в справочнике нет — впишите сумму, и она станет своей строкой."); return; }
+      // Своей работе в форме — часы, а не сумма: ставка живёт в «Деньгах», и работа
+      // посчитается по ней так же, как строка справочника.
+      const hours=Math.round((parseFloat(String((document.getElementById("pad-hours")||{}).value||"").replace(/\s/g,"").replace(",","."))||0)*10)/10;
+      if(!est&&!(hours>0)){ alert("Такой работы в справочнике нет — впишите часы, и она станет своей строкой."); return; }
       const row=est
         ? { id:gid(), estId:est.id }
-        : { id:gid(), name:name, cost:Math.round(cost),
+        : { id:gid(), name:name,
             stage:Number((document.getElementById("pad-stage")||{}).value)||0 };
       sh.posAdd=(sh.posAdd||[]).concat([row]);
+      if(!est)sh.posHours=Object.assign({}, sh.posHours||{}, { ["add:"+row.id]:hours });
       if(cut){
         const key="add:"+row.id;
         // Этап и комната — там же, куда добавляли. Этап пишем отдельной отметкой:

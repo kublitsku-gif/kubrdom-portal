@@ -799,7 +799,9 @@ const SHEET = {
   p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
   const open = p.dom.node({ a: 'est-pos-add-open', k: p.q('spec2Sheet().id') })
   p.run('bind();'); open.onclick()
-  p.dom.field('pad-n', 'Сборка стеллажей'); p.dom.field('pad-cost', '500'); p.dom.field('pad-stage', '1')
+  // Своя работа заводится часами: деньги — по ставке листа.
+  p.run('spec2Sheet().hourRate=1000;')
+  p.dom.field('pad-n', 'Сборка стеллажей'); p.dom.field('pad-hours', '0,5'); p.dom.field('pad-stage', '1')
   p.run('tSpec2();')
   const go = p.dom.node({ a: 'est-pos-add-do', k: p.q('spec2Sheet().id') })
   p.run('bind();'); go.onclick()

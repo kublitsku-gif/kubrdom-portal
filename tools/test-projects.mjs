@@ -540,16 +540,23 @@ function create(p, name) {
   // Этап пришёл вместе с адресом, и спрашивать его второй раз незачем.
   t.ok('этап в форме не спрашивают', p.run('tProjects()').indexOf('id="pad-stage"') < 0)
 
-  // Своя строка: имени в справочнике нет, зато есть сумма.
-  p.dom.field('pad-n', 'Вывоз мусора'); p.dom.field('pad-cost', '9000')
+  // Своя строка: имени в справочнике нет. В форме — часы, а не сумма: ставка
+  // живёт в «Деньгах», и работа считается по ней, как строка справочника.
+  t.ok('в форме часы, а не сумма',
+    p.run('tProjects()').indexOf('id="pad-hours"') >= 0 && p.run('tProjects()').indexOf('id="pad-cost"') < 0)
+  p.run('projects[0].hourRate=1000;')
+  const costR = p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost')
+  p.dom.field('pad-n', 'Вывоз мусора'); p.dom.field('pad-hours', '9')
   const go = p.dom.node({ a: 'est-pos-add-do', k: tag1 })
   p.run('bind();'); go.onclick()
   const own = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.name==="Вывоз мусора";})')
   t.ok('своя работа появилась', own.length === 1, JSON.stringify(own.map((x) => x.name)))
-  t.ok('с её суммой', own[0] && own[0].cost === 9000, own[0] && String(own[0].cost))
+  t.ok('деньги — часы × ставка', own[0] && own[0].cost === 9000, own[0] && String(own[0].cost))
+  t.ok('часы легли планом строки, суммы в строке нет',
+    p.q('projects[0].posHours["add:"+projects[0].posAdd[0].id]') === 9 && !p.q('projects[0].posAdd[0].cost'))
   t.ok('и на своём этапе', own[0] && own[0].stage === 2, own[0] && String(own[0].stage))
   t.ok('деньги выросли ровно на неё',
-    p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost') === cost0 + 9000)
+    p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost') === costR + 9000)
   t.ok('справочник не тронут', p.q('estimates.length') === 2)
   // Дописанная помечена РЕЙКОЙ слева, а не зелёной пилюлей у имени: «дописана» —
   // свойство всей строки, а зелёный в смете значит «факт со стройки» и занят.
@@ -558,7 +565,7 @@ function create(p, name) {
   // Имя из справочника — строка берётся целиком, со своими материалами и ценой.
   const open2 = p.dom.node({ a: 'est-pos-add-open', k: tag1 })
   p.run('bind();'); open2.onclick()
-  p.dom.field('pad-n', 'Обшивка стен ОСП'); p.dom.field('pad-cost', '')
+  p.dom.field('pad-n', 'Обшивка стен ОСП'); p.dom.field('pad-hours', '')
   const go2 = p.dom.node({ a: 'est-pos-add-do', k: tag1 })
   p.run('bind();'); go2.onclick()
   const fromCat = p.q('allPositions(projects[0], specCtx(projects[0])).filter(function(x){return x.key.indexOf("add:")===0&&x.estId==="e_osb";})')
@@ -1012,7 +1019,7 @@ function create(p, name) {
   const tag = p.q('projects[0].id') + '@3|' + room.id
   const open = p.dom.node({ a: 'est-pos-add-open', k: tag }); p.run('bind();'); open.onclick()
   t.ok('форма открылась в помещении', /ДОБАВИТЬ РАБОТУ — ВАННАЯ КОМНАТА/.test(p.run('tProjects()')))
-  p.dom.field('pad-n', 'Затирка швов'); p.dom.field('pad-cost', '5000')
+  p.dom.field('pad-n', 'Затирка швов'); p.dom.field('pad-hours', '5')
   const add = p.dom.node({ a: 'est-pos-add-do', k: tag }); p.run('bind();'); add.onclick()
   const inRoom = st().blocks.filter((b) => b.key === room.id)[0]
   t.ok('работа добавлена в это помещение', inRoom.positions.some((x) => x.name === 'Затирка швов'), layout())
@@ -1100,10 +1107,10 @@ function create(p, name) {
   t.section('Своя работа и её цена')
   const p = panel()
   create(p, 'Дом со своей работой')
-  p.run('projBand="parts";')
+  p.run('projBand="parts";projects[0].hourRate=1000;')
   const open = p.dom.node({ a: 'est-pos-add-open', k: p.q('projects[0].id') })
   p.run('bind();'); open.onclick()
-  p.dom.field('pad-n', 'Сборка стеллажей'); p.dom.field('pad-cost', '500'); p.dom.field('pad-stage', '1')
+  p.dom.field('pad-n', 'Сборка стеллажей'); p.dom.field('pad-hours', '0,5'); p.dom.field('pad-stage', '1')
   p.run('tProjects();')
   const go = p.dom.node({ a: 'est-pos-add-do', k: p.q('projects[0].id') })
   p.run('bind();'); go.onclick()
@@ -1126,16 +1133,25 @@ function create(p, name) {
   const own2 = p.run('tProjects()').replace(/<[^>]*>/g, '').replace(/[\u00a0\u202f]/g, ' ')
   t.ok('в строке видно обе половины', /материалы 200 ₽ · работа 500 ₽/.test(own2), 'нет раскладки')
 
-  // Цена своей работы правится В ПОЛЕ: она лежит в самой строке, а не отметкой
-  // поверх расчёта, и раньше поле оставалось пустым при живой цене.
+  // Цену своей работы в строке не вбивают: в строке часы и коэффициент сложности,
+  // ставка — в «Деньгах». Поле ₽ рядом с часами было вторым ответом на тот же
+  // вопрос, и в боевом «Пол на весь дом» стоял 1 ₽ при пяти часах.
   openRow(p, key)
-  const ownField = () => (p.run('tProjects()').match(new RegExp('id="pc-' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"[^>]*')) || [''])[0]
-  t.ok('цена своей работы стоит в поле', /value="500"/.test(ownField()), ownField().slice(0, 140))
-  const setOwn = p.dom.node({ a: 'est-pos-cost', k: key })
-  p.run('bind();'); setOwn.value = '900'; setOwn.onchange()
-  t.ok('и правится там же', own().cost === 900 + 200, String(own().cost))
-  t.ok('правка ушла в саму работу, а не в отметку поверх расчёта',
-    p.q('projects[0].posAdd[0].cost') === 900 && !p.q('projects[0].posCost'))
+  const opened = p.run('tProjects()')
+  t.ok('поля цены у своей работы нет',
+    opened.indexOf('id="pc-' + key + '"') < 0 && opened.indexOf('data-a="est-pos-cost" data-k="' + key + '"') < 0)
+  t.ok('часы стоят в поле', opened.indexOf('data-a="est-pos-hours" data-k="' + key + '" value="0,5"') >= 0)
+  const hoursIn = p.dom.node({ a: 'est-pos-hours', k: key })
+  p.run('bind();'); hoursIn.value = '0,9'; hoursIn.onchange()
+  t.ok('правка часов двигает работу', own().cost === 900 + 200, String(own().cost))
+  t.ok('в строку суммы не пишется ничего', !p.q('projects[0].posAdd[0].cost') && !p.q('projects[0].posCost'))
+  const hard = p.dom.node({ a: 'est-pos-k', k: key, v: '2' })
+  p.run('bind();'); hard.onclick()
+  t.ok('коэффициент сложности поднимает часы и деньги',
+    own().hours === 1.8 && own().cost === 1800 + 200, own().hours + ' ч, ' + own().cost + ' ₽')
+  const formula = p.run('tProjects()').replace(/<[^>]*>/g, '').replace(/[\u00a0\u202f]/g, ' ')
+  t.ok('формула видна в строке', /0,9 ч × 2 = 1,8 ч × 1 000 ₽ = 1 800 ₽/.test(formula),
+    (formula.match(/[^·]{0,40}ч × [^·]{0,40}/) || [''])[0])
   t.ok('пустого чипа «откуда число» нет',
     !/border-radius:7px;padding:2px 7px[^>]*"><\/span>/.test(p.run('tProjects()')))
 
@@ -1899,7 +1915,7 @@ function create(p, name) {
   const add = p.dom.node({ a: 'est-pos-add-open', k: p.q('projects[0].id') + '@' + stN + '|' + missing.id })
   p.run('bind();'); add.onclick()
   t.ok('форма раскрылась', p.run('tProjects()').indexOf('id="pad-n"') >= 0, 'нет формы работы')
-  p.dom.field('pad-n', 'Уборка после отделки'); p.dom.field('pad-cost', '3000')
+  p.dom.field('pad-n', 'Уборка после отделки'); p.dom.field('pad-hours', '3')
   const doIt = p.dom.node({ a: 'est-pos-add-do', k: p.q('projects[0].id') + '@' + stN + '|' + missing.id })
   p.run('bind();'); doIt.onclick()
 

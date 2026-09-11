@@ -187,6 +187,49 @@ const R = (o) => Object.assign({ id: 'r1', kind: 'house', what: 'surface', k: 'w
   t.ok('без нормы работа не считается', !(plain.hours > 0) && !plain.laborCalc)
 }
 
+// ── Своя работа по часам ────────────────────────────────────────────────────
+// Своей работе (строке, дописанной в дом без справочника) цену вбивали прямо в
+// строке — и в «Пол на весь дом» стоял 1 ₽ при пяти часах. Ставка живёт в
+// «Деньгах», в строке остаются только часы и коэффициент сложности: работа =
+// часы × коэффициент × ставка, так же, как у строк справочника.
+{
+  t.section('Своя работа по часам')
+  const ctxOwn = (extra) => Object.assign({ estimates: EST, products: PRODUCTS, winTypes: TYPES, rules: [], pies: false }, extra || {})
+  const ownOf = (sheet, extra) => allPositionsRaw(sheet, ctxOwn(extra)).positions.filter((p) => p.key === 'add:w1')[0]
+  const ownMats = (p) => (p.mats || []).filter((m) => m.own)
+  const base = Object.assign({}, SHEET, {
+    posAdd: [{ id: 'w1', name: 'Пол на весь дом', cost: 1, stage: 2 }],
+    posHours: { 'add:w1': 5 },
+    matAdd: { 'add:w1': [{ id: 'm1', pid: '', n: 'Фанера', cost: 1000, qty: 3 }] },
+  })
+
+  const paid = ownOf(Object.assign({}, base, { hourRate: 1000 }))
+  t.ok('работа — часы × ставка, а не вписанная сумма', positionSplit(paid).labor === 5000, JSON.stringify(positionSplit(paid)))
+  t.ok('материалы строки остались своей цифрой', positionSplit(paid).mats === 3000 && paid.cost === 8000, String(paid.cost))
+  // Стройка складывает `labor` с материалами (workTotal): деньги своей работы
+  // обязаны жить только в её «материале», иначе объект посчитал бы их дважды.
+  t.ok('деньги лежат в «материале» работы, а не в labor', !(Number(paid.labor) > 0) && ownMats(paid).length === 1 && ownMats(paid)[0].cost === 5000)
+
+  const hard = ownOf(Object.assign({}, base, { hourRate: 1000, posK: { 'add:w1': 1.5 } }))
+  t.ok('коэффициент поднимает часы', hard.hours === 7.5 && hard.hourK === 1.5, hard.hours + ' ч ×' + hard.hourK)
+  t.ok('и деньги вместе с ними', positionSplit(hard).labor === 7500, String(positionSplit(hard).labor))
+
+  const byBase = ownOf(base, { hourRate: 1200 })
+  t.ok('без ставки дома — база портала', positionSplit(byBase).labor === 6000, String(positionSplit(byBase).labor))
+
+  // Сумма, вписанная до нормы-часа, не пропадает молча: пока часов нет, она и есть работа.
+  const legacy = ownOf(Object.assign({}, base, { posHours: {}, posAdd: [{ id: 'w1', name: 'Черновой пол', cost: 5000, stage: 2 }], hourRate: 1000 }))
+  t.ok('без часов остаётся прежняя сумма', positionSplit(legacy).labor === 5000 && !legacy.laborCalc, String(positionSplit(legacy).labor))
+  const noRate = ownOf(base)
+  t.ok('без ставки — прежняя сумма, часы остаются планом', positionSplit(noRate).labor === 1 && noRate.hours === 5,
+    positionSplit(noRate).labor + ' ₽, ' + noRate.hours + ' ч')
+
+  // Новую свою работу заводят без суммы — одними часами.
+  const fresh = ownOf(Object.assign({}, base, { posAdd: [{ id: 'w1', name: 'Пол', stage: 2 }], hourRate: 1000 }))
+  t.ok('строка без суммы получает работу по часам', positionSplit(fresh).labor === 5000 && ownMats(fresh).length === 1,
+    JSON.stringify(positionSplit(fresh)))
+}
+
 // ── Объёмы для кнопок выбора ────────────────────────────────────────────────
 // Кнопка «пол · 25,26 м²» обязана обещать ровно то число, которое потом уедет в
 // смету: считается оно тем же roomArea, что и позиции правила.
