@@ -65,8 +65,9 @@ import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
 import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
+import { plinthOptions, plinthPieceLen, isPlinthMat } from "../src/plinth.js";
 
-const APP_BUILD = "2026-09-11.5";
+const APP_BUILD = "2026-09-11.6";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -13851,6 +13852,10 @@ function specMatsListHtml(pos, sh, live){
   // Клей под фанеру и плитку на стенах: null — строка не про это. Норма расхода —
   // из настроек портала, её правят тут же, в подсказке.
   const glue=glueForRow(pos, glueRateOf(settings));
+  // Погонные метры плинтусов — из чертежа (`modelAreas`), и только когда в строке
+  // нашёлся плинтус: пересчитывать площади дома на каждый материал незачем.
+  let plinthMemo;
+  const plinthFacts=function(){ if(plinthMemo===undefined)plinthMemo=(sh&&sh.model)?modelAreas(sh.model, winTypes):null; return plinthMemo; };
   // Объёмы дома нужны только для сверки своего числа — считаем, лишь когда спросили.
   let volsMemo=null;
   const vols=function(){ if(!volsMemo)volsMemo=houseVolsOf(sh); return volsMemo; };
@@ -13924,6 +13929,7 @@ function specMatsListHtml(pos, sh, live){
               matAltQtyHtml(m, qty)+
               matNeedHtml(pos, m, qty, can, vols)+
               glueNeedHtml(pos, m, qty, can, glue)+
+              plinthNeedHtml(pos, m, qty, can, plinthFacts)+
               (m.qtySet
                 ? '<button data-a="est-mat-qty-reset" data-k="'+esc(matSwapKey(pos,m))+'" title="Вернуть расчётное количество" style="border:none;background:transparent;color:#8e44ad;font-size:10px;font-weight:700;cursor:pointer;padding:0 2px">вручную ⟲</button>'
                 : '')+
@@ -14053,6 +14059,35 @@ function matNeedHtml(pos, m, qty, can, vols){
   if(!act)return '<span style="color:#e67e22;font-weight:700">нужно '+what+'</span>';
   return '<button '+act+' title="Поставить количество по объёму строки" '+
     'style="border:1px solid #e67e2255;background:#fdf2e9;color:#d35400;border-radius:5px;padding:1px 6px;font-size:9.5px;font-weight:700;cursor:pointer">нужно '+what+' ⟵</button>';
+}
+// «пол 32,86 м → 11 шт» у плинтуса. Погонные метры — дома или комнаты строки
+// (`modelAreas`), штуки — по длине хлыста (`plinthOptions`). Какой это плинтус,
+// скажет название товара или строки; не сказало — варианты кнопками, выбирает
+// человек. Тап ставит число: дописанному — в сам лист, расчётному — ручным
+// количеством строки, как у клея.
+function plinthNeedHtml(pos, m, qty, can, facts){
+  if(!m||m.own||!isPlinthMat(m.n))return '';
+  const opts=plinthOptions(pos, m, facts());
+  if(!opts.length)return '';
+  const unit=esc(specMatUnit(m));
+  const piece=plinthPieceLen(m);
+  const why=function(o){
+    return o.where+' · '+o.n+': '+numRu(o.len)+' м'+((m.mode||"piece")==="mp"?'':' ÷ '+numRu(piece)+' м в штуке = '+numRu(o.need)+' шт');
+  };
+  const hit=opts.find(function(o){ return Math.abs((Number(qty)||0)-o.need)<0.01; });
+  if(hit)return '<span title="'+esc(why(hit))+'" style="color:#16a085;font-weight:700">✓ плинтус '+numRu(hit.need)+' '+unit+' = '+esc(hit.n)+' '+numRu(hit.len)+' м</span>';
+  return '<span style="display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px">'+
+    '<span style="color:#d35400;font-weight:700">плинтус'+(opts[0].where!=="весь дом"?' · '+esc(opts[0].where):'')+':</span>'+
+    opts.map(function(o){
+      const txt=esc(o.n)+' '+numRu(o.len)+' м → '+numRu(o.need)+' '+unit;
+      const act=!can?'':(m.added
+        ? 'data-a="est-mat-need" data-k="'+esc(pos.key)+'" data-m="'+esc(m.id||"")+'" data-q="'+o.need+'"'
+        : 'data-a="est-mat-qty-to" data-k="'+esc(matSwapKey(pos,m))+'" data-q="'+o.need+'"');
+      if(!act)return '<span title="'+esc(why(o))+'" style="color:#e67e22;font-weight:700">'+txt+'</span>';
+      return '<button '+act+' title="'+esc(why(o)+'. Тап — поставить количество')+'" '+
+        'style="border:1px solid #e67e2255;background:#fdf2e9;color:#d35400;border-radius:5px;padding:1px 6px;font-size:9.5px;font-weight:700;cursor:pointer">'+txt+' ⟵</button>';
+    }).join("")+
+  '</span>';
 }
 // «Нужно 10 шт на 26,87 м²» у клея Tytan в строке стен, где клеят фанеру или
 // плитку. Считает `glueForRow`: норма на квадрат (по умолчанию 100 г), 280 г в
@@ -25652,7 +25687,7 @@ function bind(){
       const k=el.dataset.k||"", q=parseFloat(el.dataset.q||"0");
       const cut=k.lastIndexOf("|");
       const sh=schemeSheet()||spec2Sheet(); if(!sh||cut<0||!(q>0))return;
-      estSnap(sh, "количество клея по площади");
+      estSnap(sh, "количество по объёму");
       sh.matQty=matQtyWith(sh, k.slice(0,cut), k.slice(cut+1), q); fl();
     };}
     // «⚙ 100 г/м²» у подсказки клея — норма расхода, одна на портал. Не число или
