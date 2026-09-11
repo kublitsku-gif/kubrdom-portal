@@ -7,7 +7,8 @@
 // на чём держится новая карточка: шаги договора и чего не хватает для следующего,
 // порядок объектов в выборе, защиту от второго основного договора, имя и шаблон
 // объекта из договора, прогресс стройки и даты по-русски.
-import { dateRu, CT_STEPS, ctStep, ctMissing, objPickList, mainContractOf, ctObjName, ctTemplateFor, objProgress } from '../src/contract-card.js'
+import { dateRu, CT_STEPS, ctStep, ctMissing, objPickList, mainContractOf, ctObjName, ctTemplateFor, objProgress,
+  ctMainConflict, ctOthersOnObject, ctCanBecomeMain, ctPayProgress } from '../src/contract-card.js'
 
 const t = reporterOf()
 function reporterOf() {
@@ -155,6 +156,40 @@ const stage = (n, works, o) => Object.assign({ id: 's' + n, n: 'Этап ' + n, 
   t.ok('отставание в рабочих днях', p.late === 6, String(p.late))
   const fresh = objProgress({ stages: [stage(1, [work()])] }, TODAY)
   t.ok('не начата — не начата, отставания нет', fresh.started === false && fresh.late === 0)
+}
+
+// Живой случай 11.09.2026: договор Кутьина (подписан, 1 752 000 ₽) привязали к «Дому
+// СВО», где основным стоял черновик №59, — и подписанный стал «доп. работами».
+// Черновик не должен перебивать подписанный договор.
+{
+  t.section('Основной договор: черновик не перебивает подписанный')
+  const draft59 = { id: 'c59', objId: 'svo', type: 'main', status: 'draft', name: '№59' }
+  const signedMain = { id: 'cS', objId: 'svo', type: 'main', status: 'signed', name: '№1906' }
+  const kut = { id: 'cK', type: 'main', status: 'signed', name: '№2108' }
+  t.ok('на объекте черновик — предлагаем поменять местами', (ctMainConflict([draft59], kut, 'svo') || {}).mode === 'swap')
+  t.ok('на объекте подписанный — этот становится доп. работами', (ctMainConflict([signedMain], kut, 'svo') || {}).mode === 'extra')
+  t.ok('два черновика — тоже доп. работы', (ctMainConflict([draft59], Object.assign({}, kut, { status: 'draft' }), 'svo') || {}).mode === 'extra')
+  t.ok('доп. работы не конфликтуют', ctMainConflict([draft59], Object.assign({}, kut, { type: 'extra' }), 'svo') === null)
+  t.ok('объекта нет — конфликта нет', ctMainConflict([draft59], kut, '') === null && ctMainConflict([], kut, 'svo') === null)
+
+  const kutExtra = Object.assign({}, kut, { type: 'extra', objId: 'svo' })
+  t.ok('подписанный доп. при черновике-основном — можно сделать основным', (ctCanBecomeMain([draft59, kutExtra], kutExtra) || {}).id === 'c59')
+  t.ok('при подписанном основном — нельзя', ctCanBecomeMain([signedMain, kutExtra], kutExtra) === null)
+  t.ok('черновик сам себя основным не делает', ctCanBecomeMain([draft59, Object.assign({}, kutExtra, { status: 'draft' })], Object.assign({}, kutExtra, { status: 'draft' })) === null)
+  t.ok('остальные договоры на объекте', ctOthersOnObject([draft59, signedMain, kutExtra, { id: 'x', objId: 'svo', archived: true }], kutExtra).map((x) => x.id).join(',') === 'c59,cS')
+  t.ok('без объекта — никого', ctOthersOnObject([draft59], { id: 'n' }).length === 0)
+}
+
+{
+  t.section('Оплата клиента по графику')
+  const p = ctPayProgress(1752000, [{ amount: 1050000, paidAt: '2026-08-22' }, { amount: 502000 }])
+  t.ok('оплачено — только отмеченные', p.paid === 1050000)
+  t.ok('расписано — все транши', p.planned === 1552000)
+  t.ok('не расписано — остаток суммы', p.unplanned === 200000 && p.over === 0)
+  t.ok('процент — от суммы договора', p.pct === 60, String(p.pct))
+  const none = ctPayProgress(1752000, null)
+  t.ok('графика нет — ничего не оплачено и всё не расписано', none.paid === 0 && none.unplanned === 1752000 && none.pct === 0)
+  t.ok('перебор графика виден', ctPayProgress(100, [{ amount: 150 }]).over === 50)
 }
 
 t.done()

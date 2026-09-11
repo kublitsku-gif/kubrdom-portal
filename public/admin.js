@@ -57,7 +57,8 @@ import { totals2, issues2, works2 } from "../src/spec2.js";
 import { priceHist, priceWas, pricePush, priceStale, refreshPrices } from "../src/prices.js";
 import { UNIT_WORDS, PACK_AS_WORD, normProduct } from "../src/catalog.js";
 import { glueForRow, isGlueMat, glueProductOf, glueRateOf, glueRateParse, GLUE_G_PER_TUBE, GLUE_RATE_MAX } from "../src/glue.js";
-import { dateRu, CT_STEPS, ctStep, ctMissing, objPickList, mainContractOf, ctObjName, ctTemplateFor, objProgress } from "../src/contract-card.js";
+import { dateRu, CT_STEPS, ctStep, ctMissing, objPickList, mainContractOf, ctObjName, ctTemplateFor, objProgress,
+  ctMainConflict, ctOthersOnObject, ctCanBecomeMain, ctPayProgress } from "../src/contract-card.js";
 import { allPositions, allPositionsRaw, addedPositions, guessVolume, carryRuleEdits, matKeyOf, matAddKey, matAddrs, matAddrPid, matAddrSwap, migrateMatAddrs, rulePositions, positionWork, ruleText, ruleReady, ruleAreas, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
   pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
   optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf, ROOM_HOUSE, roomKeyOf, positionSplit,
@@ -10140,6 +10141,15 @@ function payMethodSelector(){
 }
 function payMethodLabel(m){ return m==="cash"?"💵 Наличка":(m==="transfer"?"🏦 Перевод":""); }
 
+// Типы файлов договора — одним списком: из него строятся группы в блоке «Файлы» и
+// кнопки «＋ добавить». Ключи (`kind`) — те же, что лежат в `c.files`.
+const CT_FILE_KINDS=[
+  {k:"contract", i:"📄", n:"Договор",             col:"#2980b9"},
+  {k:"plan",     i:"📐", n:"Планировка и проект", col:"#8e44ad"},
+  {k:"spec",     i:"📋", n:"Спецификация",        col:"#16a085"},
+  {k:"act",      i:"✅", n:"Акты",                col:"#e67e22"},
+  {k:"wind",     i:"🪟", n:"Окна и двери",        col:"#34495e"},
+];
 function buildContractFiles(c){
   function fileIcon(f){
     const mime=(f.mime||"").toLowerCase();
@@ -10156,48 +10166,44 @@ function buildContractFiles(c){
     if(n<1024*1024) return Math.round(n/1024)+" КБ";
     return (n/1024/1024).toFixed(1)+" МБ";
   }
-  function section(kind,title,color){
-    const files=(c.files||[]).filter(function(f){return f.kind===kind;});
-    let h='<div style="background:#fff;border-radius:12px;border:1px solid '+color+'33;padding:12px 14px;margin-bottom:10px">';
-    h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'+
-         '<div style="font-size:10px;color:'+color+';font-weight:700;letter-spacing:0.5px">'+title+(files.length?' · '+files.length:'')+'</div>'+
-         '<span style="display:flex;gap:6px;align-items:center">'+
-         (kind==="plan"?'<button data-a="ct-plan-pick" data-cid="'+c.id+'" style="padding:4px 11px;background:#6c5ce7;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">📐 Из базы</button>':'')+
-         '<label data-a="ct-file-label" data-cid="'+c.id+'" data-kind="'+kind+'" style="padding:4px 11px;background:'+color+';border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">+ Прикрепить<input id="ct-file-inp-'+c.id+'-'+kind+'" type="file" multiple style="display:none"></label>'+
-         '</span>'+
-       '</div>';
-    if(!files.length){
-      h+='<div style="font-size:11px;color:#9aabbf;text-align:center;padding:12px;border:1px dashed '+color+'44;border-radius:8px">Нет файлов. Нажмите «+ Прикрепить»</div>';
-    } else {
-      files.forEach(function(f){
-        const isImg=(f.mime||"").indexOf("image")===0;
-        h+='<div style="display:flex;align-items:center;gap:9px;padding:8px 10px;background:#fafbfc;border:1px solid #f0f3f7;border-radius:8px;margin-bottom:5px">';
-        if(isImg){
-          h+='<img src="'+f.data+'" style="width:34px;height:34px;border-radius:6px;object-fit:cover;flex-shrink:0;border:1px solid #e0e6ee" alt="">';
-        } else {
-          h+='<div style="width:34px;height:34px;border-radius:6px;background:'+color+'15;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0">'+fileIcon(f)+'</div>';
-        }
-        h+='<div style="flex:1;min-width:0">'+
-             '<div style="font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name)+'</div>'+
-             '<div style="font-size:9px;color:#9aabbf">'+(f.date||"")+(f.size?' · '+fmtSize(f.size):'')+'</div>'+
-           '</div>'+
-           (kind==="act"?'<label onclick="event.stopPropagation()" style="display:flex;align-items:center;gap:5px;padding:5px 9px;background:'+(f.signed?'#27ae6015':'#fff')+';border:1px solid '+(f.signed?'#27ae6055':'#d0dae8')+';border-radius:6px;cursor:pointer;font-size:10px;font-weight:700;color:'+(f.signed?'#27ae60':'#9aabbf')+';white-space:nowrap;flex-shrink:0"><input type="checkbox" data-a="ct-act-signed" data-cid="'+c.id+'" data-fid="'+f.id+'"'+(f.signed?' checked':'')+' style="accent-color:#27ae60;margin:0">'+(f.signed?'подписан':'не подписан')+'</label>':'')+
-           '<a href="'+f.data+'" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;cursor:pointer;color:'+color+';font-size:11px;font-weight:700;text-decoration:none;white-space:nowrap">Открыть</a>'+
-           fileDownloadBtn(f.data,f.name||"Файл",color,28,6)+
-           '<button data-a="file-print" data-url="'+esc(f.data)+'" data-name="'+esc(f.name||"Файл")+'" data-mime="'+esc(f.mime||"")+'" title="Печать" style="width:28px;height:28px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;cursor:pointer;color:'+color+';font-size:13px;flex-shrink:0">🖨</button>'+
-           '<button data-a="ct-file-del" data-cid="'+c.id+'" data-fid="'+f.id+'" style="width:28px;height:28px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:12px;flex-shrink:0">✕</button>'+
-           '</div>';
-      });
-    }
-    h+='</div>';
-    return h;
+  // Строка одного файла — общая для всех типов: цвет типа и отметка «подписан» у акта.
+  function fileRow(f, kind, color){
+    const isImg=(f.mime||"").indexOf("image")===0;
+    return '<div style="display:flex;align-items:center;gap:9px;padding:8px 10px;background:#fafbfc;border:1px solid #f0f3f7;border-radius:8px;margin-bottom:5px">'+
+      (isImg
+        ? '<img src="'+f.data+'" style="width:34px;height:34px;border-radius:6px;object-fit:cover;flex-shrink:0;border:1px solid #e0e6ee" alt="">'
+        : '<div style="width:34px;height:34px;border-radius:6px;background:'+color+'15;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0">'+fileIcon(f)+'</div>')+
+      '<div style="flex:1;min-width:0">'+
+        '<div style="font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name)+'</div>'+
+        '<div style="font-size:9px;color:#9aabbf">'+(f.date||"")+(f.size?' · '+fmtSize(f.size):'')+'</div>'+
+      '</div>'+
+      (kind==="act"?'<label onclick="event.stopPropagation()" style="display:flex;align-items:center;gap:5px;padding:5px 9px;background:'+(f.signed?'#27ae6015':'#fff')+';border:1px solid '+(f.signed?'#27ae6055':'#d0dae8')+';border-radius:6px;cursor:pointer;font-size:10px;font-weight:700;color:'+(f.signed?'#27ae60':'#9aabbf')+';white-space:nowrap;flex-shrink:0"><input type="checkbox" data-a="ct-act-signed" data-cid="'+c.id+'" data-fid="'+f.id+'"'+(f.signed?' checked':'')+' style="accent-color:#27ae60;margin:0">'+(f.signed?'подписан':'не подписан')+'</label>':'')+
+      '<a href="'+f.data+'" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="padding:5px 10px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;cursor:pointer;color:'+color+';font-size:11px;font-weight:700;text-decoration:none;white-space:nowrap">Открыть</a>'+
+      fileDownloadBtn(f.data,f.name||"Файл",color,28,6)+
+      '<button data-a="file-print" data-url="'+esc(f.data)+'" data-name="'+esc(f.name||"Файл")+'" data-mime="'+esc(f.mime||"")+'" title="Печать" style="width:28px;height:28px;background:'+color+'18;border:1px solid '+color+'44;border-radius:6px;cursor:pointer;color:'+color+';font-size:13px;flex-shrink:0">🖨</button>'+
+      '<button data-a="ct-file-del" data-cid="'+c.id+'" data-fid="'+f.id+'" style="width:28px;height:28px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:12px;flex-shrink:0">✕</button>'+
+    '</div>';
   }
-  let html='<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin:14px 0 8px">📎 ФАЙЛЫ</div>';
-  html+=section("contract","📄 ФАЙЛ ДОГОВОРА","#2980b9");
-  html+=section("plan","📐 ФАЙЛ ПЛАНИРОВКИ И ПРОЕКТ","#8e44ad");
-  html+=section("spec","📋 ФАЙЛ СПЕЦИФИКАЦИИ","#16a085");
-  html+=section("act","✅ АКТЫ ВЫПОЛНЕННЫХ РАБОТ","#e67e22");
-  html+=section("wind","🪟 ДОГОВОР НА ОКНА И ДВЕРИ","#34495e");
+  // Один блок на все файлы договора. Пять карточек по типам, половина из которых
+  // пустые «Нет файлов», растягивали договор на лишний экран. Файлы — группами по
+  // типу, а добавить любой тип — одной строкой кнопок внизу.
+  const all=c.files||[];
+  let html='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:10px">'+
+    '<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:4px">📎 ФАЙЛЫ'+(all.length?' · '+all.length:'')+'</div>';
+  if(!all.length)html+='<div style="font-size:11.5px;color:#9aabbf;padding:4px 0">Файлов пока нет — добавьте ниже.</div>';
+  CT_FILE_KINDS.forEach(function(k){
+    const files=all.filter(function(f){return f.kind===k.k;});
+    if(!files.length)return;
+    html+='<div style="font-size:9.5px;font-weight:800;color:'+k.col+';letter-spacing:0.4px;margin:8px 0 4px">'+k.i+' '+k.n.toUpperCase()+' · '+files.length+'</div>';
+    files.forEach(function(f){ html+=fileRow(f, k.k, k.col); });
+  });
+  html+='<div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin-top:9px;padding-top:9px;border-top:1px solid #f4f6f9">'+
+    '<span style="font-size:10px;color:#9aabbf;font-weight:700">＋ ДОБАВИТЬ:</span>'+
+    CT_FILE_KINDS.map(function(k){
+      return '<label data-a="ct-file-label" data-cid="'+c.id+'" data-kind="'+k.k+'" style="padding:4px 9px;background:'+k.col+'12;border:1px solid '+k.col+'44;border-radius:7px;cursor:pointer;color:'+k.col+';font-size:11px;font-weight:700;white-space:nowrap">'+k.i+' '+k.n+'<input id="ct-file-inp-'+c.id+'-'+k.k+'" type="file" multiple style="display:none"></label>'+
+        (k.k==="plan"?'<button data-a="ct-plan-pick" data-cid="'+c.id+'" style="padding:4px 9px;background:#6c5ce712;border:1px solid #6c5ce744;border-radius:7px;cursor:pointer;color:#6c5ce7;font-size:11px;font-weight:700;white-space:nowrap">📐 из базы</button>':'');
+    }).join("")+
+  '</div></div>';
   return html;
 }
 
@@ -10227,21 +10233,30 @@ function objFromTemplate(tmpl, name, icon, extra){
   return Object.assign({ id:gid(), name:name, icon:icon||tmpl.icon||"🏠", templateId:tmpl.id,
     stages:reidStages(tmpl.stages||[]), specs:deepCopy(tmpl.specs||{rooms:[],openings:[]}), tplBase:tplBaseline(tmpl) }, extra||{});
 }
-// Привязать объект к договору (пустой oid — отвязать). Второй основной договор на
-// объекте спрашиваем: согласились — договор становится доп. работами.
+// Привязать объект к договору (пустой oid — отвязать). Если у объекта уже есть
+// основной договор, спрашиваем. Черновик не перебивает подписанный: предлагаем
+// поменять их местами. Иначе этот договор становится доп. работами.
 function ctLinkObject(cid, oid){
   const c=contractDocs.find(function(x){return x.id===cid;});
   if(!c)return false;
-  let type=c.type||"main";
-  if(oid&&type==="main"){
-    const other=mainContractOf(contractDocs, oid, cid);
-    if(other){
-      const o=objects.find(function(x){return x.id===oid;})||{};
+  const conflict=ctMainConflict(contractDocs, c, oid);
+  let type=c.type||"main", demoteId="";
+  if(conflict){
+    const o=objects.find(function(x){return x.id===oid;})||{};
+    const other=conflict.other;
+    if(conflict.mode==="swap"){
+      if(!confirm("На объекте «"+(o.name||"")+"» основным стоит черновик «"+(other.name||"")+"».\n\nСделать основным этот договор, а черновик перевести в доп. работы?"))return false;
+      demoteId=other.id;
+    } else {
       if(!confirm("У объекта «"+(o.name||"")+"» уже есть основной договор «"+(other.name||"")+"».\n\nПривязать этот договор как доп. работы?"))return false;
       type="extra";
     }
   }
-  contractDocs=contractDocs.map(function(x){ return x.id===cid?Object.assign({},x,{objId:oid,type:type}):x; });
+  contractDocs=contractDocs.map(function(x){
+    if(x.id===cid)return Object.assign({},x,{objId:oid,type:type});
+    if(demoteId&&x.id===demoteId)return Object.assign({},x,{type:"extra"});
+    return x;
+  });
   return true;
 }
 // Объект из договора: этапы из шаблона, имя и клиент — из договора. Клиента объект
@@ -10303,7 +10318,51 @@ function ctSummaryHtml(c, obj){
       '<div style="background:#e8eef5;border-radius:6px;height:5px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+col+'"></div></div>'+
     '</div>';
   }
-  return h+'</div>';
+  return h+ctPayLineHtml(c, t.total)+ctDeadlinesLineHtml(c)+ctOthersLineHtml(c)+'</div>';
+}
+// Оплата клиента — полосой в сводке: после суммы это вторая цифра, ради которой
+// открывают договор. Весь график — в разделе «Деньги».
+function ctPayLineHtml(c, total){
+  const p=ctPayProgress(total, ctTranches(c));
+  if(!(p.total>0))return "";
+  const note=p.unplanned>0?'не расписано '+p.unplanned.toLocaleString("ru-RU"):(p.over>0?'перебор графика '+p.over.toLocaleString("ru-RU"):'график');
+  return '<div style="margin-top:10px">'+
+    '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:11px;flex-wrap:wrap;margin-bottom:4px">'+
+      '<span style="font-weight:700;color:#1a2a3a">💳 Оплачено '+p.paid.toLocaleString("ru-RU")+' из '+p.total.toLocaleString("ru-RU")+'</span>'+
+      '<button data-a="ct-sec" data-cid="'+c.id+'" data-sec="money" style="border:none;background:transparent;padding:0;color:#2980b9;font-size:11px;font-weight:700;cursor:pointer">'+note+' ›</button>'+
+    '</div>'+
+    '<div style="background:#e8eef5;border-radius:6px;height:5px;overflow:hidden"><div style="height:100%;width:'+p.pct+'%;background:#2980b9"></div></div>'+
+  '</div>';
+}
+// Дедлайны бригадиров — строкой в сводке, а не блоком с полями: смотрят их каждый
+// раз, правят редко. Тап ведёт в «Люди», где даты и штрафы.
+function ctDeadlinesLineHtml(c){
+  const resp=c.responsible||[];
+  const items=users.filter(function(u){
+    return resp.indexOf(u.id)>=0&&(u.roles||[]).some(function(r){return r==="brigadier"||r==="worker";});
+  }).map(function(u){
+    const i=getBrigadierDeadlineInfo(c,u.id);
+    if(!i.hasDeadline)return "";
+    const late=i.overdueDays>0;
+    return '<button data-a="ct-sec" data-cid="'+c.id+'" data-sec="people" style="border:none;background:'+(late?"#e74c3c12":"#27ae6012")+';color:'+(late?"#e74c3c":"#27ae60")+';border-radius:6px;padding:2px 8px;font-size:10.5px;font-weight:700;cursor:pointer">🏁 '+esc(u.name)+': '+(late?'просрочка '+i.overdueDays+' р.дн':'осталось '+i.daysLeft+' р.дн')+'</button>';
+  }).filter(Boolean);
+  return items.length?'<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:8px">'+items.join("")+'</div>':"";
+}
+// Кто ещё на том же объекте. Если этот договор стал доп. работами из-за черновика —
+// кнопка «сделать основным»: так чинится случай, когда черновик перебил подписанный.
+function ctOthersLineHtml(c){
+  const others=ctOthersOnObject(contractDocs, c);
+  if(!others.length)return "";
+  const draft=ctCanBecomeMain(contractDocs, c);
+  return '<div style="margin-top:9px;padding:8px 10px;background:#f7fafc;border-radius:9px;font-size:11px;color:#5a7a9a;line-height:1.5">'+
+    'На объекте ещё: '+others.map(function(x){
+      return '<button data-a="obj-ct-open" data-cid="'+x.id+'" style="border:none;background:transparent;padding:0;color:#2980b9;font-size:11px;font-weight:700;cursor:pointer">'+esc(x.name||"договор")+'</button>'+
+        ' <span style="color:#9aabbf">('+((x.type||"main")==="main"?"основной":"доп.")+' · '+String(CT_STATUS_LABEL[x.status]||"").toLowerCase()+')</span>';
+    }).join(", ")+
+    (draft?'<div style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">'+
+      '<button data-a="ct-make-main" data-cid="'+c.id+'" style="padding:6px 10px;border:1px solid #2980b9;background:#fff;border-radius:8px;color:#2980b9;font-size:11.5px;font-weight:700;cursor:pointer">⭐ Сделать этот договор основным</button>'+
+      '<span style="color:#9aabbf">«'+esc(draft.name||"")+'» станет доп. работами</span></div>':'')+
+  '</div>';
 }
 // Выбор объекта — тапом по строке «Объект», без режима правки. Сверху текущий и
 // подходящие, занятые — внизу серым и с тем договором, у которого они.
@@ -10396,6 +10455,127 @@ function ctNoteHtml(c){
     (long?' <button data-a="ct-note-open" data-cid="'+c.id+'" style="border:none;background:transparent;padding:0;color:#2980b9;font-size:12px;font-weight:700;cursor:pointer">'+(open?'свернуть':'ещё')+'</button>':'')+
   '</div>';
 }
+// ── КАРТОЧКА ДОГОВОРА: разделы ─────────────────────────────────────────────
+// Договор был лентой из 18 блоков — 3 000 px, четыре с половиной экрана телефона.
+// Теперь разделы: «Главное» (что за договор и что с ним делать), «Деньги», «Люди»,
+// «Файлы». Шапка с разделами закреплена — номер, сумма и статус видны при прокрутке.
+function ctSecOf(cid){ return ctSec[cid]||"main"; }
+function ctSalPlan(c, u){
+  const ud=(c.salaries||{})[u.id]||{};
+  return ud.plan!=null&&ud.plan!==0?ud.plan:getDefaultSalary(u);
+}
+function ctStickyHeadHtml(c){
+  const sec=ctSecOf(c.id), t=ctTotals(c);
+  const nResp=(c.responsible||[]).length, nFiles=(c.files||[]).length;
+  const tabs=[["main","Главное"],["money","Деньги"],["people","Люди"+(nResp?" · "+nResp:"")],["files","Файлы"+(nFiles?" · "+nFiles:"")]];
+  return '<div style="position:sticky;top:0;z-index:6;background:#f4f7fb;margin:-14px -14px 10px;padding:10px 14px 9px;border-bottom:1px solid #e3e9f0">'+
+    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
+      '<button data-a="ct-back" title="К списку договоров" style="width:34px;height:34px;flex-shrink:0;border:1px solid #d0dae8;background:#fff;border-radius:10px;cursor:pointer;font-size:15px;color:#7a9aaa">←</button>'+
+      '<div style="flex:1;min-width:0">'+
+        '<div style="font-size:13.5px;font-weight:800;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.name)+'</div>'+
+        '<div style="font-size:11px;color:#7a9aaa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b style="color:#27ae60">'+(t.total?fmt(t.total):"—")+'</b> · '+(CT_STATUS_LABEL[c.status]||"Черновик")+'</div>'+
+      '</div>'+
+      '<button data-a="ct-menu" data-cid="'+c.id+'" title="Ещё" style="width:34px;height:34px;flex-shrink:0;border:1px solid #d0dae8;background:'+(ctMenuOpen===c.id?"#e8eef5":"#fff")+';border-radius:10px;cursor:pointer;font-size:16px;color:#5a7a9a;line-height:1">⋯</button>'+
+    '</div>'+
+    '<div style="display:flex;gap:4px">'+tabs.map(function(x){
+      const on=x[0]===sec;
+      return '<button data-a="ct-sec" data-cid="'+c.id+'" data-sec="'+x[0]+'" style="flex:1;min-width:0;padding:7px 2px;border-radius:9px;border:none;cursor:pointer;font-size:11.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:'+(on?"#0d1b2e":"#e8eef5")+';color:'+(on?"#fff":"#5a7a9a")+'">'+x[1]+'</button>';
+    }).join("")+'</div>'+
+  '</div>';
+}
+// Клиент одной строкой: имя, телефон и этап CRM, «→ CRM» и PIN. Раньше клиент стоял
+// на экране трижды — строкой PIN, карточкой CRM и строкой «Клиент» в деталях.
+function ctClientLineHtml(c, cl, stageLabel){
+  const canPin=currentUser&&(currentUser.roles.includes("admin")||currentUser.roles.includes("client_mgr"));
+  const name=(cl&&cl.name)||ctClientName(c)||"Клиент не указан";
+  const sub=[cl&&cl.phone?esc(cl.phone):"", stageLabel?esc("этап: "+stageLabel):""].filter(Boolean).join(" · ");
+  let h='<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:10px 12px;margin-bottom:10px">'+
+    '<div style="display:flex;align-items:center;gap:9px">'+
+      '<span style="width:32px;height:32px;border-radius:9px;background:#27ae6018;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">👤</span>'+
+      '<span style="flex:1;min-width:0">'+
+        '<span style="display:block;font-size:13px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(name)+'</span>'+
+        (sub?'<span style="display:block;font-size:10.5px;color:#7a9aaa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+sub+'</span>':'')+
+      '</span>'+
+      (cl?'<button data-a="ct-goto-crm" data-crmid="'+cl.id+'" style="padding:5px 9px;background:#27ae60;border:none;border-radius:7px;cursor:pointer;font-size:10.5px;color:#fff;font-weight:700;flex-shrink:0">→ CRM</button>':'')+
+    '</div>';
+  if(canPin){
+    const eff=effectiveClientPin(c), isCustom=!!(c.clientPin&&c.clientPin.trim()), open=!!ctPinOpen[c.id];
+    h+='<button data-a="ct-pin-open" data-cid="'+c.id+'" style="display:flex;align-items:center;gap:6px;width:100%;margin-top:8px;padding:7px 0 0;border:none;border-top:1px solid #f4f6f9;background:transparent;cursor:pointer;text-align:left">'+
+      '<span style="font-size:10px;color:#d68910;font-weight:700;letter-spacing:0.5px">🔑 PIN ДЛЯ ВХОДА</span>'+
+      '<span style="flex:1;font-size:12.5px;font-weight:700;color:#1a2a3a;letter-spacing:2px">'+esc((isCustom?c.clientPin:eff)||"—")+'</span>'+
+      '<span style="color:#9aabbf;font-size:11px">'+(open?'свернуть':'изменить ›')+'</span>'+
+    '</button>';
+    if(open){
+      h+='<div style="font-size:11px;color:#7a9aaa;margin:6px 0">Клиент входит по номеру договора или фамилии + этот PIN. По умолчанию — последние 4 цифры его телефона'+(eff?' ('+eff+')':' (телефон не указан)')+'.</div>'+
+        '<div style="display:flex;gap:6px">'+
+          '<input id="ct-clientpin-'+c.id+'" type="text" inputmode="numeric" maxlength="6" value="'+(isCustom?c.clientPin:"")+'" placeholder="'+(eff||"PIN")+'" style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:14px;outline:none;letter-spacing:3px;box-sizing:border-box">'+
+          '<button data-a="ct-clientpin-save" data-cid="'+c.id+'" style="padding:8px 14px;background:#d68910;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Задать</button>'+
+          (isCustom?'<button data-a="ct-clientpin-reset" data-cid="'+c.id+'" style="padding:8px 12px;background:transparent;border:1px solid #dde6f0;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:12px">Сброс</button>':'')+
+        '</div>';
+    }
+  }
+  return h+'</div>';
+}
+// Ответственные — только назначенные. Все сотрудники чипами занимали два ряда, и
+// снять человека можно было случайным касанием. Переключатели — по «＋ Изменить».
+function ctRespHtml(c){
+  const resp=c.responsible||[], edit=!!ctRespEdit[c.id];
+  const list=edit?users:users.filter(function(u){return resp.indexOf(u.id)>=0;});
+  return '<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:10px">'+
+    '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">'+
+      '<span style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px">ОТВЕТСТВЕННЫЕ ЗА ДОГОВОР'+(resp.length?' · '+resp.length:'')+'</span>'+
+      '<button data-a="ct-resp-edit" data-cid="'+c.id+'" style="padding:3px 10px;background:'+(edit?"#2980b9":"#fff")+';border:1px solid #2980b966;border-radius:7px;cursor:pointer;font-size:11px;color:'+(edit?"#fff":"#2980b9")+';font-weight:700">'+(edit?'✓ Готово':'＋ Изменить')+'</button>'+
+    '</div>'+
+    '<div style="display:flex;flex-wrap:wrap;gap:6px">'+
+      (list.length?list.map(function(u){
+        const on=resp.indexOf(u.id)>=0;
+        const inner='<span style="font-size:13px">'+u.av+'</span><span style="font-size:11px;font-weight:600;color:'+(on?'#fff':'#7a9aaa')+'">'+esc(u.name)+'</span>'+(edit&&on?'<span style="font-size:10px;color:rgba(255,255,255,0.8)">✓</span>':'');
+        const style='display:flex;align-items:center;gap:5px;padding:5px 10px;border-radius:16px;background:'+(on?u.c:'#f4f6f8')+';border:1.5px solid '+(on?u.c:'#dde6f0');
+        return edit
+          ? '<div data-a="ct-resp-toggle" data-cid="'+c.id+'" data-uid="'+u.id+'" style="'+style+';cursor:pointer">'+inner+'</div>'
+          : '<span style="'+style+'">'+inner+'</span>';
+      }).join(""):'<span style="font-size:11.5px;color:#9aabbf">Никто не назначен — нажмите «＋ Изменить»</span>')+
+    '</div>'+
+  '</div>';
+}
+// Выплаты по договору — одним блоком вместо четырёх (производство, РОП, разбивка по
+// этапам, доп. работы производству). Сверху итог, ниже по строке на человека; поля и
+// разбивки — по тапу: их правят раз, а смотрят каждый раз.
+function ctPayoutsHtml(c, rows, stagePayHtml, planExtraHtml, payUsers){
+  const plan=payUsers.reduce(function(a,u){return a+ctSalPlan(c,u);},0);
+  const paid=payUsers.reduce(function(a,u){return a+getSalaryPaid(c,u);},0);
+  const left=Math.max(0,plan-paid);
+  const planSum=(c.extraWorksPlan||[]).reduce(function(a,w){return a+(w.amount||0);},0);
+  const cell=function(lbl,val,col){ return '<div><div style="font-size:9px;color:#9aabbf">'+lbl+'</div><div style="font-size:13px;font-weight:700;color:'+col+'">'+val+'</div></div>'; };
+  const sub=function(k, label, note, body){
+    if(!body)return "";
+    const key=c.id+":"+k, open=!!ctPayOpen[key];
+    return '<div style="border-top:1px solid #f4f6f9">'+
+      '<button data-a="ct-pay-open" data-k="'+key+'" style="display:flex;align-items:center;gap:8px;width:100%;padding:9px 0;border:none;background:transparent;cursor:pointer;text-align:left">'+
+        '<span style="flex:1;min-width:0;font-size:12px;font-weight:700;color:#1a2a3a">'+label+'</span>'+
+        (note?'<span style="font-size:10.5px;color:#9aabbf;white-space:nowrap">'+note+'</span>':'')+
+        '<span style="color:#9aabbf;font-size:12px">'+(open?"▾":"›")+'</span>'+
+      '</button>'+(open?body:'')+
+    '</div>';
+  };
+  return '<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:10px">'+
+    '<div style="font-size:10px;color:#e67e22;font-weight:700;letter-spacing:1px;margin-bottom:8px">💼 ВЫПЛАТЫ ПО ДОГОВОРУ</div>'+
+    (payUsers.length
+      ? '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-bottom:4px">'+
+          cell("ПЛАН", plan.toLocaleString("ru-RU"), "#1a2a3a")+cell("ВЫПЛАЧЕНО", paid.toLocaleString("ru-RU"), "#27ae60")+
+          cell("ОСТАЛОСЬ", left>0?left.toLocaleString("ru-RU"):"✓", left>0?"#e67e22":"#27ae60")+
+        '</div>'+rows
+      : '<div style="font-size:11.5px;color:#9aabbf;margin-bottom:4px">Назначьте бригадира или РОПа в разделе «Люди» — появятся их выплаты.</div>')+
+    sub("stages", "👷 Разбивка по этапам объекта", "", stagePayHtml)+
+    sub("extraplan", "🛠 Доп. работы производству", planSum?"план "+planSum.toLocaleString("ru-RU"):"не запланированы", planExtraHtml)+
+  '</div>';
+}
+function ctNoExtrasLineHtml(c){
+  return '<div style="display:flex;align-items:center;gap:8px;background:#fff;border:1px dashed #d0dae8;border-radius:12px;padding:9px 12px;margin-bottom:10px">'+
+    '<span style="flex:1;font-size:11.5px;color:#7a9aaa">🔨 '+(c.type==="extra"?"Работ и материалов":"Доп. работ и материалов")+' пока нет</span>'+
+    '<button data-a="ct-extra-add" data-cid="'+c.id+'" style="padding:4px 10px;background:#8e44ad;border:none;border-radius:6px;cursor:pointer;font-size:11px;color:#fff;font-weight:600">+ Работа</button>'+
+  '</div>';
+}
 function tContractDetail(cid){
   const c=contractDocs.find(function(x){return x.id===cid;});
   if(!c)return tContractList();
@@ -10411,76 +10591,30 @@ function tContractDetail(cid){
 
   let html='<div>';
 
-  // Header. Архив — редкое действие, ему место в «⋯», а не отдельный блок в карточке.
-  html+=
-    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">'+
-      '<button data-a="ct-back" style="padding:6px 14px;background:transparent;border:1px solid #d0dae8;border-radius:20px;cursor:pointer;font-size:12px;color:#7a9aaa">← Договора</button>'+
-      '<div style="font-size:14px;font-weight:700;color:#0d1b2e;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.name)+'</div>'+
-      '<button data-a="ct-menu" data-cid="'+c.id+'" title="Ещё" style="width:34px;height:34px;flex-shrink:0;border:1px solid #d0dae8;background:'+(ctMenuOpen===c.id?"#f0f4f8":"#fff")+';border-radius:10px;cursor:pointer;font-size:16px;color:#5a7a9a;line-height:1">⋯</button>'+
-    '</div>'+
+  // Шапка закреплена: номер, сумма и статус видны при прокрутке, разделы — под рукой.
+  // Архив и удаление — редкие действия, им место в «⋯».
+  html+=ctStickyHeadHtml(c)+
     (ctMenuOpen===c.id
-      ? '<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:8px;margin:-6px 0 10px;box-shadow:0 6px 18px #0d1b2e14">'+
+      ? '<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:8px;margin:0 0 10px;box-shadow:0 6px 18px #0d1b2e14">'+
           '<button data-a="ct-archive-toggle" data-cid="'+c.id+'" style="width:100%;padding:9px;border-radius:9px;cursor:pointer;font-size:12px;font-weight:700;border:1px solid '+(c.archived?'#27ae6055':'#dde6f0')+';background:'+(c.archived?'#eaf6ee':'#f7f9fb')+';color:'+(c.archived?'#27ae60':'#8a97a6')+'">'+(c.archived?'↩️ Вернуть из архива':'📦 Отправить в архив')+'</button>'+
           '<div style="font-size:10px;color:#9aabbf;text-align:center;margin-top:5px">'+(c.archived?'Договор в архиве — скрыт из активного списка':'Уберёт из активного списка, договор останется во вкладке «Архив»')+'</div>'+
+          '<button data-a="ct-delete" data-cid="'+c.id+'" style="width:100%;margin-top:8px;padding:9px;border-radius:9px;cursor:pointer;font-size:12px;font-weight:700;border:1px solid #e74c3c44;background:#fff;color:#e74c3c">🗑 Удалить договор</button>'+
         '</div>'
       : '');
 
-  // Что сделать с договором прямо сейчас — выше всего остального: без объекта его
-  // не видят стройка, закупки и финансы. Дальше сводка и шаги.
-  html+=ctNoObjPlateHtml(c, obj)+ctMkObjHtml(c)+ctSummaryHtml(c, obj)+ctObjPickHtml(c)+ctStepsHtml(c, obj);
-
-  // PIN клиента для входа в кабинет — только админ и менеджер по сопровождению
-  (function(){
-    const canSee=currentUser&&(currentUser.roles.includes("admin")||currentUser.roles.includes("client_mgr"));
-    if(!canSee) return;
-    const eff=effectiveClientPin(c);
-    const isCustom=c.clientPin&&c.clientPin.trim();
-    // PIN нужен раз — когда клиенту дают вход. Свёрнут в строку: сам PIN виден,
-    // поле и пояснение — по тапу.
-    if(!ctPinOpen[c.id]){
-      html+='<button data-a="ct-pin-open" data-cid="'+c.id+'" style="display:flex;align-items:center;gap:8px;width:100%;background:#fff;border:1px solid #d6890033;border-radius:12px;padding:9px 14px;margin-bottom:10px;cursor:pointer;text-align:left">'+
-        '<span style="font-size:10px;color:#d68910;font-weight:700;letter-spacing:0.5px">🔑 PIN КЛИЕНТА</span>'+
-        '<span style="flex:1;font-size:13px;font-weight:700;color:#1a2a3a;letter-spacing:2px">'+esc((isCustom?c.clientPin:eff)||"—")+'</span>'+
-        '<span style="color:#9aabbf;font-size:11px">изменить ›</span>'+
-      '</button>';
-      return;
-    }
-    html+='<div style="background:#fff;border:1px solid #d6890044;border-radius:12px;padding:12px 14px;margin-bottom:10px">'+
-      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><span style="font-size:10px;color:#d68910;font-weight:700;letter-spacing:0.5px">🔑 PIN КЛИЕНТА ДЛЯ ВХОДА</span>'+
-        '<button data-a="ct-pin-open" data-cid="'+c.id+'" style="border:none;background:transparent;color:#9aabbf;font-size:11px;cursor:pointer;padding:0">свернуть</button></div>'+
-      '<div style="font-size:11px;color:#7a9aaa;margin-bottom:8px">Клиент входит по номеру договора или фамилии + этот PIN. По умолчанию — последние 4 цифры его телефона'+(eff?' ('+eff+')':' (телефон не указан)')+'.</div>'+
-      '<div style="display:flex;gap:6px">'+
-        '<input id="ct-clientpin-'+c.id+'" type="text" inputmode="numeric" maxlength="6" value="'+(isCustom?c.clientPin:"")+'" placeholder="'+(eff||"PIN")+'" style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:14px;outline:none;letter-spacing:3px;box-sizing:border-box">'+
-        '<button data-a="ct-clientpin-save" data-cid="'+c.id+'" style="padding:8px 14px;background:#d68910;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Задать</button>'+
-        (isCustom?'<button data-a="ct-clientpin-reset" data-cid="'+c.id+'" style="padding:8px 12px;background:transparent;border:1px solid #dde6f0;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:12px">Сброс</button>':'')+
-      '</div>';
-    html+='</div>';
-  })();
-
-  // CRM client card
-  if(crmLinked){
-    html+=
-      '<div style="background:linear-gradient(135deg,#27ae6012,#27ae6006);border:1px solid #27ae6033;border-radius:12px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:flex-start;gap:10px">'+
-        '<div style="width:36px;height:36px;border-radius:10px;background:#27ae6020;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">👤</div>'+
-        '<div style="flex:1;min-width:0">'+
-          '<div style="font-size:13px;font-weight:700;color:#1a2a3a">'+esc(crmLinked.name)+'</div>'+
-          '<div style="font-size:11px;color:#5a7a9a;margin-top:2px">'+crmLinked.phone+'</div>'+
-          '<div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap">'+
-            '<span style="font-size:10px;background:#27ae6015;color:#27ae60;border-radius:6px;padding:1px 8px;font-weight:700">📝 Этап: '+(CRM_STAGE_NAMES[crmLinked.stage]||crmLinked.stage)+'</span>'+
-            (crmLinked.notes?'<span style="font-size:10px;color:#7a9aaa;font-style:italic">'+esc(crmLinked.notes)+'</span>':'')+
-          '</div>'+
-          (crmLinked.msg?'<div style="font-size:11px;color:#7a9aaa;margin-top:4px;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">«'+esc(crmLinked.msg)+'»</div>':'')+
-        '</div>'+
-        '<button data-a="ct-goto-crm" data-crmid="'+crmLinked.id+'" style="padding:4px 8px;background:#27ae60;border:none;border-radius:6px;cursor:pointer;font-size:10px;color:#fff;font-weight:700;flex-shrink:0;white-space:nowrap">→ CRM</button>'+
-      '</div>';
+  // «Главное»: что сделать с договором прямо сейчас (без объекта его не видят стройка,
+  // закупки и финансы), сводка, шаги, клиент одной строкой и детали.
+  const sec=ctSecOf(c.id);
+  if(sec==="main"){
+    html+=ctNoObjPlateHtml(c, obj)+ctMkObjHtml(c)+ctSummaryHtml(c, obj)+ctObjPickHtml(c)+ctStepsHtml(c, obj)+
+      ctClientLineHtml(c, crmLinked, crmLinked?(CRM_STAGE_NAMES[crmLinked.stage]||crmLinked.stage):"");
   }
 
-  // Статус — шагами наверху (ctStepsHtml), архив — в «⋯» шапки.
-
-  // Details — editable or view
+  // Details — editable or view (только в «Главном»)
   const isEditing=contractEditId===cid;
   // Источник значений edit-формы: черновик (переживает перерисовки), фолбэк — сам договор.
   const ed=(isEditing&&ctEditDraft&&ctEditDraft.cid===cid)?ctEditDraft:{name:c.name,amount:c.amount,signDate:c.signDate,deadlineDate:c.deadlineDate,note:c.note,objId:c.objId};
+  if(sec==="main"){
   html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:10px">';
   html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'+
     '<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px">ДЕТАЛИ</div>'+
@@ -10508,12 +10642,10 @@ function tContractDetail(cid){
       '<textarea id="ct-edit-note" placeholder="Примечания" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;height:60px;resize:none;outline:none;margin-bottom:10px;box-sizing:border-box">'+esc(ed.note||'')+'</textarea>'+
       '<button data-a="ct-edit-save" data-cid="'+cid+'" style="width:100%;padding:9px;background:#27ae60;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">💾 Сохранить изменения</button>';
   } else {
-    // Сумма, объект и даты — в сводке наверху. Здесь то, что правят реже: тип, клиент
-    // и примечание. Сумма «основной договор» рядом с «итого» повторяла одно число,
-    // когда доп. работ нет, — теперь раскладка есть только там, где она что-то говорит.
+    // Сумма, объект и даты — в сводке наверху, клиент — строкой клиента. Здесь то, что
+    // правят реже: тип и примечание.
     [
       {label:"Тип",    val:c.type==="main"?"Основной":"Доп. работы"},
-      {label:"Клиент", val:esc(ctClientName(c)||"—")},
     ].forEach(function(row){
       html+=
         '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f4f6f9">'+
@@ -10524,79 +10656,38 @@ function tContractDetail(cid){
     html+=ctNoteHtml(c);
   }
   html+='</div>';
+  }
+  // Ответственные — в разделе «Люди» (ctRespHtml).
 
-  // Responsible — who manages this contract
-  html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:10px">';
-  html+='<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">ОТВЕТСТВЕННЫЕ ЗА ДОГОВОР</div>';
-  html+='<div style="display:flex;flex-wrap:wrap;gap:6px">';
-  users.forEach(function(u){
-    const on=responsible.includes(u.id);
-    html+=
-      '<div data-a="ct-resp-toggle" data-cid="'+c.id+'" data-uid="'+u.id+'" style="display:flex;align-items:center;gap:5px;padding:5px 10px;border-radius:16px;cursor:pointer;background:'+(on?u.c:'#f4f6f8')+';border:1.5px solid '+(on?u.c:'#dde6f0')+'">'+
-        '<span style="font-size:13px">'+u.av+'</span>'+
-        '<span style="font-size:11px;font-weight:600;color:'+(on?'#fff':'#7a9aaa')+'">'+esc(u.name)+'</span>'+
-        (on?'<span style="font-size:10px;color:rgba(255,255,255,0.8)">✓</span>':'')+
-      '</div>';
-  });
-  html+='</div></div>';
-
-  // ===== SALARY SECTIONS — managed here, used in финансы (read-only) =====
-  function _renderSalSection(opts){
-    // opts: {title, color, users, salaryKey}
-    const us=opts.users;
-    if(!us.length)return "";
-    let h='<div style="background:#fff;border-radius:12px;border:1px solid '+opts.color+'33;padding:12px 14px;margin-bottom:10px">';
-    h+='<div style="font-size:10px;color:'+opts.color+';font-weight:700;letter-spacing:1px;margin-bottom:10px">'+opts.title+'</div>';
-    us.forEach(function(u){
+  // ===== ВЫПЛАТЫ — managed here, used in финансы (read-only) =====
+  // Выплата одного человека — строкой: план, выплачено, долг. Поле плана и 💾 — по тапу.
+  function _salRows(us, group){
+    return us.map(function(u){
       const ud=salaries[u.id]||{};
-      const effPlan=ud.plan!=null&&ud.plan!==0?ud.plan:getDefaultSalary(u);
+      const effPlan=ctSalPlan(c,u);
       const paid=getSalaryPaid(c,u);
       const left=Math.max(0,effPlan-paid);
-      h+=
-        '<div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #f4f6f9">'+
-          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
-            '<div style="width:30px;height:30px;border-radius:8px;background:'+u.c+';display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0">'+u.av+'</div>'+
-            '<div style="flex:1;min-width:0">'+
-              '<div style="font-size:12px;font-weight:700;color:#1a2a3a">'+esc(u.name)+'</div>'+
-              '<div style="font-size:10px;color:#9aabbf">'+u.roles.map(function(r){const ro=roles.find(function(x){return x.id===r;});return ro?esc(ro.n):"";}).filter(Boolean).join(", ")+'</div>'+
-            '</div>'+
-            (left>0?
-              '<span style="font-size:10px;color:#e67e22;font-weight:700;background:#e67e2212;border-radius:6px;padding:2px 7px;white-space:nowrap">−'+left.toLocaleString("ru-RU")+'</span>':
-              paid>0?'<span style="font-size:10px;color:#27ae60;font-weight:700;background:#27ae6012;border-radius:6px;padding:2px 7px">✓ Выпл.</span>':
-              '<span style="font-size:10px;color:#9aabbf;background:#f0f4f8;border-radius:6px;padding:2px 7px">План</span>')+
-          '</div>'+
-          '<div style="display:flex;gap:6px;align-items:end">'+
+      const key=cid+":"+u.id, open=!!ctPayOpen[key];
+      return '<div style="border-top:1px solid #f4f6f9">'+
+        '<button data-a="ct-pay-open" data-k="'+key+'" style="display:flex;align-items:center;gap:8px;width:100%;padding:8px 0;border:none;background:transparent;cursor:pointer;text-align:left">'+
+          '<span style="width:28px;height:28px;border-radius:8px;background:'+u.c+';display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">'+u.av+'</span>'+
+          '<span style="flex:1;min-width:0">'+
+            '<span style="display:block;font-size:12px;font-weight:700;color:#1a2a3a">'+esc(u.name)+'</span>'+
+            '<span style="display:block;font-size:10px;color:#9aabbf">'+esc(group)+' · план '+effPlan.toLocaleString("ru-RU")+' · выплачено '+paid.toLocaleString("ru-RU")+'</span>'+
+          '</span>'+
+          (left>0?'<span style="font-size:10px;color:#e67e22;font-weight:700;background:#e67e2212;border-radius:6px;padding:2px 7px;white-space:nowrap">−'+left.toLocaleString("ru-RU")+'</span>'
+            :(paid>0?'<span style="font-size:10px;color:#27ae60;font-weight:700;background:#27ae6012;border-radius:6px;padding:2px 7px">✓ Выпл.</span>':''))+
+          '<span style="color:#9aabbf;font-size:12px">'+(open?"▾":"›")+'</span>'+
+        '</button>'+
+        (open?'<div style="display:flex;gap:6px;align-items:end;padding:0 0 9px 36px">'+
             '<div style="flex:1;min-width:0">'+
               '<div style="font-size:9px;color:#9aabbf;margin-bottom:3px">ПЛАН ₽ (по умолчанию '+getDefaultSalary(u).toLocaleString("ru-RU")+')</div>'+
               '<input id="ctsal-plan-'+cid+'-'+u.id+'" type="text" inputmode="numeric" data-money="1" value="'+(ud.plan!=null&&ud.plan!==0?fmtMoney(ud.plan):"")+'" placeholder="введите сумму" style="width:100%;padding:6px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;text-align:right;box-sizing:border-box">'+
             '</div>'+
-            '<div style="flex:1;min-width:0">'+
-              '<div style="font-size:9px;color:#9aabbf;margin-bottom:3px">ВЫПЛАЧЕНО ₽</div>'+
-              '<div style="padding:6px 8px;border-radius:7px;border:1px solid #f0f4f8;background:#f8fafc;font-size:12px;text-align:right;color:'+(paid>0?"#27ae60":"#9aabbf")+';font-weight:600">'+paid.toLocaleString("ru-RU")+'</div>'+
-            '</div>'+
             '<button data-a="ct-sal-save" data-cid="'+cid+'" data-uid="'+u.id+'" style="padding:7px 10px;background:'+u.c+';border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:13px;font-weight:700;flex-shrink:0">💾</button>'+
-          '</div>'+
-        '</div>';
-    });
-    // Totals
-    let planT=0,paidT=0;
-    us.forEach(function(u){
-      const ud=salaries[u.id]||{};
-      const ep=ud.plan!=null&&ud.plan!==0?ud.plan:getDefaultSalary(u);
-      planT+=ep;
-      paidT+=getSalaryPaid(c,u);
-    });
-    h+=
-      '<div style="display:flex;justify-content:space-between;padding-top:4px">'+
-        '<span style="font-size:11px;color:#7a9aaa">Итого план:</span>'+
-        '<span style="font-size:11px;font-weight:700;color:#1a2a3a">'+planT.toLocaleString("ru-RU")+' ₽</span>'+
-      '</div>'+
-      '<div style="display:flex;justify-content:space-between;margin-top:3px">'+
-        '<span style="font-size:11px;color:#7a9aaa">Итого выплачено:</span>'+
-        '<span style="font-size:11px;font-weight:700;color:#27ae60">'+paidT.toLocaleString("ru-RU")+' ₽</span>'+
+          '</div>':'')+
       '</div>';
-    h+='</div>';
-    return h;
+    }).join("");
   }
 
   // Resolve eligible users from contract responsible list (NOT all in object)
@@ -10605,8 +10696,10 @@ function tContractDetail(cid){
   const prodUsers=respUsers.filter(function(u){return u.roles.some(function(r){return r==="brigadier"||r==="worker";});});
   const escortUsers=respUsers.filter(function(u){return u.roles.includes("sales_head");});
 
-  // Block 1: ЗАРПЛАТА ПРОИЗВОДСТВУ
-  html+=_renderSalSection({title:"💼 ЗАРПЛАТА ПРОИЗВОДСТВУ",color:"#e67e22",users:prodUsers});
+  // Блоки ниже пишут в html по порядку. Каждый собираем в свою строку и расставляем по
+  // разделам в конце: их код прежний, меняется только место в карточке.
+  const _head=html; html="";
+  const prodRows=_salRows(prodUsers, "производство");
 
   // Block 1.2: ОПЛАТА ПО ЭТАПАМ ОБЪЕКТА
   // Назначается здесь же, где план зарплаты: сумма этапов — это разбивка того же плана,
@@ -10647,6 +10740,8 @@ function tContractDetail(cid){
       html+='</div>';
     }
   }
+
+  const stagePayHtml=html; html="";
 
   // Block 1.5: ДЕДЛАЙНЫ БРИГАДИРОВ (only prod_head + admin can edit)
   if(prodUsers.length){
@@ -10735,8 +10830,9 @@ function tContractDetail(cid){
     html+='</div>';
   }
 
-  // Block 2: ЗАРПЛАТА СОПРОВОДИТЕЛЯ
-  html+=_renderSalSection({title:"🚚 ЗАРПЛАТА РОПа",color:"#9b59b6",users:escortUsers});
+  const deadlinesHtml=html; html="";
+  // Block 2: ВЫПЛАТА СОПРОВОДИТЕЛЮ (РОП)
+  const escortRows=_salRows(escortUsers, "РОП");
 
   // Block 2б: ГРАФИК ПЛАТЕЖЕЙ КЛИЕНТА
   {
@@ -10791,6 +10887,8 @@ function tContractDetail(cid){
     html+='</div>';
   }
 
+  const tranchesHtml=html; html="";
+
   // Block 3: ПЛАН ДОП РАБОТ
   {
     const planItems=c.extraWorksPlan||[];
@@ -10835,6 +10933,8 @@ function tContractDetail(cid){
     '</div>';
     html+='</div>';
   }
+
+  const planExtraHtml=html; html="";
 
   // Extra works block - available for ALL contracts (main can have extras too)
   {
@@ -10916,11 +11016,16 @@ function tContractDetail(cid){
     html+='</div>';
   }
 
-    // Файлы договора и планировки
-  html+=buildContractFiles(c);
+  const extraWorksHtml=html; html=_head;
 
-    // Delete
-  html+='<button data-a="ct-delete" data-cid="'+c.id+'" style="width:100%;padding:8px;background:transparent;border:1px solid #e74c3c44;border-radius:8px;cursor:pointer;color:#e74c3c;font-size:12px;margin-top:2px">🗑 Удалить договор</button>';
+  // Разделы. «Главное» собрано выше; здесь деньги, люди и файлы. Удаление — в «⋯».
+  if(sec==="money"){
+    html+=tranchesHtml+
+      ctPayoutsHtml(c, prodRows+escortRows, stagePayHtml, planExtraHtml, prodUsers.concat(escortUsers))+
+      ((c.extraWorks||[]).length?extraWorksHtml:ctNoExtrasLineHtml(c));
+  }
+  if(sec==="people")html+=ctRespHtml(c)+deadlinesHtml;
+  if(sec==="files")html+=buildContractFiles(c);
   html+='</div>';
   return html;
 }
@@ -22088,6 +22193,9 @@ let ctEditDraft=null; // {cid,name,amount,signDate,deadlineDate,note,objId}
 // из договора» {cid,name,tid}, меню «⋯», раскрытые PIN и примечание, выбор договора
 // в карточке объекта (id объекта).
 let ctObjPick=null, ctObjPickQ="", ctMkObj=null, ctMenuOpen=null, ctPinOpen={}, ctNoteOpen={}, objCtPick=null;
+// Разделы карточки договора {cid: "main"|"money"|"people"|"files"}, раскрытые строки
+// выплат {"cid:uid"|"cid:stages"|"cid:extraplan": true}, правка ответственных {cid: true}.
+let ctSec={}, ctPayOpen={}, ctRespEdit={};
 
 // Синк текстовых/date-полей форм договора в буферы (add → contractNew, edit → ctEditDraft).
 // Без него любой render() сбрасывал всё, что набрано, но не сохранено (сумма выживала,
@@ -28337,7 +28445,7 @@ function bind(){
       contractNew={objId:"",type:"main",name:"",amount:"",signDate:new Date().toISOString().slice(0,10),client:"",status:"draft",note:"",deadlineDate:"",extraWorks:[],files:[]};
       fl();
     };}
-    else if(a==="ct-open"){el.onclick=()=>{contractView=el.dataset.cid;render();};}
+    else if(a==="ct-open"){el.onclick=()=>{contractView=el.dataset.cid;ctSec=Object.assign({},ctSec,{[el.dataset.cid]:"main"});render();};}
     else if(a==="ct-back"){el.onclick=()=>{contractView=null;ctObjPick=null;ctMkObj=null;ctMenuOpen=null;render();};}
     // ─── Шаблон договора (подвкладка) ───
     else if(a==="ct-subtab"){el.onclick=()=>{ctSubTab=el.dataset.st;render();};}
@@ -28435,6 +28543,7 @@ function bind(){
           setTimeout(function(){try{document.body.removeChild(toast);}catch(e){}},2600);
         }catch(e){}
         // Не тупик, а следующий шаг: сразу открываем выбор объекта.
+        ctSec=Object.assign({},ctSec,{[cid]:"main"});
         ctObjPick=cid; ctObjPickQ=""; ctMkObj=null; render();
         return;
       }
@@ -28459,11 +28568,39 @@ function bind(){
       if(ev){ev.stopPropagation();}
       const cid=el.dataset.cid;
       contractView=cid; contractEditId=null; ctEditDraft=null;
+      ctSec=Object.assign({},ctSec,{[cid]:"main"});
       ctObjPick=cid; ctObjPickQ=""; ctMkObj=null;
       render();
     };}
     // ── Карточка договора: меню, PIN, примечание, объект ─────────────────────
     else if(a==="ct-menu"){el.onclick=()=>{ const cid=el.dataset.cid; ctMenuOpen=(ctMenuOpen===cid)?null:cid; render(); };}
+    // Разделы договора: «Главное · Деньги · Люди · Файлы». Открытые панели выбора
+    // закрываем — они живут в «Главном».
+    else if(a==="ct-sec"){el.onclick=(ev)=>{
+      if(ev&&ev.stopPropagation)ev.stopPropagation();
+      const cid=el.dataset.cid;
+      ctSec=Object.assign({},ctSec,{[cid]:el.dataset.sec||"main"});
+      ctObjPick=null; ctMkObj=null; ctMenuOpen=null;
+      render();
+      if(window.scrollTo)window.scrollTo(0,0);
+    };}
+    else if(a==="ct-pay-open"){el.onclick=()=>{ const k=el.dataset.k||""; ctPayOpen=Object.assign({},ctPayOpen,{[k]:!ctPayOpen[k]}); render(); };}
+    else if(a==="ct-resp-edit"){el.onclick=()=>{ const cid=el.dataset.cid; ctRespEdit=Object.assign({},ctRespEdit,{[cid]:!ctRespEdit[cid]}); render(); };}
+    // Подписанный договор, ставший доп. работами из-за черновика-основного, — основным;
+    // черновик уступает место и становится доп. работами.
+    else if(a==="ct-make-main"){el.onclick=()=>{
+      const cid=el.dataset.cid;
+      const c0=contractDocs.find(function(x){return x.id===cid;});
+      const draft=c0&&ctCanBecomeMain(contractDocs, c0);
+      if(!draft)return;
+      contractDocs=contractDocs.map(function(x){
+        if(x.id===cid)return Object.assign({},x,{type:"main"});
+        if(x.id===draft.id)return Object.assign({},x,{type:"extra"});
+        return x;
+      });
+      fl();
+      fileToast("✓ Договор основной, «"+(draft.name||"")+"» — доп. работы");
+    };}
     else if(a==="ct-pin-open"){el.onclick=()=>{ const cid=el.dataset.cid; ctPinOpen=Object.assign({},ctPinOpen,{[cid]:!ctPinOpen[cid]}); render(); };}
     else if(a==="ct-note-open"){el.onclick=()=>{ const cid=el.dataset.cid; ctNoteOpen=Object.assign({},ctNoteOpen,{[cid]:!ctNoteOpen[cid]}); render(); };}
     else if(a==="ct-objpick-open"){el.onclick=(ev)=>{
@@ -28524,6 +28661,7 @@ function bind(){
     else if(a==="obj-ct-open"){el.onclick=(ev)=>{
       if(ev&&ev.stopPropagation)ev.stopPropagation();
       tab="contracts"; ctSubTab="list"; contractView=el.dataset.cid; contractEditId=null; ctEditDraft=null;
+      ctSec=Object.assign({},ctSec,{[el.dataset.cid]:"main"});
       render();
       if(window.scrollTo)window.scrollTo(0,0);
     };}

@@ -101,6 +101,50 @@ export function mainContractOf(contracts, objId, exceptId) {
   }) || null;
 }
 
+// Что делать, если у объекта уже есть основной договор, а привязывают ещё один
+// основной. Черновик не перебивает подписанный: предлагаем поменять их местами
+// (этот — основным, черновик — доп. работами). Иначе этот становится доп. работами.
+// Живой случай 11.09.2026: подписанный договор Кутьина стал «доп. работами» из-за
+// черновика №59 на том же объекте.
+export function ctMainConflict(contracts, c, oid) {
+  const me = c || {};
+  if (!oid || (me.type || "main") !== "main") return null;
+  const other = mainContractOf(contracts, oid, me.id);
+  if (!other) return null;
+  return { other: other, mode: other.status === "draft" && me.status !== "draft" ? "swap" : "extra" };
+}
+
+// Остальные договоры того же объекта — чтобы в карточке было видно, с кем он делит объект.
+export function ctOthersOnObject(contracts, c) {
+  const me = c || {};
+  if (!me.objId) return [];
+  return (contracts || []).filter(function (x) { return x && x.objId === me.objId && x.id !== me.id && !x.archived; });
+}
+
+// Подписанный договор, ставший доп. работами из-за черновика-основного, можно
+// сделать основным. Возвращает тот черновик, который уступит место, иначе null.
+export function ctCanBecomeMain(contracts, c) {
+  const me = c || {};
+  if (!me.objId || me.type !== "extra" || me.status === "draft") return null;
+  const other = mainContractOf(contracts, me.objId, me.id);
+  return other && other.status === "draft" ? other : null;
+}
+
+// ── Оплата клиента по графику ────────────────────────────────────────────────
+// Оплачено — транши с отметкой оплаты; расписано — все транши; не расписано — остаток
+// суммы договора. Вторая по важности цифра после суммы, поэтому она в сводке.
+export function ctPayProgress(total, tranches) {
+  const trs = Array.isArray(tranches) ? tranches : [];
+  const sum = Number(total) || 0;
+  const planned = trs.reduce(function (a, t) { return a + (Number(t && t.amount) || 0); }, 0);
+  const paid = trs.filter(function (t) { return t && t.paidAt; }).reduce(function (a, t) { return a + (Number(t.amount) || 0); }, 0);
+  return {
+    total: sum, planned: planned, paid: paid,
+    unplanned: Math.max(0, sum - planned), over: Math.max(0, planned - sum),
+    pct: sum > 0 ? Math.min(100, Math.round(paid / sum * 100)) : 0,
+  };
+}
+
 // ── Объект из договора ───────────────────────────────────────────────────────
 function ctText(c) { return String((c && c.note) || "") + " " + String((c && c.name) || ""); }
 
