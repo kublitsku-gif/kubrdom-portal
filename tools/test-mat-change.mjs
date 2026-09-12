@@ -129,6 +129,7 @@ function fill(p, { name, cost, qty = {}, reason = '', payer = 'company' }) {
 
   // применяет уже согласующий
   p.run('currentUser={id:"u_a",name:"Админ",roles:["admin"],objs:[],c:"#000",av:"⚙️"};')
+  p.run(`objSecOpen=Object.assign({},objSecOpen,{[objects[0].id+"|issues"]:true});`)   // блок вопросов свёрнут по умолчанию
   const card = p.run(`buildIssuesSection(objects[0])`)
   t.ok('в карточке видно «было → стало»', card.includes('ОСП 30 м²') && card.includes('ГВЛВ 10 мм'))
   t.ok('в карточке видна разница', card.includes('+' + (40 * 490).toLocaleString('ru-RU') + ' ₽'), 'сумма должна читаться без открытия заявки')

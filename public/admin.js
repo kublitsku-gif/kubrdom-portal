@@ -2984,7 +2984,7 @@ function renderTplCards(){
         '<span style="font-size:32px">'+t.icon+'</span>'+
         '<div style="flex:1;min-width:0">'+
           '<div style="font-size:15px;font-weight:700;color:#1a2a3a">'+esc(t.name)+'</div>'+
-          '<div style="font-size:11px;color:#7a9aaa;margin-top:3px">'+t.stages.length+' этапов · '+allW.length+' работ</div>'+
+          '<div style="font-size:11px;color:#7a9aaa;margin-top:3px">'+t.stages.length+' '+pluralRu(t.stages.length,"этап","этапа","этапов")+' · '+worksN(allW.length)+'</div>'+
           '<div style="font-size:11px;color:#5a7a9a;margin-top:2px">'+totalCost.toLocaleString("ru-RU")+' ₽</div>'+
         '</div>'+
       '</div>'+
@@ -3019,7 +3019,7 @@ function renderDbStageOptions(tid){
       '<div style="width:22px;height:22px;border-radius:6px;border:2px solid '+(checked?sc:"#c0d0e0")+';background:'+(checked?sc:"#fff")+';flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:700;margin-top:1px">'+(checked?"✓":"")+'</div>'+
       '<div style="flex:1;min-width:0">'+
         '<div style="font-size:13px;font-weight:700;color:#1a2a3a">'+esc(stage)+'</div>'+
-        '<div style="font-size:11px;color:#7a9aaa;margin-top:3px">'+sw.length+' работ · '+totalMats+' материалов · '+totalCost.toLocaleString("ru-RU")+' ₽</div>'+
+        '<div style="font-size:11px;color:#7a9aaa;margin-top:3px">'+worksN(sw.length)+' · '+totalMats+' '+pluralRu(totalMats,"материал","материала","материалов")+' · '+totalCost.toLocaleString("ru-RU")+' ₽</div>'+
         '<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:5px">'+preview+more+'</div>'+
       '</div>'+
     '</div>';
@@ -5063,6 +5063,9 @@ function render(){
   if(window._bindPhoneInputs)window._bindPhoneInputs();
 }
 
+// Внутри объекта лента вкладок не нужна: у экрана своя кнопка возврата и липкая строка
+// объекта — три ряда подряд съедали треть первого экрана.
+function topTabsVisible(){ return !(tab==="objects"&&openObject); }
 function page(){
   const isAdmin=currentUser&&currentUser.roles.includes("admin");
   const isSupplyOnly=currentUser&&currentUser.roles.includes("supply")&&!isAdmin;
@@ -5183,7 +5186,7 @@ ${showPinChange?`<div style="background:#fff;border-bottom:1px solid #eef2f7;pad
     <button data-a="pin-change-save" style="width:100%;padding:10px;background:#27ae60;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">Сохранить PIN</button>
   </div>
 </div>`:""}
-<div id="hdr-tabs" style="background:linear-gradient(180deg,#fff 0%,#f8fafc 100%);border-bottom:1px solid #dde6f0;padding:8px 0;position:sticky;top:53px;z-index:49;box-shadow:0 2px 4px rgba(0,0,0,0.04)">
+${topTabsVisible()?`<div id="hdr-tabs" style="background:linear-gradient(180deg,#fff 0%,#f8fafc 100%);border-bottom:1px solid #dde6f0;padding:8px 0;position:sticky;top:53px;z-index:49;box-shadow:0 2px 4px rgba(0,0,0,0.04)">
   <div style="display:flex;overflow-x:auto;padding:0 10px;scrollbar-width:none;-webkit-overflow-scrolling:touch;gap:6px" id="tabs-scroll">
   ${TABS.filter(function(t){return _bottomPicked.indexOf(t[0])<0;}).map(([k,n],i)=>{
     const active=tab===k;
@@ -5201,7 +5204,7 @@ ${showPinChange?`<div style="background:#fff;border-bottom:1px solid #eef2f7;pad
   <button data-a="more-open" style="flex-shrink:0;padding:9px 14px;border:1.5px dashed ${moreOpen?"#2980b9":"#c8d4e0"};border-radius:10px;background:${moreOpen?"#2980b9":"transparent"};cursor:pointer;font-size:12.5px;font-weight:700;color:${moreOpen?"#fff":"#7a9aaa"};white-space:nowrap">☰ Ещё</button>
   </div>
   ${TABS.length-_bottomPicked.length>4?`<div style="font-size:9px;color:#9aabbf;text-align:center;margin-top:4px;letter-spacing:0.5px">← смахни для других вкладок →</div>`:""}
-</div>
+</div>`:""}
 <div id="tab-content" style="padding:14px">
   ${tabContentHtml()}
 </div>
@@ -5250,6 +5253,9 @@ let showNotify=false, notifyData=null, notifyBusy=false, notifyLink=null, notify
 // ~390px; на стройке в один момент нужен один слой. works — что делаем, money — почём,
 // receive — приёмка (часы и фото крупными целями).
 let objWorkView="works";   // works | money | receive
+// Свёртки экрана объекта: раскрытый вопрос {iid:true}, правка шапки {oid:true},
+// показ сделанных работ {sid:true}, свёрнутая комната {"sid:room":true}.
+let objIssueOpen={}, objHeadEdit={}, objDoneOpen={}, objRoomOpen={};
 // Фильтр готовности внутри режима «Работы»: за что бригада может взяться прямо сейчас.
 // null = выбора ещё не было, тогда берём умолчание по роли (см. readyFilter).
 let objReadyFilter=null;   // go | wait | done | stages
@@ -5545,6 +5551,9 @@ function notifyPanel(){
   return h+'</div></div>';
 }
 
+// «2 работ» → «2 работы»: склонение в портале есть (pluralRu), а в шапках этапов и
+// карточках объектов его забыли.
+function worksN(n){ return n+" "+pluralRu(n,"работа","работы","работ"); }
 function objSection(oid,key,title,color,summary,body,defaultOpen){
   if(_objSecBuf&&OBJ_CHIP_KEYS.indexOf(key)>=0){ _objSecBuf.push({key:key,title:title,color:color,summary:summary,body:body,defaultOpen:defaultOpen}); return ""; }
   const k=oid+"|"+key;
@@ -5615,7 +5624,7 @@ function renderObjCard(obj, isAdmin){
   // Бейдж — отдельной строкой: рядом с названием он на телефоне съедает его до многоточия
   const _objDone=objDoneLabel(obj.id);
   html+='<div style="font-size:14px;font-weight:700;color:'+(_objDone?"#7a9aaa":"#0d1b2e")+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(_exp?"▾ ":"▸ ")+esc(obj.name)+'</div>';
-  html+='<div style="font-size:11px;color:#7a9aaa;margin-top:2px">'+allWorks.length+' работ · '+allMats.length+' материалов · '+fmt(totalCost)+'</div>';
+  html+='<div style="font-size:11px;color:#7a9aaa;margin-top:2px">'+worksN(allWorks.length)+' · '+allMats.length+' материалов · '+fmt(totalCost)+'</div>';
   if(_objDone)html+='<div style="margin-top:4px">'+doneBadge(_objDone,true)+'</div>';
   // Дедлайн от начальника производства (из договоров объекта)
   (function(){
@@ -6130,6 +6139,9 @@ function buildIssuesSection(obj){
     const kd=ISSUE_KIND[t.kind]||ISSUE_KIND.question;
     const wn=issueWorkName(t);
     const isOpen=ISSUE_OPEN(t);
+    // Пять раскрытых вопросов с формами решения занимали больше экрана, чем вся стройка.
+    // В списке — строка с сутью, форма открывается у того вопроса, которым занялись.
+    const _full=!!objIssueOpen[t.id]||t.kind==="matchg";   // заявка на замену — сама по себе просьба решить
     let h='<div style="background:#fff;border:1px solid #e3eaf2;border-left:4px solid '+st.c+';border-radius:10px;padding:9px 11px;margin-bottom:6px">';
     h+='<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">'+
       '<span style="font-size:9.5px;font-weight:700;border-radius:5px;padding:2px 7px;background:'+st.bg+';color:'+st.c+'">'+st.i+' '+st.n+'</span>'+
@@ -6162,7 +6174,7 @@ function buildIssuesSection(obj){
     if(t.kind==="matchg"&&t.mat)h+=matChangeCard(t);
 
     // Деньги: сумма и за чей счёт. Показываем только там, где вопрос стоит денег.
-    if(isOpen&&canApp&&(t.kind==="supply"||t.kind==="change"||t.kind==="matchg")){
+    if(_full&&isOpen&&canApp&&(t.kind==="supply"||t.kind==="change"||t.kind==="matchg")){
       const payer=t.payer||(t.kind==="supply"?"company":"client");
       h+='<div style="margin-top:7px;padding-top:7px;border-top:1px solid #f0f3f7;display:flex;align-items:center;gap:6px;flex-wrap:wrap">'+
         '<span style="font-size:10px;color:#8497a5;font-weight:600">Сумма</span>'+
@@ -6183,7 +6195,7 @@ function buildIssuesSection(obj){
             '<button data-a="iss-to-extra" data-iid="'+t.id+'" style="flex:1;min-width:120px;padding:7px 9px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;border:none;background:#8e44ad;color:#fff">🛠 В доп работы</button>'+
           '</div>';
     }
-    if(isOpen&&canAns){
+    if(_full&&isOpen&&canAns){
       // Переадресация нативным select: на телефоне это привычное колесо, а не ещё
       // один самодельный список, который надо листать пальцем.
       h+='<div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap">'+
@@ -6201,6 +6213,7 @@ function buildIssuesSection(obj){
         '<button data-a="iss-status" data-iid="'+t.id+'" data-s="rejected" style="padding:6px 10px;border-radius:7px;cursor:pointer;font-size:10.5px;font-weight:700;border:1.5px solid #e74c3c55;background:#fff;color:#c0392b">Отклонить</button>'+
       '</div>';
     }
+    if(isOpen&&(canAns||canApp))h+='<div style="margin-top:6px"><button data-a="obj-iss-open" data-iid="'+t.id+'" style="padding:5px 10px;border-radius:7px;cursor:pointer;font-size:10.5px;font-weight:700;border:1px solid #c0392b44;background:#fff;color:#c0392b">'+(_full?"свернуть":"Решить ▸")+'</button></div>';
     if(!isOpen&&canAns)h+='<div style="margin-top:6px"><button data-a="iss-status" data-iid="'+t.id+'" data-s="work" style="padding:5px 10px;border-radius:7px;cursor:pointer;font-size:10px;font-weight:700;border:1px solid #d0dae8;background:#fff;color:#7a9aaa">↩ Вернуть в работу</button></div>';
     return h+'</div>';
   };
@@ -6243,7 +6256,7 @@ function buildIssuesSection(obj){
   const summary=open.length
     ? '<span style="color:'+_tone.c+'">'+open.length+' открыт'+(open.length===1?"":"ых")+(_oldest>=2?' · старший '+_oldest+' дн':'')+'</span>'
     : (list.length?'<span style="color:#27ae60">✓ все закрыты</span>':'<span style="color:#9aabbf">нет</span>');
-  return objSection(obj.id,"issues","❓ ВОПРОСЫ ПО ОБЪЕКТУ","#c0392b",summary,body,open.length>0);
+  return objSection(obj.id,"issues","❓ ВОПРОСЫ ПО ОБЪЕКТУ","#c0392b",summary,body,false);
 }
 
 // Личная плашка. Единственное, что заставляет открыть раздел: цифра «вам N» и цена
@@ -6462,7 +6475,7 @@ function buildWorkSummary(obj){
   }
 
   return objSection(obj.id,"summary","✅ СДЕЛАННЫЕ РАБОТЫ И ВРЕМЯ","#16a085",
-    '<span style="color:#27ae60">'+totalDone+' работ</span> · '+totalHours+' ч',h,false);
+    '<span style="color:#27ae60">'+worksN(totalDone)+'</span> · '+totalHours+' ч',h,false);
 }
 
 function getMatStatus(mats){
@@ -6491,22 +6504,32 @@ function tObjects(){
   <div style="flex:1"></div>
 </div>
 
+${(()=>{
+  // Строка объекта липкая: при прокрутке видно, где ты и сколько осталось. Шапки этапов
+  // встают под ней (--stagetop + 38px), поэтому ничего не перекрывается.
+  const _aw=obj.stages.flatMap(s=>s.works||[]);
+  const _dc=_aw.filter(w=>w.done).length;
+  const _tc=_aw.reduce((a,w)=>a+(w.cost||0),0);
+  const _dcost=_aw.filter(w=>w.done).reduce((a,w)=>a+(w.cost||0),0);
+  const _pct=isAdmin?(_tc>0?Math.round(_dcost/_tc*100):0):(_aw.length?Math.round(_dc/_aw.length*100):0);
+  return `<div data-obj-sticky style="position:sticky;top:var(--stagetop,110px);z-index:6;display:flex;align-items:center;gap:8px;margin:-4px -14px 8px;padding:7px 14px;background:#f4f7fbf2;border-bottom:1px solid #e3e9f0">
+    <span style="font-size:15px;flex-shrink:0">${obj.icon}</span>
+    <span style="flex:1;min-width:0;font-size:12.5px;font-weight:800;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(obj.name)}</span>
+    <span style="font-size:11px;font-weight:800;color:#2980b9;flex-shrink:0">${_pct}%</span>
+    ${isAdmin?`<span style="font-size:11px;color:#7a9aaa;flex-shrink:0;white-space:nowrap">осталось ${Math.round(Math.max(0,_tc-_dcost)).toLocaleString("ru-RU")} ₽</span>
+    <button data-a="obj-head-edit" data-oid="${obj.id}" title="Переименовать объект" style="width:26px;height:26px;flex-shrink:0;border:1px solid #d0dae8;background:#fff;border-radius:7px;cursor:pointer;font-size:12px;color:#7a9aaa">✏️</button>`:""}
+  </div>`;
+})()}
 <!-- Заголовок объекта -->
 <div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:10px">
-  ${isAdmin?`
+  ${(isAdmin&&objHeadEdit[obj.id])?`
   <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
     <select id="obj-icon-${obj.id}" style="padding:4px 2px;border-radius:8px;border:1px solid #d0dae8;font-size:22px;outline:none;cursor:pointer;flex-shrink:0;width:54px;text-align:center">
       ${["🛁","🏠","🌾","🏗️","🏡","🏘️","🏢","🔨","⚡","🌊"].map(i=>`<option value="${i}" ${obj.icon===i?"selected":""}>${i}</option>`).join("")}
     </select>
     <input id="obj-name-${obj.id}" value="${esc(obj.name)}" style="flex:1;min-width:0;padding:9px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:15px;font-weight:700;outline:none;color:#0d1b2e">
     <button data-a="save-obj-info" data-oid="${obj.id}" style="width:42px;height:42px;background:#27ae60;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:18px;font-weight:700;flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:0">💾</button>
-  </div>`:`
-  <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-    <span style="font-size:24px;flex-shrink:0">${obj.icon}</span>
-    <div style="flex:1;min-width:0">
-      <div style="font-size:16px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(obj.name)}</div>
-    </div>
-  </div>`}
+  </div>`:``}
   <!-- Объект завершён — плашкой, а не мелким бейджем: это меняет смысл всего экрана -->
   ${(()=>{
     const lbl=objDoneLabel(obj.id);
@@ -7025,9 +7048,9 @@ ${obj.stages.map(s=>{
   const _vw=s.works.filter(_matchW).filter(w=>_rf==="stages"||workGroup(w)===_rf);
   if((_q||_rf!=="stages")&&!_vw.length)return "";
   return `<div id="stage-${s.id}" style="background:#fff;border-radius:12px;border:1px solid ${s.c}44;margin-bottom:10px">
-  <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:linear-gradient(135deg,${s.c}15,${s.c}03),#fff;border-bottom:1px solid ${s.c}22;border-radius:11px 11px 0 0;position:sticky;top:var(--stagetop,110px);z-index:5">
+  <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:linear-gradient(135deg,${s.c}15,${s.c}03),#fff;border-bottom:1px solid ${s.c}22;border-radius:11px 11px 0 0;position:sticky;top:calc(var(--stagetop,110px) + 38px);z-index:5">
     <div style="width:8px;height:8px;border-radius:50%;background:${s.c}"></div>
-    <span style="font-size:13px;font-weight:700;color:#1a2a3a;flex:1">${esc(s.n)}</span>
+    <span style="font-size:13px;font-weight:700;color:#1a2a3a;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.n)}</span>
     ${stageSchedChip(s)}
     ${(()=>{
       // Приёмка этапа клиентом. Пока все работы не закрыты — не предлагаем: «принять
@@ -7041,19 +7064,24 @@ ${obj.stages.map(s=>{
       if(canAsk&&stageCanAskAccept(s))return `<button data-a="obj-stage-ask-accept" data-oid="${obj.id}" data-sid="${s.id}" style="font-size:10px;font-weight:700;color:#fff;background:#27ae60;border:none;border-radius:6px;padding:3px 9px;margin-right:6px;cursor:pointer;white-space:nowrap">📩 Запросить приёмку</button>`;
       return "";
     })()}
-    ${(()=>{const sm=s.works.flatMap(w=>w.mats||[]);const st=getMatStatus(sm);return st?`<span style="font-size:10px;font-weight:700;color:${st.color};background:${st.bg};border-radius:6px;padding:2px 8px;margin-right:6px">${st.label} ${st.done}/${st.total}</span>`:"";})()}
+    ${isAdmin&&_objEdit&&objWorkView==="money"?`<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#8e44ad;font-weight:700;margin-right:8px">👷<input data-a="obj-stage-pay" data-oid="${obj.id}" data-sid="${s.id}" value="${stagePay(s)||""}" inputmode="numeric" placeholder="0" style="width:82px;padding:3px 6px;border:1px solid #8e44ad55;border-radius:6px;font-size:11px;font-weight:700;color:#8e44ad;outline:none;text-align:right">₽</span>`:""}
+    ${isAdmin&&_objEdit?`<button data-a="obj-del-stage" data-oid="${obj.id}" data-sid="${s.id}" style="padding:2px 7px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;font-size:10px;color:#e74c3c">✕</button>`:""}
+  </div>
+  <!-- Счёт работ, закупка и деньги — отдельной строкой: в одной с названием их сжимало,
+       и «10 работ · 297 704 ₽» уезжало за край карточки. -->
+  <div data-stage-sub style="display:flex;align-items:center;gap:8px;padding:5px 14px 7px;border-bottom:1px solid ${s.c}18;background:#fcfdfe;flex-wrap:wrap">
+    ${(()=>{const sm=s.works.flatMap(w=>w.mats||[]);const st=getMatStatus(sm);return st?`<span style="font-size:10px;font-weight:700;color:${st.color};background:${st.bg};border-radius:6px;padding:2px 8px;flex-shrink:0;white-space:nowrap">${st.label} ${st.done}/${st.total}</span>`:"";})()}
+    <span style="flex:1"></span>
     ${(()=>{
-      const cnt=_q?(_vw.length+" из "+s.works.length):s.works.length;
+      const cnt=_q?(_vw.length+" из "+s.works.length):worksN(s.works.length);
       const done=s.works.filter(w=>w.done).length;
       const pay=stagePay(s);
       // Финансисту — цена клиента, бригаде — сумма этапа для неё и прогресс.
       const right=canSeeClientMoney()
-        ? cnt+" работ · "+fmt(s.works.reduce((a,w)=>a+w.cost,0))
-        : cnt+" работ · сделано "+done+(pay?" · <b>"+fmt(pay)+"</b> бригаде":"");
-      return `<span style="font-size:11px;color:${s.c};font-weight:600;margin-right:8px">`+right+`</span>`;
+        ? cnt+" · "+fmt(s.works.reduce((a,w)=>a+w.cost,0))
+        : cnt+" · сделано "+done+(pay?" · <b>"+fmt(pay)+"</b> бригаде":"");
+      return `<span style="font-size:11px;color:${s.c};font-weight:600;flex-shrink:0;white-space:nowrap">`+right+`</span>`;
     })()}
-    ${isAdmin&&_objEdit&&objWorkView==="money"?`<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#8e44ad;font-weight:700;margin-right:8px">👷<input data-a="obj-stage-pay" data-oid="${obj.id}" data-sid="${s.id}" value="${stagePay(s)||""}" inputmode="numeric" placeholder="0" style="width:82px;padding:3px 6px;border:1px solid #8e44ad55;border-radius:6px;font-size:11px;font-weight:700;color:#8e44ad;outline:none;text-align:right">₽</span>`:""}
-    ${isAdmin&&_objEdit?`<button data-a="obj-del-stage" data-oid="${obj.id}" data-sid="${s.id}" style="padding:2px 7px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;font-size:10px;color:#e74c3c">✕</button>`:""}
   </div>
   ${isAdmin&&_objEdit?`<div style="display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid ${s.c}22;background:#fbfcfe;flex-wrap:wrap">
     <span style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.4px">ПЛАН ЭТАПА</span>
@@ -7143,7 +7171,7 @@ ${obj.stages.map(s=>{
               return `<button data-a="obj-toggle-photo" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="padding:6px 12px;font-size:12px !important;background:${bg};border:1px solid ${bd};border-radius:5px;cursor:pointer;font-size:10px;color:#3498db;font-weight:600">📷 ${photos.length>0?photos.length:'+'}</button>`;
             })()}
           </div>
-          ${objWorkView!=="works"||!_rd||_rd.ok?"":(()=>{
+          ${objWorkView!=="works"||!_rd||_rd.ok||!isMatsOpen?"":(()=>{
             // Причина простоя прямо в карточке: бригадиру не надо раскрывать список,
             // чтобы понять, чего ждёт работа, — а снабженцу это готовая заявка.
             return `<div style="margin-top:4px;display:flex;flex-direction:column;gap:1px">`+missingBlocks(_rd.missing).map(b=>
@@ -7257,20 +7285,34 @@ ${obj.stages.map(s=>{
     };
     // Чистовой этап — разбивка работ по помещениям (Парная/Душевая/Туалет/КО/Общие),
     // как в смете. Комната берётся из w.room, иначе определяется по названию работы.
+    // Сделанные работы — под свёрткой в конце этапа: из 22 работ объекта 16 закрыты, и
+    // каждая занимала столько же места, сколько живая. Фильтры «Можно делать / Ждут /
+    // Сделано» показывают свою выборку целиком — там свёртка только мешала бы.
+    const _plain=(objWorkView!=="works"||readyFilter()==="stages");
+    const _liveW=_plain?_vw.filter(function(w){return !w.done;}):_vw;
+    const _doneW=_plain?_vw.filter(function(w){return !!w.done;}):[];
+    const _doneTail=_doneW.length
+      ? `<button data-a="obj-done-open" data-sid="${s.id}" style="width:100%;margin-top:6px;padding:7px;border-radius:8px;border:1px dashed #27ae6055;background:#27ae6008;color:#27ae60;font-size:11px;font-weight:700;cursor:pointer">${objDoneOpen[s.id]?"▾":"▸"} ✓ Сделано ${_doneW.length}</button>`+(objDoneOpen[s.id]?_doneW.map(_ri).join(""):"")
+      : "";
+    // Чистовой этап — разбивка работ по помещениям (Парная/Душевая/Туалет/КО/Общие),
+    // как в смете. Комната берётся из w.room, иначе определяется по названию работы.
+    // Комната сворачивается: до нужной доходят тапом, а не прокруткой всего этапа.
     if(/чистов/i.test(s.n||"")){
       const _objKind=(templates.find(function(t){return t.id===obj.templateId;})||{}).kind||"banya";
       return roomsFor(_objKind).map(function(rm){
-        const _its=_vw.filter(function(w){return estRoom({name:w.n,room:w.room}, _objKind)===rm.k;});
+        const _its=_liveW.filter(function(w){return estRoom({name:w.n,room:w.room}, _objKind)===rm.k;});
         if(!_its.length)return "";
         const _sum=_its.reduce(function(a,w){return a+(Number(w.cost)||0);},0);
-        return '<div style="display:flex;align-items:center;gap:6px;margin:10px 2px 5px;padding:5px 9px;border-radius:7px;background:'+rm.color+'12;border:1px dashed '+rm.color+'55">'+
+        const _rk=s.id+":"+rm.k, _rclosed=!!objRoomOpen[_rk];
+        return '<button data-a="obj-room-toggle" data-k="'+esc(_rk)+'" style="display:flex;align-items:center;gap:6px;width:100%;margin:10px 2px 5px;padding:5px 9px;border-radius:7px;background:'+rm.color+'12;border:1px dashed '+rm.color+'55;cursor:pointer;text-align:left">'+
             '<span style="font-size:12px">'+rm.emoji+'</span>'+
-            '<span style="font-size:10px;font-weight:800;color:'+rm.color+';letter-spacing:0.3px;flex:1">'+rm.n.toUpperCase()+'</span>'+
-            '<span style="font-size:9px;color:'+rm.color+';font-weight:700">'+_its.length+' · '+fmt(_sum)+'</span>'+
-          '</div>'+_its.map(_ri).join("");
-      }).join("");
+            '<span style="font-size:10px;font-weight:800;color:'+rm.color+';letter-spacing:0.3px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+rm.n.toUpperCase()+'</span>'+
+            '<span style="font-size:9px;color:'+rm.color+';font-weight:700;flex-shrink:0;white-space:nowrap">'+_its.length+' · '+fmt(_sum)+'</span>'+
+            '<span style="font-size:9px;color:'+rm.color+';flex-shrink:0">'+(_rclosed?"▸":"▾")+'</span>'+
+          '</button>'+(_rclosed?"":_its.map(_ri).join(""));
+      }).join("")+_doneTail;
     }
-    return _vw.map(_ri).join("");
+    return _liveW.map(_ri).join("")+_doneTail;
     })()}
     ${isAdmin?(showNObjWorkSid===s.id?`<div style="margin-top:6px;background:#f0f4f8;border-radius:9px;padding:9px">
       <input id="onw-n" placeholder="Название работы" style="width:100%;padding:7px 9px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;margin-bottom:5px;outline:none;box-sizing:border-box">
@@ -25276,6 +25318,10 @@ function bind(){
       // Сотрудники не назначаются здесь — только через ответственных по договору (вкладка «Договора»).
       showNObj=false;fl();
     };}
+    else if(a==="obj-iss-open"){el.onclick=()=>{ const id=el.dataset.iid||""; objIssueOpen=Object.assign({},objIssueOpen,{[id]:!objIssueOpen[id]}); render(); };}
+    else if(a==="obj-head-edit"){el.onclick=()=>{ const oid=el.dataset.oid||""; objHeadEdit=Object.assign({},objHeadEdit,{[oid]:!objHeadEdit[oid]}); render(); };}
+    else if(a==="obj-done-open"){el.onclick=()=>{ const sid=el.dataset.sid||""; objDoneOpen=Object.assign({},objDoneOpen,{[sid]:!objDoneOpen[sid]}); render(); };}
+    else if(a==="obj-room-toggle"){el.onclick=()=>{ const k=el.dataset.k||""; objRoomOpen=Object.assign({},objRoomOpen,{[k]:!objRoomOpen[k]}); render(); };}
     else if(a==="open-obj"){el.onclick=()=>{openObject=el.dataset.oid;render();};}
     else if(a==="obj-prev-toggle"){el.onclick=()=>{ const oid=el.dataset.oid; objPrevExpanded=Object.assign({},objPrevExpanded,{[oid]:!objPrevExpanded[oid]}); render(); };}
     else if(a==="close-obj"){el.onclick=()=>{openObject=null;render();};}
