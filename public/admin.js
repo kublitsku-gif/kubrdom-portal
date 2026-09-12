@@ -5255,7 +5255,10 @@ let showNotify=false, notifyData=null, notifyBusy=false, notifyLink=null, notify
 let objWorkView="works";   // works | money | receive
 // Свёртки экрана объекта: раскрытый вопрос {iid:true}, правка шапки {oid:true},
 // показ сделанных работ {sid:true}, свёрнутая комната {"sid:room":true}.
-let objIssueOpen={}, objHeadEdit={}, objDoneOpen={}, objRoomOpen={}, objMenuOpen=null, objSearchOpen=false;
+let objIssueOpen={}, objHeadEdit={}, objDoneOpen={}, objRoomOpen={}, objMenuOpen=null, objSearchOpen=false, objStageOpen={};
+// «＋ Запись» ужимается до круглой кнопки, пока экран листают вниз, — иначе широкая
+// плашка закрывает правый край строк работ. Состояние общее, чтобы перерисовка его не сбрасывала.
+let _fabMini=false;
 // Фильтр готовности внутри режима «Работы»: за что бригада может взяться прямо сейчас.
 // null = выбора ещё не было, тогда берём умолчание по роли (см. readyFilter).
 let objReadyFilter=null;   // go | wait | done | stages
@@ -5273,6 +5276,30 @@ function readyFilter(){
 // ~300px и в большинстве объектов пустые. Режим сбора: пока _objSecBuf активен, objSection
 // не рисует аккордеон, а складывает описание — и все секции выводятся одной строкой чипов.
 let _objSecBuf=null;
+// Плавающая «＋ Запись». Ужатая — круг с плюсом (см. _fabMini и fabScrollWatch).
+function fabRecordHtml(oid,isAdmin){
+  return '<button data-a="tl-wiz-open" data-fab data-oid="'+esc(oid||"")+'" aria-label="Запись" style="position:fixed;right:14px;bottom:calc('+(isAdmin?"92px":"24px")+' + env(safe-area-inset-bottom,0px));z-index:600;background:#16a085;border:none;border-radius:999px;padding:'+(_fabMini?"0":"15px 30px")+';'+(_fabMini?"width:54px;height:54px;justify-content:center;":"")+'cursor:pointer;color:#fff;font-size:'+(_fabMini?"26px":"16px")+';font-weight:800;box-shadow:0 10px 24px rgba(22,160,133,0.45);display:flex;align-items:center;gap:7px;transition:padding 0.15s">＋'+(_fabMini?"":'<span data-fab-label>Запись</span>')+'</button>';
+}
+// Листают вниз — кнопка ужимается, вверх — разворачивается. Меняем DOM на месте,
+// без перерисовки: прокрутка идёт десятки раз в секунду.
+function fabScrollWatch(){
+  if(typeof window==="undefined"||!window.addEventListener||window._fabWatch)return;
+  window._fabWatch=true;
+  let last=window.pageYOffset||0;
+  window.addEventListener("scroll",function(){
+    const y=window.pageYOffset||0;
+    if(Math.abs(y-last)<8)return;
+    const mini=y>last&&y>120;
+    last=y;
+    if(mini===_fabMini)return;
+    _fabMini=mini;
+    document.querySelectorAll("[data-fab]").forEach(function(b){
+      const tmp=document.createElement("div");
+      tmp.innerHTML=fabRecordHtml(b.dataset.oid,/92px/.test(b.getAttribute("style")||""));
+      const nb=tmp.firstChild; nb.onclick=b.onclick; b.replaceWith(nb);
+    });
+  },{passive:true});
+}
 // Короткое имя для чипа, когда показывать нечего (иначе «🛠 —» ни о чём не говорит).
 const OBJ_SEC_SHORT={docs:"Документы",extra:"Доп работы",deadline:"Дедлайн",summary:"Сделано",video:"Видео",dayreport:"Отчёт дня",tpldiff:"Шаблон"};
 // Все справочные разделы — чипами. «Отчёт дня» и «Связь с шаблоном» тоже: отдельными
@@ -6506,33 +6533,48 @@ function tObjects(){
     const _objEdit=!!objEditWorks[obj.id];
     _objSecBuf=null;   // страховка от протечки режима сбора при прерванном рендере
     return`<div>
-<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
-  <button data-a="close-obj" style="padding:7px 14px;background:transparent;border:1px solid #d0dae8;border-radius:20px;cursor:pointer;font-size:12px;color:#7a9aaa">← Объекты</button>
-  <div style="flex:1"></div>
-</div>
-
 ${(()=>{
   // Строка объекта липкая: при прокрутке видно, где ты и сколько осталось. Шапки этапов
-  // встают под ней (--stagetop + 38px), поэтому ничего не перекрывается.
+  // встают под ней (--stagetop + 38px), поэтому ничего не перекрывается. В ней же возврат
+  // к списку, команда и прогресс — раньше это были ещё два блока на 120 px над работами.
   const _aw=obj.stages.flatMap(s=>s.works||[]);
   const _dc=_aw.filter(w=>w.done).length;
   const _tc=_aw.reduce((a,w)=>a+(w.cost||0),0);
   const _dcost=_aw.filter(w=>w.done).reduce((a,w)=>a+(w.cost||0),0);
   const _pct=isAdmin?(_tc>0?Math.round(_dcost/_tc*100):0):(_aw.length?Math.round(_dc/_aw.length*100):0);
-  return `<div data-obj-sticky style="position:sticky;top:var(--stagetop,110px);z-index:6;display:flex;align-items:center;gap:8px;margin:-4px 0 8px;padding:7px 10px;background:#f4f7fbf2;border:1px solid #e3e9f0;border-radius:10px">
-    <span style="font-size:15px;flex-shrink:0">${obj.icon}</span>
-    <span style="flex:1;min-width:0;font-size:12.5px;font-weight:800;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(obj.name)}</span>
-    <span style="font-size:11px;font-weight:800;color:#2980b9;flex-shrink:0">${_pct}%</span>
-    ${isAdmin?`<span style="font-size:11px;color:#7a9aaa;flex-shrink:0;white-space:nowrap">осталось ${Math.round(Math.max(0,_tc-_dcost)).toLocaleString("ru-RU")} ₽</span>
-    <button data-a="obj-head-edit" data-oid="${obj.id}" title="Переименовать объект" style="width:26px;height:26px;flex-shrink:0;border:1px solid #d0dae8;background:#fff;border-radius:7px;cursor:pointer;font-size:12px;color:#7a9aaa">✏️</button>
-    <button data-a="obj-menu" data-oid="${obj.id}" title="Ещё" style="width:26px;height:26px;flex-shrink:0;border:1px solid #d0dae8;background:${objMenuOpen===obj.id?"#e8eef5":"#fff"};border-radius:7px;cursor:pointer;font-size:14px;color:#5a7a9a;line-height:1;padding:0">⋯</button>`:""}
+  const _bar=_pct>=100?"#27ae60":(_pct>0?"#2980b9":"#dfe6ee");
+  const _team=(()=>{
+    const ids=new Set();
+    contractDocs.filter(d=>d.objId===obj.id&&(d.status==="signed"||d.status==="closed")).forEach(d=>(d.responsible||[]).forEach(uid=>ids.add(uid)));
+    return users.filter(u=>ids.has(u.id));
+  })();
+  const _ib="width:26px;height:26px;flex-shrink:0;border:1px solid #d0dae8;background:#fff;border-radius:7px;cursor:pointer;font-size:12px;color:#7a9aaa;padding:0;line-height:1";
+  const _mb="padding:8px 12px;background:#fff;border:1px solid #d0dae8;border-radius:9px;cursor:pointer;font-size:12px;font-weight:700;color:#5a7a9a;white-space:nowrap";
+  return `<div data-obj-sticky style="position:sticky;top:var(--stagetop,110px);z-index:6;margin:-4px 0 8px;padding:6px 8px 0;background:#f4f7fbf2;border:1px solid #e3e9f0;border-radius:10px;overflow:hidden">
+    <div style="display:flex;align-items:center;gap:7px">
+      <button data-a="close-obj" title="К списку объектов" style="${_ib};font-size:14px;color:#5a7a9a">←</button>
+      <span style="font-size:15px;flex-shrink:0">${obj.icon}</span>
+      <span style="flex:1;min-width:0;font-size:13px;font-weight:800;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(obj.name)}</span>
+      ${_team.length?`<span title="${_team.map(u=>esc(u.name)).join(", ")}" style="display:inline-flex;align-items:center;flex-shrink:0">${_team.slice(0,3).map((u,i)=>`<span style="width:22px;height:22px;border-radius:50%;background:${u.c}22;border:2px solid #fff;box-shadow:0 0 0 1px ${u.c}55;display:inline-flex;align-items:center;justify-content:center;font-size:11px;margin-left:${i?"-7px":"0"}">${u.av}</span>`).join("")}${_team.length>3?`<span style="font-size:9px;color:#7a9aaa;margin-left:2px">+${_team.length-3}</span>`:""}</span>`:""}
+      ${isAdmin?`<button data-a="obj-head-edit" data-oid="${obj.id}" title="Переименовать объект" style="${_ib}">✏️</button>
+      <button data-a="obj-menu" data-oid="${obj.id}" title="Ещё" style="${_ib};font-size:14px;color:#5a7a9a;background:${objMenuOpen===obj.id?"#e8eef5":"#fff"}">⋯</button>`:""}
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;padding:3px 0 5px 33px;font-size:10.5px;color:#7a9aaa;white-space:nowrap;overflow:hidden">
+      <span><b style="color:#0d1b2e">${_dc} из ${_aw.length}</b> ${pluralRu(_aw.length,"работы","работ","работ")}</span>
+      <span>·</span><b style="color:${_pct>0?_bar:"#9aabbf"}">${_pct}%</b>
+      ${isAdmin?`<span>·</span><span style="overflow:hidden;text-overflow:ellipsis">осталось ${Math.round(Math.max(0,_tc-_dcost)).toLocaleString("ru-RU")} ₽</span>`:""}
+      ${!_team.length?`<span>·</span><span style="color:#c4cdd8;overflow:hidden;text-overflow:ellipsis">команда не назначена</span>`:""}
+    </div>
+    <div data-obj-bar style="height:3px;margin:0 -8px;background:#e6ecf3"><div style="width:${_pct}%;height:100%;background:${_bar}"></div></div>
   </div>
-  ${isAdmin&&objMenuOpen===obj.id?`<div style="display:flex;justify-content:flex-end;margin:-2px 0 10px">
-    <button data-a="del-obj" data-oid="${obj.id}" style="padding:8px 14px;background:#fff;border:1px solid #e74c3c55;border-radius:9px;cursor:pointer;font-size:12px;font-weight:700;color:#e74c3c">🗑 Удалить объект целиком</button>
+  ${isAdmin&&objMenuOpen===obj.id?`<div style="display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;margin:-2px 0 10px">
+    <button data-a="obj-edit-toggle" data-oid="${obj.id}" style="${_mb}">${_objEdit?"✓ Готово":"✏️ Править работы"}</button>
+    <button data-a="obj-add-stage" data-oid="${obj.id}" style="${_mb};color:#2980b9;border-color:#2980b966">+ Этап</button>
+    <button data-a="del-obj" data-oid="${obj.id}" style="${_mb};color:#e74c3c;border-color:#e74c3c55">🗑 Удалить объект целиком</button>
   </div>`:""}`;
 })()}
-<!-- Заголовок объекта -->
-<div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:10px">
+<!-- Правка имени и плашка «объект завершён» — карточкой, только когда есть что показать -->
+${((isAdmin&&objHeadEdit[obj.id])||objDoneLabel(obj.id))?`<div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:10px">
   ${(isAdmin&&objHeadEdit[obj.id])?`
   <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
     <select id="obj-icon-${obj.id}" style="padding:4px 2px;border-radius:8px;border:1px solid #d0dae8;font-size:22px;outline:none;cursor:pointer;flex-shrink:0;width:54px;text-align:center">
@@ -6554,40 +6596,7 @@ ${(()=>{
       </div>
     </div>`;
   })()}
-  <!-- Сводка + команда одной строкой: у бригадира верх экрана должен занимать
-       минимум места, перечень работ важнее реквизитов объекта -->
-  ${(()=>{
-    const doneCnt=allWorks.filter(w=>w.done).length;
-    const objContracts=contractDocs.filter(d=>d.objId===obj.id&&(d.status==="signed"||d.status==="closed"));
-    const assignedIds=new Set();
-    objContracts.forEach(d=>(d.responsible||[]).forEach(uid=>assignedIds.add(uid)));
-    const team=users.filter(u=>assignedIds.has(u.id));
-    // Полоса прогресса. У админа она считается ПО ДЕНЬГАМ (дорогая закрытая работа должна
-    // двигать её сильнее дешёвой — тот же принцип, что у прогресса закупки материалов),
-    // у остальных — по числу работ, потому что сумм они не видят.
-    const doneCost=allWorks.filter(w=>w.done).reduce((a,w)=>a+(w.cost||0),0);
-    const pct=isAdmin
-      ? (totalCost>0?Math.round(doneCost/totalCost*100):0)
-      : (allWorks.length?Math.round(doneCnt/allWorks.length*100):0);
-    const barColor=pct>=100?"#27ae60":(pct>0?"#2980b9":"#dfe6ee");
-    const rub=v=>Math.round(v).toLocaleString("ru-RU")+" ₽";
-    return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:7px">
-      <div style="flex:1;min-width:0;font-size:12px;color:#7a9aaa">
-        <b style="color:#0d1b2e;font-size:14px">${doneCnt}</b> из ${allWorks.length} ${pluralRu(allWorks.length,"работы","работ","работ")} сделано
-      </div>
-      ${team.length?`<div style="display:flex;align-items:center;flex-shrink:0" title="${team.map(u=>esc(u.name)).join(", ")}">
-        ${team.slice(0,4).map((u,i)=>`<span style="width:26px;height:26px;border-radius:50%;background:${u.c}22;border:2px solid #fff;box-shadow:0 0 0 1px ${u.c}55;display:inline-flex;align-items:center;justify-content:center;font-size:13px;margin-left:${i?"-8px":"0"}">${u.av}</span>`).join("")}
-        ${team.length>4?`<span style="font-size:10px;color:#7a9aaa;margin-left:4px">+${team.length-4}</span>`:""}
-      </div>`:`<span style="font-size:10px;color:#c4cdd8;flex-shrink:0">команда не назначена</span>`}
-    </div>
-    <div style="display:flex;align-items:center;gap:8px">
-      <div style="flex:1;height:7px;border-radius:4px;background:#eef2f7;overflow:hidden">
-        <div style="width:${pct}%;height:100%;background:${barColor};border-radius:4px;transition:width 0.25s"></div>
-      </div>
-    </div>
-    ${isAdmin?`<div style="margin-top:6px;font-size:11px;color:#7a9aaa">Закрыто <b style="color:#27ae60">${rub(doneCost)}</b></div>`:""}`;
-  })()}
-</div>
+</div>`:""}
 
 ${(()=>{ _objSecBuf=[]; return ""; })()}
 <!-- Документы из договора: спецификация + договор на окна и двери (показ, источник правды — договор) -->
@@ -6942,13 +6951,7 @@ ${objSection(obj.id,"video","🎬 ВИДЕО ОБЪЕКТА","#0088cc",
 ${objChipsHtml(obj.id,_objSecBuf||[])}
 
 <!-- Этапы и работы объекта — редактируемые -->
-<div style="display:flex;align-items:center;gap:7px;margin-bottom:10px">
-  <div style="flex:1;font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">ПЕРЕЧЕНЬ РАБОТ</div>
-  <button data-a="obj-search-open" title="Поиск по работам и материалам" style="width:30px;height:28px;padding:0;background:${(objSearchOpen||objWorkSearch)?"#eaf2fb":"transparent"};border:1px solid ${(objSearchOpen||objWorkSearch)?"#2980b9":"#d0dae8"};border-radius:7px;cursor:pointer;font-size:13px">🔍</button>
-  ${isAdmin?`<button data-a="obj-edit-toggle" data-oid="${obj.id}" style="padding:5px 12px;background:${_objEdit?"#e74c3c":"transparent"};border:1px solid ${_objEdit?"#e74c3c":"#d0dae8"};border-radius:7px;cursor:pointer;font-size:11px;color:${_objEdit?"#fff":"#7a9aaa"};font-weight:700">${_objEdit?"✓ Готово":"✏️ Править"}</button>`:""}
-  ${isAdmin?`<button data-a="obj-add-stage" data-oid="${obj.id}" style="padding:5px 12px;background:#2980b9;border:none;border-radius:7px;cursor:pointer;font-size:11px;color:#fff;font-weight:700">+ Этап</button>`:""}
-</div>
-${_objEdit?`<div style="background:#fdecea;border:1px solid #f5b7b1;border-radius:10px;padding:8px 11px;margin-bottom:10px;font-size:11px;color:#c0392b;line-height:1.4">✏️ Режим правки: показаны кнопки удаления этапов и работ. Нажмите «Готово», когда закончите.</div>`:""}
+${_objEdit?`<div style="display:flex;align-items:center;gap:8px;background:#fdecea;border:1px solid #f5b7b1;border-radius:10px;padding:8px 11px;margin-bottom:10px;font-size:11px;color:#c0392b;line-height:1.4"><span style="flex:1;min-width:0">✏️ Режим правки: показаны кнопки удаления этапов и работ.</span><button data-a="obj-edit-toggle" data-oid="${obj.id}" style="padding:6px 12px;background:#e74c3c;border:none;border-radius:7px;cursor:pointer;font-size:11px;color:#fff;font-weight:700;flex-shrink:0">✓ Готово</button></div>`:""}
 <div style="position:relative;margin-bottom:${(objSearchOpen||objWorkSearch||_photoQueueN>0)?"10px":"0"}">
   ${_photoQueueN>0?`<div style="display:flex;align-items:center;gap:8px;background:#fff3e0;border:1px solid #e67e2244;border-radius:10px;padding:8px 11px;margin-bottom:8px">
     <span style="font-size:15px">📷</span>
@@ -6987,7 +6990,7 @@ ${(()=>{
   // фильтр готовности со счётчиками. В «Деньгах» и «Приёмке» нужен весь список целиком.
   const modes=[["works","🔨","Работы"],["money","💰","Деньги"],["receive","📸","Приёмка"]].map(v=>{
     const on=objWorkView===v[0];
-    return `<button data-a="obj-work-view" data-v="${v[0]}" title="${v[2]}" style="flex:0 0 auto;padding:7px ${on?"10px":"8px"};border-radius:9px;cursor:pointer;font-size:11.5px;font-weight:700;border:1.5px solid ${on?"#2980b9":"#dde6f0"};background:${on?"#2980b9":"#fff"};color:${on?"#fff":"#7a9aaa"};white-space:nowrap">${v[1]}${on?" "+v[2]:""}</button>`;
+    return `<button data-a="obj-work-view" data-v="${v[0]}" title="${v[2]}" aria-label="${v[2]}" style="flex:0 0 auto;width:34px;padding:0;border-radius:9px;cursor:pointer;font-size:15px;border:1.5px solid ${on?"#2980b9":"#dde6f0"};background:${on?"#2980b9":"#fff"}">${v[1]}</button>`;
   }).join("");
   let ready="";
   if(objWorkView==="works"){
@@ -7000,7 +7003,7 @@ ${(()=>{
       const cur=readyFilter();
       const tab=(v,ic,lb,n,c)=>{
         const on=cur===v;
-        return `<button data-a="obj-ready-filter" data-v="${v}" title="${lb}" style="flex:1 1 0;min-width:0;padding:4px 2px;border-radius:9px;cursor:pointer;border:1.5px solid ${on?c:"#dde6f0"};background:${on?c:"#fff"};color:${on?"#fff":"#7a9aaa"};font-size:11px;font-weight:800;line-height:1.15;white-space:nowrap;overflow:hidden">${ic}${n!=null?" "+n:""}<span style="display:block;font-size:8.5px;font-weight:700;overflow:hidden;text-overflow:ellipsis">${lb}</span></button>`;
+        return `<button data-a="obj-ready-filter" data-v="${v}" title="${lb}" style="flex:1 1 0;min-width:0;padding:4px 1px;border-radius:9px;cursor:pointer;border:1.5px solid ${on?c:"#dde6f0"};background:${on?c:"#fff"};color:${on?"#fff":"#7a9aaa"};font-size:11.5px;font-weight:800;line-height:1.15;white-space:nowrap;overflow:hidden">${ic}${n!=null?" "+n:""}<span style="display:block;font-size:10px;font-weight:700;overflow:hidden;text-overflow:ellipsis">${lb}</span></button>`;
       };
       ready=`<span style="width:1px;align-self:stretch;background:#dde6f0;flex-shrink:0"></span>
     ${tab("go","▶","Можно",cnt.go,"#27ae60")}
@@ -7009,7 +7012,9 @@ ${(()=>{
     ${tab("stages","📋","Этапы",null,"#2980b9")}`;
     }
   }
-  return `<div data-work-filters style="display:flex;align-items:stretch;gap:5px;margin-bottom:10px">${modes}${ready}</div>`;
+  const _son=!!(objSearchOpen||objWorkSearch);
+  const search=`<button data-a="obj-search-open" title="Поиск по работам и материалам" style="flex:0 0 auto;width:34px;padding:0;background:${_son?"#eaf2fb":"#fff"};border:1.5px solid ${_son?"#2980b9":"#dde6f0"};border-radius:9px;cursor:pointer;font-size:14px">🔍</button>`;
+  return `<div data-work-filters style="display:flex;align-items:stretch;gap:4px;min-height:38px;margin-bottom:10px">${modes}${ready}${ready?"":`<span style="flex:1"></span>`}${search}</div>`;
 })()}
 
 ${(()=>{
@@ -7056,23 +7061,47 @@ ${obj.stages.map(s=>{
   const _rf=objWorkView==="works"?readyFilter():"stages";
   const _vw=s.works.filter(_matchW).filter(w=>_rf==="stages"||workGroup(w)===_rf);
   if((_q||_rf!=="stages")&&!_vw.length)return "";
+  // Закрытый этап — одной строкой: все работы сделаны и куплены, а карточка занимала
+  // 159 px. При поиске и фильтрах не сворачиваем — там человек ищет конкретное.
+  const _closed=stageFact(s).allDone&&!_q&&_rf==="stages"&&!_objEdit;
+  const _accHtml=(()=>{
+    // Приёмка этапа клиентом. Пока все работы не закрыты — не предлагаем: «принять
+    // недоделанное» не приёмка, а способ потерять право на переделку.
+    if(stageAccepted(s)){
+      const a=stageAcc(s);
+      return `<span title="Принято клиентом ${esc(String(a.acceptedAt||""))}" style="font-size:10px;font-weight:700;color:#27ae60;background:#eafaf0;border-radius:6px;padding:2px 8px;white-space:nowrap">✅ Принят клиентом</span>`;
+    }
+    if(stageAwaitingClient(s))return `<span style="font-size:10px;font-weight:700;color:#c08a1e;background:#fbf3e2;border-radius:6px;padding:2px 8px;white-space:nowrap">⏳ Ждём приёмки клиентом</span>`;
+    const canAsk=currentUser&&currentUser.roles.some(r=>["admin","brigadier","prod_head","client_mgr"].indexOf(r)>=0);
+    if(canAsk&&stageCanAskAccept(s))return `<button data-a="obj-stage-ask-accept" data-oid="${obj.id}" data-sid="${s.id}" style="font-size:10px;font-weight:700;color:#fff;background:#27ae60;border:none;border-radius:6px;padding:3px 9px;cursor:pointer;white-space:nowrap">📩 Запросить приёмку</button>`;
+    return "";
+  })();
+  const _moneyLine=(()=>{
+    const cnt=_q?(_vw.length+" из "+s.works.length):worksN(s.works.length);
+    const done=s.works.filter(w=>w.done).length;
+    const pay=stagePay(s);
+    // Финансисту — цена клиента, бригаде — сумма этапа для неё и прогресс.
+    return canSeeClientMoney()
+      ? cnt+" · "+fmt(s.works.reduce((a,w)=>a+w.cost,0))
+      : cnt+" · сделано "+done+(pay?" · <b>"+fmt(pay)+"</b> бригаде":"");
+  })();
+  if(_closed&&!objStageOpen[s.id])return `<div id="stage-${s.id}" style="background:#fff;border-radius:12px;border:1px solid ${s.c}33;margin-bottom:8px;padding:8px 12px">
+  <button data-a="obj-stage-open" data-sid="${s.id}" style="display:flex;align-items:center;gap:8px;width:100%;padding:0;border:none;background:transparent;cursor:pointer;text-align:left">
+    <span style="width:18px;height:18px;border-radius:50%;background:#27ae60;color:#fff;font-size:11px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">✓</span>
+    <span style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.n)}</span>
+    <span style="font-size:10px;color:#c4cdd8;flex-shrink:0">▸</span>
+  </button>
+  <div style="display:flex;align-items:center;gap:8px;margin-top:4px;padding-left:26px">
+    <span style="flex:1;min-width:0;font-size:10.5px;color:${s.c};font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_moneyLine}</span>
+    ${_accHtml}
+  </div>
+</div>`;
   return `<div id="stage-${s.id}" style="background:#fff;border-radius:12px;border:1px solid ${s.c}44;margin-bottom:10px">
   <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:linear-gradient(135deg,${s.c}15,${s.c}03),#fff;border-bottom:1px solid ${s.c}22;border-radius:11px 11px 0 0;position:sticky;top:calc(var(--stagetop,110px) + 38px);z-index:5">
     <div style="width:8px;height:8px;border-radius:50%;background:${s.c}"></div>
     <span style="font-size:13px;font-weight:700;color:#1a2a3a;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.n)}</span>
     ${stageSchedChip(s)}
-    ${(()=>{
-      // Приёмка этапа клиентом. Пока все работы не закрыты — не предлагаем: «принять
-      // недоделанное» не приёмка, а способ потерять право на переделку.
-      if(stageAccepted(s)){
-        const a=stageAcc(s);
-        return `<span title="Принято клиентом ${esc(String(a.acceptedAt||""))}" style="font-size:10px;font-weight:700;color:#27ae60;background:#eafaf0;border-radius:6px;padding:2px 8px;margin-right:6px;white-space:nowrap">✅ Принят клиентом</span>`;
-      }
-      if(stageAwaitingClient(s))return `<span style="font-size:10px;font-weight:700;color:#c08a1e;background:#fbf3e2;border-radius:6px;padding:2px 8px;margin-right:6px;white-space:nowrap">⏳ Ждём приёмки клиентом</span>`;
-      const canAsk=currentUser&&currentUser.roles.some(r=>["admin","brigadier","prod_head","client_mgr"].indexOf(r)>=0);
-      if(canAsk&&stageCanAskAccept(s))return `<button data-a="obj-stage-ask-accept" data-oid="${obj.id}" data-sid="${s.id}" style="font-size:10px;font-weight:700;color:#fff;background:#27ae60;border:none;border-radius:6px;padding:3px 9px;margin-right:6px;cursor:pointer;white-space:nowrap">📩 Запросить приёмку</button>`;
-      return "";
-    })()}
+    ${_closed?`<button data-a="obj-stage-open" data-sid="${s.id}" title="Свернуть этап" style="width:24px;height:24px;flex-shrink:0;padding:0;border:1px solid #dde6f0;background:#fff;border-radius:6px;cursor:pointer;font-size:10px;color:#7a9aaa">▾</button>`:""}
     ${isAdmin&&_objEdit&&objWorkView==="money"?`<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#8e44ad;font-weight:700;margin-right:8px">👷<input data-a="obj-stage-pay" data-oid="${obj.id}" data-sid="${s.id}" value="${stagePay(s)||""}" inputmode="numeric" placeholder="0" style="width:82px;padding:3px 6px;border:1px solid #8e44ad55;border-radius:6px;font-size:11px;font-weight:700;color:#8e44ad;outline:none;text-align:right">₽</span>`:""}
     ${isAdmin&&_objEdit?`<button data-a="obj-del-stage" data-oid="${obj.id}" data-sid="${s.id}" style="padding:2px 7px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;font-size:10px;color:#e74c3c">✕</button>`:""}
   </div>
@@ -7080,17 +7109,10 @@ ${obj.stages.map(s=>{
        и «10 работ · 297 704 ₽» уезжало за край карточки. -->
   <div data-stage-sub style="display:flex;align-items:center;gap:8px;padding:5px 14px 7px;border-bottom:1px solid ${s.c}18;background:#fcfdfe;flex-wrap:wrap">
     ${(()=>{const sm=s.works.flatMap(w=>w.mats||[]);const st=getMatStatus(sm);return st?`<span style="font-size:10px;font-weight:700;color:${st.color};background:${st.bg};border-radius:6px;padding:2px 8px;flex-shrink:0;white-space:nowrap">${st.label} ${st.done}/${st.total}</span>`:"";})()}
+    <!-- Приёмка — здесь, а не в шапке: там она сжимала имя этапа до «ЭТАП 1 — ПОДГОТ…» -->
+    ${_accHtml}
     <span style="flex:1"></span>
-    ${(()=>{
-      const cnt=_q?(_vw.length+" из "+s.works.length):worksN(s.works.length);
-      const done=s.works.filter(w=>w.done).length;
-      const pay=stagePay(s);
-      // Финансисту — цена клиента, бригаде — сумма этапа для неё и прогресс.
-      const right=canSeeClientMoney()
-        ? cnt+" · "+fmt(s.works.reduce((a,w)=>a+w.cost,0))
-        : cnt+" · сделано "+done+(pay?" · <b>"+fmt(pay)+"</b> бригаде":"");
-      return `<span style="font-size:11px;color:${s.c};font-weight:600;flex-shrink:0;white-space:nowrap">`+right+`</span>`;
-    })()}
+    <span style="font-size:11px;color:${s.c};font-weight:600;flex-shrink:0;white-space:nowrap">${_moneyLine}</span>
   </div>
   ${isAdmin&&_objEdit?`<div style="display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid ${s.c}22;background:#fbfcfe;flex-wrap:wrap">
     <span style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.4px">ПЛАН ЭТАПА</span>
@@ -7136,10 +7158,11 @@ ${obj.stages.map(s=>{
         <div style="flex:1;min-width:0">
           <div ${canSheet?`data-a="work-sheet-open" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}"`:""} style="font-size:13px;font-weight:${isSupplyWork?700:600};color:${isDone?'#27ae60':isSupplyWork?'#e67e22':'#1a2a3a'};display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;line-height:1.3;${canSheet?'cursor:pointer;':''}${isDone?'text-decoration:line-through;text-decoration-color:#27ae6066':''}">${esc(w.n)}</div>
           ${w.projMark?projMarkHtml(obj, w):""}
+          ${canComplete&&!canCheck&&!isDone?`<button data-a="obj-need-time" data-wid="${w.id}" style="display:block;margin-top:2px;padding:0;border:none;background:transparent;cursor:pointer;font-size:10.5px;font-weight:700;color:#e67e22;text-align:left">🔒 сначала отметьте часы ›</button>`:""}
           <div style="display:flex;gap:6px;margin-top:2px;align-items:center;flex-wrap:wrap">
             ${isSupplyWork?`<span style="font-size:9px;font-weight:700;color:#e67e22;background:#e67e2214;border:1px solid #e67e2240;border-radius:5px;padding:2px 7px;letter-spacing:0.3px">ДОБАВИЛ СНАБЖЕНЕЦ</span>`:""}
             ${objWorkView==="works"?(()=>{const ql=workQtyLabel(w);return ql?`<span style="font-size:10px;color:#16a085;background:#16a08515;border-radius:5px;padding:2px 7px;font-weight:600">${ql}</span>`:"";})():""}
-            ${objWorkView!=="works"||!_rail?"":(()=>{
+            ${objWorkView!=="works"||!_rail||_rd.ok?"":(()=>{
               // Плашка готовности — расшифровка рельса словами. Тап раскрывает список
               // с кнопкой «Принять»: тот же обработчик, что в «Снабжении», статус один.
               const bg=_rd.ok?"#eafaf0":_rail==="#c0392b"?"#fdeeec":"#fdf3e3";
@@ -7297,7 +7320,8 @@ ${obj.stages.map(s=>{
     // Сделанные работы — под свёрткой в конце этапа: из 22 работ объекта 16 закрыты, и
     // каждая занимала столько же места, сколько живая. Фильтры «Можно делать / Ждут /
     // Сделано» показывают свою выборку целиком — там свёртка только мешала бы.
-    const _plain=(objWorkView!=="works"||readyFilter()==="stages");
+    // При поиске сделанные не прячем: найденное должно быть видно сразу.
+    const _plain=!_q&&(objWorkView!=="works"||readyFilter()==="stages");
     const _liveW=_plain?_vw.filter(function(w){return !w.done;}):_vw;
     const _doneW=_plain?_vw.filter(function(w){return !!w.done;}):[];
     const _doneTail=_doneW.length
@@ -7330,7 +7354,7 @@ ${obj.stages.map(s=>{
         <button data-a="obj-save-work" data-oid="${obj.id}" data-sid="${s.id}" style="padding:7px 12px;background:#27ae60;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">+</button>
         <button data-a="cancel-onw" style="padding:7px 10px;background:transparent;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:12px;color:#7a9aaa">✕</button>
       </div>
-    </div>`:`<button data-a="obj-show-work" data-sid="${s.id}" style="width:100%;margin-top:5px;padding:7px;background:transparent;border:1px dashed ${s.c}66;border-radius:7px;cursor:pointer;font-size:12px;color:${s.c};font-weight:600">+ Добавить работу</button>`):""}
+    </div>`:stageFact(s).allDone&&!_objEdit?"":`<button data-a="obj-show-work" data-sid="${s.id}" style="width:100%;margin-top:5px;padding:7px;background:transparent;border:1px dashed ${s.c}66;border-radius:7px;cursor:pointer;font-size:12px;color:${s.c};font-weight:600">+ Добавить работу</button>`):""}
   </div>
 </div>`;}).join("")}
 
@@ -7441,7 +7465,7 @@ ${objMatModal?`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);di
 ${(()=>{
   const canLog=currentUser&&["admin","financier","brigadier","worker","prod_head"].some(r=>currentUser.roles.includes(r));
   if(!canLog)return "";
-  return `<button data-a="tl-wiz-open" data-oid="${obj.id}" style="position:fixed;right:14px;bottom:calc(${isAdmin?"92px":"24px"} + env(safe-area-inset-bottom,0px));z-index:600;background:#16a085;border:none;border-radius:999px;padding:15px 30px;cursor:pointer;color:#fff;font-size:16px;font-weight:800;box-shadow:0 10px 24px rgba(22,160,133,0.45);display:flex;align-items:center;gap:7px">＋ Запись</button>`;
+  return fabRecordHtml(obj.id,isAdmin);
 })()}
 <!-- Запас под плавающую «＋ Запись»: иначе она закрывает «+ Добавить работу» последнего этапа -->
 <div style="height:120px"></div>
@@ -7522,7 +7546,7 @@ ${(()=>{
   if(!canLog||!_vo.length)return "";
   const expanded=_vo.filter(o=>objPrevExpanded[o.id]===true);
   const foid=expanded.length===1?expanded[0].id:(_vo.length===1?_vo[0].id:"");
-  return `<button data-a="tl-wiz-open" data-oid="${foid}" style="position:fixed;right:14px;bottom:calc(${isAdmin?"92px":"24px"} + env(safe-area-inset-bottom,0px));z-index:600;background:#16a085;border:none;border-radius:999px;padding:15px 30px;cursor:pointer;color:#fff;font-size:16px;font-weight:800;box-shadow:0 10px 24px rgba(22,160,133,0.45);display:flex;align-items:center;gap:7px">＋ Запись</button>`;
+  return fabRecordHtml(foid,isAdmin);
 })()}
 
 <!-- ── ШАБЛОНЫ ── -->
@@ -24987,6 +25011,7 @@ function bindNavDrag(){
 }
 
 function bind(){
+  fabScrollWatch();
   bindSupplySwipe();
   syncBottomBarVar();
   bindNavDrag();
@@ -25326,6 +25351,7 @@ function bind(){
       showNObj=false;fl();
     };}
     else if(a==="obj-iss-open"){el.onclick=()=>{ const id=el.dataset.iid||""; objIssueOpen=Object.assign({},objIssueOpen,{[id]:!objIssueOpen[id]}); render(); };}
+    else if(a==="obj-stage-open"){el.onclick=()=>{ const sid=el.dataset.sid||""; objStageOpen=Object.assign({},objStageOpen,{[sid]:!objStageOpen[sid]}); render(); };}
     else if(a==="obj-menu"){el.onclick=()=>{ const oid=el.dataset.oid||""; objMenuOpen=(objMenuOpen===oid)?null:oid; render(); };}
     else if(a==="obj-search-open"){el.onclick=()=>{
       // Закрыть можно, только когда запрос пуст: иначе фильтр остался бы невидимым.
@@ -25337,7 +25363,7 @@ function bind(){
     else if(a==="obj-room-toggle"){el.onclick=()=>{ const k=el.dataset.k||""; objRoomOpen=Object.assign({},objRoomOpen,{[k]:!objRoomOpen[k]}); render(); };}
     else if(a==="open-obj"){el.onclick=()=>{openObject=el.dataset.oid;render();};}
     else if(a==="obj-prev-toggle"){el.onclick=()=>{ const oid=el.dataset.oid; objPrevExpanded=Object.assign({},objPrevExpanded,{[oid]:!objPrevExpanded[oid]}); render(); };}
-    else if(a==="close-obj"){el.onclick=()=>{openObject=null;render();};}
+    else if(a==="close-obj"){el.onclick=()=>{openObject=null;objMenuOpen=null;render();};}
     else if(a==="tog-obj"){el.onclick=()=>{const uid=el.dataset.uid,oid=el.dataset.oid;users=users.map(u=>{if(u.id!==uid)return u;const o=u.objs.includes(oid)?u.objs.filter(x=>x!==oid):[...u.objs,oid];return{...u,objs:o};});fl();};}
     else if(a==="tog-user-obj"){el.onclick=()=>{const uid=el.dataset.uid,oid=el.dataset.oid;users=users.map(u=>{if(u.id!==uid)return u;const o=u.objs.includes(oid)?u.objs.filter(x=>x!==oid):[...u.objs,oid];return{...u,objs:o};});fl();};}
     // Шаблоны
@@ -29538,7 +29564,7 @@ function bind(){
       window._allowEmptyOnce=Object.assign({},window._allowEmptyOnce,{objects:true});  // явное удаление: страж пропускает пустой список
       openObject=null;fl();
     };}
-    else if(a==="obj-add-stage"){el.onclick=()=>{showNObjStageTid=el.dataset.oid;newObjStage={n:"",c:"#e67e22"};render();};}
+    else if(a==="obj-add-stage"){el.onclick=()=>{objMenuOpen=null;showNObjStageTid=el.dataset.oid;newObjStage={n:"",c:"#e67e22"};render();};}
     else if(a==="cancel-ons"){el.onclick=()=>{showNObjStageTid="";render();};}
     else if(a==="pick-ons-c"){el.onclick=()=>{newObjStage.c=el.dataset.c;render();};}
     else if(a==="obj-save-stage"){el.onclick=()=>{
@@ -29783,6 +29809,7 @@ function bind(){
     else if(a==="obj-edit-toggle"){el.onclick=()=>{
       const oid=el.dataset.oid;
       objEditWorks=Object.assign({},objEditWorks,{[oid]:!objEditWorks[oid]});
+      objMenuOpen=null;
       rerenderTab();
     };}
     // Удаление этапа уносит ВСЕ работы внутри — показываем в подтверждении, что именно теряем.

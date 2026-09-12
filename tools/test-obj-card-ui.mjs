@@ -122,7 +122,7 @@ const click = (p, ds) => { const n = p.dom.node(ds); p.run('bind();'); n.onclick
   t.section('Липкая строка объекта и верхние вкладки')
   const p = panel()
   const h = view(p)
-  t.ok('строка объекта липкая', h.indexOf('data-obj-sticky') >= 0 && /position:sticky/.test(h.slice(h.indexOf('data-obj-sticky') - 200, h.indexOf('data-obj-sticky') + 200)))
+  t.ok('строка объекта липкая', h.indexOf('data-obj-sticky') >= 0 && /position:sticky/.test(h.slice(Math.max(0, h.indexOf('data-obj-sticky') - 200), h.indexOf('data-obj-sticky') + 200)))
   t.ok('в ней имя и процент', /Баня с хозблоком/.test(plain(h)) && /%/.test(plain(h)))
   t.ok('шапки этапов встают под ней', /top:calc\(var\(--stagetop/.test(h), h.slice(h.indexOf('ЭТАП 2') - 500, h.indexOf('ЭТАП 2')).slice(-200))
   // Внутри объекта лента вкладок не нужна: у экрана своя шапка и своя кнопка возврата.
@@ -185,6 +185,69 @@ const click = (p, ds) => { const n = p.dom.node(ds); p.run('bind();'); n.onclick
   click(p, { a: 'obj-menu', oid: 'o1' })
   t.ok('в меню — удаление', view(p).indexOf('data-a="del-obj" data-oid="o1"') >= 0)
   t.ok('снизу есть запас под плавающей кнопкой', /height:120px/.test(view(p)))
+}
+
+// ── Третий заход: 1 493 px; до первой работы ~380 px, закрытые этапы по 159 px ──
+{
+  t.section('Верх: одна строка объекта вместо трёх блоков')
+  const p = panel()
+  const h = view(p)
+  const sticky = h.slice(h.indexOf('data-obj-sticky'), h.indexOf('data-obj-sticky') + 3000)
+  t.ok('«← Объекты» — в строке объекта', h.indexOf('data-a="close-obj"') > h.indexOf('data-obj-sticky') && sticky.indexOf('data-a="close-obj"') >= 0)
+  t.ok('полоса прогресса — в ней же', sticky.indexOf('data-obj-bar') >= 0)
+  t.ok('отдельной карточки прогресса нет', !/из 4 работ сделано/.test(plain(h)) && /2 из 4 работ/.test(plain(sticky)), plain(sticky).slice(0, 200))
+  t.ok('процент — один раз', (plain(h).match(/%/g) || []).length === 1)
+  t.ok('правка и этап — не на виду', h.indexOf('data-a="obj-edit-toggle"') < 0 && h.indexOf('data-a="obj-add-stage"') < 0 && !/ПЕРЕЧЕНЬ РАБОТ/.test(plain(h)))
+  click(p, { a: 'obj-menu', oid: 'o1' })
+  const menu = view(p)
+  t.ok('а в меню «⋯»', menu.indexOf('data-a="obj-edit-toggle" data-oid="o1"') >= 0 && menu.indexOf('data-a="obj-add-stage" data-oid="o1"') >= 0)
+  click(p, { a: 'obj-edit-toggle', oid: 'o1' })
+  t.ok('в режиме правки «Готово» видно без меню', /data-a="obj-edit-toggle" data-oid="o1"[^>]*>[^<]*Готово/.test(view(p)))
+  const f = h.slice(h.indexOf('data-work-filters'), h.indexOf('data-work-filters') + 4000)
+  t.ok('🔍 — в ряду фильтров', f.indexOf('data-a="obj-search-open"') >= 0 && f.indexOf('data-a="obj-search-open"') < f.indexOf('</div>'))
+  t.ok('подписи фильтров не мельче 10 px', !/font-size:[89](\.\d)?px/.test(f.slice(0, f.indexOf('</div>'))), (f.match(/font-size:[\d.]+px/g) || []).join(','))
+}
+
+{
+  t.section('Закрытый этап — одной строкой')
+  const p = panel()
+  p.run('objects[0].stages[0].works[1].done=true;objects[0].stages[0].works[1].doneAt="2026-09-03";')
+  const h = view(p)
+  t.ok('свёрнут: кнопка вместо карточки', h.indexOf('data-a="obj-stage-open" data-sid="s1"') >= 0 && !/Монтаж стен из ОСП/.test(plain(h)))
+  t.ok('в строке — имя и счёт', /ЭТАП 2 — ЧЕРНОВЫЕ РАБОТЫ/.test(plain(h)) && /2 работы/.test(plain(h.slice(h.indexOf('data-a="obj-stage-open"'), h.indexOf('data-a="obj-stage-open"') + 1500))))
+  t.ok('приёмку запросить можно и из свёрнутого', h.indexOf('data-a="obj-stage-ask-accept" data-oid="o1" data-sid="s1"') >= 0)
+  click(p, { a: 'obj-stage-open', sid: 's1' })
+  const o = view(p)
+  const st = o.slice(o.indexOf('id="stage-s1"'), o.indexOf('id="stage-s2"'))
+  t.ok('раскрыли — этап на месте', st.indexOf('data-stage-sub') >= 0 && st.indexOf('data-a="obj-done-open" data-sid="s1"') >= 0)
+  t.ok('кнопка приёмки не в шапке, а во второй строке', st.indexOf('data-a="obj-stage-ask-accept"') > st.indexOf('data-stage-sub'))
+  t.ok('в закрытый этап работу не добавляют', st.indexOf('data-a="obj-show-work"') < 0 && o.indexOf('data-a="obj-show-work" data-sid="s2"') >= 0)
+  const p2 = panel()
+  p2.run('objects[0].stages[0].works[1].done=true;')
+  p2.run('objWorkSearch="обрешётки";')
+  t.ok('при поиске закрытый этап не прячет найденное', /Монтаж обрешётки/.test(plain(view(p2))))
+}
+
+{
+  t.section('Строки работ: без лишних плашек, замок объяснён')
+  const p = panel()
+  const h = view(p)
+  t.ok('«всё на объекте» не повторяет зелёную полосу', !/всё на объекте/.test(plain(h)))
+  t.ok('«ждём» — осталось', /ждём 1 из 1/.test(plain(h)))
+  p.run('currentUser=users[0];objReadyFilter="stages";')
+  const b = view(p)
+  const row = b.slice(b.indexOf('Монтаж стен из ОСП') - 2500, b.indexOf('Монтаж стен из ОСП') + 1500)
+  t.ok('замок подписан прямо в строке', /сначала отметьте часы/i.test(plain(row)) && (row.match(/data-a="obj-need-time" data-wid="w2"/g) || []).length >= 2, plain(row).slice(0, 300))
+}
+
+{
+  t.section('«＋ Запись» ужимается при прокрутке')
+  const p = panel()
+  const h = view(p)
+  t.ok('кнопка с подписью', /data-fab[^>]*>[\s\S]{0,40}Запись/.test(h))
+  p.run('_fabMini=true;')
+  const m = view(p)
+  t.ok('ужатая — без подписи', m.indexOf('data-fab') >= 0 && !/Запись<\/span>/.test(m.slice(m.indexOf('data-fab'), m.indexOf('</button>', m.indexOf('data-fab')))))
 }
 
 t.done()
