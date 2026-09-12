@@ -131,4 +131,60 @@ const click = (p, ds) => { const n = p.dom.node(ds); p.run('bind();'); n.onclick
   t.ok('в списке объектов — есть', p.q('topTabsVisible()') === true)
 }
 
+// ── Второй заход: 1 966 px, из них ~740 px управления до первой работы ────────
+{
+  t.section('Ничего не раскрывается само и не уезжает вбок')
+  const p = panel()
+  // Дедлайн бригадира просрочен — раньше блок на 217 px открывался сам.
+  p.run(`contractDocs=[{id:"c1",name:"Договор № 1",objId:"o1",type:"main",status:"signed",amount:100000,client:"Клиент",responsible:["u1"],salaries:{},extraWorks:[],files:[],deadlines:{u1:{startDate:"2026-07-25",deadline:"2026-08-31"}}}];`)
+  const h = view(p)
+  t.ok('ни один раздел не раскрыт сам', h.indexOf('data-open="1"') < 0, plain(h).slice(0, 300))
+  t.ok('просрочка видна чипом', /просрочка/i.test(plain(h)) && !/ШТРАФ/.test(plain(h)))
+  t.ok('липкая строка не шире колонки', h.indexOf('margin:-4px -14px') < 0 && h.indexOf('data-obj-sticky') >= 0)
+}
+
+{
+  t.section('Меньше повторов: прогресс, отчёт дня, шаблон')
+  const p = panel()
+  // Отчёт дня рисуется, когда на объекте есть подписанный договор с ответственными,
+  // связь с шаблоном — когда объект создан из шаблона.
+  p.run(`contractDocs=[{id:"c1",name:"Договор № 1",objId:"o1",type:"main",status:"signed",amount:100000,client:"Клиент",responsible:["u1"],salaries:{},extraWorks:[],files:[]}];templates=[{id:"t1",name:"Баня",stages:[]}];objects[0].templateId="t1";`)
+  const h = view(p)
+  const txt = plain(h)
+  t.ok('«осталось» — только в липкой строке', (txt.match(/осталось/gi) || []).length === 1, String((txt.match(/осталось/gi) || []).length))
+  t.ok('процент — один раз', (txt.match(/%/g) || []).length === 1, String((txt.match(/%/g) || []).length))
+  t.ok('«отчёт дня» и «шаблон» — чипами', h.indexOf('data-a="obj-chip"') >= 0 && /data-key="dayreport"/.test(h) && /data-key="tpldiff"/.test(h))
+  t.ok('отдельных блоков под них нет', h.indexOf('data-k="o1|dayreport"') < 0 && h.indexOf('data-k="o1|tpldiff"') < 0)
+  t.ok('чипы переносятся, а не обрезаются', /data-obj-chips[^>]*flex-wrap:wrap/.test(h), (h.match(/data-obj-chips[^>]{0,120}/) || [""])[0])
+}
+
+{
+  t.section('Управление над списком работ')
+  const p = panel()
+  const h = view(p)
+  t.ok('лента этапов не нужна на двух этапах', h.indexOf('data-a="obj-stage-jump"') < 0)
+  p.run(`objects[0].stages=objects[0].stages.concat([{id:"s3",n:"ЭТАП 4",c:"#8e44ad",works:[{id:"w9",n:"Работа",cost:1,mats:[],timeLogs:[]}]},{id:"s4",n:"ЭТАП 5",c:"#16a085",works:[{id:"w10",n:"Работа",cost:1,mats:[],timeLogs:[]}]}]);`)
+  t.ok('на четырёх — появляется', view(p).indexOf('data-a="obj-stage-jump"') >= 0)
+
+  const p2 = panel()
+  const h2 = view(p2)
+  t.ok('фильтры одним блоком', /data-work-filters/.test(h2) &&
+    h2.slice(h2.indexOf('data-work-filters')).indexOf('data-a="obj-ready-filter"') < h2.slice(h2.indexOf('data-work-filters')).indexOf('ПЕРЕЧЕНЬ') + 4000)
+  t.ok('поиск спрятан за иконкой', h2.indexOf('id="obj-work-search"') < 0 && h2.indexOf('data-a="obj-search-open"') >= 0)
+  click(p2, { a: 'obj-search-open' })
+  t.ok('тап — поле поиска на месте', view(p2).indexOf('id="obj-work-search"') >= 0)
+}
+
+{
+  t.section('Длинные имена и низ экрана')
+  const p = panel()
+  p.run(`objects[0].stages[0].works[1].n="Монтаж пано можжевеловое, светильники, подсветки и прочее длинное название";`)
+  const h = view(p)
+  t.ok('имя работы переносится, а не режется', /-webkit-line-clamp:2/.test(h.slice(h.indexOf('Монтаж пано') - 600, h.indexOf('Монтаж пано'))), h.slice(h.indexOf('Монтаж пано') - 300, h.indexOf('Монтаж пано')))
+  t.ok('удаление объекта — в меню', h.indexOf('data-a="del-obj"') < 0 && h.indexOf('data-a="obj-menu" data-oid="o1"') >= 0)
+  click(p, { a: 'obj-menu', oid: 'o1' })
+  t.ok('в меню — удаление', view(p).indexOf('data-a="del-obj" data-oid="o1"') >= 0)
+  t.ok('снизу есть запас под плавающей кнопкой', /height:120px/.test(view(p)))
+}
+
 t.done()
