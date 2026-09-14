@@ -64,6 +64,7 @@ import { allPositions, allPositionsRaw, addedPositions, guessVolume, carryRuleEd
   optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf, ROOM_HOUSE, roomKeyOf, positionSplit,
   importRows, importPatch } from "../src/recipe.js";
 import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
+import { SHELVES_DEFAULT, labelWorks, labelUnits, shelfLayout, shelfPages, houseNums, labelSheetCount, matPinKey } from "../src/labels.js";
 import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
@@ -1685,6 +1686,7 @@ const TAB_DEFS=[
   {k:"spec",      n:"🏠 Спецификация"},
   {k:"spec2",     n:"🧪 Спецификация 2"},
   {k:"projects",  n:"🏗 Проекты"},
+  {k:"labels",    n:"🏷 Таблички"},
   {k:"voiceai",   n:"🎙 Голосовой ИИ"},
   {k:"issues",    n:"❓ Вопросы"},
   {k:"history",   n:"🕘 История"},
@@ -2403,6 +2405,13 @@ let buildRules=[];
 // поэтому редактор модели, смета, печать и сборка объекта работают без правок.
 let projects=[];
 let projOpenId=null, projBand="parts", projNew=null, projRulesOpen=false;
+// Вкладка «🏷 Таблички». Выбранный проект и галочки документов живут НА ЭКРАНЕ:
+// это вопрос «что печатаю сейчас», а не свойство дома. Настройки самих бирок
+// (номера домов, раскладка полок) — свойство дома и лежат в проекте (`p.labels`).
+let labelsProjId=null, labelsDocs={spec:true, plan:true, shelf:true, scheme:false};
+// Отмеченные пачкой строки и раскрытая раскладка — ЭКРАН, в снимок не идут:
+// отметка живёт ровно до того, как её переложили на полку.
+let labelsMark={}, labelsPinOpen=false;
 let specOpenId=null;      // открытая спецификация (null = список)
 let specNew={name:"",kind:"banya",clientId:"",planId:"",model:"",preset:""};
 let specShowNew=false;
@@ -4819,7 +4828,7 @@ function moreSheet(allTabs,accessible,picked){
 }
 
 function tabContentHtml(){
-  return tab==="assign"?tObjects():tab==="myday"?tMyDay():tab==="sheetlist"?tSheetList():tab==="wizard"?tWizardTab():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tab==="kp"?tKP():tab==="spec"?tSpec():tab==="spec2"?tSpec2():tab==="projects"?tProjects():tab==="voiceai"?tVoiceAi():tab==="issues"?tIssues():tab==="history"?tHistory():tCRM();
+  return tab==="assign"?tObjects():tab==="myday"?tMyDay():tab==="sheetlist"?tSheetList():tab==="wizard"?tWizardTab():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tab==="kp"?tKP():tab==="spec"?tSpec():tab==="spec2"?tSpec2():tab==="projects"?tProjects():tab==="labels"?tLabels():tab==="voiceai"?tVoiceAi():tab==="issues"?tIssues():tab==="history"?tHistory():tCRM();
 }
 
 function render(){
@@ -12527,8 +12536,77 @@ function specStagesInnerHtml(sh){
 // Печатная форма спецификации для клиента: по помещениям, с площадями и ценой.
 // Себестоимость и материалы наружу не выносим — клиенту важно, ЧТО у него будет
 // в каждой комнате и сколько это стоит, а не из чего мы это считали.
-function buildSpecPrint(sh){
-  if(!sh){ alert("Спецификация не найдена."); return; }
+
+// ─── ПЕЧАТЬ: ОДНА ДВЕРЬ НА ВСЕ ФОРМЫ ─────────────────────────────────────────
+// Печатных форм в портале несколько (спецификация клиенту, чертёж бригаде,
+// бирки на стеллаж), и «Таблички» печатают их ОДНИМ документом — человек отметил
+// галочками, что нужно, и получил одну стопку, а не три окна и три раза Ctrl+P.
+//
+// Стили форм написаны каждая под себя, и имена классов у них общие (.sub, .c, .r,
+// .note). Склеить их на одном листе значит перекрасить одну формой другой, поэтому
+// при склейке селекторы каждой формы получают свой корень. Сами формы при этом
+// остаются как есть: переписывать работающую договорную спецификацию ради соседа
+// по листу — менять рабочее на непроверенное.
+function scopeCss(css, root){
+  let out="", i=0;
+  while(i<css.length){
+    const at=css.indexOf("{", i);
+    if(at<0){ out+=css.slice(i); break; }
+    const head=css.slice(i, at).trim();
+    if(head.charAt(0)==="@"){
+      // Блок с вложенными правилами (@media print) — ищем парную скобку, внутри
+      // те же правила, значит и скоупить их надо тем же кодом.
+      let depth=0, j=at;
+      for(; j<css.length; j++){ if(css[j]==="{")depth++; else if(css[j]==="}"){ depth--; if(!depth)break; } }
+      out+=head+"{"+scopeCss(css.slice(at+1, j), root)+"}";
+      i=j+1;
+    } else {
+      const end=css.indexOf("}", at);
+      const body=css.slice(at+1, end<0?css.length:end);
+      out+=head.split(",").map(function(sel){
+        const t=sel.trim();
+        if(!t)return "";
+        // `body` формы — это её корень на общем листе, а не страница целиком:
+        // иначе поля и шрифт последней формы достались бы всем остальным.
+        return (t==="body"||t==="html")?root:(root+" "+t);
+      }).filter(Boolean).join(",")+"{"+body+"}";
+      i=(end<0?css.length:end+1);
+    }
+  }
+  return out;
+}
+
+// parts = [{css, body}] — по части на документ, в порядке печати.
+function printDoc(title, parts){
+  const list=(parts||[]).filter(Boolean);
+  if(!list.length){ alert("Нечего печатать — ничего не выбрано."); return; }
+  const css=list.map(function(P,i){ return scopeCss(P.css||"", ".pdoc-"+i); }).join("\n");
+  const body=list.map(function(P,i){
+    // Каждый документ начинается со своей страницы: спецификация, чертёж и бирки —
+    // разные бумаги, и половина одной на листе другой не нужна никому.
+    return '<div class="pdoc pdoc-'+i+'"'+(i?' style="break-before:page;page-break-before:always"':'')+'>'+(P.body||"")+'</div>';
+  }).join("");
+  const html='<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>'+esc(title||"Печать")+'</title><style>'+
+    'body{margin:0;background:#fff}.pdoc{break-inside:auto}'+
+    '.pbtn{position:fixed;right:16px;bottom:16px;padding:11px 17px;background:#16a085;color:#fff;border:none;'+
+      'border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;z-index:99;font-family:-apple-system,Segoe UI,Arial,sans-serif;'+
+      'box-shadow:0 3px 14px rgba(13,27,46,.25)}'+
+    '@media print{.pbtn{display:none}}'+
+    css+
+    '</style></head><body>'+body+
+    '<button class="pbtn" onclick="window.print()">🖨 Печать / Сохранить в PDF</button>'+
+    '</body></html>';
+  const w=window.open("","_blank");
+  if(!w){ alert("Браузер заблокировал новое окно — разрешите всплывающие окна для портала."); return; }
+  w.document.write(html); w.document.close();
+}
+
+// Спецификация клиенту — та самая, что прикладывают к договору. Возвращает части
+// документа, а не открывает окно: этот же лист печатается и сам по себе, и вместе
+// с чертежом и бирками из «Табличек». Вторая копия формы разошлась бы с первой, и
+// клиент получил бы на руки не то, что лежит в договоре.
+function specPrintParts(sh){
+  if(!sh) return null;
   const t=specTot(sh);
   const RUk=function(n){return Math.round(n).toLocaleString("ru-RU")+" ₽";};
   // Наценку размазываем по позициям, но показанные рубли обязаны сойтись с итогом:
@@ -12601,7 +12679,7 @@ function buildSpecPrint(sh){
       '</tr></table>'
     : "";
 
-  const html='<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Спецификация '+esc(sh.name||"")+'</title><style>'+
+  const css=''+
     'body{font-family:-apple-system,Segoe UI,Arial,sans-serif;padding:28px;color:#1a2a3a;max-width:780px;margin:0 auto}'+
     'h1{font-size:22px;margin:0 0 4px}.sub{font-size:13px;color:#555;margin:2px 0}'+
     '.box{background:#eefaf6;border:1px solid #b7e2d5;border-radius:10px;padding:14px 16px;margin:16px 0}'+
@@ -12618,8 +12696,8 @@ function buildSpecPrint(sh){
     'h2{font-size:14px;margin:22px 0 0;color:#0e7a67}'+
     '.foot{margin-top:16px;font-size:11.5px;color:#666;line-height:1.5}'+
     '.btn{display:inline-block;margin:14px 0;padding:10px 16px;background:#16a085;color:#fff;border:none;border-radius:9px;font-size:14px;cursor:pointer}'+
-    '@media print{.btn{display:none}}'+
-    '</style></head><body>'+
+    '@media print{.btn{display:none}}';
+  const body=''+
     '<h1>Спецификация '+esc(sh.name||"")+'</h1>'+
     '<div class="sub">'+estKindLabel(sh.kind)+(cl?' · '+esc(cl.name):'')+' · '+ds+'</div>'+
     '<div class="box"><div style="font-size:12px;color:#0e7a67;font-weight:700">СТОИМОСТЬ</div>'+
@@ -12630,12 +12708,14 @@ function buildSpecPrint(sh){
       '<tr><td class="sub" colspan="2">ИТОГО</td><td class="r sub">'+RUk(t.price)+'</td></tr>'+
     '</table>'+
     layoutTable+roomTable+
-    '<div class="foot">Площади рассчитаны по планировке. Позиции «выбор клиента» могут быть заменены на равные по стоимости без доплаты; более дорогой выбор согласовывается отдельно.<br>Предложение носит предварительный характер и действует 14 дней.</div>'+
-    '<button class="btn" onclick="window.print()">🖨 Печать / Сохранить в PDF</button>'+
-    '</body></html>';
-  const w=window.open("","_blank");
-  if(!w){ alert("Браузер заблокировал новое окно — разрешите всплывающие окна для портала."); return; }
-  w.document.write(html); w.document.close();
+    '<div class="foot">Площади рассчитаны по планировке. Позиции «выбор клиента» могут быть заменены на равные по стоимости без доплаты; более дорогой выбор согласовывается отдельно.<br>Предложение носит предварительный характер и действует 14 дней.</div>';
+  return { title:"Спецификация "+(sh.name||""), css:css, body:body };
+}
+
+function buildSpecPrint(sh){
+  const P=specPrintParts(sh);
+  if(!P){ alert("Спецификация не найдена."); return; }
+  printDoc(P.title, [P]);
 }
 
 // Этапы объекта из спецификации. Работы собираются из позиций: та же форма, что даёт
@@ -13679,11 +13759,13 @@ function wallDetailSvg(list){
 // На площадке телефон в кармане у одного, а размечают вдвоём; лист лежит на
 // стене и не гаснет. Печатаем ровно то, что на экране: и чертёж, и узлы рисует
 // тот же код, поэтому распечатка не может показать вчерашний дом.
-function buildSchemePrint(){
-  const sh=schemeSheet();
+// Чертёж для монтажа. Лист передаётся аргументом: из «Табличек» печатают ВЫБРАННЫЙ
+// там проект, а не тот, что открыт в другом разделе.
+function schemePrintParts(sheet){
+  const sh=sheet||schemeSheet();
   const pr=MODEL_PRESETS[0];
   const built=(sh&&sh.model)?{model:sh.model,winTypes:winTypes}:(pr?presetModel(pr, winTypes, gid):null);
-  if(!built){ alert("Модель не найдена."); return; }
+  if(!built) return null;
   const m=built.model, types=built.winTypes;
   const sc=modelScheme(m, types);
   const A=modelAreas(m, types);
@@ -13715,7 +13797,7 @@ function buildSchemePrint(){
       '<td class="c">'+numRu(r.floor)+' м²</td><td class="c">'+numRu(r.wallNet)+' м²</td></tr>';
   }).join("");
 
-  const html='<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Чертёж '+esc((sh&&sh.name)||(pr&&pr.n)||"Дом")+'</title><style>'+
+  const css=''+
     'body{font-family:-apple-system,Segoe UI,Arial,sans-serif;padding:22px;color:#0d1b2e;max-width:900px;margin:0 auto}'+
     'h1{font-size:20px;margin:0 0 3px}h2{font-size:13px;margin:20px 0 6px;color:#2f4a63;letter-spacing:0.3px}'+
     '.sub{font-size:12px;color:#5a7a9a;margin-bottom:14px}'+
@@ -13729,8 +13811,8 @@ function buildSchemePrint(){
     '.note{font-size:11.5px;color:#5a7a9a;line-height:1.55;margin:6px 0 0}'+
     '.node{border:1px solid #dde6f0;border-radius:8px;padding:10px 12px;margin-bottom:10px}'+
     '.btn{display:inline-block;margin:16px 0;padding:10px 16px;background:#16a085;color:#fff;border:none;border-radius:9px;font-size:14px;cursor:pointer}'+
-    '@media print{.btn{display:none}body{padding:0}.node,.plan{break-inside:avoid}}'+
-    '</style></head><body>'+
+    '@media print{.btn{display:none}body{padding:0}.node,.plan{break-inside:avoid}}';
+  const body=''+
     '<h1>'+esc((sh&&sh.name)||(pr&&pr.n)||"Дом")+' — чертёж для монтажа</h1>'+
     '<div class="sub">Размеры в миллиметрах · '+ds+' · пол '+numRu(A.total.floor)+' м²</div>'+
     '<div class="plan">'+modelSchemeSvg(m, types, 0, "dim")+'</div>'+
@@ -13751,12 +13833,195 @@ function buildSchemePrint(){
     '<h2>Помещения</h2>'+
     '<table><tr><th>Помещение</th><th class="c">Размер</th><th class="c">Пол</th><th class="c">Стены</th></tr>'+rooms+
       '<tr class="sum"><td>Всего</td><td class="c">—</td><td class="c">'+numRu(A.total.floor)+' м²</td><td class="c">'+numRu(A.total.wallNet)+' м²</td></tr></table>'+
-    '<div class="note">Площади чистовые: потолок равен полу, стены — за вычетом проёмов. Полная площадь стен '+numRu(A.total.wallGross)+' м² — по ней идут обрешётка и утеплитель.</div>'+
-    '<button class="btn" onclick="window.print()">🖨 Печать / Сохранить в PDF</button>'+
-    '</body></html>';
-  const w=window.open("","_blank");
-  if(!w){ alert("Браузер заблокировал новое окно — разрешите всплывающие окна для портала."); return; }
-  w.document.write(html); w.document.close();
+    '<div class="note">Площади чистовые: потолок равен полу, стены — за вычетом проёмов. Полная площадь стен '+numRu(A.total.wallGross)+' м² — по ней идут обрешётка и утеплитель.</div>';
+  return { title:"Чертёж "+((sh&&sh.name)||(pr&&pr.n)||"Дом"), css:css, body:body };
+}
+
+function buildSchemePrint(sheet){
+  const P=schemePrintParts(sheet);
+  if(!P){ alert("Модель не найдена."); return; }
+  printDoc(P.title, [P]);
+}
+
+// ─── ПЛАНИРОВКА КЛИЕНТУ ──────────────────────────────────────────────────────
+// Тот же чертёж, но вид «plan»: имена помещений и площадь пола, без единого
+// размера. Это лист, который смотрят вместе с договором, и размерные цепочки на
+// нём отвечают на вопрос, которого клиент не задавал. Геометрия одна и та же —
+// второй чертёж разошёлся бы с первым на первой правке перегородки.
+function planPrintParts(sheet){
+  const sh=sheet||schemeSheet();
+  const pr=MODEL_PRESETS[0];
+  const built=(sh&&sh.model)?{model:sh.model,winTypes:winTypes}:(pr?presetModel(pr, winTypes, gid):null);
+  if(!built) return null;
+  const A=modelAreas(built.model, built.winTypes);
+  const nm=(sh&&sh.name)||(pr&&pr.n)||"Дом";
+  const rooms=A.rooms.map(function(r){
+    return '<tr><td>'+esc(r.name||"Помещение")+'</td><td class="c">'+numRu(r.l)+' × '+numRu(r.w)+' м</td>'+
+      '<td class="c">'+numRu(r.floor)+' м²</td></tr>';
+  }).join("");
+  const css=''+
+    'body{font-family:-apple-system,Segoe UI,Arial,sans-serif;padding:26px;color:#0d1b2e;max-width:860px;margin:0 auto}'+
+    'h1{font-size:21px;margin:0 0 3px}'+
+    '.sub{font-size:12.5px;color:#5a7a9a;margin-bottom:16px}'+
+    '.plan{border:1px solid #dde6f0;border-radius:10px;padding:12px;margin-bottom:14px}'+
+    'table{width:100%;border-collapse:collapse;font-size:13px;max-width:520px}'+
+    'th,td{border:1px solid #dde6f0;padding:7px 10px;text-align:left}th{background:#f2f6fa;font-size:11px}'+
+    '.c{text-align:center;white-space:nowrap}'+
+    '.sum td{background:#f6f9fc;font-weight:800}'+
+    '@media print{body{padding:0}.plan{break-inside:avoid}}';
+  const body=''+
+    '<h1>'+esc(nm)+' — планировка</h1>'+
+    '<div class="sub">Площадь дома '+numRu(A.total.floor)+' м² · помещений '+A.rooms.length+'</div>'+
+    '<div class="plan">'+modelSchemeSvg(built.model, built.winTypes, 0, "plain")+'</div>'+
+    '<table><tr><th>Помещение</th><th class="c">Размер</th><th class="c">Площадь пола</th></tr>'+rooms+
+      '<tr class="sum"><td>Всего</td><td class="c">—</td><td class="c">'+numRu(A.total.floor)+' м²</td></tr></table>';
+  return { title:"Планировка "+nm, css:css, body:body };
+}
+
+// ─── БИРКИ НА СТЕЛЛАЖ ────────────────────────────────────────────────────────
+// Стеллаж — дом, полка — этап. На каждом листе стоит номер дома: снятая бирка без
+// номера через час уже ничья, и это главная ошибка такой системы.
+//
+// Состав берётся ТЕМ ЖЕ `allPositions`, что показан в «Составе» проекта и которым
+// собирается объект. Цен на бирке нет намеренно: её читает каждый, кто подошёл к
+// стеллажу, а для комплектации цена бесполезна.
+function labelsCfg(sh){
+  const L=(sh&&sh.labels)||{};
+  const sv=Array.isArray(L.shelves)&&L.shelves.length?L.shelves.map(function(x){return Number(x)||0;}):SHELVES_DEFAULT.slice();
+  return { houses:String(L.houses||"1"), shelves:sv, perPage:Number(L.perPage)||26, pins:L.pins||{} };
+}
+
+// Настройка живёт В ПРОЕКТЕ: сколько домов в серии и что лежит на какой полке —
+// свойство этого дома, а не экрана и не компании. Заводим лениво, по первой правке.
+function labelsSet(sh, fn){
+  if(!sh)return;
+  if(!sh.labels)sh.labels={houses:"1", shelves:SHELVES_DEFAULT.slice(), perPage:26, pins:{}};
+  if(!Array.isArray(sh.labels.shelves)||!sh.labels.shelves.length)sh.labels.shelves=SHELVES_DEFAULT.slice();
+  fn(sh.labels);
+  fl();
+}
+
+function labelStageMeta(n){
+  const st=EST_STAGES.find(function(x){return x.n===Number(n);});
+  return { title:n?("ЭТАП "+n):"ПРОЧЕЕ", name:st?String(st.label||""):"", color:st?(st.color||"#7a9aaa"):"#7a5aa0" };
+}
+
+// Работы бирки по выбранному проекту — общий модуль раскладки плюс та же подпись
+// единицы, что стоит в составе на экране (`specMatUnit`): разойдись они, на бирке
+// был бы рулон, а в смете лист.
+function labelShelvesOf(sh){
+  const cfg=labelsCfg(sh);
+  const works=labelWorks(allPositions(sh, specCtx(sh)), specMatUnit);
+  return { cfg:cfg, shelves:shelfLayout(works, cfg.shelves, cfg.pins), works:works };
+}
+
+function labelsPrintParts(sh){
+  if(!sh) return null;
+  const L=labelShelvesOf(sh);
+  const houses=houseNums(L.cfg.houses);
+  const nm=String(sh.name||"Дом");
+  const ds=new Date().toLocaleDateString("ru-RU");
+
+  const matRow=function(m){
+    const q=m.qty?(numRu(m.qty)+(m.unit?" "+m.unit:"")):"";
+    return '<li><span class="box"></span><span class="nm">'+esc(m.n)+'</span>'+
+      (q?'<span class="dots"></span><span class="q">'+esc(q)+'</span>':'')+'</li>';
+  };
+  const shelfSheet=function(house, sh2, works, page, pages){
+    const M=labelStageMeta(sh2.stage);
+    const bodyHtml=works.length
+      ? works.map(function(w){
+          return '<div class="wk">'+
+            (w.name?'<div class="wn"><span class="bul">▸</span><span>'+esc(w.name)+
+              (w.room?'<span class="rm"> · '+esc(w.room)+'</span>':'')+'</span></div>':'')+
+            (w.mats.length?'<ul class="mats">'+w.mats.map(matRow).join("")+'</ul>':'')+
+          '</div>';
+        }).join("")
+      : '<div class="nolines">— полка свободна —</div>';
+    return '<div class="lsheet">'+
+      '<div class="band" style="background:'+M.color+'"></div>'+
+      '<div class="lhead">'+
+        '<div class="lft">'+
+          '<div class="proj">'+esc(nm)+'</div>'+
+          '<div class="shelf">ПОЛКА '+sh2.i+'</div>'+
+          '<div class="stage" style="color:'+M.color+'">'+M.title+(M.name?' · '+esc(M.name.toUpperCase()):'')+'</div>'+
+        '</div>'+
+        '<div class="rgt"><div class="lbl">ДОМ</div><div class="num">'+esc(house)+'</div></div>'+
+      '</div>'+
+      '<div class="lbody">'+bodyHtml+'</div>'+
+      '<div class="lfoot"><span>'+esc(nm)+' · дом '+esc(house)+' · полка '+sh2.i+'</span>'+
+        '<span>'+(pages>1?('лист '+page+' из '+pages):'&nbsp;')+'</span></div>'+
+    '</div>';
+  };
+  const coverSheet=function(house){
+    const rows=L.shelves.map(function(s){
+      const M=labelStageMeta(s.stage);
+      const cnt=s.works.reduce(function(a,w){return a+w.mats.length;},0);
+      return '<div class="prow">'+
+        '<div class="p1"><span class="chip" style="background:'+M.color+'"></span>Полка '+s.i+' — '+
+          (s.stage?('этап '+s.stage):'прочее')+(M.name?' · '+esc(M.name):'')+'</div>'+
+        '<div class="p2">'+s.works.length+' раб. · '+cnt+' поз.</div></div>';
+    }).join("");
+    return '<div class="lsheet cover">'+
+      '<div class="cproj">'+esc(nm.toUpperCase())+'</div>'+
+      '<div class="cword">ДОМ</div>'+
+      '<div class="cbig">'+esc(house)+'</div>'+
+      '<div class="cplan">'+rows+'</div>'+
+      '<div class="cfoot">Комплект на один дом · '+esc(ds)+'</div>'+
+    '</div>';
+  };
+
+  const sheets=[];
+  houses.forEach(function(h){
+    sheets.push(coverSheet(h));
+    L.shelves.forEach(function(s){
+      const pages=shelfPages(s.works, L.cfg.perPage);
+      pages.forEach(function(ws,i){ sheets.push(shelfSheet(h, s, ws, i+1, pages.length)); });
+    });
+  });
+
+  // Размеры в миллиметрах и крупный кегль — бирку читают с двух метров и в
+  // перчатках. Поля не меньше 12 мм: ближе к краю текст срезает ламинатор.
+  const css=''+
+    'body{margin:0;font-family:Segoe UI,Arial,Helvetica,sans-serif;color:#0d1b2e}'+
+    // Свои 4 мм по бокам поверх полей страницы: у печатного поля край — это то,
+    // что срезает ламинатор, и «ДОМ 7», стоящий вплотную к нему, теряет цифру.
+    '.lsheet{min-height:263mm;display:flex;flex-direction:column;break-after:page;page-break-after:always;padding:0 4mm}'+
+    '.lsheet:last-child{break-after:auto;page-break-after:auto}'+
+    '.band{height:9mm;flex:0 0 auto}'+
+    '.lhead{display:flex;align-items:flex-start;justify-content:space-between;gap:8mm;padding:6mm 0 4mm;'+
+      'border-bottom:1.2mm solid #0d1b2e;margin-bottom:4mm}'+
+    '.lhead .proj{font-size:10pt;font-weight:700;color:#5a7a9a;letter-spacing:.5px;text-transform:uppercase}'+
+    '.lhead .shelf{font-size:26pt;font-weight:900;line-height:1.05}'+
+    '.lhead .stage{font-size:14pt;font-weight:700;margin-top:1mm}'+
+    '.lhead .rgt{text-align:right;flex:0 0 auto}'+
+    '.lhead .lbl{font-size:9pt;font-weight:700;color:#5a7a9a;letter-spacing:1px}'+
+    '.lhead .num{font-size:44pt;font-weight:900;line-height:.95}'+
+    '.lbody{flex:1 1 auto}'+
+    '.wk{margin-bottom:3.4mm;break-inside:avoid}'+
+    '.wk .wn{font-size:13.5pt;font-weight:800;line-height:1.25;display:flex;gap:3mm;align-items:baseline}'+
+    '.wk .bul{flex:0 0 auto;color:#9aabbf}'+
+    '.wk .rm{font-weight:700;color:#5a7a9a}'+
+    '.mats{margin:1mm 0 0 6mm;padding:0;list-style:none}'+
+    '.mats li{display:flex;align-items:center;gap:3mm;font-size:12pt;line-height:1.5;padding:.4mm 0}'+
+    '.mats .box{flex:0 0 auto;width:5mm;height:5mm;border:.5mm solid #0d1b2e;border-radius:1mm}'+
+    '.mats .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'+
+    '.mats .dots{flex:1 1 auto;border-bottom:.3mm dotted #b8c8d8;margin:0 2mm 1.5mm}'+
+    '.mats .q{flex:0 0 auto;font-weight:800;white-space:nowrap}'+
+    '.lfoot{flex:0 0 auto;border-top:.4mm solid #dde6f0;margin-top:4mm;padding-top:2.5mm;'+
+      'display:flex;justify-content:space-between;font-size:9pt;color:#5a7a9a}'+
+    '.nolines{font-size:12pt;color:#7a9aaa;font-style:italic;padding:6mm 0}'+
+    '.cover{text-align:center}'+
+    '.cproj{font-size:16pt;font-weight:700;color:#5a7a9a;letter-spacing:3px;padding-top:10mm}'+
+    '.cword{font-size:24pt;font-weight:800;letter-spacing:8px;margin-top:12mm}'+
+    '.cbig{font-size:150pt;font-weight:900;line-height:.88;margin:2mm 0 6mm}'+
+    '.cplan{margin:8mm auto 0;width:82%;border-top:1mm solid #0d1b2e;padding-top:5mm}'+
+    '.prow{display:flex;justify-content:space-between;align-items:center;font-size:12.5pt;padding:2.2mm 0;border-bottom:.3mm solid #e6edf5}'+
+    '.prow .p1{font-weight:800;display:flex;align-items:center;gap:3mm}'+
+    '.prow .chip{width:4mm;height:4mm;border-radius:1mm;flex:0 0 auto}'+
+    '.prow .p2{color:#5a7a9a}'+
+    '.cfoot{margin-top:auto;padding-bottom:4mm;font-size:9pt;color:#7a9aaa}';
+  return { title:"Бирки "+nm, css:css, body:sheets.join("") };
 }
 
 // Узлы — вкладками, а не тремя карточками подряд: их уже три, и листать чертёж
@@ -17130,6 +17395,220 @@ function projCardHtml(p){
     h+='<button data-a="proj-del" data-id="'+p.id+'" style="width:100%;padding:9px;background:#fff;border:1px solid #f0d5d0;border-radius:10px;cursor:pointer;color:#c0392b;font-size:11.5px;margin-bottom:20px">Удалить проект</button>';
   }
   return h;
+}
+
+// ─── ВКЛАДКА «🏷 ТАБЛИЧКИ» ───────────────────────────────────────────────────
+// Одно место, где дом уходит на бумагу: спецификация к договору, планировка,
+// чертёж бригаде и бирки на стеллаж. Раньше эти кнопки лежали по трём разным
+// разделам, и напечатать комплект на дом значило обойти портал кругом.
+//
+// Печатается ОДНИМ документом, теми же формами, что печатают их разделы
+// (`specPrintParts`, `planPrintParts`, `schemePrintParts`): вторая копия формы
+// разошлась бы с первой, и клиент получил бы не тот лист, что в договоре.
+const LABEL_COL="#c0392b";
+const LABEL_DOCS=[
+  ["spec",  "📄 Спецификация к договору", "состав и стоимость по этапам — лист, который прикладывают к договору"],
+  ["plan",  "🏠 Планировка",              "чертёж клиенту: имена помещений и площадь пола, без размеров"],
+  ["shelf", "🏷 Бирки на стеллаж",        "по листу на полку: что лежит на этом этапе этого дома"],
+  ["scheme","📐 Чертёж бригаде",          "рабочий чертёж с размерами, узлами и пирогами стен"],
+];
+
+function labelsSheet(){
+  if(labelsProjId){ const p=proj(labelsProjId); if(p)return p; }
+  return null;
+}
+
+function tLabels(){
+  const sh=labelsSheet();
+  let h='<div>';
+  h+='<div style="margin-bottom:11px">'+
+    '<div style="font-size:11px;color:'+LABEL_COL+';font-weight:700;letter-spacing:1px">🏷 ТАБЛИЧКИ</div>'+
+    '<div style="font-size:12px;color:#5a7a9a;margin-top:2px;line-height:1.45">Выберите дом, отметьте, что печатать, — уйдёт одной стопкой.</div>'+
+  '</div>';
+
+  // Проект выбирают ЗДЕСЬ, а не берут «тот, что открыт в другом разделе»: печать
+  // не того дома выясняется уже на ламинаторе.
+  if(!projects.length){
+    return h+'<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:16px;font-size:12.5px;color:#7a9aaa;line-height:1.55">'+
+      'Проектов пока нет — печатать нечего. Дом заводится во вкладке «🏗 Проекты», а сюда приезжает готовым.'+
+    '</div></div>';
+  }
+  h+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 12px;margin-bottom:9px">'+
+    '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:7px">ДОМ</div>'+
+    '<div style="display:flex;flex-wrap:wrap;gap:6px">'+
+      projects.map(function(pr){
+        const on=sh&&sh.id===pr.id;
+        return '<button data-a="labels-proj" data-id="'+pr.id+'" style="border:1.5px solid '+(on?LABEL_COL:"#dde6f0")+';background:'+(on?LABEL_COL:"#fff")+';color:'+(on?"#fff":"#0d1b2e")+';border-radius:10px;padding:7px 11px;font-size:12px;font-weight:700;cursor:pointer">'+esc(pr.name||"Проект")+'</button>';
+      }).join("")+
+    '</div>'+
+  '</div>';
+  if(!sh)return h+'<div style="font-size:12.5px;color:#7a9aaa;padding:4px 2px">Выберите дом — дальше появятся документы и настройка полок.</div></div>';
+
+  // Что печатаем. Галочка — состояние экрана: это вопрос «что мне нужно сейчас»,
+  // а не свойство дома, и запоминать его в снимке значило бы решать за соседа.
+  h+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 12px;margin-bottom:9px">'+
+    '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:7px">ЧТО НАПЕЧАТАТЬ</div>'+
+    LABEL_DOCS.map(function(d){
+      const on=!!labelsDocs[d[0]];
+      return '<div data-a="labels-doc" data-k="'+d[0]+'" style="display:flex;gap:9px;align-items:flex-start;padding:8px 6px;border-radius:10px;cursor:pointer;'+(on?'background:'+LABEL_COL+'0d':'')+'">'+
+        '<span style="flex:0 0 auto;width:19px;height:19px;border-radius:6px;border:2px solid '+(on?LABEL_COL:"#c8d6e5")+';background:'+(on?LABEL_COL:"#fff")+';color:#fff;font-size:12px;font-weight:900;line-height:16px;text-align:center">'+(on?"✓":"")+'</span>'+
+        '<span style="flex:1;min-width:0">'+
+          '<span style="display:block;font-size:13px;font-weight:700;color:#0d1b2e">'+esc(d[1])+'</span>'+
+          '<span style="display:block;font-size:11px;color:#7a9aaa;line-height:1.4;margin-top:1px">'+esc(d[2])+'</span>'+
+        '</span>'+
+      '</div>';
+    }).join("")+
+  '</div>';
+
+  if(labelsDocs.shelf)h+=labelsShelfSetup(sh);
+
+  const parts=labelsParts(sh);
+  h+='<button data-a="labels-print" style="width:100%;padding:13px;background:'+(parts.length?LABEL_COL:"#c8d6e5")+';border:none;border-radius:12px;cursor:pointer;color:#fff;font-size:14px;font-weight:800;margin-bottom:8px">🖨 Напечатать выбранное'+(parts.length?'':' — ничего не отмечено')+'</button>';
+  h+='<div style="font-size:11.5px;color:#7a9aaa;line-height:1.5;padding:0 2px 10px">'+
+    'Печать откроется в новом окне: «Печать / Сохранить в PDF». Если окно не появилось — разрешите всплывающие окна для портала.'+
+  '</div>';
+  return h+'</div>';
+}
+
+// Настройка бирок: серия домов и что лежит на какой полке. Живёт в проекте, потому
+// что это свойство ЭТОГО дома: у следующего и полок другое число, и серия своя.
+function labelsShelfSetup(sh){
+  const L=labelShelvesOf(sh);
+  const houses=houseNums(L.cfg.houses);
+  const sheets=labelSheetCount(L.shelves, houses, L.cfg.perPage, true, true);
+  const stOpts=[0].concat(EST_STAGES.map(function(x){return x.n;}));
+  let h='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 12px;margin-bottom:9px">'+
+    '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:8px">БИРКИ · СТЕЛЛАЖ = ДОМ, ПОЛКА = ЭТАП</div>'+
+    '<div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:9px">'+
+      '<label style="flex:1 1 150px;min-width:0"><span style="display:block;font-size:10px;color:#9aabbf;font-weight:700;margin-bottom:3px">НОМЕРА ДОМОВ</span>'+
+        '<input data-a="labels-houses" value="'+esc(L.cfg.houses)+'" placeholder="1-21" style="width:100%;padding:8px 10px;border:1.5px solid #dde6f0;border-radius:9px;font-size:13px"></label>'+
+      '<label style="flex:0 0 120px"><span style="display:block;font-size:10px;color:#9aabbf;font-weight:700;margin-bottom:3px">СТРОК НА ЛИСТ</span>'+
+        '<input data-a="labels-perpage" type="number" min="10" max="60" value="'+L.cfg.perPage+'" style="width:100%;padding:8px 10px;border:1.5px solid #dde6f0;border-radius:9px;font-size:13px"></label>'+
+    '</div>';
+  h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:7px;margin-bottom:8px">'+
+    L.shelves.map(function(s){
+      const M=labelStageMeta(s.stage);
+      const cnt=s.works.reduce(function(a,w){return a+w.mats.length;},0);
+      return '<div style="border:1.5px solid #dde6f0;border-left:5px solid '+M.color+';border-radius:11px;padding:8px 10px">'+
+        '<div style="font-size:10px;font-weight:800;color:#9aabbf;letter-spacing:0.4px;margin-bottom:5px">ПОЛКА '+s.i+'</div>'+
+        '<select data-a="labels-shelf" data-i="'+(s.i-1)+'" style="width:100%;padding:6px 7px;border:1.5px solid #dde6f0;border-radius:8px;font-size:12px">'+
+          stOpts.map(function(n){
+            const M2=labelStageMeta(n);
+            const nm=n?("Этап "+n+(M2.name?" · "+M2.name:"")):"Прочее";
+            return '<option value="'+n+'"'+(Number(s.stage)===n?' selected':'')+'>'+esc(nm)+'</option>';
+          }).join("")+
+        '</select>'+
+        '<div style="font-size:10.5px;color:#7a9aaa;margin-top:5px">'+s.works.length+' раб. · '+cnt+' поз.</div>'+
+      '</div>';
+    }).join("")+
+    '</div>'+
+    '<div style="display:flex;gap:6px;margin-bottom:8px">'+
+      '<button data-a="labels-shelf-add" style="border:1.5px solid #dde6f0;background:#fff;border-radius:9px;padding:5px 11px;font-size:12px;font-weight:700;cursor:pointer;color:#0d1b2e">+ полка</button>'+
+      '<button data-a="labels-shelf-del" style="border:1.5px solid #dde6f0;background:#fff;border-radius:9px;padding:5px 11px;font-size:12px;font-weight:700;cursor:pointer;color:#0d1b2e">− полка</button>'+
+    '</div>';
+  h+=labelsPinHtml(sh, L);
+  // Сотня листов — это не «нажал и забыл»: сказать об этом надо ДО принтера, а не
+  // из лотка. Серию печатают частями («1-5»), и поле номеров ровно для этого.
+  h+='<div style="font-size:11.5px;color:#5a7a9a;line-height:1.5;background:#f6f8fa;border-radius:9px;padding:8px 10px">'+
+    '<b style="color:#0d1b2e">'+sheets+' '+labelPlural(sheets,"лист","листа","листов")+' A4</b> на '+houses.length+' '+labelPlural(houses.length,"дом","дома","домов")+': '+
+    'титульный с номером дома плюс лист на каждую полку. Ламинировать столько за раз долго — печатайте частями, например «1-5».'+
+  '</div>';
+  return h+'</div>';
+}
+
+// ─── РАСКЛАДКА РУКАМИ ────────────────────────────────────────────────────────
+// Автомат делит этап между полками поровну по длине списка, но полку заполняет не
+// длина списка, а мешок ППУ и трёхметровый брусок — этого портал не знает. Поэтому
+// последнее слово за человеком: отметил галочками, что переложить, и указал полку.
+//
+// Отмечать можно и материал отдельно от его работы: длинный брусок кладут вниз, а
+// не туда, где лежит остальной каркас. На чужой полке он остаётся подписан своей
+// работой — материал без ответа «подо что» на складе бесполезен.
+function labelsPinHtml(sh, L){
+  const marked=Object.keys(labelsMark).filter(function(k){return labelsMark[k];});
+  const head='<div data-a="labels-pin-open" style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:2px 0">'+
+    '<span style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;flex:1">РАСКЛАДКА РУКАМИ · '+(labelsPinOpen?"СВЕРНУТЬ":"ЧТО НА КАКОЙ ПОЛКЕ")+'</span>'+
+    '<span style="font-size:12px;color:#9aabbf">'+(labelsPinOpen?"▲":"▼")+'</span>'+
+  '</div>';
+  if(!labelsPinOpen)return '<div style="border-top:1px solid #eef3f8;margin-top:9px;padding-top:9px">'+head+'</div>';
+
+  const rowCss='display:flex;align-items:center;gap:8px;padding:5px 4px;border-radius:8px;cursor:pointer';
+  const boxHtml=function(on,small){
+    const sz=small?15:17;
+    return '<span style="flex:0 0 auto;width:'+sz+'px;height:'+sz+'px;border-radius:5px;border:2px solid '+(on?LABEL_COL:"#c8d6e5")+';background:'+(on?LABEL_COL:"#fff")+';color:#fff;font-size:'+(small?9:11)+'px;font-weight:900;line-height:'+(sz-4)+'px;text-align:center">'+(on?"✓":"")+'</span>';
+  };
+  let h='<div style="border-top:1px solid #eef3f8;margin-top:9px;padding-top:9px">'+head;
+  // Куда переложить. Ряд стоит НАД списком и липнет под шапкой: список бывает на
+  // сорок строк, и кнопки в его конце значат прокрутку туда-обратно на каждую
+  // перекладку. Внизу их держать нельзя — там нижний таб-бар портала.
+  // Показываем ВСЕГДА, но гасим без отметок: ряд,
+  // появляющийся только после первой галочки, не объясняет, зачем галочки.
+  const live=marked.length>0;
+  h+='<div style="position:sticky;top:var(--hdr);background:#fff;border-bottom:1px solid #eef3f8;padding:7px 0 8px;margin-bottom:4px;z-index:2">'+
+    '<div style="font-size:11px;color:'+(live?"#0d1b2e":"#9aabbf")+';font-weight:700;margin-bottom:6px">'+
+      (live?('Отмечено '+marked.length+' — переложить:'):'Отметьте работы или материалы, чтобы переложить их на другую полку')+
+    '</div>'+
+    '<div style="display:flex;flex-wrap:wrap;gap:5px">'+
+      L.shelves.map(function(s){
+        return '<button data-a="labels-to" data-v="'+s.i+'"'+(live?'':' disabled')+' style="border:1.5px solid '+(live?LABEL_COL:"#dde6f0")+';background:#fff;color:'+(live?LABEL_COL:"#c8d6e5")+';border-radius:9px;padding:6px 12px;font-size:12px;font-weight:800;cursor:'+(live?"pointer":"default")+'">полка '+s.i+'</button>';
+      }).join("")+
+      '<button data-a="labels-to" data-v="0"'+(live?'':' disabled')+' style="border:1.5px solid #dde6f0;background:#fff;color:'+(live?"#0d1b2e":"#c8d6e5")+';border-radius:9px;padding:6px 12px;font-size:12px;font-weight:700;cursor:'+(live?"pointer":"default")+'">⟲ по расчёту</button>'+
+    '</div>'+
+  '</div>';
+  h+='<div style="margin-top:7px">'+L.shelves.map(function(s){
+    const M=labelStageMeta(s.stage);
+    return '<div style="margin-bottom:9px">'+
+      '<div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:800;color:#0d1b2e;padding:3px 0 4px">'+
+        '<span style="width:8px;height:8px;border-radius:2px;background:'+M.color+'"></span>ПОЛКА '+s.i+' · '+esc(M.title)+
+      '</div>'+
+      (s.works.length?s.works.map(function(w){
+        const wk=w.key;
+        const on=!!labelsMark[wk];
+        // Строку-часть (материалы, уехавшие сюда с чужой полки) целиком не
+        // отмечаем: её работа живёт на другой полке, и «переложить работу»
+        // отсюда значило бы тащить за собой то, чего здесь нет.
+        const wRow=w.part
+          ? '<div style="display:flex;align-items:center;gap:6px;padding:4px 4px;font-size:12px;color:#7a9aaa"><span>↳</span><span style="font-weight:700;color:#5a7a9a">'+esc(w.name||"Работа")+(w.room?" · "+esc(w.room):"")+'</span><span style="font-size:10.5px">· отсюда только материалы ниже</span></div>'
+          : '<div data-a="labels-mark" data-k="'+esc(wk)+'" style="'+rowCss+';background:'+(on?LABEL_COL+"0d":"transparent")+'">'+
+              boxHtml(on)+'<span style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(w.name||"Работа")+
+                (w.room?'<span style="color:#5a7a9a"> · '+esc(w.room)+'</span>':'')+'</span>'+
+              '<span style="font-size:10.5px;color:#9aabbf;white-space:nowrap">'+w.mats.length+' поз.</span>'+
+            '</div>';
+        return '<div style="border:1px solid #eef3f8;border-radius:10px;padding:3px 4px;margin-bottom:5px">'+wRow+
+          w.mats.map(function(m){
+            const mk=matPinKey(wk, m.n);
+            const mon=!!labelsMark[mk];
+            return '<div data-a="labels-mark" data-k="'+esc(mk)+'" style="'+rowCss+';margin-left:16px;background:'+(mon?LABEL_COL+"0d":"transparent")+'">'+
+              boxHtml(mon,true)+'<span style="flex:1;min-width:0;font-size:12px;color:#5a7a9a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(m.n)+'</span>'+
+              '<span style="font-size:11px;font-weight:700;color:#0d1b2e;white-space:nowrap">'+numRu(m.qty)+(m.unit?' '+esc(m.unit):'')+'</span>'+
+            '</div>';
+          }).join("")+
+        '</div>';
+      }).join(""):'<div style="font-size:11.5px;color:#9aabbf;padding:3px 4px">— пусто —</div>')+
+    '</div>';
+  }).join("")+'</div>';
+
+  return h+'</div>';
+}
+
+function labelPlural(n,one,few,many){
+  const a=Math.abs(n)%100, b=a%10;
+  if(a>10&&a<20)return many;
+  if(b>1&&b<5)return few;
+  if(b===1)return one;
+  return many;
+}
+
+// Части печати в порядке, в котором их читают: сначала то, что уходит клиенту,
+// потом то, что остаётся у нас.
+function labelsParts(sh){
+  if(!sh)return [];
+  const out=[];
+  if(labelsDocs.spec)out.push(specPrintParts(sh));
+  if(labelsDocs.plan)out.push(planPrintParts(sh));
+  if(labelsDocs.scheme)out.push(schemePrintParts(sh));
+  if(labelsDocs.shelf)out.push(labelsPrintParts(sh));
+  return out.filter(Boolean);
 }
 
 function tProjects(){
@@ -27669,6 +28148,52 @@ function bind(){
     else if(a==="rule-room"){el.onchange=()=>{ ruleSet(el.dataset.id, function(r){ r.room=el.value||""; }); };}
     else if(a==="rule-qty"){el.onchange=()=>{ ruleSet(el.dataset.id, function(r){ const v=parseFloat(String(el.value).replace(",",".")); r.qty=(isFinite(v)&&v>0)?v:1; }); };}
     else if(a==="spec2-print"){el.onclick=()=>{ buildSchemePrint(); };}
+    // ── вкладка «🏷 Таблички» ──
+    else if(a==="labels-proj"){el.onclick=()=>{ labelsProjId=el.dataset.id||null; labelsMark={}; ui(); };}
+    else if(a==="labels-doc"){el.onclick=()=>{ const k=el.dataset.k; labelsDocs[k]=!labelsDocs[k]; ui(); };}
+    else if(a==="labels-pin-open"){el.onclick=()=>{ labelsPinOpen=!labelsPinOpen; ui(); };}
+    // Отметка строки — это ЭКРАН: в снимок она не идёт, и звать на неё сохранение
+    // нельзя. Перекладывание на полку — уже правка дома, его пишет labelsSet.
+    else if(a==="labels-mark"){el.onclick=()=>{ const k=el.dataset.k; if(labelsMark[k])delete labelsMark[k]; else labelsMark[k]=true; ui(); };}
+    else if(a==="labels-to"){el.onclick=()=>{
+      const sh=labelsSheet(); if(!sh)return;
+      const to=parseInt(el.dataset.v,10)||0;
+      const keys=Object.keys(labelsMark).filter(function(k){return labelsMark[k];});
+      if(!keys.length)return;
+      labelsSet(sh, function(L){
+        if(!L.pins)L.pins={};
+        // «По расчёту» СНИМАЕТ привязку, а не пишет нулевую: оставленный ноль
+        // потом не отличить от «человек указал полку, которой больше нет».
+        keys.forEach(function(k){ if(to)L.pins[k]=to; else delete L.pins[k]; });
+      });
+      labelsMark={};
+    };}
+    // Номера домов и строки на лист пишем по `change`, а не по `input`:
+    // перерисовка на каждой цифре выбивает поле из-под пальца.
+    else if(a==="labels-houses"){el.onchange=()=>{ const sh=labelsSheet(); if(sh)labelsSet(sh, function(L){ L.houses=String(el.value||"1"); }); };}
+    else if(a==="labels-perpage"){el.onchange=()=>{ const sh=labelsSheet(); if(!sh)return; const v=parseInt(el.value,10);
+      labelsSet(sh, function(L){ L.perPage=(isFinite(v)&&v>=10&&v<=60)?v:26; }); };}
+    else if(a==="labels-shelf"){el.onchange=()=>{ const sh=labelsSheet(); if(!sh)return; const i=parseInt(el.dataset.i,10);
+      labelsSet(sh, function(L){ L.shelves[i]=parseInt(el.value,10)||0; }); };}
+    else if(a==="labels-shelf-add"){el.onclick=()=>{ const sh=labelsSheet(); if(!sh)return;
+      labelsSet(sh, function(L){ if(L.shelves.length<12)L.shelves.push(0); }); };}
+    else if(a==="labels-shelf-del"){el.onclick=()=>{
+      const sh=labelsSheet(); if(!sh)return;
+      const L0=labelsCfg(sh), last=L0.shelves.length;
+      if(last<=1)return;
+      // Снятая полка уносит с собой привязки к ней: иначе работа повисает на
+      // полке, которой нет, и исчезает с бирок молча.
+      labelsSet(sh, function(L){
+        L.shelves.pop();
+        Object.keys(L.pins||{}).forEach(function(k){ if(Number(L.pins[k])>=last)delete L.pins[k]; });
+      });
+    };}
+    else if(a==="labels-print"){el.onclick=()=>{
+      const sh=labelsSheet(); if(!sh){ alert("Сначала выберите дом."); return; }
+      const parts=labelsParts(sh);
+      if(!parts.length){ alert("Отметьте, что напечатать."); return; }
+      printDoc(String(sh.name||"Дом"), parts);
+    };}
     else if(a==="model-tool"){el.onclick=()=>{
       modelTool=el.dataset.k;
       if(modelTool==="op"&&!modelPlaceType&&winTypes.length)modelPlaceType=winTypes[0].id;
