@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "harness": "node tools/render-harness.js",
+    "codemap": "node tools/codemap.mjs",
     "test:bot": "node tools/test-botissue.mjs",
     "test:supply": "node tools/test-supply-group.mjs",
     "test:mats": "node tools/test-material-link.mjs",
