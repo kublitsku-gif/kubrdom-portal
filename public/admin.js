@@ -70,8 +70,12 @@ import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js"
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 import { plinthOptions, plinthPieceLen, isPlinthMat } from "../src/plinth.js";
 import { installInPageCamera } from "../src/camera.js";
+// Закрытие дня и штраф за незакрытый — общий модуль с напоминаниями (src/dayclose.js):
+// панель и крон ОБЯЗАНЫ считать «день закрыт» одинаково, иначе человек видит галочку,
+// а утром у него удерживают деньги. См. docs/domain/day-close.md.
+import { dayCloseState, dayFineCfg, underDayFine, fineSum, DAY_FINE_CAT, DAY_FINE_DEFAULT } from "../src/dayclose.js";
 
-const APP_BUILD = "2026-09-11.10";
+const APP_BUILD = "2026-09-15.1";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -6744,15 +6748,25 @@ ${(()=>{
     out+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:9px">';
     out+='<span style="font-size:18px">'+u.av+'</span>';
     out+='<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:#1a2a3a">'+esc(u.name)+(u.id===currentUser.id?' (вы)':'')+'</div>';
+    // Состояние дня — ЛИЧНОЕ, по всем объектам сразу: именно так его считает крон,
+    // который утром удерживает штраф. Карточка обязана показывать ту же правду.
+    const day=dayCloseState(objects,u.id,todayISOd);
+    const fined=underDayFine(settings,u.id);
     if(isOff){
       out+='<div style="font-size:10px;color:#9b59b6;font-weight:600;margin-top:1px">🏖 Выходной</div>';
-    } else if(hoursToday>0||completedWorks>0){
-      out+='<div style="font-size:10px;color:#27ae60;font-weight:600;margin-top:1px">✓ Есть записи за сегодня</div>';
+    } else if(day.closed){
+      const where=(hoursToday>0||completedWorks>0)?'✓ Есть записи за сегодня':'✓ День закрыт (записи на другом объекте)';
+      out+='<div style="font-size:10px;color:#27ae60;font-weight:600;margin-top:1px">'+where+'</div>';
+    } else if(fined){
+      out+='<div style="font-size:10px;color:#e74c3c;font-weight:700;margin-top:1px">⚠️ День не закрыт — утром '+dayFineCfg(settings).amount+' ₽</div>';
     } else {
       out+='<div style="font-size:10px;color:#9aabbf;font-style:italic;margin-top:1px">Записей за сегодня нет</div>';
     }
     out+='</div>';
     out+='</div>';
+    if(day.note){
+      out+='<div style="font-size:11px;color:#5a7a9a;background:#fff;border:1px solid #e5ebf2;border-radius:8px;padding:7px 9px;margin-bottom:9px">✍️ '+esc(day.note)+'</div>';
+    }
     
     // Quick day stats
     if(!isOff){
@@ -6770,11 +6784,11 @@ ${(()=>{
     out+='</div>';
   });
   
-  // История — только выходные: отчёт с фото уборки убран, других записей тут не появляется
-  const allReports=(obj.dayReports||[]).filter(function(r){return r.date<todayISOd&&r.dayOff;});
+  // История: выходные и короткие отчёты текстом из бота (отчёт с фото уборки убран)
+  const allReports=(obj.dayReports||[]).filter(function(r){return r.date<todayISOd&&(r.dayOff||r.note);});
   if(allReports.length){
     out+='<button data-a="dr-hist-toggle" style="width:100%;margin-top:6px;padding:6px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:6px;cursor:pointer;color:#7a9aaa;font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:space-between">';
-    out+='<span>📜 Выходные за прошлые дни ('+allReports.length+')</span><span>'+(dayReportHistOpen?'▲':'▼')+'</span>';
+    out+='<span>📜 Отчёты за прошлые дни ('+allReports.length+')</span><span>'+(dayReportHistOpen?'▲':'▼')+'</span>';
     out+='</button>';
     if(dayReportHistOpen){
       // Group by date desc
@@ -6789,7 +6803,7 @@ ${(()=>{
           const u=users.find(x=>x.id===r.userId);
           out+='<div style="display:flex;align-items:center;gap:6px;font-size:10px;padding:3px 0;color:#5a7a9a">';
           out+='<span>'+(u?u.av:"👤")+'</span><span style="font-weight:600">'+esc(u?u.name:"—")+'</span>';
-          out+='<span style="color:#9b59b6">· 🏖 Выходной</span>';
+          out+=r.dayOff?'<span style="color:#9b59b6">· 🏖 Выходной</span>':'<span style="color:#5a7a9a">· ✍️ '+esc(String(r.note||"").slice(0,80))+'</span>';
           out+='</div>';
         });
         out+='</div>';
@@ -6799,22 +6813,20 @@ ${(()=>{
   }
 
   // Итог в шапке: день закрыт, если есть часы/сделанные работы или отмечен выходной
-  const dayFilled=function(u){
-    const r=getTodayReport(obj,u.id,todayISOd);
-    if(r&&r.dayOff)return true;
-    const h=(obj.stages||[]).reduce(function(a,st){return a+(st.works||[]).reduce(function(b,w){
-      return b+(w.timeLogs||[]).filter(function(l){return l.userId===u.id&&l.date===todayISOd;}).reduce(function(c,l){return c+(l.hours||0);},0);
-    },0);},0);
-    if(h>0)return true;
-    return (obj.stages||[]).some(function(st){return (st.works||[]).some(function(w){
-      return w.done&&w.doneBy===u.id&&(w.doneAt||"").indexOf(todayISOd)===0;
-    });});
-  };
+  // Одно правило на портал и крон — src/dayclose.js. Своей копии тут больше нет:
+  // она разъезжалась с той, по которой удерживают деньги.
+  const dayFilled=function(u){ return dayCloseState(objects,u.id,todayISOd).closed; };
   let summary;
   if(viewUsers.length===1){
     const rep=getTodayReport(obj,viewUsers[0].id,todayISOd);
+    // Свёрнутый чип «Отчёт дня» — единственное, что человек видит, не открывая раздел.
+    // Поэтому незакрытый день у того, кто под штрафом, пишем прямо в подпись с ценой:
+    // «записей нет» чип считает пустой подписью и заменяет названием раздела.
+    const fineHere=underDayFine(settings,viewUsers[0].id)&&!dayFilled(viewUsers[0]);
     summary=rep&&rep.dayOff?'<span style="color:#9b59b6">🏖 выходной</span>':
-      (dayFilled(viewUsers[0])?'<span style="color:#27ae60">✓ есть записи</span>':'<span style="color:#e67e22">записей нет</span>');
+      (dayFilled(viewUsers[0])?'<span style="color:#27ae60">✓ есть записи</span>':
+      (fineHere?'<span style="color:#e74c3c">⚠️ не закрыт · '+dayFineCfg(settings).amount+' ₽</span>'
+              :'<span style="color:#e67e22">записей нет</span>'));
   } else {
     const okN=viewUsers.filter(dayFilled).length;
     summary='<span style="color:'+(okN===viewUsers.length?"#27ae60":"#e67e22")+'">'+okN+' / '+viewUsers.length+' отметились</span>';
@@ -19112,6 +19124,10 @@ function tFinanceMine(isBrig){
     }):[];
     return {
       c:c, obj:obj,
+      // Штрафы уменьшают «осталось получить»: так решил заказчик, и так же считает бот
+      // («Мои деньги»). Общий счётчик — src/dayclose.js, все «⚠️»-категории.
+      fines:fineSum(finTxns,me.id,c.id),
+      fineTxns:finTxns.filter(function(t){return t.type==="expense"&&t.userId===me.id&&t.contractId===c.id&&String(t.category||"").indexOf("⚠️")===0;}),
       planSal:planSal, paidSal:paidSal, salTxns:salTxns,
       planExtra:isBrig?getExtraWorksPlan(c):0,
       paidExtra:extraTxns.reduce(function(a,t){return a+(t.amount||0);},0),
@@ -19122,7 +19138,10 @@ function tFinanceMine(isBrig){
 
   const tPlan=rows.reduce(function(a,r){return a+r.planSal+r.planExtra;},0);
   const tPaid=rows.reduce(function(a,r){return a+r.paidSal+r.paidExtra;},0);
-  const tLeft=Math.max(0,tPlan-tPaid);
+  // Штрафы считаем ПО ВСЕМ своим записям, а не только по строкам договоров: удержание
+  // за незакрытый день на объекте без подписанного договора иначе потерялось бы.
+  const tFines=fineSum(finTxns,me.id);
+  const tLeft=Math.max(0,tPlan-tPaid-tFines);
   const tDebt=rows.reduce(function(a,r){return a+r.debt;},0);
   const pct=tPlan>0?Math.min(100,Math.round(tPaid/tPlan*100)):0;
   const objCount=rows.reduce(function(a,r){return a.indexOf(r.c.objId)<0?a.concat([r.c.objId]):a;},[]).length;
@@ -19156,6 +19175,13 @@ function tFinanceMine(isBrig){
   const salPaidAll=rows.reduce(function(a,r){return a+r.paidSal;},0);
   const exPlanAll=rows.reduce(function(a,r){return a+r.planExtra;},0);
   const exPaidAll=rows.reduce(function(a,r){return a+r.paidExtra;},0);
+  if(tFines>0){
+    html+='<div style="display:flex;align-items:center;gap:9px;margin-bottom:8px;padding:10px 11px;background:rgba(231,76,60,0.16);border-radius:10px">'+
+      '<span style="font-size:15px">⚠️</span>'+
+      '<div style="flex:1;font-size:11px;color:rgba(255,255,255,0.75)">Удержано штрафов<div style="font-size:9px;color:rgba(255,255,255,0.45);margin-top:1px">уже вычтено из «осталось получить»</div></div>'+
+      '<div style="font-size:14px;font-weight:800;color:#ff8a7a">−'+money(tFines)+' ₽</div>'+
+    '</div>';
+  }
   html+='<div style="display:grid;grid-template-columns:repeat('+(isBrig?2:1)+',minmax(0,1fr));gap:7px;padding-top:11px;border-top:1px solid rgba(255,255,255,0.08)">';
   html+=dTile("👷 ЗАРПЛАТА", money(salPaidAll), "#fff", "из "+money(salPlanAll)+" ₽");
   if(isBrig){
@@ -19199,7 +19225,7 @@ function tFinanceMine(isBrig){
     const c=r.c;
     const open=finMineOpen[c.id]!=null?finMineOpen[c.id]:autoOpen;
     const rowPlan=r.planSal+r.planExtra, rowPaid=r.paidSal+r.paidExtra;
-    const rowLeft=Math.max(0,rowPlan-rowPaid);
+    const rowLeft=Math.max(0,rowPlan-rowPaid-r.fines);
     const rowPct=rowPlan>0?Math.min(100,Math.round(rowPaid/rowPlan*100)):0;
 
     html+='<div style="background:#fff;border-radius:14px;border:1px solid '+(open?accent+"55":"#e0e8f0")+';margin-bottom:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.05)">';
@@ -22377,8 +22403,50 @@ function tSupplyDetail(sel, sortBy){
 }
 
 
+// ── ЕЖЕДНЕВНЫЙ ОТЧЁТ И ШТРАФ ЗА НЕЗАКРЫТЫЙ ДЕНЬ ────────────────────────────
+// Кого штрафуем — настройка, а не код: завтра добавится третий человек, и это должен
+// быть тап, а не деплой. Само правило и расписание — в src/dayclose.js и
+// src/reminders.js, здесь только ручки. Мягкий запуск включается вместе с режимом:
+// первую неделю вместо удержания приходит «это стоило бы N ₽» — люди успевают
+// привыкнуть к ритуалу до первого рубля.
+function tDayFine(){
+  if(!currentUser||!currentUser.roles.includes("admin"))return "";
+  const cfg=dayFineCfg(settings);
+  const prod=users.filter(function(u){return (u.roles||[]).some(function(r){return r==="brigadier"||r==="worker"||r==="prod_head";});});
+  const inp='padding:6px 9px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box';
+  let h='<div style="margin-bottom:16px">';
+  h+='<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:10px">ЕЖЕДНЕВНЫЙ ОТЧЁТ</div>';
+  h+='<div style="background:#fff;border-radius:12px;border:1px solid '+(cfg.enabled?"#e67e2255":"#dde6f0")+';padding:12px">';
+  h+='<div data-a="dfine-toggle" style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:'+(cfg.enabled?"10px":"0")+'">'+
+    '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:#1a2a3a">📋 Закрытие дня и штраф</div>'+
+    '<div style="font-size:10px;color:#9aabbf;margin-top:2px;line-height:1.35">19:00 — напоминание, 21:00 — последнее, 09:00 — удержание за вчера</div></div>'+
+    '<div style="width:40px;height:23px;border-radius:12px;background:'+(cfg.enabled?"#27ae60":"#cdd6e0")+';position:relative;flex-shrink:0;transition:background 0.2s">'+
+      '<div style="width:19px;height:19px;border-radius:50%;background:#fff;position:absolute;top:2px;left:'+(cfg.enabled?"19px":"2px")+';transition:left 0.2s"></div></div>'+
+  '</div>';
+  if(cfg.enabled){
+    h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'+
+      '<label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#5a7a9a">Штраф, ₽'+
+        '<input id="dfine-amount" data-a="dfine-amount" type="number" min="0" step="100" value="'+cfg.amount+'" style="'+inp+';width:92px;text-align:right"></label>'+
+      '<label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#5a7a9a">Мягко до'+
+        '<input id="dfine-soft" data-a="dfine-soft" type="date" value="'+(cfg.softUntil||"")+'" title="До этой даты включительно вместо удержания приходит предупреждение" style="'+inp+'"></label>'+
+    '</div>';
+    h+='<div style="font-size:10px;color:#9aabbf;font-weight:700;margin-bottom:6px">КТО ОТЧИТЫВАЕТСЯ</div>';
+    if(!prod.length)h+='<div style="font-size:11px;color:#9aabbf;font-style:italic">Производственных сотрудников пока нет.</div>';
+    h+='<div style="display:flex;flex-wrap:wrap;gap:5px">';
+    prod.forEach(function(u){
+      const on=cfg.uids.indexOf(u.id)>=0;
+      h+='<button data-a="dfine-user" data-uid="'+u.id+'" style="padding:7px 12px;border-radius:14px;cursor:pointer;font-size:12px;font-weight:700;background:'+(on?u.c:"#fff")+';color:'+(on?"#fff":"#5a7a9a")+';border:1.5px solid '+(on?u.c:"#dde6f0")+'">'+u.av+' '+esc(u.name)+'</button>';
+    });
+    h+='</div>';
+    h+='<div style="font-size:10px;color:#a0b4c8;margin-top:8px;line-height:1.45">День закрывают часы в «Моём дне», отметка выполненной работы, «🏖 Выходной» или короткий отчёт текстом из бота. Выходные отмечают сами — суббота и воскресенье ничем не отличаются. Удержание уменьшает «осталось получить» и отменяется удалением записи в финансах.'+
+      (cfg.softUntil?' Сейчас мягкий запуск до '+cfg.softUntil+': удержаний нет.':'')+'</div>';
+  }
+  h+='</div></div>';
+  return h;
+}
 function tTeam(){
   return`<div style="display:flex;flex-direction:column;gap:0">
+${tDayFine()}
 <div style="margin-bottom:16px">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
     <div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">СОТРУДНИКИ</div>
@@ -24615,7 +24683,7 @@ const FIN_INCOME_CATS=["💰 Аванс клиента","💰 Окончател
 // Default salary plans (when not explicitly set)
 const DEFAULT_SALARY_PROD=200000;   // brigadier/worker
 const DEFAULT_SALARY_ESCORT=150000; // РОП (sales_head)
-const FIN_EXPENSE_CATS=["📦 Закупка материалов","📦 Доставка материалов","👷 Зарплата производства","🛠 Доп. работы производства","🧹 Премия за уборку","🚚 Зарплата сопроводителя","⚠️ Штраф просрочка","🔧 Аренда техники","💼 Прочий расход"];
+const FIN_EXPENSE_CATS=["📦 Закупка материалов","📦 Доставка материалов","👷 Зарплата производства","🛠 Доп. работы производства","🧹 Премия за уборку","🚚 Зарплата сопроводителя","⚠️ Штраф просрочка",DAY_FINE_CAT,"🔧 Аренда техники","💼 Прочий расход"];
 
 // Role-based category filtering for "+Транзакция" button
 // Get all object IDs accessible to a user:
@@ -24682,10 +24750,12 @@ function getBrigadierDeadlineInfo(c,uid){
   return {hasDeadline:true,startDate,deadline,daysLeft,overdueDays,fine:overdueDays*FINE_PER_DAY};
 }
 
-// Get fines applied (as transactions) for a brigadier on a contract
+// Штрафы за ПРОСРОЧКУ, применённые к бригадиру по договору. Удержания за незакрытый
+// день сюда не входят: рядом с ними считается «сколько штрафа по дедлайну ещё не
+// проведено», и чужая категория занижала бы этот остаток.
 function getFinesApplied(contractId,userId){
   return finTxns.filter(function(t){
-    return t.type==="expense"&&t.contractId===contractId&&txnCategoryGroup(t.category)==="fine"&&t.userId===userId;
+    return t.type==="expense"&&t.contractId===contractId&&txnCategoryGroup(t.category)==="fine"&&t.userId===userId&&t.category!==DAY_FINE_CAT;
   }).reduce(function(a,t){return a+(t.amount||0);},0);
 }
 // Calculate total ДОП РАБОТЫ paid for a contract (across all brigade)
@@ -26353,6 +26423,38 @@ function bind(){
       if(hint)hint.textContent=need
         ? "Разница выше порога — правка уйдёт заявкой тому, кто отвечает за деньги, и применится после утверждения."
         : "Разница от "+matChangeLimit().toLocaleString("ru-RU")+" ₽ уходит на согласование тому, кто отвечает за деньги.";
+    };}
+    // ── Ежедневный отчёт и штраф (вкладка «Команда», только админ) ──
+    else if(a==="dfine-toggle"){el.onclick=()=>{
+      const cfg=dayFineCfg(settings);
+      const next=!cfg.enabled;
+      const today=todayISO();
+      // Включаем — считаем со СЛЕДУЮЩЕГО дня и с мягким запуском на неделю: штрафовать
+      // за вчера, когда правила ещё не было, нельзя.
+      const soft=new Date(); soft.setDate(soft.getDate()+7);
+      const patch=next
+        ? {enabled:true,amount:cfg.amount||DAY_FINE_DEFAULT,uids:cfg.uids,
+           from:cfg.from||today,softUntil:cfg.softUntil||soft.toISOString().slice(0,10)}
+        : Object.assign({},settings.dayFine||{},{enabled:false});
+      settings=Object.assign({},settings,{dayFine:patch});
+      fl();
+    };}
+    else if(a==="dfine-user"){el.onclick=()=>{
+      const uid=el.dataset.uid;
+      const cfg=dayFineCfg(settings);
+      const uids=cfg.uids.indexOf(uid)>=0?cfg.uids.filter(function(x){return x!==uid;}):cfg.uids.concat([uid]);
+      settings=Object.assign({},settings,{dayFine:Object.assign({},settings.dayFine||{},{uids:uids})});
+      fl();
+    };}
+    // Сумму и дату мягкого запуска сохраняем без перерисовки: она бы выбивала фокус из поля.
+    else if(a==="dfine-amount"){el.onchange=()=>{
+      const v=parseInt(el.value);
+      settings=Object.assign({},settings,{dayFine:Object.assign({},settings.dayFine||{},{amount:(isFinite(v)&&v>=0)?v:DAY_FINE_DEFAULT})});
+      scheduleSave();
+    };}
+    else if(a==="dfine-soft"){el.onchange=()=>{
+      settings=Object.assign({},settings,{dayFine:Object.assign({},settings.dayFine||{},{softUntil:el.value||""})});
+      scheduleSave();
     };}
     // Порог сохраняем без перерисовки: она бы стёрла уже набранные поля модалки.
     else if(a==="sem-limit"){el.onchange=()=>{

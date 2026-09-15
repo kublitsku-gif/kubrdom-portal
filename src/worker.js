@@ -13,6 +13,7 @@ import { finText, finCallback, answerCb } from "./botfin.js";
 import { viewText, viewCallback } from "./botview.js";
 import { ensureTopic } from "./tgapi.js";
 import { workText, workCallback, workMedia } from "./botwork.js";
+import { dayText, dayCallback } from "./botday.js";
 import { issueText, issueCallback, issueMedia, issueReplyToAuthor } from "./botissue.js";
 import { planRequest, planFromResponse, planNormalize, PLAN_MODEL, PLAN_MAX_FILES,
   planRequestOpenAI, planFromOpenAI, PLAN_MODEL_KIMI } from "./plan-read.js";
@@ -1619,8 +1620,9 @@ async function getPrice(url){
 
 export default {
   async scheduled(event, env, ctx) {
-    // 0 6 — 09:00 МСК (дожим клиентов + утренние напоминания), 0 16 — 19:00 (часы),
-    // 0 17 — 20:00 (сводка дня). Расписание — в wrangler.toml.
+    // 0 6 — 09:00 МСК (дожим клиентов, утренние напоминания, удержание за вчерашний
+    // незакрытый день), 0 16 — 19:00 («закройте день» + часы), 0 17 — 20:00 (сводка дня),
+    // 0 18 — 21:00 (последнее предупреждение по незакрытому дню). Расписание — в wrangler.toml.
     if (event.cron === "0 6 * * *") ctx.waitUntil(aiNudge(env));
     ctx.waitUntil(runReminders(env, event.cron).catch(function () {}));
   },
@@ -1677,12 +1679,14 @@ export default {
           // issueText идёт до viewText/finText: пока человек описывает вопрос, любая
           // его фраза — это текст вопроса, а не команда разделу.
           return (await workText(e, uid, chat, text, roles))
+            || (await dayText(e, uid, chat, text))
             || (await issueText(e, uid, chat, text, roles))
             || (await viewText(e, uid, chat, text, roles))
             || (await finText(e, uid, chat, text, roles));
         },
         onCallback: async function (e, uid, chat, data, roles) {
           return (await workCallback(e, uid, chat, data, roles))
+            || (await dayCallback(e, uid, chat, data))
             || (await issueCallback(e, uid, chat, data, roles))
             || (await viewCallback(e, uid, chat, data, roles))
             || (await finCallback(e, uid, chat, data, roles));

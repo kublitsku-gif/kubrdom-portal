@@ -10,6 +10,7 @@
 import { sendTg, escapeHtml } from "./notify.js";
 import { logEvent } from "./audit.js";
 import { objTeam } from "./reminders.js";
+import { fineSum } from "./dayclose.js";
 
 const TG_API = "https://api.telegram.org/bot";
 const MSK_OFFSET_MS = 3 * 3600 * 1000;
@@ -266,9 +267,12 @@ async function commit(env, chat, uid, d, roles) {
   let summary = "";
   if (who && doc && (c.k === "salpr" || c.k === "salesc")) {
     const plan = salaryPlan(doc, who.id), paid = salaryPaid(stAfter, doc, who);
+    // Удержанные штрафы уменьшают остаток — та же арифметика, что в «Моих деньгах».
+    const held = fineSum(txns, who.id, doc.id);
     summary = "\n\n" + escapeHtml(who.name) + " по этому объекту: выплачено <b>" + money(paid) + "</b>"
-      + (plan ? " из " + money(plan) + "\nОсталось: <b>" + money(Math.max(0, plan - paid)) + "</b>"
-        + (paid > plan ? " (перебор " + money(paid - plan) + ")" : "") : "");
+      + (held ? ", удержано " + money(held) : "")
+      + (plan ? " из " + money(plan) + "\nОсталось: <b>" + money(Math.max(0, plan - paid - held)) + "</b>"
+        + (paid + held > plan ? " (перебор " + money(paid + held - plan) + ")" : "") : "");
   }
   await sendTg(env, chat, "✅ <b>Записано в портал</b>\n" + escapeHtml(title) + summary);
 
@@ -278,12 +282,13 @@ async function commit(env, chat, uid, d, roles) {
     if (link && link.chat_id) {
       const paid = doc ? salaryPaid(Object.assign({}, st, { finTxns: txns }), doc, who) : 0;
       const plan = salaryPlan(doc, who.id);
+      const held = doc ? fineSum(txns, who.id, doc.id) : 0;
       const isFine = c.k === "fine";
       const base = (env.PUBLIC_BASE_URL || "https://portal.kubrdom.ru").replace(/\/+$/, "");
       await sendTg(env, link.chat_id,
         (isFine ? "⚠️ <b>Вам начислен штраф " : "💸 <b>Вам проведена выплата ") + money(tx.amount) + "</b>"
         + (o ? "\nОбъект: «" + escapeHtml(o.name) + "»" : "")
-        + (isFine ? "" : "\nВыплачено по объекту: <b>" + money(paid) + "</b>" + (plan ? " из " + money(plan) + "\nОсталось: <b>" + money(Math.max(0, plan - paid)) + "</b>" : ""))
+        + (isFine ? "" : "\nВыплачено по объекту: <b>" + money(paid) + "</b>" + (plan ? " из " + money(plan) + "\nОсталось: <b>" + money(Math.max(0, plan - paid - held)) + "</b>" : ""))
         + '\n\n👉 <a href="' + base + '/admin#tab=finance">Открыть финансы</a>');
     }
   }

@@ -7,6 +7,7 @@ import { sendTg, escapeHtml } from "./notify.js";
 import { deadlineInfo, objTeam, money, mskToday } from "./reminders.js";
 import { salaryPaid, salaryPlan } from "./botfin.js";
 import { needStatus, needState, objectSupply } from "./supply.js";
+import { fineSum } from "./dayclose.js";
 
 const has = (roles, list) => (roles || []).some(function (r) { return list.indexOf(r) >= 0; });
 const canFin = (roles) => has(roles, ["admin", "financier"]);
@@ -64,17 +65,16 @@ export async function viewMyMoney(env, chat, uid) {
   let plan = 0, paid = 0;
   const rows = [];
   docs.forEach(function (c) {
-    const p = salaryPlan(c, uid), d = salaryPaid(st, c, me);
-    if (!p && !d) return;
+    const p = salaryPlan(c, uid), d = salaryPaid(st, c, me), f = fineSum(st.finTxns, uid, c.id);
+    if (!p && !d && !f) return;
     plan += p; paid += d;
     rows.push("• <b>" + escapeHtml(objName(c.objId)) + "</b>: выплачено " + money(d)
-      + (p ? " из " + money(p) + " · осталось <b>" + money(Math.max(0, p - d)) + "</b>" : " (плана нет)"));
+      + (p ? " из " + money(p) + (f ? " · штрафы " + money(f) : "") + " · осталось <b>" + money(Math.max(0, p - d - f)) + "</b>" : " (плана нет)"));
   });
 
   // Штрафы — только свои и только помеченные его id: чужие удержания его не касаются.
-  const fines = (st.finTxns || []).filter(function (t) {
-    return t.type === "expense" && t.userId === uid && String(t.category || "").indexOf("⚠️") === 0;
-  }).reduce(function (a, t) { return a + (Number(t.amount) || 0); }, 0);
+  // Они же уменьшают «осталось получить» — общий счёт в src/dayclose.js.
+  const fines = fineSum(st.finTxns, uid);
 
   // Сдельные расценки за работы, которые он сам отметил выполненными.
   let byWorks = 0;
@@ -92,12 +92,12 @@ export async function viewMyMoney(env, chat, uid) {
     + "Итого выплачено: <b>" + money(paid) + "</b>"
     + (plan ? "\nПлан по объектам: " + money(plan) : "")
     + (plan
-      ? (paid >= plan
-        ? "\n✅ Выплачено полностью" + (paid > plan ? " (сверх плана " + money(paid - plan) + ")" : "")
-        : "\nОсталось получить: <b>" + money(plan - paid) + "</b>")
+      ? (paid + fines >= plan
+        ? "\n✅ Выплачено полностью" + (paid + fines > plan ? " (сверх плана " + money(paid + fines - plan) + ")" : "")
+        : "\nОсталось получить: <b>" + money(plan - paid - fines) + "</b>")
       : "")
     + (byWorks ? "\nПо отмеченным вами работам: " + money(byWorks) : "")
-    + (fines ? "\n⚠️ Удержано штрафов: <b>" + money(fines) + "</b>" : "")
+    + (fines ? "\n⚠️ Удержано штрафов: <b>" + money(fines) + "</b> (вычтено из «осталось получить»)" : "")
     + link(env, "#tab=finance", "Открыть портал");
   return await sendTg(env, chat, text);
 }
@@ -167,7 +167,10 @@ function byPerson(st, docs) {
   (st.users || []).forEach(function (u) {
     let plan = 0, paid = 0;
     docs.forEach(function (c) { plan += salaryPlan(c, u.id); paid += salaryPaid(st, c, u); });
-    if (plan > 0 || paid > 0) list.push({ u: u, plan: plan, paid: paid, left: Math.max(0, plan - paid), over: Math.max(0, paid - plan) });
+    // Удержания уменьшают долг перед человеком — иначе бухгалтер увидит одну цифру,
+    // а сам человек в «Моих деньгах» другую.
+    const fines = fineSum(st.finTxns, u.id);
+    if (plan > 0 || paid > 0) list.push({ u: u, plan: plan, paid: paid, fines: fines, left: Math.max(0, plan - paid - fines), over: Math.max(0, paid + fines - plan) });
   });
   list.sort(function (a, b) { return b.left - a.left; });
   // Итог «к выплате» = сумма остатков ПО ЛЮДЯМ. Считать его как (общий план − общая выплата)
@@ -178,6 +181,7 @@ function byPerson(st, docs) {
     over: list.reduce(function (a, x) { return a + x.over; }, 0),
     text: list.map(function (x) {
       return "• " + (x.u.av || "👤") + " <b>" + escapeHtml(x.u.name) + "</b>: выплачено " + money(x.paid)
+        + (x.fines ? " · штрафы " + money(x.fines) : "")
         + (x.plan
           ? " из " + money(x.plan) + (x.over ? " · <b>переплата " + money(x.over) + "</b>" : " · осталось <b>" + money(x.left) + "</b>")
           : " (плана нет)");

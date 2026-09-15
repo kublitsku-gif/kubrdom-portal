@@ -5,9 +5,11 @@
 // Логика дедлайнов повторяет клиентскую (рабочие дни, штраф 2000 ₽/день): цифра в
 // напоминании должна совпадать с тем, что человек видит в карточке объекта.
 
-import { ensureNotifyTables, sendTg, defaultPrefs, escapeHtml, portalButton, ensureChatUi, ensureMenuButton } from "./notify.js";
+import { ensureNotifyTables, sendTg, defaultPrefs, escapeHtml, portalButton, portalUrl, ensureChatUi, ensureMenuButton } from "./notify.js";
 import { stagesNeedingAttention } from "./stages.js";
 import { pendingSelections } from "./supply.js";
+import { dayCloseState, dayFineCfg, softDay, fineStarted, hasDayFine, dayFineTxn, underDayFine, DAY_FINE_CAT } from "./dayclose.js";
+import { logEvent } from "./audit.js";
 
 const MSK_OFFSET_MS = 3 * 3600 * 1000;
 const FINE_PER_DAY = 2000;
@@ -236,6 +238,9 @@ async function runHours(env, st, today) {
     const team = objTeam(st, o.id);
     for (const p of people) {
       if (!isProd(p.user)) continue;
+      // Кто под ежедневным отчётом — получает «Закройте день» с кнопками (runDayClose)
+      // в тот же час. Два сообщения об одном и том же в 19:00 читать перестанут оба.
+      if (underDayFine(st.settings, p.uid)) continue;
       if (!team.has(p.uid)) continue;                            // только свой объект
       const text = "⏱ <b>Часы за сегодня не записаны</b>\nОбъект: «" + escapeHtml(o.name) + "», открытых работ: " + open.length + "."
         + "\n<i>Без часов галочку «сделано» поставить нельзя.</i>";
@@ -317,7 +322,12 @@ async function runFinance(env, st) {
 
   debts.sort(function (a, b) { return b.left - a.left; });
   const debtTotal = debts.reduce(function (a, d) { return a + d.left; }, 0);
-  const salLeft = Math.max(0, salPlan - salPaid);
+  // Удержания уменьшают долг перед людьми: в «Моих деньгах» человек видит остаток уже
+  // за вычетом штрафов, и сводка руководителю обязана называть ту же сумму.
+  const salHeld = txns.filter(function (t) {
+    return t.type === "expense" && t.userId && String(t.category || "").indexOf("⚠️") === 0;
+  }).reduce(function (a, t) { return a + (Number(t.amount) || 0); }, 0);
+  const salLeft = Math.max(0, salPlan - salPaid - salHeld);
   if (!debtTotal && !salLeft) return 0;
 
   const top = debts.slice(0, 5);
@@ -327,7 +337,8 @@ async function runFinance(env, st) {
   const text = "💰 <b>Финансы</b>\n"
     + "Клиенты должны: <b>" + money(debtTotal) + "</b>" + (debts.length > 5 ? " (показаны 5 крупнейших из " + debts.length + ")" : "") + "\n"
     + lines.join("\n")
-    + "\n\nЗарплата к выплате: <b>" + money(salLeft) + "</b> (план " + money(salPlan) + ", выплачено " + money(salPaid) + ")";
+    + "\n\nЗарплата к выплате: <b>" + money(salLeft) + "</b> (план " + money(salPlan) + ", выплачено " + money(salPaid)
+    + (salHeld ? ", удержано " + money(salHeld) : "") + ")";
 
   // Хеш цифр в ключе: сообщение повторится только когда суммы реально изменятся.
   const key = "fin:" + hashNums(String(debtTotal) + ":" + salLeft + ":" + debts.length);
@@ -482,6 +493,151 @@ async function runIssues(env, st, today) {
   return sent;
 }
 
+// ─── 6. ЗАКРЫТИЕ ДНЯ И ШТРАФ ЗА НЕЗАКРЫТЫЙ ───────────────────────────────────
+// Ритм: 19:00 — «закройте день», 21:00 — последнее предупреждение с суммой,
+// 09:00 следующего утра — удержание за вчера. Вечером человек ещё помнит, что делал;
+// ночь остаётся как последний шанс (в «Моём дне» дата листается назад); утреннее
+// сообщение читают все, и оно работает двумя концами — приговор за вчера и
+// напоминание про сегодня.
+//
+// Правило «день закрыт» НЕ дублируется здесь, а берётся из src/dayclose.js — того же
+// модуля, что рисует «Отчёт дня» в панели. Иначе человек видит галочку, а деньги
+// списываются.
+export function mskShift(dateStr, days) {
+  const d = new Date(dateStr + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+// Объекты, за которые человек отвечает и где ещё есть незакрытые работы. Нет таких —
+// закрывать нечего, и штрафовать не за что: договор сдан, человек между объектами.
+function activeObjectsOf(st, uid) {
+  return (st.objects || []).filter(function (o) {
+    if (!objTeam(st, o.id).has(uid)) return false;
+    return (o.stages || []).some(function (s) { return (s.works || []).some(function (w) { return !w.done; }); });
+  });
+}
+async function linkedChats(env) {
+  const rows = await env.DB.prepare("SELECT uid, chat_id FROM tg_links").all();
+  const out = {};
+  for (const r of (rows.results || [])) out[r.uid] = r.chat_id;
+  return out;
+}
+// Кнопки под напоминанием: часы — в панель (web_app), выходной и отчёт текстом —
+// прямо в чате, чтобы закрыть день одним тапом на морозе. Обрабатывает src/botday.js.
+function dayCloseButtons(env, date) {
+  return { inline_keyboard: [
+    [{ text: "⏱ Записать часы", web_app: { url: portalUrl(env, "tab=myday") } }],
+    [{ text: "🏖 Выходной", callback_data: "dc:off:" + date }],
+    [{ text: "✍️ Отчёт текстом", callback_data: "dc:note:" + date }],
+  ] };
+}
+// Кого сегодня проверяем: под штрафом, привязан к боту, есть активные объекты,
+// день не закрыт. Возвращаем всё сразу — вечерние напоминания и утренний штраф
+// обязаны отбирать людей ОДИНАКОВО, иначе напомнили одному, а удержали у другого.
+function dayCloseTargets(st, cfg, chats, date) {
+  const out = [];
+  for (const uid of cfg.uids) {
+    const u = (st.users || []).find(function (x) { return x && x.id === uid; });
+    if (!u) { DIAG.push("dayclose/" + uid + ": нет такого сотрудника в снимке"); continue; }
+    if (!chats[uid]) { DIAG.push("dayclose/" + uid + ": бот не привязан — не напоминаем и не штрафуем"); continue; }
+    const objs = activeObjectsOf(st, uid);
+    if (!objs.length) { DIAG.push("dayclose/" + uid + ": нет объектов с открытыми работами"); continue; }
+    const state = dayCloseState(st.objects || [], uid, date);
+    if (state.closed) continue;
+    out.push({ uid: uid, chat: chats[uid], user: u, objs: objs, state: state });
+  }
+  return out;
+}
+
+async function runDayClose(env, st, today, stage) {
+  const cfg = dayFineCfg(st.settings);
+  if (!cfg.enabled || !cfg.uids.length) return 0;
+  const chats = await linkedChats(env);
+  const targets = dayCloseTargets(st, cfg, chats, today);
+  const soft = softDay(cfg, today) || !fineStarted(cfg, today);
+  let sent = 0;
+
+  for (const p of targets) {
+    const text = stage === "last"
+      ? "⏰ <b>День " + today + " ещё не закрыт</b>\n"
+        + "Осталось: записать часы, отметить работу или нажать «🏖 Выходной».\n"
+        + (soft
+          ? "<i>Пока идёт мягкий запуск: утром просто напомним, удержания не будет.</i>"
+          : "Если до 09:00 ничего не появится, утром удержим <b>" + money(cfg.amount) + "</b>.")
+      : "📋 <b>Закройте день " + today + "</b>\n"
+        + "Что вы сегодня делали? Запишите часы, отметьте выполненную работу — или нажмите «🏖 Выходной».\n"
+        + (soft ? "" : "<i>Незакрытый день стоит " + money(cfg.amount) + ", проверка в 09:00.</i>");
+    if (await sendOnce(env, p, "dayclose", stage + ":" + today, text, dayCloseButtons(env, today))) sent++;
+  }
+  return sent;
+}
+
+// Утро: удержание за ВЧЕРА. Пишем одной записью в finTxns на всех — per-row запросы
+// в цикле D1 не любит, да и откат тогда получился бы половинчатым.
+async function runDayFine(env, st, date) {
+  const cfg = dayFineCfg(st.settings);
+  if (!cfg.enabled || !cfg.uids.length) return 0;
+  if (!fineStarted(cfg, date)) { DIAG.push("dayfine: " + date + " раньше даты включения " + cfg.from); return 0; }
+  const chats = await linkedChats(env);
+  const targets = dayCloseTargets(st, cfg, chats, date);
+  if (!targets.length) return 0;
+
+  const soft = softDay(cfg, date);
+  const txns = Array.isArray(st.finTxns) ? st.finTxns.slice() : [];
+  const fresh = [];
+  let sent = 0;
+
+  for (const p of targets) {
+    if (hasDayFine(txns, p.uid, date)) { DIAG.push("dayfine/" + p.uid + ": за " + date + " уже удержано"); continue; }
+    const obj = p.objs[0];
+    const doc = (st.contractDocs || []).find(function (c) {
+      return c.objId === obj.id && (c.status === "signed" || c.status === "closed");
+    });
+    if (!soft) {
+      const tx = dayFineTxn(p.uid, date, cfg.amount, obj, doc && doc.id);
+      txns.push(tx); fresh.push({ p: p, tx: tx, obj: obj });
+    }
+    const text = soft
+      ? "🟡 <b>День " + date + " остался незакрытым</b>\nСейчас идёт мягкий запуск, поэтому удержания нет — но такой день стоит <b>" + money(cfg.amount) + "</b>.\nЗакройте сегодняшний день вечером: часы, отметка работы или «🏖 Выходной»."
+      : "⚠️ <b>Удержано " + money(cfg.amount) + "</b>\nДень " + date + " не закрыт: ни часов, ни выполненных работ, ни выходного.\nШтраф уменьшает «осталось получить» по объекту «" + escapeHtml(obj.name || "—") + "».";
+    if (await sendOnce(env, p, "dayclose", (soft ? "soft:" : "fine:") + date, text,
+      portalButton(env, "tab=finance", "Открыть мои деньги"))) sent++;
+  }
+
+  if (fresh.length) {
+    await env.DB.prepare("INSERT INTO work_states (storage_key, work_id, data, updated_at) VALUES ('admin_panel','finTxns',?,?) ON CONFLICT(storage_key,work_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at")
+      .bind(JSON.stringify(txns), Date.now()).run();
+    for (const f of fresh) {
+      await logEvent(env, { uid: f.p.uid }, "finTxns", "add",
+        DAY_FINE_CAT + " · " + money(f.tx.amount) + " · " + (f.p.user.name || f.p.uid) + " · " + date,
+        "автоматически: день не закрыт");
+    }
+  }
+
+  // Руководству — одной сводкой: решение об удержании должно быть видимым, а отменить
+  // его можно тем же способом, что и любую другую запись, — удалением в финансах.
+  const bossIds = (st.users || []).filter(function (u) {
+    return (u.roles || []).some(function (r) { return r === "admin" || r === "prod_head" || r === "financier"; });
+  }).map(function (u) { return u.id; });
+  const lines = targets.map(function (p) {
+    return "• " + escapeHtml(p.user.name || p.uid) + (soft ? " — день не закрыт (мягкий запуск)" : " — " + money(cfg.amount));
+  });
+  if (lines.length) {
+    for (const uid of bossIds) {
+      if (!chats[uid]) continue;
+      if (cfg.uids.indexOf(uid) >= 0) continue;                 // сам под штрафом — уже получил личное
+      const who = { uid: uid, chat: chats[uid], user: (st.users || []).find(function (x) { return x.id === uid; }) };
+      const head = soft
+        ? "🟡 <b>Дни без отчёта за " + date + "</b>\n"
+        : "⚠️ <b>Удержания за " + date + "</b>\n";
+      if (await sendOnce(env, who, "dayclose", "digest:" + date, head + lines.join("\n")
+        + "\n\n<i>Отменить — удалить запись в финансах объекта.</i>",
+        portalButton(env, "tab=finance", "Открыть финансы"))) sent++;
+    }
+  }
+  return sent;
+}
 // ─── Точка входа для крона ───────────────────────────────────────────────────
 // cronExpr — то, что пришло в scheduled(event.cron); разные часы = разные наборы.
 export async function runReminders(env, cronExpr, diag) {
@@ -489,7 +645,7 @@ export async function runReminders(env, cronExpr, diag) {
   await ensureMenuButton(env);                       // кнопка «Портал» у поля ввода бота
   DIAG.length = 0;
   const today = mskToday();
-  const st = await loadState(env, ["objects", "users", "contractDocs", "purchased", "arrived", "finTxns", "issues"]);
+  const st = await loadState(env, ["objects", "users", "contractDocs", "purchased", "arrived", "finTxns", "issues", "settings"]);
   DIAG.push("снимок: объектов " + ((st.objects || []).length) + ", сотрудников " + ((st.users || []).length) + ", договоров " + ((st.contractDocs || []).length) + ", дата " + today);
   let sent = 0;
   if (cronExpr === "0 6 * * *") {                    // 09:00 МСК — утро
@@ -499,8 +655,12 @@ export async function runReminders(env, cronExpr, diag) {
     sent += await runSupply(env, st, today);
     sent += await runIssues(env, st, today);
     sent += await runFinance(env, st);
+    sent += await runDayFine(env, st, mskShift(today, -1));   // удержание за вчера
   } else if (cronExpr === "0 16 * * *") {            // 19:00 МСК — вечер
+    sent += await runDayClose(env, st, today, "evening");
     sent += await runHours(env, st, today);
+  } else if (cronExpr === "0 18 * * *") {            // 21:00 МСК — последнее предупреждение
+    sent += await runDayClose(env, st, today, "last");
   } else if (cronExpr === "0 17 * * *") {            // 20:00 МСК — сводка
     sent += await runDaily(env, st, today);
   }

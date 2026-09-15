@@ -19,6 +19,9 @@ export const NOTIFY_KINDS = {
   daily:    { n: "Сводка дня",           d: "вечером одним сообщением: что сделано, часы, что горит",          roles: ["admin", "financier", "prod_head"] },
   finance:  { n: "Финансы",              d: "долги клиентов и зарплата к выплате — когда суммы изменились",     roles: ["admin", "financier"] },
 };
+// Вида «dayclose» здесь намеренно НЕТ: за незакрытый день удерживают деньги, и личная
+// галочка «не беспокоить» не должна оборачиваться штрафом без предупреждения. Кому идут
+// эти сообщения, решает список settings.dayFine.uids в панели — см. src/dayclose.js.
 
 let _ready = false;
 export async function ensureNotifyTables(env) {
