@@ -24688,12 +24688,14 @@ const FIN_EXPENSE_CATS=["📦 Закупка материалов","📦 Дос�
 // Role-based category filtering for "+Транзакция" button
 // Get all object IDs accessible to a user:
 // (1) explicitly assigned via u.objs, OR
-// (2) implicitly assigned via being responsible in any contract for that object
+// (2) implicitly assigned via being responsible in any NOT archived contract for that object.
+// Архивный договор доступа не даёт: черновик, собранный по спецификации и убранный в архив,
+// открывал объект бригадиру, которого подставили ответственным по умолчанию.
 function getUserObjects(user){
   if(!user)return [];
   const explicit=user.objs||[];
   const fromContracts=contractDocs
-    .filter(function(c){return (c.responsible||[]).includes(user.id);})
+    .filter(function(c){return !c.archived&&(c.responsible||[]).includes(user.id);})
     .map(function(c){return c.objId;});
   // Union (dedup)
   const all=explicit.concat(fromContracts);
