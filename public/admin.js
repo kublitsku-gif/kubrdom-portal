@@ -69,6 +69,7 @@ import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 import { plinthOptions, plinthPieceLen, isPlinthMat } from "../src/plinth.js";
+import { installInPageCamera } from "../src/camera.js";
 
 const APP_BUILD = "2026-09-11.10";
 
@@ -31402,6 +31403,8 @@ function applyDeepLink(){
 }
 
 (async function boot(){
+  // «Снять фото/видео» во встроенном браузере Android открывал галерею — снимаем сами (src/camera.js).
+  try{ installInPageCamera(window); }catch(e){ console.error("camera", e); }
   // Открыли из Telegram: входим по его подписи, если действующего токена сотрудника на
   // этом устройстве нет. Не вышло (не привязан, нет сети) — обычный экран входа с причиной.
   if (TG_INIT_DATA){

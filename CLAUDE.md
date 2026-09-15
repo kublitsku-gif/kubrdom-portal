@@ -91,3 +91,4 @@
 | какой набор `tools/test-*.mjs` что сторожит, панель в `node:vm` | `docs/domain/tests.md` | `tools/run-tests.mjs`, `tools/harness/` |
 | вкладка «🕘 История», журнал `audit_log` | `docs/domain/audit-history.md` | `src/audit.js`, `tHistory` |
 | офлайн-очередь фото в IndexedDB | `docs/domain/photo-queue.md` | раздел «ОЧЕРЕДЬ ЗАГРУЗКИ ФОТО» в admin.js |
+| «Снять фото/видео» открывал галерею в Telegram на Android, своя камера | `docs/domain/camera.md` | `src/camera.js` |
