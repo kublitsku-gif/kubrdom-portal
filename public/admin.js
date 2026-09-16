@@ -51,7 +51,8 @@ import { CONTAINERS, MIN_ROOM, FINISH_THICK, containerMeta, emptyModel, applyCon
   modelToSpecs, modelTotals, modelIssues, modelScheme, modelAreas, modelWalls, snapWall, addWall, headSill, alignHeads, partitionAt, INNER_DOOR,
   WIN_CATALOG, winCatItem, winFace, winTypeFrom, frameNeeded, JAMB_TUBE, JAMB_TUBE_CROSS, JAMB_GAP_MIN, JAMB_GAP,
   WALL_LAYERS, SKIN_LAYERS, wallLayers, skinLayers, layersThick, applyLayers,
-  MODEL_PRESETS, modelPreset, presetModel } from "../src/model.js";
+  MODEL_PRESETS, modelPreset, presetModel,
+  isFlat, emptyFlat, FLAT_HEIGHT } from "../src/model.js";
 // «Спецификация 2» — опытный раздел: свои листы, свой критерий готовности, общие деньги.
 import { totals2, issues2, works2 } from "../src/spec2.js";
 import { priceHist, priceWas, pricePush, priceStale, refreshPrices } from "../src/prices.js";
@@ -66,7 +67,7 @@ import { allPositions, allPositionsRaw, addedPositions, guessVolume, carryRuleEd
 import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
 import { SHELVES_DEFAULT, labelWorks, labelUnits, shelfLayout, shelfPages, houseNums, labelSheetCount, matPinKey } from "../src/labels.js";
 import { isoScene } from "../src/iso.js";
-import { planNormalize, planToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
+import { planNormalize, planToModel, flatNormalize, flatToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 import { plinthOptions, plinthPieceLen, isPlinthMat } from "../src/plinth.js";
 import { installInPageCamera } from "../src/camera.js";
@@ -773,6 +774,9 @@ let modelRead=null;         // {sheetId, plan, warnings} — прочитанн�
 async function modelPlanRecognize(sh){
   const files=planFiles(sh);
   if(modelReadBusy||!files.length)return;
+  // Дом и квартиру читают разные читатели: у дома спрашивают геометрию, у квартиры —
+  // экспликацию. Что перед нами, знает сама модель листа, а не человек с кнопкой.
+  const flat=isFlat(sh.model);
   modelReadBusy=true; modelRead=null; fl();
   try{
     // Все листы уходят ОДНИМ запросом: дом на них один, и сшивать прочитанное по
@@ -781,7 +785,7 @@ async function modelPlanRecognize(sh){
     files.forEach(function(f){ names[f.url]=f.name||""; });
     const r=await fetch(API_BASE+"/api/plan-read",{
       method:"POST", headers:authHeaders({"Content-Type":"application/json"}),
-      body:JSON.stringify({ keys:files.map(function(f){return f.url;}), names:names })
+      body:JSON.stringify({ keys:files.map(function(f){return f.url;}), names:names, kind:flat?"flat":"house" })
     });
     const j=await r.json().catch(function(){ return null; });
     if(!j||!j.success){
@@ -793,7 +797,15 @@ async function modelPlanRecognize(sh){
     }
     // Нормализуем ещё раз на своей стороне: сервер отдаёт то же самое, но панель
     // не обязана верить сети на слово — она рисует по этим числам.
-    const norm=planNormalize({
+    const norm=flat?flatNormalize({
+      length:j.plan.length, width:j.plan.width, height:j.plan.height,
+      partitions_len:j.plan.partLen,
+      rooms:(j.plan.rooms||[]).map(function(r){ return { name:r.name, area:r.area, perimeter:r.perimeter, w:r.w, l:r.l }; }),
+      openings:(j.plan.openings||[]).map(function(o){
+        return { kind:o.kind, room:o.room, room2:o.room2, width:o.w, height:o.h, sill:o.sill, label:o.label };
+      }),
+      notes:j.plan.notes,
+    }):planNormalize({
       length:j.plan.length, width:j.plan.width, height:j.plan.height,
       bays:(j.plan.bays||[]).map(function(b){ return { name:b.name, len:b.len }; }),
       walls:(j.plan.walls||[]).slice(),
@@ -804,7 +816,7 @@ async function modelPlanRecognize(sh){
       notes:j.plan.notes,
     });
     // Кто читал — часть ответа: человек сверяет метры и должен знать, чьи они.
-    modelRead={ sheetId:sh.id, plan:norm.plan, warnings:(j.warnings||[]).concat(norm.warnings),
+    modelRead={ sheetId:sh.id, flat:flat, plan:norm.plan, warnings:(j.warnings||[]).concat(norm.warnings),
       model:j.model||"", provider:j.provider||"", files:files.map(function(f){return f.name||"лист";}) };
   }catch(err){
     alert("Не удалось прочитать планировку: "+((err&&err.message)||err));
@@ -821,7 +833,13 @@ async function modelPlanRecognize(sh){
 function projStartRead(pid){
   const pr=specSheet(pid);
   if(!pr||!planFiles(pr).length)return false;
-  specOpenId=pr.id; modelFull=true; modelTool="sel"; fl();
+  specOpenId=pr.id;
+  // Дом читают в редакторе — там подложка, по которой сверяют начерченное.
+  // Квартиру сверять не с чем: чертить её портал не умеет и не должен, и сверка
+  // ложится прямо на полосу «Чертёж», где стоит таблица помещений.
+  if(isFlat(pr.model)){ projOpenId=pr.id; projBand="plan"; }
+  else { modelFull=true; modelTool="sel"; }
+  fl();
   modelPlanRecognize(pr);
   return true;
 }
@@ -830,7 +848,7 @@ function projStartRead(pid){
 // планировку у нас»; предыдущая уходит в «Вернуть», как любая другая правка.
 function modelReadApply(sh){
   if(!modelRead||!sh||modelRead.sheetId!==sh.id)return;
-  const r=planToModel(modelRead.plan, winTypes, gid);
+  const r=modelRead.flat?flatToModel(modelRead.plan, winTypes, gid):planToModel(modelRead.plan, winTypes, gid);
   // Подложка переезжает в новую модель: по ней и сверяют прочитанное, а начерченное
   // поверх неё без неё превращается в «поверьте на слово».
   if(sh.model&&sh.model.under)r.model.under=sh.model.under;
@@ -11964,14 +11982,15 @@ function modelReadPanel(sh){
   // Предпросмотр считаем ТОЙ ЖЕ функцией, что и применение: иначе панель обещает
   // одно, а на чертёж встаёт другое. Номера изделий берём свои — настоящие
   // родятся при применении, а тратить их на показ незачем.
+  const flat=!!modelRead.flat;
   let pv=0;
-  const prev=planToModel(p, winTypes, function(){ return "prev"+(++pv); });
+  const prev=(flat?flatToModel:planToModel)(p, winTypes, function(){ return "prev"+(++pv); });
   // Метры с запятой, как их пишут на чертеже: «2 м» и «2.00 m» читаются как чужие
   // числа, а сверять человеку придётся именно глазами.
   const mm=function(v){ return v?(numRu(Math.round(v/10)/100)+" м"):"—"; };
   const row=function(a,b){ return '<div style="display:flex;gap:10px;font-size:12.5px;padding:4px 0;border-bottom:1px solid #eef3f8"><span style="flex:1;color:#5a7a9a">'+esc(a)+'</span><span style="font-weight:700;color:#0d1b2e">'+esc(b)+'</span></div>'; };
   const SIDES={n:"длинная стена (верх)",s:"длинная стена (низ)",w:"торец слева",e:"торец справа",part:"перегородка",wall:"кусок стены"};
-  let h='<div style="position:absolute;inset:0;background:rgba(13,27,46,.72);display:flex;align-items:center;justify-content:center;padding:18px;z-index:20">'+
+  let h='<div style="position:'+(flat?"fixed":"absolute")+';inset:0;background:rgba(13,27,46,.72);display:flex;align-items:center;justify-content:center;padding:18px;z-index:20">'+
     '<div style="background:#fff;border-radius:14px;max-width:560px;width:100%;max-height:100%;overflow:auto;padding:18px">'+
     '<div style="font-size:15px;font-weight:800;color:#0d1b2e;margin-bottom:4px">Прочитано с планировки</div>'+
     '<div style="font-size:12px;color:#7a9aaa;margin-bottom:12px">Сверьте с чертежом заказчика — по этим размерам считается смета.'+
@@ -11980,25 +11999,45 @@ function modelReadPanel(sh){
     ? '<div style="font-size:11.5px;color:#9aabbf;margin-bottom:10px">Прочитано по '+modelRead.files.length+' листам: '+esc(modelRead.files.join(", "))+'</div>'
     : "")+
     '<div style="margin-bottom:12px">'+
-      row("Длина дома", mm(p.length))+row("Ширина", mm(p.width))+row("Высота помещений", mm(p.height))+
+      (flat
+        ? row("Габарит квартиры", (p.length&&p.width)?(mm(p.length)+" × "+mm(p.width)):"—")+
+          row("Высота помещений", mm(p.height))+
+          // Перегородки у квартиры — отдельные деньги, и посчитать их по площадям
+          // нельзя: на листе это ломаная, а не «столько-то стен».
+          row("Возводимые перегородки", p.partLen?(numRu(p.partLen)+" м.п."):"не прочитаны")
+        : row("Длина дома", mm(p.length))+row("Ширина", mm(p.width))+row("Высота помещений", mm(p.height)))+
     '</div>';
   // Площадь с чертежа — бесплатная проверка чтения: сошлась с нашей — длины
   // прочитаны верно. Поэтому показываем ОБА числа рядом, а не только своё.
   h+='<div style="font-size:12px;font-weight:800;color:#5a7a9a;margin:10px 0 4px">ПОМЕЩЕНИЯ</div>'+
-    (prev.areas&&prev.areas.length
+    (flat
+      ? ((prev.model.rooms||[]).length
+        ? (prev.model.rooms||[]).map(function(r){
+            const chk=prev.areas.find(function(a){ return a.name===r.name; })||{};
+            // Подписанная площадь — слева, потому что она и поедет в смету.
+            // Справа — что вышло по прочитанным размерам: сошлось, значит цепочку
+            // прочитали верно. Не сошлось — человек увидит оба числа рядом.
+            const bad=chk.said&&chk.got&&Math.abs(chk.got-chk.said)>0.3&&Math.abs(chk.got-chk.said)/chk.said>0.05;
+            return row(r.name, numRu(r.floor)+" м²"+
+              (r.wallLen?(" · периметр "+numRu(r.wallLen)+" м"):' · <span style="color:#c0392b">периметра нет</span>')+
+              (bad?(' · <span style="color:#b9770e">по размерам '+numRu(chk.got)+" м²</span>"):""));
+          }).join("")+
+          row("Итого пола", numRu(Math.round((prev.model.rooms||[]).reduce(function(a,r){return a+(Number(r.floor)||0);},0)*100)/100)+" м²")
+        : '<div style="font-size:12.5px;color:#c0392b">экспликация не прочиталась</div>')
+      : prev.areas&&prev.areas.length
       ? prev.areas.map(function(a){
           const bad=a.said&&Math.abs(a.got-a.said)>0.3&&Math.abs(a.got-a.said)/a.said>0.05;
           return row(a.name, (a.said?(numRu(a.said)+" м² по чертежу · "):"")+
             (a.got?(bad?"у нас "+numRu(a.got):numRu(a.got)):"не нашлось")+(a.got?" м²":""));
         }).join("")
-      : (p.bays.length?p.bays.map(function(b){ return row(b.name, mm(b.len)); }).join("")
+      : ((p.bays||[]).length?p.bays.map(function(b){ return row(b.name, mm(b.len)); }).join("")
         :'<div style="font-size:12.5px;color:#c0392b">не прочитались</div>'));
   // Окна и двери показываем ПАРОЙ: что нарисовано и что поедет в заказ. Дом
   // собирают из каталога, и «1450×1300 по чертежу» купить негде — в заказ уйдёт
   // ближайшее, и увидеть эту подмену человек обязан здесь, а не в спецификации.
   h+='<div style="font-size:12px;font-weight:800;color:#5a7a9a;margin:12px 0 4px">ОКНА И ДВЕРИ</div>'+
     (prev.picks.length?prev.picks.map(function(k){
-        const head=(k.kind==="door"?"🚪 ":"🪟 ")+(k.label||(k.w+"×"+k.h))+" · "+(SIDES[k.side]||k.side);
+        const head=(k.kind==="door"?"🚪 ":"🪟 ")+(k.label||(k.w+"×"+k.h))+" · "+(flat?String(k.side||"без помещения"):(SIDES[k.side]||k.side));
         const swap=k.same
           ? '<span style="font-weight:700;color:#0d1b2e">'+k.tw+'×'+k.th+'</span>'
           : '<span style="color:#b9770e">'+k.w+'×'+k.h+'</span> <span style="color:#9aabbf">→</span> <span style="font-weight:700;color:#0d1b2e">'+k.tw+'×'+k.th+'</span>';
@@ -17205,6 +17244,13 @@ const PROJ_BANDS=[
 const PROJ_COL="#16a085";
 function projBandMeta(){ return PROJ_BANDS.find(function(b){return b[0]===projBand;})||PROJ_BANDS[0]; }
 function projTypes(){ return winTypes; }
+// Вид сметы для новой квартиры. Вид — не тип модели: по нему подбираются сметы и
+// правила сборки, и заводят его люди в разделе «Виды». Подсказываем тот, что уже
+// назван квартирой; нет такого — первый, и человек поправит селектором.
+function flatKindDefault(){
+  const own=EST_KINDS.find(function(k){ return /кварт|апартам/i.test(k.n||""); });
+  return (own||EST_KINDS[0]||{k:"house"}).k;
+}
 function projTot(p){ return specTot(p); }
 function projAreas(p){ return p&&p.model?modelAreas(p.model, winTypes):null; }
 function projObj(p){ return p&&p.objId?objects.find(function(o){return o.id===p.objId;}):null; }
@@ -17216,8 +17262,33 @@ function projNewFormHtml(){
     '<div style="font-size:10px;font-weight:700;color:'+PROJ_COL+';letter-spacing:0.5px;margin-bottom:8px">НОВЫЙ ПРОЕКТ</div>'+
     '<input id="proj-n-name" value="'+esc(n.name||"")+'" placeholder="Название (например: Дом Ивановых)" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:8px">'+
     '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:5px">С ЧЕГО НАЧАТЬ</div>'+
-    modelPresetTiles("proj-n-preset", (n.preset||MODEL_PRESETS[0].k), PROJ_COL)+
-    '<div style="font-size:10px;color:#a0b4c8;margin:2px 0 9px;line-height:1.45">Заготовка — уже начерченный контейнер: отсеки, длины и проёмы стоят, дальше их двигают в редакторе. Если приложите чертёж заказчика, дом прочитается с него, а заготовка останется запасным вариантом.</div>'+
+    // Дом и квартира — разные вещи с самого начала: дом портал ЧЕРТИТ заготовкой
+    // и двигает в ней перегородки, квартиру он принимает замером с чужого листа.
+    // Спросить об этом надо здесь: после создания тип менять нечем — у дома и
+    // квартиры не совпадает ни модель, ни чертёж, ни редактор.
+    '<div style="display:flex;gap:7px;margin-bottom:8px">'+
+      [["house","🧱 Дом из контейнера","коробка, отсеки, проёмы"],
+       ["flat","🏢 Квартира","площади из экспликации"]].map(function(t){
+        const on=((n.kind||"house")===t[0]);
+        return '<button data-a="proj-n-kind" data-k="'+t[0]+'" style="flex:1;border:2px solid '+(on?PROJ_COL:"#e2e8f0")+';background:'+(on?PROJ_COL+"0f":"#fff")+';border-radius:11px;padding:9px 8px;cursor:pointer;text-align:left">'+
+          '<div style="font-size:12.5px;font-weight:800;color:#0d1b2e">'+t[1]+'</div>'+
+          '<div style="font-size:10.5px;color:#9aabbf;margin-top:2px">'+t[2]+'</div></button>';
+      }).join("")+
+    '</div>'+
+    ((n.kind==="flat")
+      ? '<div style="font-size:10.5px;color:#a0b4c8;margin:2px 0 9px;line-height:1.45">У квартиры заготовки нет: её планировку нарисовал дизайнер, и портал принимает его замер. Приложите листы — прочитаем экспликацию; можно и вписать помещения руками.</div>'+
+        // Вид сметы спрашиваем здесь: по нему подбираются сметы и правила, и
+        // квартира, заведённая видом «Дом», собрала бы состав контейнера.
+        '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:5px">ВИД СМЕТЫ</div>'+
+        '<select id="proj-n-kind-est" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:4px">'+
+          EST_KINDS.map(function(k){
+            const on=((n.estKind||flatKindDefault())===k.k);
+            return '<option value="'+esc(k.k)+'"'+(on?" selected":"")+'>'+esc((k.emoji?k.emoji+" ":"")+k.n)+'</option>';
+          }).join("")+
+        '</select>'+
+        '<div style="font-size:10px;color:#a0b4c8;margin:0 0 9px;line-height:1.45">По виду подбираются сметы и правила сборки. Нет подходящего — заведите его в «Видах».</div>'
+      : modelPresetTiles("proj-n-preset", (n.preset||MODEL_PRESETS[0].k), PROJ_COL))+
+    ((n.kind==="flat")?"":'<div style="font-size:10px;color:#a0b4c8;margin:2px 0 9px;line-height:1.45">Заготовка — уже начерченный контейнер: отсеки, длины и проёмы стоят, дальше их двигают в редакторе. Если приложите чертёж заказчика, дом прочитается с него, а заготовка останется запасным вариантом.</div>')+
     // Планировка заказчика — подложкой под наш чертёж: по ней ставят стены, и она же
     // остаётся в проекте как исходник, с которым сверяют результат.
     '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:5px">ПЛАНИРОВКА ЗАКАЗЧИКА (необязательно)</div>'+
@@ -17285,9 +17356,99 @@ function projBandsHtml(){
   '<div style="font-size:10.5px;color:#9aabbf;line-height:1.45;margin-bottom:8px">'+esc(projBandMeta()[2])+'</div>';
 }
 
+// Полоса «Чертёж» у КВАРТИРЫ. Чертить тут нечего и нельзя: планировку нарисовал
+// дизайнер, портал хранит его замер. Поэтому вместо схемы — лист заказчика и
+// таблица помещений, в которой те же метры можно поправить руками: обмер уточняют
+// рулеткой чаще, чем перечерчивают план.
+function projFlatPlanHtml(p){
+  const m=p.model||{};
+  const rooms=m.rooms||[];
+  const num=function(v){ return (v===""||v==null)?"":String(v); };
+  const fld=function(f,val,ph,w){
+    return '<input data-a="flat-head" data-id="'+p.id+'" data-f="'+f+'" inputmode="decimal" value="'+esc(num(val))+'" placeholder="'+esc(ph)+'" '+
+      'style="width:'+(w||"74px")+';padding:7px 8px;border-radius:8px;border:1px solid #d0dae8;font-size:12.5px;outline:none;box-sizing:border-box;text-align:right">';
+  };
+  let h='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:12px 13px;margin-bottom:9px">'+
+    '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:8px">КВАРТИРА</div>'+
+    '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:12px;color:#5a7a9a">'+
+      '<span>Габарит, мм</span>'+fld("l",m.l,"длина")+'<span>×</span>'+fld("w",m.w,"ширина")+
+      '<span style="margin-left:6px">Высота, мм</span>'+fld("h",m.h,"2700")+
+      '<span style="margin-left:6px">Перегородки, м.п.</span>'+fld("partLen",m.partLen,"0")+
+    '</div>'+
+    '<div style="font-size:10.5px;color:#a0b4c8;line-height:1.45;margin-top:7px">Габарит — проверка чтения, а не данные: смета считается по площадям помещений. '+
+      'Перегородки — только ВОЗВОДИМЫЕ, погонными метрами с плана: из площадей их не вывести.</div>'+
+  '</div>';
+
+  // Таблица помещений. Площадь и периметр — то, из чего считается ВСЯ смета, и
+  // стоят они первыми; ширина с длиной идут следом и ни на что не влияют, кроме
+  // проверки: перемножили и сравнили с подписанной площадью.
+  h+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:12px 13px;margin-bottom:9px">'+
+    '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:8px">'+
+      '<span style="flex:1;font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px">ПОМЕЩЕНИЯ ПО ЭКСПЛИКАЦИИ</span>'+
+      '<span style="font-size:12px;font-weight:800;color:#0d1b2e">'+numRu(Math.round(rooms.reduce(function(a,r){return a+(Number(r.floor)||0);},0)*100)/100)+' м²</span>'+
+    '</div>';
+  if(!rooms.length){
+    h+='<div style="font-size:12.5px;color:#7a9aaa;line-height:1.5">Помещений нет. Приложите планировку заказчика и нажмите «Распознать» — площади встанут из экспликации. Или добавьте помещение руками.</div>';
+  }else{
+    const cell=function(rid,f,val,ph,flex){
+      return '<input data-a="flat-room" data-id="'+p.id+'" data-rid="'+rid+'" data-f="'+f+'" '+(f==="name"?'':'inputmode="decimal" ')+
+        'value="'+esc(num(val))+'" placeholder="'+esc(ph)+'" style="'+(flex||"width:62px")+';padding:6px 7px;border-radius:7px;border:1px solid #e2e8f0;font-size:12px;outline:none;box-sizing:border-box'+(f==="name"?"":";text-align:right")+'">';
+    };
+    h+='<div style="display:flex;gap:5px;font-size:9.5px;color:#9aabbf;font-weight:700;letter-spacing:0.3px;padding:0 0 4px">'+
+        '<span style="flex:1;min-width:0">ПОМЕЩЕНИЕ</span><span style="width:62px;text-align:right">ПОЛ, м²</span>'+
+        '<span style="width:62px;text-align:right">ПЕРИМ., м</span><span style="width:62px;text-align:right">Ш, мм</span>'+
+        '<span style="width:62px;text-align:right">Д, мм</span><span style="width:26px"></span>'+
+      '</div>';
+    h+=rooms.map(function(r){
+      // Площадь по размерам — не данные, а сверка: разошлась с подписанной, значит
+      // где-то не тот размер, и человек видит это прямо в строке.
+      const bySize=(Number(r.w)&&Number(r.l))?Math.round(Number(r.w)*Number(r.l)/1000000*100)/100:0;
+      const said=Number(r.floor)||0;
+      const bad=said&&bySize&&Math.abs(bySize-said)>0.3&&Math.abs(bySize-said)/said>0.05;
+      return '<div style="display:flex;gap:5px;align-items:center;padding:3px 0">'+
+          cell(r.id,"name",r.name,"Название","flex:1;min-width:0")+
+          cell(r.id,"floor",r.floor,"—")+cell(r.id,"wallLen",r.wallLen,"—")+
+          cell(r.id,"w",r.w,"—")+cell(r.id,"l",r.l,"—")+
+          '<button data-a="flat-room-del" data-id="'+p.id+'" data-rid="'+r.id+'" title="Убрать помещение" style="width:26px;flex-shrink:0;border:none;background:transparent;color:#c0b0b8;font-size:14px;cursor:pointer">🗑</button>'+
+        '</div>'+
+        (bad?'<div style="font-size:10.5px;color:#b9770e;padding:0 0 4px 2px">по размерам выходит '+numRu(bySize)+' м² — где-то не тот размер; в смету идёт '+numRu(said)+' м²</div>':"");
+    }).join("");
+  }
+  h+='<button data-a="flat-room-add" data-id="'+p.id+'" style="width:100%;margin-top:8px;padding:8px;background:#f6f8fa;border:1px dashed #cfd9e6;border-radius:9px;cursor:pointer;color:#5a7a9a;font-size:12px;font-weight:700">+ Помещение</button>'+
+  '</div>';
+
+  // Лист заказчика и чтение с него — рядом друг с другом: кнопка обязана стоять
+  // там, где лежит то, что она прочтёт.
+  const pf=planFiles(p);
+  h+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:12px 13px;margin-bottom:9px">'+
+    '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:8px">ПЛАНИРОВКА ЗАКАЗЧИКА</div>'+
+    (pf.length
+      ? pf.map(function(f){ return '<div style="font-size:12.5px;padding:3px 0"><a href="'+esc(f.url)+'" target="_blank" rel="noopener" style="color:#2980b9;text-decoration:none">📄 '+esc(f.name||"лист")+'</a></div>'; }).join("")
+      : '<div style="font-size:12.5px;color:#7a9aaa">Листов нет — приложите план, чтобы портал прочитал экспликацию.</div>')+
+    '<input id="flat-plan-add" type="file" accept="image/*,application/pdf" multiple style="display:none">'+
+    '<div style="display:flex;gap:7px;margin-top:9px">'+
+      '<button data-a="flat-plan-add" data-id="'+p.id+'" style="padding:9px 13px;background:#fff;border:1px solid #d0dae8;border-radius:9px;cursor:pointer;color:#5a7a9a;font-size:12.5px;font-weight:700">＋ Лист</button>'+
+      (pf.length?'<button data-a="flat-read" data-id="'+p.id+'"'+(modelReadBusy?' disabled':'')+' style="flex:1;padding:9px 13px;background:'+PROJ_COL+';border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700">'+
+        (modelReadBusy?"Читаю…":("🔍 Распознать — "+pf.length+" лист"+(pf.length===1?"":(pf.length<5?"а":"ов"))))+'</button>':"")+
+    '</div>'+
+    '<div style="font-size:10.5px;color:#a0b4c8;line-height:1.45;margin-top:7px">Читается ЭКСПЛИКАЦИЯ: площади берутся подписанными, а не пересчитываются по размерам. Прочитанное покажем на сверку — применяет человек.</div>'+
+  '</div>';
+
+  h+=areasCardHtml(p.model, winTypes);
+  const iss=modelIssues(p.model, winTypes);
+  if(iss.length){
+    h+='<div style="background:#fff4e5;border:1px solid #f0c99a;border-radius:11px;padding:10px 12px;margin-bottom:9px">'+
+      '<div style="font-size:10px;font-weight:800;color:#b9770e;letter-spacing:0.5px;margin-bottom:4px">ПРОВЕРЬТЕ</div>'+
+      iss.map(function(t){ return '<div style="font-size:12.5px;color:#7a5a2a;padding:2px 0">• '+esc(t)+'</div>'; }).join("")+
+    '</div>';
+  }
+  return h+modelReadPanel(p);
+}
+
 // Полоса «Чертёж»: та же схема, тот же оверлей и та же печать, что в опытном
 // разделе, — рисует их один код, и распечатка не может показать вчерашний дом.
 function projPlanHtml(p){
+  if(isFlat(p.model))return projFlatPlanHtml(p);
   if(!p.model)return '<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:16px;font-size:12.5px;color:#7a9aaa">У проекта нет модели — считать нечего.</div>';
   return (schemeView==="dim"
       ? '<button data-a="spec2-print" style="width:100%;padding:10px;background:#0d1b2e;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700;margin-bottom:9px">🖨 Печать для бригады — чертёж, узлы и таблицы</button>'
@@ -28167,15 +28328,76 @@ function bind(){
     else if(a==="proj-new-cancel"){el.onclick=()=>{ projNew=null; render(); };}
     else if(a==="proj-n-preset"){el.onclick=()=>{ presetFormStash();
       projNew=Object.assign({},projNew||{},{k:0,preset:el.dataset.k}); render(); };}
+    else if(a==="proj-n-kind"){el.onclick=()=>{
+      projNew=Object.assign({}, projNew||{}, { kind:el.dataset.k||"house" });
+      fl();
+    };}
+    // ── КВАРТИРА: ПРАВКА ЗАМЕРА ────────────────────────────────────────────
+    // Обмер уточняют рулеткой чаще, чем перечерчивают план, поэтому те же метры,
+    // что пришли с листа, правятся прямо в таблице. Каждая правка идёт через
+    // modelSync: смета считается по specs, и разъехаться им нельзя.
+    else if(a==="flat-head"){el.onchange=()=>{
+      const pr=proj(el.dataset.id); if(!pr||!isFlat(pr.model))return;
+      const f=el.dataset.f, v=el.value.replace(",",".").trim();
+      pr.model=Object.assign({}, pr.model, { [f]: (v===""?0:Number(v)||0) });
+      modelSync(pr); rerenderTab();
+    };}
+    else if(a==="flat-room"){el.onchange=()=>{
+      const pr=proj(el.dataset.id); if(!pr||!isFlat(pr.model))return;
+      const rid=el.dataset.rid, f=el.dataset.f;
+      const v=(f==="name")?el.value:el.value.replace(",",".").trim();
+      pr.model=Object.assign({}, pr.model, {
+        rooms:(pr.model.rooms||[]).map(function(r){
+          return r.id!==rid?r:Object.assign({}, r, { [f]:(f==="name")?v:(v===""?0:Number(v)||0) });
+        }),
+      });
+      modelSync(pr); rerenderTab();
+    };}
+    else if(a==="flat-room-add"){el.onclick=()=>{
+      const pr=proj(el.dataset.id); if(!pr||!isFlat(pr.model))return;
+      pr.model=Object.assign({}, pr.model, {
+        rooms:(pr.model.rooms||[]).concat([{ id:gid(), name:"", w:0, l:0, floor:0, wallLen:0, pts:{} }]),
+      });
+      modelSync(pr); rerenderTab();
+    };}
+    else if(a==="flat-room-del"){el.onclick=()=>{
+      const pr=proj(el.dataset.id); if(!pr||!isFlat(pr.model))return;
+      const rid=el.dataset.rid;
+      const gone=(pr.model.rooms||[]).find(function(r){return r.id===rid;})||{};
+      if(!confirm("Убрать «"+(gone.name||"помещение")+"»? Его метры уйдут из сметы."))return;
+      // Проёмы убранного помещения уходят вместе с ним: проём без своей комнаты
+      // не попадёт никуда и будет молча висеть в модели.
+      pr.model=Object.assign({}, pr.model, {
+        rooms:(pr.model.rooms||[]).filter(function(r){return r.id!==rid;}),
+        openings:(pr.model.openings||[]).filter(function(o){return o.roomId!==rid;}),
+      });
+      modelSync(pr); rerenderTab();
+    };}
+    else if(a==="flat-plan-add"){el.onclick=()=>{
+      const fi=document.getElementById("flat-plan-add"); if(!fi)return;
+      const pid=el.dataset.id;
+      fi.onchange=function(){ attachPlanFiles(pid, fi.files).then(function(){ fl(); }); };
+      fi.click();
+    };}
+    else if(a==="flat-read"){el.onclick=()=>{
+      const pr=proj(el.dataset.id); if(!pr)return;
+      specOpenId=pr.id;
+      modelPlanRecognize(pr);
+    };}
     else if(a==="proj-create"){el.onclick=()=>{
       const name=((document.getElementById("proj-n-name")||{}).value||"").trim();
       const clientId=((document.getElementById("proj-n-client")||{}).value||"");
-      const pr=MODEL_PRESETS.find(function(x){return x.k===((projNew&&projNew.preset)||MODEL_PRESETS[0].k);})||MODEL_PRESETS[0];
-      const r=presetModel(pr, winTypes, gid);
+      const flat=((projNew&&projNew.kind)==="flat");
+      // У квартиры заготовки нет и быть не может: её обмерили, и пустая модель
+      // ждёт замер — с листа или из рук. Подсовывать ей контейнер значит начать
+      // проект с площадей, которых в квартире нет.
+      const pr=flat?null:((MODEL_PRESETS.find(function(x){return x.k===((projNew&&projNew.preset)||MODEL_PRESETS[0].k);}))||MODEL_PRESETS[0]);
+      const r=flat?{ model:emptyFlat(), winTypes:winTypes }:presetModel(pr, winTypes, gid);
       if(!r){ alert("Заготовка не найдена."); return; }
       winTypes=r.winTypes;
-      const p={ id:gid(), name:name||pr.n, kind:"house", clientId:clientId,
-        specs:{height:2.5,rooms:[],openings:[]}, rooms:{}, global:{}, qty:{},
+      const estKind=flat?(((document.getElementById("proj-n-kind-est")||{}).value)||flatKindDefault()):"house";
+      const p={ id:gid(), name:name||(flat?"Квартира":pr.n), kind:estKind, clientId:clientId,
+        specs:{height:flat?(FLAT_HEIGHT/1000):2.5,rooms:[],openings:[]}, rooms:{}, global:{}, qty:{},
         markup:Number((settings&&settings.specMarkup))||30, status:"draft",
         at:todayISO(), by:(currentUser&&currentUser.id)||"", model:r.model, objId:"", contractId:"" };
       // Пироги материализуем сразу: план идёт за ними, и дом, где толщина стены
@@ -28184,7 +28406,7 @@ function bind(){
       p.model=applyLayers(p.model, "skin", skinLayers(p.model));
       modelSync(p);
       projects=projects.concat([p]);
-      projNew=null; projOpenId=p.id; projBand="parts"; fl();
+      projNew=null; projOpenId=p.id; projBand=flat?"plan":"parts"; fl();
       // Файл грузим ПОСЛЕ создания: проект уже открыт и им можно заниматься, пока
       // планировка едет в R2. Упадёт загрузка — проект от этого не пострадает.
       const fi=document.getElementById("proj-n-plan");
