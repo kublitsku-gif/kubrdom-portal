@@ -17346,14 +17346,14 @@ function projListHtml(){
   return h;
 }
 
-function projBandsHtml(){
+function projBandsHtml(hint){
   return '<div style="display:flex;gap:4px;margin-bottom:9px">'+
     PROJ_BANDS.map(function(b){
       const on=projBand===b[0];
       return '<button data-a="proj-band" data-v="'+b[0]+'" style="flex:1;border:1.5px solid '+(on?"#0d1b2e":"#dde6f0")+';background:'+(on?"#0d1b2e":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:10px;padding:8px 4px;font-size:11.5px;font-weight:700;cursor:pointer">'+esc(b[1])+'</button>';
     }).join("")+
   '</div>'+
-  '<div style="font-size:10.5px;color:#9aabbf;line-height:1.45;margin-bottom:8px">'+esc(projBandMeta()[2])+'</div>';
+  '<div style="font-size:10.5px;color:#9aabbf;line-height:1.45;margin-bottom:8px">'+esc(hint||projBandMeta()[2])+'</div>';
 }
 
 // Полоса «Чертёж» у КВАРТИРЫ. Чертить тут нечего и нельзя: планировку нарисовал
@@ -17550,9 +17550,11 @@ function projCardHtml(p){
       '<input data-a="proj-name" data-id="'+p.id+'" value="'+esc(p.name||"")+'" style="width:100%;border:none;background:transparent;font-size:16px;font-weight:800;color:#0d1b2e;outline:none;padding:0">'+
       '<div style="font-size:11.5px;color:#7a9aaa;margin-top:2px">'+esc(estKindMeta(p.kind).n)+((crmClients.find(function(c){return c.id===p.clientId;})||{}).name?' · '+esc(crmClients.find(function(c){return c.id===p.clientId;}).name):'')+'</div>'+
     '</div>'+
-    '<button data-a="proj-edit" data-id="'+p.id+'" style="padding:9px 13px;background:#8e44ad;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:12px;font-weight:700;flex-shrink:0">⛶ Чертить</button>'+
+    (isFlat(p.model)?"":'<button data-a="proj-edit" data-id="'+p.id+'" style="padding:9px 13px;background:#8e44ad;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:12px;font-weight:700;flex-shrink:0">⛶ Чертить</button>')+
   '</div>';
-  h+=projBandsHtml();
+  // Дом СТРОЯТ по чертежу, квартиру ОТДЕЛЫВАЮТ по замеру — и подпись полосы
+  // обязана говорить именно это: «что построить» над таблицей площадей врёт.
+  h+=projBandsHtml((projBand==="plan"&&isFlat(p.model))?"что отделать":"");
   if(projBand==="plan")h+=projPlanHtml(p);
   else if(projBand==="parts"){
     h+=estBodyHtml(p, winTypes, p, false);
@@ -17801,14 +17803,14 @@ function areasCardHtml(model, types){
       '<div style="font-size:14px;font-weight:800;color:#0d1b2e">'+numRu(val)+' м²</div></div>';
   };
   return '<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 13px;margin-bottom:9px">'+
-    '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:8px">ПЛОЩАДИ · ВСЕГО ПО ДОМУ</div>'+
+    '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:8px">ПЛОЩАДИ · ВСЕГО ПО '+(isFlat(model)?"КВАРТИРЕ":"ДОМУ")+'</div>'+
     '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:9px">'+
       cell("ПОЛ",A.total.floor)+cell("ПОТОЛОК",A.total.ceil)+cell("СТЕНЫ",A.total.wallNet)+
     '</div>'+
     A.rooms.map(function(r){
       return '<div style="display:flex;align-items:baseline;gap:8px;padding:5px 0;border-top:1px solid #f4f7fb;font-size:12px">'+
         '<span style="flex:1;min-width:0;color:#0d1b2e;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.name||"Помещение")+'</span>'+
-        '<span style="color:#7a9aaa;white-space:nowrap;font-size:11px">'+numRu(r.l)+'×'+numRu(r.w)+' м</span>'+
+        '<span style="color:#7a9aaa;white-space:nowrap;font-size:11px">'+((r.l&&r.w)?(numRu(r.l)+'×'+numRu(r.w)+' м'):'не прямоуг.')+'</span>'+
         '<span style="color:#0d1b2e;font-weight:700;white-space:nowrap">пол '+numRu(r.floor)+'</span>'+
         '<span style="color:#5a7a9a;white-space:nowrap">стены '+numRu(r.wallNet)+'</span>'+
       '</div>';
