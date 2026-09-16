@@ -52,7 +52,7 @@ const CLAUDE_OK = { status: 200, body: { model: "claude-opus-5", content: [{ typ
 const KIMI_OK = { status: 200, body: { model: "kimi-latest", choices: [{ message: { tool_calls: [{ function: { name: "plan_read", arguments: JSON.stringify(READ) } }] } }] } };
 const BAD_KEY = { status: 401, body: { error: { message: "invalid x-api-key" } } };
 
-async function read(env, plan, type) {
+async function read(env, plan, type, kind) {
   const { seen, fetchMock } = net(plan);
   const real = globalThis.fetch;
   globalThis.fetch = fetchMock;
@@ -61,7 +61,7 @@ async function read(env, plan, type) {
       new Request("https://portal.kubrdom.ru/api/plan-read", {
         method: "POST",
         headers: { "X-Admin-Token": TOKEN, "Content-Type": "application/json" },
-        body: JSON.stringify({ keys: ["plan.png"], names: { "plan.png": "план.png" } }),
+        body: JSON.stringify(Object.assign({ keys: ["plan.png"], names: { "plan.png": "план.png" } }, kind ? { kind: kind } : {})),
       }),
       Object.assign({ ADMIN_TOKEN: TOKEN, FILES: makeFiles(type) }, env), CTX);
     return { j: await r.json(), status: r.status, seen };
@@ -115,6 +115,40 @@ console.log("Чего не умеем");
   const b = await read({ KIMI_API_KEY: "k" }, {}, "application/pdf");
   ok("PDF для Kimi — объяснение, а не пустой ответ", !b.j.success && /снимок листа/.test(b.j.error), b.j.error);
   ok("сеть при этом не дёргалась", b.seen.length === 0);
+}
+
+console.log("Квартира читается своим читателем");
+{
+  // Дом и квартиру спрашивают по-разному, и перепутать их нельзя: у дома просят
+  // геометрию, у квартиры — экспликацию. Ручка одна, поэтому выбор читателя
+  // сторожим здесь: иначе квартира однажды уедет в «планировку контейнера» и
+  // вернётся отсеками вдоль длины, которых в ней нет.
+  const FLAT = {
+    length: 7190, width: 6410, height: 2950, partitions_len: 21.4,
+    rooms: [{ name: "Кухня", area: 15.93, perimeter: 16.23, w: 3325, l: 4790 }],
+    openings: [], notes: "",
+  };
+  const FLAT_OK = { status: 200, body: { model: "claude-opus-5", content: [{ type: "tool_use", name: "flat_read", input: FLAT }] } };
+
+  const a = await read({ CLAUDE_API_KEY: "k" }, { claude: FLAT_OK }, "image/png", "flat");
+  ok("спросили квартирным инструментом", a.seen[0].body.tools[0].name === "flat_read",
+    JSON.stringify(a.seen[0].body.tools.map((t) => t.name)));
+  ok("и правилами чтения квартиры", /ЭКСПЛИКАЦИЯ/.test(a.seen[0].body.system));
+  ok("ответ помечен типом", a.j.success && a.j.kind === "flat", JSON.stringify(a.j).slice(0, 160));
+  ok("площадь из экспликации доехала", a.j.plan.rooms[0].area === 15.93, JSON.stringify(a.j.plan.rooms));
+  ok("перегородки доехали метрами", a.j.plan.partLen === 21.4, String(a.j.plan.partLen));
+
+  // Без kind — по-прежнему дом: этим ходят проекты, заведённые до правки.
+  const b = await read({ CLAUDE_API_KEY: "k" }, { claude: CLAUDE_OK });
+  ok("без kind читается дом", b.seen[0].body.tools[0].name === "plan_read");
+
+  // Второй провайдер обязан спрашивать ТО ЖЕ САМОЕ: разойдясь, они дали бы
+  // человеку два разных ответа на один чертёж.
+  const KIMI_FLAT = { status: 200, body: { model: "kimi-latest", choices: [{ message: { tool_calls: [{ function: { name: "flat_read", arguments: JSON.stringify(FLAT) } }] } }] } };
+  const c = await read({ KIMI_API_KEY: "k" }, { kimi: KIMI_FLAT }, "image/png", "flat");
+  ok("у Kimi тот же инструмент", c.seen[0].body.tool_choice.function.name === "flat_read");
+  ok("и та же схема", c.seen[0].body.tools[0].function.parameters.required.includes("partitions_len"));
+  ok("квартира прочиталась и им", c.j.success && c.j.plan.rooms[0].area === 15.93);
 }
 
 console.log(failed ? `\n✘ провалено проверок: ${failed}` : "\n✓ все проверки прошли");
