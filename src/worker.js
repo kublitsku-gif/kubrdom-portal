@@ -16,7 +16,8 @@ import { workText, workCallback, workMedia } from "./botwork.js";
 import { dayText, dayCallback } from "./botday.js";
 import { issueText, issueCallback, issueMedia, issueReplyToAuthor } from "./botissue.js";
 import { planRequest, planFromResponse, planNormalize, PLAN_MODEL, PLAN_MAX_FILES,
-  planRequestOpenAI, planFromOpenAI, PLAN_MODEL_KIMI } from "./plan-read.js";
+  planRequestOpenAI, planFromOpenAI, PLAN_MODEL_KIMI,
+  flatRequest, flatFromResponse, flatNormalize, flatRequestOpenAI, flatFromOpenAI } from "./plan-read.js";
 import { mcpFetch } from "./mcp.js";
 import { catalogFetch } from "./catalog.js";
 
@@ -706,6 +707,16 @@ async function planRead(env, request) {
   // Листов у одного дома бывает несколько: план, фасады, разрезы. Принимаем список,
   // одиночный `key` оставляем — им ходят проекты, заведённые до этой правки.
   const names = (body && body.names) || {};
+  // Дом и квартиру читают РАЗНЫЕ читатели: у дома спрашивают геометрию, потому
+  // что его построят, у квартиры — экспликацию, потому что её уже обмерили.
+  // Умолчание — дом: им ходят проекты, заведённые до этой правки.
+  const kind = ((body && body.kind) === "flat") ? "flat" : "house";
+  const isFlatRead = kind === "flat";
+  const mkClaude = isFlatRead ? flatRequest : planRequest;
+  const mkKimi = isFlatRead ? flatRequestOpenAI : planRequestOpenAI;
+  const parseClaude = isFlatRead ? flatFromResponse : planFromResponse;
+  const parseKimi = isFlatRead ? flatFromOpenAI : planFromOpenAI;
+  const normalize = isFlatRead ? flatNormalize : planNormalize;
   const keys = ((body && body.keys) || [(body && body.key) || ""])
     .map(function (k) { return String(k || "").replace(/^\/api\/file\//, ""); })
     .filter(Boolean)
@@ -735,7 +746,7 @@ async function planRead(env, request) {
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": env.CLAUDE_API_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify(planRequest(files, model ? { model: model } : {})),
+      body: JSON.stringify(mkClaude(files, model ? { model: model } : {})),
     });
     const j = await r.json().catch(function () { return null; });
     return { ok: r.ok, status: r.status, j: j };
@@ -750,7 +761,7 @@ async function planRead(env, request) {
     const r = await fetch(base + "/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": "Bearer " + env.KIMI_API_KEY },
-      body: JSON.stringify(planRequestOpenAI(files, { model: model || env.KIMI_MODEL || PLAN_MODEL_KIMI })),
+      body: JSON.stringify(mkKimi(files, { model: model || env.KIMI_MODEL || PLAN_MODEL_KIMI })),
     });
     const j = await r.json().catch(function () { return null; });
     return { ok: r.ok, status: r.status, j: j };
@@ -767,11 +778,11 @@ async function planRead(env, request) {
       used = fallback;
       res = await askClaude(used);
     }
-    return { res: res, used: used, who: "Claude", parse: planFromResponse, def: PLAN_MODEL };
+    return { res: res, used: used, who: "Claude", parse: parseClaude, def: PLAN_MODEL };
   };
   const runKimi = async function () {
     const used = env.KIMI_MODEL || PLAN_MODEL_KIMI;
-    return { res: await askKimi(used), used: used, who: "Kimi", parse: planFromOpenAI, def: PLAN_MODEL_KIMI };
+    return { res: await askKimi(used), used: used, who: "Kimi", parse: parseKimi, def: PLAN_MODEL_KIMI };
   };
 
   const first = (want === "kimi" || (!hasClaude && hasKimi)) ? runKimi : runClaude;
@@ -792,11 +803,11 @@ async function planRead(env, request) {
   }
   // Отказ модели — не сбой: она отвечает 200 и рассказывает, что увидела.
   let read;
-  try { read = planNormalize(out.parse(out.res.j)); }
+  try { read = normalize(out.parse(out.res.j)); }
   catch (err) { return json({ success: false, error: String((err && err.message) || err) }, 422); }
 
   return json({
-    success: true, plan: read.plan, warnings: read.warnings, files: keys.length,
+    success: true, kind: kind, plan: read.plan, warnings: read.warnings, files: keys.length,
     provider: out.who, model: out.res.j.model || out.used || out.def, usage: out.res.j.usage || null,
   });
 }

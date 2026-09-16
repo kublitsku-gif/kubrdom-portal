@@ -16,6 +16,7 @@
 import {
   CONTAINERS, emptyModel, FINISH_THICK, MIN_ROOM,
   WIN_CATALOG, INNER_DOOR, winTypeFrom, totalLength, alignHeads, addWall, modelRooms, WALL_THICK,
+  emptyFlat, FLAT_HEIGHT,
 } from "./model.js";
 
 // Читает чертёж модель посильнее: план — это картинка с цифрами, и ошибка в
@@ -620,4 +621,326 @@ export function planToModel(plan, winTypes, newId) {
   }
 
   return { model: model, winTypes: types, warnings: warn, picks: picks, areas: areas };
+}
+
+
+// ─── ПЛАНИРОВКА КВАРТИРЫ ─────────────────────────────────────────────────────
+// Чертёж квартиры устроен иначе, чем чертёж контейнера, и читать его тем же
+// запросом нельзя. У контейнера мы спрашиваем ГЕОМЕТРИЮ — отсеки, куски стен,
+// отметки проёмов, — потому что дом по ней построят. У квартиры геометрия уже
+// построена: её обмерили, и на листе стоит экспликация — «Кухня 15,93 м²».
+// Спрашивать у модели контур, чтобы посчитать по нему ту же площадь, значит
+// заменять замер пересчётом и получать 15,7 там, где написано 15,93.
+//
+// Поэтому здесь спрашивают то, что на листе НАПИСАНО: имя помещения, его площадь
+// из экспликации, размеры и периметр — если подписаны, высоту и проёмы. Что не
+// подписано — приходит как null и остаётся пустым: в квартире пустое поле человек
+// домерит рулеткой, а выдуманное подпишет не глядя.
+export const FLAT_TOOL_NAME = "flat_read";
+
+export const FLAT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["length", "width", "height", "rooms", "openings", "partitions_len", "notes"],
+  properties: {
+    length: Object.assign({ description: "Габарит квартиры по длинной стороне, мм" }, NUM),
+    width: Object.assign({ description: "Габарит квартиры по короткой стороне, мм" }, NUM),
+    height: Object.assign({ description: "Высота помещений, мм (на обмерном плане подписывают H=2950)" }, NUM),
+    rooms: {
+      type: "array",
+      description: "Экспликация: все помещения квартиры с площадями, в том порядке, в каком они перечислены на листе",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "area", "perimeter", "w", "l"],
+        properties: {
+          name: { type: "string", description: "Название помещения из экспликации: Кухня, Санузел, Прихожая" },
+          area: Object.assign({ description: "Площадь пола в КВАДРАТНЫХ МЕТРАХ, как подписана в экспликации" }, NUM),
+          perimeter: Object.assign({ description: "Периметр стен помещения в ПОГОННЫХ МЕТРАХ, если его можно снять с плана" }, NUM),
+          w: Object.assign({ description: "Ширина помещения в чистоте, мм — только если подписана размерной цепочкой" }, NUM),
+          l: Object.assign({ description: "Длина помещения в чистоте, мм — только если подписана" }, NUM),
+        },
+      },
+    },
+    openings: {
+      type: "array",
+      description: "Окна и двери с указанием помещения. Существующие окна тоже перечисляй",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "room", "room2", "width", "height", "sill", "label"],
+        properties: {
+          kind: { type: "string", enum: ["win", "door"] },
+          room: { type: "string", description: "Название помещения, которому принадлежит проём — ровно как в экспликации" },
+          room2: { type: "string", description: "Для межкомнатной двери — второе помещение; иначе пустая строка" },
+          width: Object.assign({ description: "Ширина проёма, мм" }, NUM),
+          height: Object.assign({ description: "Высота проёма, мм" }, NUM),
+          sill: Object.assign({ description: "Высота подоконника от чистого пола, мм; у дверей 0" }, NUM),
+          label: { type: "string", description: "Подпись у проёма на чертеже" },
+        },
+      },
+    },
+    partitions_len: Object.assign({
+      description: "Суммарная длина ВОЗВОДИМЫХ перегородок в ПОГОННЫХ МЕТРАХ по листу «план возводимых перегородок». Существующие стены не считать",
+    }, NUM),
+    notes: { type: "string", description: "Что прочитать не удалось и что пришлось предположить" },
+  },
+};
+
+export const FLAT_TOOL = {
+  name: FLAT_TOOL_NAME,
+  description: "Вернуть прочитанную планировку квартиры",
+  input_schema: FLAT_SCHEMA,
+  strict: true,
+};
+
+export const FLAT_SYSTEM = [
+  "Ты читаешь дизайн-проект планировки КВАРТИРЫ — вид сверху, обмерный план и план возводимых перегородок.",
+  "Главное на листе — ЭКСПЛИКАЦИЯ: таблица «№ / Наименование / Площадь». Перечисли из неё ВСЕ помещения и возьми площади ОТТУДА.",
+  "Площадь из экспликации НЕ пересчитывай по размерам: это замер, по нему выставят счёт, и твой пересчёт его только испортит.",
+  "Если экспликации нет — бери площади, подписанные прямо в помещениях на плане (5,03 м²).",
+  "Одинаковые имена не склеивай: две «Гардеробные» в экспликации — это два помещения, верни оба.",
+  "Размеры w и l давай ТОЛЬКО если они подписаны размерной цепочкой. Не подписаны — null.",
+  "У непрямоугольного помещения (Г-образного) размеров нет: верни null и null, площадь всё равно возьми из экспликации.",
+  "Периметр давай, если его видно по контуру помещения; иначе null — мы посчитаем сами по размерам.",
+  "Все ЛИНЕЙНЫЕ размеры переводи в МИЛЛИМЕТРЫ, площади оставляй в КВАДРАТНЫХ МЕТРАХ, периметр и перегородки — в ПОГОННЫХ МЕТРАХ.",
+  "Высоту помещений ищи на обмерном плане: её подписывают H=2950 или «Н=3000». Разные высоты — возьми преобладающую и напиши о разнице в notes.",
+  "partitions_len — суммарная длина только ВОЗВОДИМЫХ перегородок (на планах их выделяют заливкой и подписывают толщину).",
+  "Существующие и демонтируемые стены в partitions_len не входят.",
+  "Проёмы привязывай к помещению ПО ИМЕНИ из экспликации. У межкомнатной двери назови оба помещения (room и room2).",
+  "Файлов может быть несколько — это РАЗНЫЕ ЛИСТЫ ОДНОЙ квартиры (обмерный план, планировочное решение, перегородки, фотофиксация).",
+  "Читай их вместе и верни ОДНУ планировку. Не удваивай помещения, увидев их на двух листах.",
+  "Если на листах несколько ВАРИАНТОВ планировки — бери ИТОГОВЫЙ (его подписывают «итоговый вариант»), а о прочих напиши в notes.",
+  "Чего на чертеже нет — оставляй null и пиши об этом в notes. Не достраивай планировку по здравому смыслу:",
+  "по этим числам выставляют счёт, и придуманный размер дороже пропущенного.",
+].join(" ");
+
+// Запрос читателю. Конверт тот же, что у контейнера (`planRequest`) — меняются
+// только инструмент и правила чтения: две копии сборки запроса разошлись бы на
+// первой правке формата файлов.
+export function flatRequest(files, opts) {
+  const o = opts || {};
+  const req = planRequest(files, Object.assign({}, o, {
+    hint: o.hint || ((files || []).length > 1
+      ? "Это листы ОДНОЙ квартиры. Прочитай их вместе и верни одну планировку через flat_read."
+      : "Прочитай планировку этой квартиры и верни её через flat_read."),
+  }));
+  req.system = FLAT_SYSTEM;
+  req.tools = [FLAT_TOOL];
+  req.tool_choice = { type: "tool", name: FLAT_TOOL_NAME };
+  return req;
+}
+
+export function flatFromResponse(resp) {
+  const blocks = (resp && resp.content) || [];
+  const call = blocks.find(function (b) { return b && b.type === "tool_use" && b.name === FLAT_TOOL_NAME; });
+  if (!call) {
+    const text = blocks.filter(function (b) { return b && b.type === "text"; })
+      .map(function (b) { return b.text; }).join(" ").trim();
+    throw new Error(text ? ("Не удалось прочитать чертёж: " + text.slice(0, 300)) : "Модель не вернула планировку");
+  }
+  return call.input;
+}
+
+// Множитель единиц у квартиры узнаём по ВЫСОТЕ: она есть почти на каждом обмерном
+// плане и не гуляет по порядку — жилая высота это 2,4…3,5 м в любом доме. Длина
+// квартиры для этого хуже: студия 6 м и «трёшка» 18 м отличаются втрое, и по ней
+// сантиметры от миллиметров не отличить.
+function flatScale(r) {
+  const H = Number(r && r.height) || 0;
+  if (H >= 1800) return 1;      // миллиметры
+  if (H >= 180) return 10;      // сантиметры
+  if (H >= 1.8) return 1000;    // метры
+  const L = Number(r && r.length) || 0;
+  if (L >= 2000) return 1;
+  if (L >= 200) return 10;
+  return L ? 1000 : 1;
+}
+
+// Прочитанное → наши единицы. Площадь и периметр множитель длины не трогает: они
+// приходят в метрах по условию задачи, и «перевести» их вместе с миллиметрами —
+// классический способ получить квартиру в 44 000 м².
+export function flatNormalize(raw) {
+  const r = raw || {};
+  const warn = [];
+  const k = flatScale(r);
+  const m2 = function (v) {
+    const n = Number(v) || 0;
+    return (n > 0 && n < 400) ? Math.round(n * 100) / 100 : 0;
+  };
+  const mp = function (v) {
+    const n = Number(v) || 0;
+    return (n > 0 && n < 400) ? Math.round(n * 1000) / 1000 : 0;
+  };
+
+  const rooms = (r.rooms || []).map(function (rm, i) {
+    const it = rm || {};
+    const name = String(it.name || "").trim();
+    if (!name) { warn.push("Помещение №" + (i + 1) + " без названия — пропущено"); return null; }
+    const area = m2(it.area);
+    const w = toMm(it.w, k, 300, 30000);
+    const l = toMm(it.l, k, 300, 30000);
+    if (!area && !(w && l)) {
+      warn.push("«" + name + "»: ни площади, ни размеров — помещение пропущено");
+      return null;
+    }
+    return { name: name, area: area, perimeter: mp(it.perimeter), w: w, l: l };
+  }).filter(Boolean);
+
+  const openings = (r.openings || []).map(function (o, i) {
+    const it = o || {};
+    const label = String(it.label || "").trim();
+    const kind = (it.kind === "door") ? "door" : "win";
+    const nameOf = label || ((kind === "door" ? "Дверь" : "Окно") + " №" + (i + 1));
+    const w = toMm(it.width, k, 300, 6000);
+    if (!w) { warn.push(nameOf + ": ширина не прочиталась — проём пропущен"); return null; }
+    const room = String(it.room || "").trim();
+    if (!room) { warn.push(nameOf + ": не сказано, в каком помещении — проём пропущен"); return null; }
+    const guessH = !toMm(it.height, k, 300, 3000);
+    if (guessH) warn.push(nameOf + ": высота не подписана, поставили " + (kind === "door" ? 2100 : 1400));
+    return {
+      kind: kind, room: room, room2: String(it.room2 || "").trim(),
+      w: w,
+      h: toMm(it.height, k, 300, 3000) || (kind === "door" ? 2100 : 1400),
+      sill: (kind === "door") ? 0 : sillOf(it.sill, k),
+      label: label,
+    };
+  }).filter(Boolean);
+
+  return {
+    plan: {
+      length: toMm(r.length, k, 2000, 40000),
+      width: toMm(r.width, k, 2000, 40000),
+      height: toMm(r.height, k, 1800, 4000),
+      rooms: rooms, openings: openings,
+      partLen: mp(r.partitions_len),
+      notes: String(r.notes || "").trim(),
+    },
+    warnings: warn,
+  };
+}
+
+// Прочитанное → модель квартиры. Отдаёт ТУ ЖЕ форму, что `planToModel`
+// (`model`/`winTypes`/`warnings`/`picks`/`areas`), потому что панель сверки одна
+// на оба типа: человек сверяет прочитанное с подложкой одним и тем же экраном.
+//
+// Площадь пола — ВСЕГДА подписанная. Размеры, если они прочитаны, идут не в
+// площадь, а в проверку: перемножили и сравнили с подписью. Сошлось — значит
+// цепочку прочитали верно; разошлось — значит где-то не тот размер, и человек
+// узнаёт об этом строкой, а не через месяц по недостаче плитки.
+export function flatToModel(plan, winTypes, newId) {
+  const p = plan || {};
+  let seq = 0;
+  const gen = (typeof newId === "function") ? newId : function () { return "fl-" + (++seq); };
+  const warn = [];
+  const model = emptyFlat();
+  if (p.length) model.l = p.length;
+  if (p.width) model.w = p.width;
+  model.h = p.height || FLAT_HEIGHT;
+  if (!p.height) warn.push("Высота помещений не прочитана — поставили " + FLAT_HEIGHT + " мм, проверьте по обмерному плану");
+  model.partLen = p.partLen || 0;
+  if (!p.partLen) warn.push("Длина возводимых перегородок не прочитана — перегородки в смету не попадут, впишите метры руками");
+
+  const areas = [];
+  const byName = {};
+  model.rooms = (p.rooms || []).map(function (rm) {
+    const w = rm.w || 0, l = rm.l || 0;
+    const fromSize = (w && l) ? Math.round(w * l / 1000000 * 100) / 100 : 0;
+    const floor = rm.area || fromSize;
+    if (!rm.area && fromSize) {
+      warn.push("«" + rm.name + "»: площадь не подписана — посчитали по размерам, вышло " + fromSize + " м²");
+    }
+    // Периметр: подписанный выигрывает. Не подписан — считаем по размерам, а у
+    // непрямоугольной комнаты размеров нет, и тогда честнее пустое поле, чем
+    // периметр «примерно»: по нему считают стены, плинтус и обои.
+    let perim = rm.perimeter || 0;
+    if (!perim && w && l) perim = Math.round((w + l) * 2 / 1000 * 1000) / 1000;
+    if (!perim) warn.push("«" + rm.name + "»: периметр не прочитан — стены и плинтус посчитаются нулём, впишите руками");
+
+    const row = { name: rm.name, said: rm.area, got: fromSize };
+    areas.push(row);
+    if (rm.area && fromSize) {
+      const diff = Math.abs(fromSize - rm.area);
+      if (diff > 0.3 && diff / rm.area > 0.05) {
+        warn.push("«" + rm.name + "»: в экспликации " + rm.area + " м², а по размерам выходит " + fromSize +
+          " м² — где-то не тот размер (площадь оставили из экспликации)");
+      }
+    }
+    const room = { id: gen(), name: rm.name, w: w, l: l, floor: floor, wallLen: perim, pts: {} };
+    // Имена в экспликации повторяются («Гардеробная» дважды): по имени ищут
+    // проёмы, и первое помещение с этим именем забирает их все. Это лучше, чем
+    // потерять проём, но сказать об этом надо.
+    if (byName[rm.name]) warn.push("«" + rm.name + "»: таких помещений два — проёмы уйдут в первое, проверьте");
+    else byName[rm.name] = room.id;
+    return room;
+  });
+
+  const types = (winTypes || []).slice();
+  const picks = [];
+  model.openings = (p.openings || []).map(function (o) {
+    const roomId = byName[o.room];
+    const named = o.label || ((o.kind === "door" ? "дверь " : "окно ") + o.w + "×" + o.h);
+    if (!roomId) {
+      warn.push(named + ": помещения «" + o.room + "» нет в экспликации — проём пропущен");
+      return null;
+    }
+    const found = findType(types, o.kind, o.w, o.h, gen);
+    if (found.added) types.push(found.added);
+    if (found.none) {
+      warn.push(named + " " + o.w + "×" + o.h + ": в каталоге нет ничего близкого — завели изделие по чертежу, впишите цену");
+    } else if (found.w !== o.w || found.h !== o.h) {
+      warn.push(named + ": на чертеже " + o.w + "×" + o.h + ", поставили «" + found.n + "» — ближайшее, что заказываем");
+    }
+    picks.push({
+      label: o.label, kind: o.kind, side: o.room, pos: null, sill: o.sill,
+      w: o.w, h: o.h,
+      name: found.n, tw: found.w, th: found.h,
+      cost: (found.added ? Number(found.added.cost) || 0 : null),
+      same: (found.w === o.w && found.h === o.h),
+      none: !!found.none,
+    });
+    const op = { id: gen(), roomId: roomId, typeId: found.id };
+    const second = o.room2 ? byName[o.room2] : "";
+    if (second && second !== roomId) op.roomId2 = second;
+    if (o.sill != null) op.sill = o.sill;
+    return op;
+  }).filter(Boolean);
+
+  return { model: model, winTypes: types, warnings: warn, picks: picks, areas: areas };
+}
+
+// Тот же читатель квартиры у второго провайдера. Конверт OpenAI-совместимый,
+// правила чтения и схема — ТЕ ЖЕ: две копии правил разошлись бы на первой правке,
+// а сверять их пришлось бы человеку по расхождению в метрах.
+export const FLAT_FUNCTION = {
+  type: "function",
+  function: { name: FLAT_TOOL_NAME, description: FLAT_TOOL.description, parameters: FLAT_SCHEMA },
+};
+
+export function flatRequestOpenAI(files, opts) {
+  const o = opts || {};
+  const req = planRequestOpenAI(files, Object.assign({}, o, {
+    hint: o.hint || ((files || []).length > 1
+      ? "Это листы ОДНОЙ квартиры. Прочитай их вместе и верни одну планировку через flat_read."
+      : "Прочитай планировку этой квартиры и верни её через flat_read."),
+  }));
+  req.messages[0].content = FLAT_SYSTEM;
+  req.tools = [FLAT_FUNCTION];
+  req.tool_choice = { type: "function", function: { name: FLAT_TOOL_NAME } };
+  return req;
+}
+
+export function flatFromOpenAI(resp) {
+  const msg = (((resp && resp.choices) || [])[0] || {}).message || {};
+  const call = ((msg.tool_calls || [])[0] || {}).function;
+  if (!call || call.name !== FLAT_TOOL_NAME) {
+    const text = String(msg.content || "").trim();
+    throw new Error(text ? ("Не удалось прочитать чертёж: " + text.slice(0, 300)) : "Модель не вернула планировку");
+  }
+  let args = call.arguments;
+  if (typeof args === "string") {
+    try { args = JSON.parse(args); }
+    catch (e) { throw new Error("Модель вернула не JSON: " + String(args).slice(0, 200), { cause: e }); }
+  }
+  return args;
 }

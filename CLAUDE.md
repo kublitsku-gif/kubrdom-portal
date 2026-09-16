@@ -78,6 +78,7 @@
 | бюджет выбора `m.sel`, сроки выбора | `docs/domain/client-selection.md` | `matSelBudget`, `pendingSelections` |
 | вкладка «🏠 Спецификация», продажа собирает объект/договор | `docs/domain/spec-sheet.md` | `src/spec.js`, `tSpec`, `specSheets` |
 | коробка, перегородки, проёмы, площади | `docs/domain/container-model.md` | `src/model.js`, `src/geom.js` |
+| квартира: площади из экспликации вместо чертежа | `docs/domain/flat-model.md` | `isFlat`, `flatRooms`, `flatToModel` |
 | опытный раздел: рабочий лист, редактор модели (большой файл ~70 КБ — читать нужный подраздел) | `docs/domain/spec2.md` | `src/spec2.js`, `tSpec2` |
 | правила «к чему применяется смета», вкладка «⚙️ Правила» | `docs/domain/build-rules.md` | `src/recipe.js`, `buildRules` |
 | вкладка «🏗 Проекты», дом от чертежа до договора | `docs/domain/projects.md` | `tProjects`, раздел `projects` |
