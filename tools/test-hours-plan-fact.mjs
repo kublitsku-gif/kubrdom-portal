@@ -9,6 +9,7 @@
 import { presetModel, MODEL_PRESETS } from '../src/model.js'
 import { positionWork } from '../src/recipe.js'
 import { boot, reporter } from './harness/panel-vm.js'
+import { openProject, estHtml } from './helpers/open-project.mjs'
 
 const t = reporter()
 
@@ -65,17 +66,15 @@ const built = presetModel(MODEL_PRESETS[0], [], gid)
     winTypes: [], objects: [], templates: [], contractDocs: [], purchases: [], issues: [],
     users: [], stock: [], settings: {}, buildRules: [],
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
-  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key')
+  openProject(p)
+  const key = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions[0].key')
 
   // Хозяин поставил план 8 ч, бригада отметила 11 ч на этой же работе.
-  p.run('spec2Sheet().posHours={' + JSON.stringify(key) + ':8};')
-  p.run('var sh=spec2Sheet(); sh.objId="o1"; objects=[{id:"o1",name:"Дом",specId:sh.id,stages:[{id:"st1",n:"ЭТАП",works:[' +
+  p.run('proj(projOpenId).posHours={' + JSON.stringify(key) + ':8};')
+  p.run('var sh=proj(projOpenId); sh.objId="o1"; objects=[{id:"o1",name:"Дом",specId:sh.id,stages:[{id:"st1",n:"ЭТАП",works:[' +
     '{id:"w1",posKey:' + JSON.stringify(key) + ',n:"Монтаж окна",planHours:8,timeLogs:[{id:"l1",userId:"u1",date:"2026-09-01",hours:11}]}]}]}];')
 
-  const plain = p.run('tSpec2()').replace(/<[^>]*>/g, '').replace(/[  ]/g, ' ')
+  const plain = estHtml(p).replace(/<[^>]*>/g, '').replace(/[  ]/g, ' ')
   t.ok('факт виден в строке работы', /факт 11 ч/.test(plain), 'нет факта в строке')
   t.ok('итог показывает оба числа', /план 8 ч · факт 11 ч/.test(plain), 'нет пары план/факт в итоге')
   // Перерасход надо ВИДЕТЬ, а не вычислять глазами: 11 против 8 — это разговор

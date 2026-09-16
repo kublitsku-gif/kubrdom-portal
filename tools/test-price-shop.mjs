@@ -8,6 +8,7 @@
 // на себя всё остальное: собрать список ссылок этапа, принять новую цену,
 // записать историю и пересчитать проект.
 import { boot, reporter } from './harness/panel-vm.js'
+import { openProject, estHtml } from './helpers/open-project.mjs'
 
 const t = reporter()
 
@@ -30,9 +31,7 @@ function panel() {
     purchases: [], issues: [], users: [], stock: [], settings: {}, buildRules: RULES,
     currentUser: { id: 'u1', name: 'Юрий', roles: ['admin'], objs: [], c: '#000', av: '👤' },
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
+  openProject(p)
   return p
 }
 
@@ -40,12 +39,12 @@ function panel() {
 {
   t.section('Сверка открывает магазины этапа')
   const p = panel()
-  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
-  t.ok('пока не жали — панели нет', p.run('tSpec2()').indexOf('data-a="price-shop-set"') < 0)
+  const stN = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).stages[0].n')
+  t.ok('пока не жали — панели нет', estHtml(p).indexOf('data-a="price-shop-set"') < 0)
 
   const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) })
   p.run('bind();'); btn.onclick()
-  const html = p.run('tSpec2()')
+  const html = estHtml(p)
   t.ok('панель сверки открылась', html.indexOf('data-a="price-shop-set"') >= 0)
   // Ссылка — это главное: по ней и идут смотреть цену.
   t.ok('ссылка на Ozon есть', /https:\/\/www\.ozon\.ru\/product\/kabel-1\//.test(html))
@@ -62,7 +61,7 @@ function panel() {
 {
   t.section('Новая цена из магазина')
   const p = panel()
-  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const stN = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).stages[0].n')
   const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
 
   const inp = p.dom.node({ a: 'price-shop-set', p: 'p_kab' })
@@ -77,8 +76,8 @@ function panel() {
   t.ok('стоит дата проверки', !!p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].priceCheckedAt'))
   // Смета считается по каталогу — значит проект дорожает сразу.
   t.ok('проект пересчитался',
-    p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).mats') >= 5600,
-    'материалы: ' + p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).mats'))
+    p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).mats') >= 5600,
+    'материалы: ' + p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).mats'))
   // Второй товар не тронут: сверяли один.
   t.ok('соседний товар не изменился', p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].unitCost') === 107.67)
 }
@@ -87,7 +86,7 @@ function panel() {
 {
   t.section('Товара нет в наличии')
   const p = panel()
-  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const stN = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).stages[0].n')
   const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
 
   const oos = p.dom.node({ a: 'price-shop-oos', p: 'p_br' })
@@ -97,8 +96,8 @@ function panel() {
   // закроют, а закупать по строке будут завтра.
   const btn2 = p.dom.node({ a: 'est-stage-prices', n: String(stN) })
   p.run('bind();'); btn2.onclick()          // закрываем панель
-  p.run('(function(){var w=works2(spec2Sheet(), specCtx(spec2Sheet()));var m={};w.positions.forEach(function(x){m[x.key]=1;});matsOpen=m;})()')
-  const html = p.run('tSpec2()')
+  p.run('(function(){var w=works2(proj(projOpenId), specCtx(proj(projOpenId)));var m={};w.positions.forEach(function(x){m[x.key]=1;});matsOpen=m;})()')
+  const html = estHtml(p)
   t.ok('панель закрыта', html.indexOf('data-a="price-shop-set"') < 0)
   t.ok('в строке материала видно «нет в наличии»', /нет в наличии/i.test(html), 'пометки не видно')
   // Цену при этом не обнуляем: товар вернётся, а смета не должна «подешеветь».
@@ -115,10 +114,10 @@ function panel() {
 {
   t.section('Статус каждой карточки')
   const p = panel()
-  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const stN = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).stages[0].n')
   const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
 
-  const html0 = p.run('tSpec2()')
+  const html0 = estHtml(p)
   t.ok('пока не сверяли — так и написано', /не сверял/i.test(html0), 'нет метки «не сверялось»')
   t.ok('счётчик показывает ноль из двух', /сверено 0 из 2/i.test(html0), 'нет счётчика')
   t.ok('ручных отметок в списке нет', html0.indexOf('data-a="price-shop-ok"') < 0)
@@ -126,7 +125,7 @@ function panel() {
   // Подтверждение приходит РЕЗУЛЬТАТОМ сверки, а не тапом по списку.
   p.run('applyPriceReports([{ id:"p_kab", ok:true, price:5100, inStock:true }])')
   t.ok('дата подтверждения записана', !!p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].priceOkAt'))
-  const html1 = p.run('tSpec2()')
+  const html1 = estHtml(p)
   // Дату спрашиваем у самой панели (`dayRu(todayISO())`), а не пишем строкой:
   // сверка ставит СЕГОДНЯШНЕЕ число, и зашитое здесь «6 сен» делало тест
   // бомбой замедленного действия — он краснел на следующий же день и вставал
@@ -139,11 +138,11 @@ function panel() {
   const inp = p.dom.node({ a: 'price-shop-set', p: 'p_br', o: '' })
   p.run('bind();'); inp.value = '120'; inp.onchange()
   t.ok('ввод цены подтверждает карточку', !!p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].priceOkAt'))
-  t.ok('сверены обе', /сверено 2 из 2/i.test(p.run('tSpec2()')))
+  t.ok('сверены обе', /сверено 2 из 2/i.test(estHtml(p)))
 
   // Давняя сверка — не то же самое, что свежая: цену могли поднять неделю назад.
   p.run('expProducts.filter(function(x){return x.id==="p_kab";})[0].priceOkAt="2026-06-01";')
-  t.ok('старая сверка помечена как давняя', /давно/i.test(p.run('tSpec2()')), 'нет метки «давно»')
+  t.ok('старая сверка помечена как давняя', /давно/i.test(estHtml(p)), 'нет метки «давно»')
 }
 
 // ── 5. Отчёт от расширения ──────────────────────────────────────────────────
@@ -221,13 +220,13 @@ function panel() {
 {
   t.section('Замена вместо ручных отметок')
   const p = panel()
-  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const stN = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).stages[0].n')
   const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
 
   // Сверка прошла: кабель подтверждён, брусок кончился и найдена замена.
   p.run('applyPriceReports([{ id:"p_kab", ok:true, price:5100, inStock:true },{ id:"p_br", ok:true, inStock:false, alt:{ name:"Брусок строганый 40x50x3000 Оптима", store:"Лемана ПРО", url:"https://lemanapro.ru/product/alt/", price:120 } }])')
 
-  const html = p.run('tSpec2()')
+  const html = estHtml(p)
   t.ok('подтверждённое не требует действий', !/data-a="price-shop-ok"/.test(html), 'ручные кнопки остались')
   t.ok('видно, что товар кончился', /кончился|нет в наличии/i.test(html))
   t.ok('предложена замена', /Брусок строганый 40x50x3000 Оптима/.test(html), 'аналога не видно')
@@ -244,7 +243,7 @@ function panel() {
   t.ok('со ссылкой и магазином', !!added && /lemanapro/.test(added.url) && added.store === 'Лемана ПРО')
   t.ok('единица учёта унаследована', added && added.mode === 'mp' && added.lenPer === 3,
     'режим: ' + (added && added.mode))
-  t.ok('в смете теперь замена', /Оптима/.test(p.run('tSpec2()')), 'смета не подхватила')
+  t.ok('в смете теперь замена', /Оптима/.test(estHtml(p)), 'смета не подхватила')
   t.ok('старый товар остался в каталоге помеченным',
     !!p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].oosAt'))
   t.ok('предложение израсходовано', !p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].alt'))
@@ -257,17 +256,17 @@ function panel() {
 {
   t.section('Чем сверять — видно сразу')
   const p = panel()
-  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const stN = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).stages[0].n')
   const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
 
-  const html = p.run('tSpec2()')
+  const html = estHtml(p)
   t.ok('кнопка сверки на месте без расширения', html.indexOf('data-a="price-ext-run"') >= 0)
   t.ok('и мастер рядом', html.indexOf('data-a="price-wiz-open"') >= 0)
   t.ok('состояние расширения подписано', /расширение/i.test(html), 'нет упоминания расширения')
 
   // С расширением подпись меняется на действие.
   p.run('priceExtReady=true;')
-  const html2 = p.run('tSpec2()')
+  const html2 = estHtml(p)
   t.ok('с расширением зовёт сверить всё', /сверить вс|обойти/i.test(html2), 'нет призыва к действию')
 }
 
@@ -278,27 +277,27 @@ function panel() {
 {
   t.section('Отметка этапа следует за магазинами')
   const p = panel()
-  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const stN = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).stages[0].n')
 
   const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) })
   p.run('bind();'); btn.onclick()
-  const afterClick = p.run('tSpec2()')
+  const afterClick = estHtml(p)
   t.ok('кнопка сама зелёной отметки не даёт', !/цены сверены/i.test(afterClick), 'отметка появилась без магазинов')
 
   // Проверили в магазине один товар из двух — этап ещё не сверен.
   p.run('applyPriceReports([{ id:"p_kab", ok:true, price:5100, inStock:true }])')
-  t.ok('половина — ещё не отметка', !/цены сверены/i.test(p.run('tSpec2()')))
+  t.ok('половина — ещё не отметка', !/цены сверены/i.test(estHtml(p)))
 
   // Проверили второй — вот теперь этап сверен, и дата берётся из карточек.
   p.run('applyPriceReports([{ id:"p_br", ok:true, price:323, inStock:true }])')
-  const done = p.run('tSpec2()')
+  const done = estHtml(p)
   t.ok('оба проверены — этап сверен', /цены сверены/i.test(done), 'отметки нет, хотя всё проверено')
   t.ok('дата настоящая', done.indexOf(p.q('dayRu(todayISO())')) >= 0,
     'нет даты сверки ' + p.q('dayRu(todayISO())'))
 
   // Прошло время — отметка гаснет сама: цена, проверенная месяц назад, не свежая.
   p.run('expProducts.forEach(function(x){ x.priceOkAt="2026-06-01"; });')
-  t.ok('давняя сверка отметку снимает', !/цены сверены/i.test(p.run('tSpec2()')), 'старая отметка держится')
+  t.ok('давняя сверка отметку снимает', !/цены сверены/i.test(estHtml(p)), 'старая отметка держится')
 }
 
 // ── Динамика цены рядом с ценой ─────────────────────────────────────────────
@@ -308,8 +307,8 @@ function panel() {
 {
   t.section('Динамика цены в сверке')
   const p = panel()
-  const plain = () => p.run('tSpec2()').replace(/[\u00a0\u202f]/g, ' ')
-  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const plain = () => estHtml(p).replace(/[\u00a0\u202f]/g, ' ')
+  const stN = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).stages[0].n')
   const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
   t.ok('без истории чипа нет', plain().indexOf('data-a="price-hist"') < 0)
 
@@ -353,8 +352,8 @@ function panel() {
 {
   t.section('Ценник магазина в нашу единицу')
   const p = panel()
-  const plain = () => p.run('tSpec2()').replace(/[  ]/g, ' ')
-  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const plain = () => estHtml(p).replace(/[  ]/g, ' ')
+  const stN = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).stages[0].n')
   const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
 
   // Хлыст: делитель у метража уже есть — 240 ₽ за 3 м это 80 ₽/м.п.
@@ -393,11 +392,11 @@ function panel() {
 {
   t.section('Имя замены — не плашка акции')
   const p = panel()
-  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const stN = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).stages[0].n')
   const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
   p.run('applyPriceReports([{ id:"p_br", ok:true, inStock:false, alt:{ name:"10% БАЛЛАМИ", store:"Лемана ПРО", url:"https://lemanapro.ru/product/alt/", price:120 } }])')
 
-  const html = p.run('tSpec2()')
+  const html = estHtml(p)
   t.ok('плашка в имя не пролезла',
     p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].alt.name') === '',
     JSON.stringify(p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].alt')))
@@ -431,9 +430,9 @@ function panel() {
 {
   t.section('Сравнить по всем магазинам')
   const p = panel()
-  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const stN = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).stages[0].n')
   const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
-  const html = p.run('tSpec2()')
+  const html = estHtml(p)
 
   // Ряд «сравнить» показывает КАЖДЫЙ магазин из PRICE_SHOPS: пропущенный — это
   // цена, которую никто не посмотрит.
@@ -458,8 +457,8 @@ function panel() {
 {
   t.section('Мелкое движение цены не показываем')
   const p = panel()
-  const plain = () => p.run('tSpec2()').replace(/[  ]/g, ' ')
-  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const plain = () => estHtml(p).replace(/[  ]/g, ' ')
+  const stN = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).stages[0].n')
   const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
 
   // 5 100 → 5 098: два рубля из пяти тысяч.
@@ -482,8 +481,8 @@ function panel() {
 {
   t.section('Магазин по ссылке из сверки')
   const p = panel()
-  const plain = () => p.run('tSpec2()').replace(/[  ]/g, ' ')
-  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const plain = () => estHtml(p).replace(/[  ]/g, ' ')
+  const stN = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).stages[0].n')
   const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
   t.ok('кнопка есть у каждого товара', plain().indexOf('data-a="price-offer-add" data-p="p_kab"') >= 0)
 
@@ -555,8 +554,8 @@ function panel() {
 {
   t.section('Портал находит дешевле и предлагает')
   const p = panel()
-  const plain = () => p.run('tSpec2()').replace(/[  ]/g, ' ')
-  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const plain = () => estHtml(p).replace(/[  ]/g, ' ')
+  const stN = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).stages[0].n')
   const btn = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); btn.onclick()
   t.ok('кнопка поиска есть', plain().indexOf('data-a="price-ext-find"') >= 0)
 
@@ -565,7 +564,7 @@ function panel() {
   // недостающих у каждого — все остальные. Прибитое число ломалось бы на каждом
   // новом магазине, хотя правило не менялось.
   const shopsN = p.q('PRICE_SHOPS.length')
-  const items = p.q('priceFindItems(priceShopRows(works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes})).stages[0]))')
+  const items = p.q('priceFindItems(priceShopRows(works2(proj(projOpenId), Object.assign(specCtx(proj(projOpenId)),{winTypes:winTypes})).stages[0]))')
   t.ok('заданий столько, сколько недостающих магазинов', items.length === (shopsN - 1) * 2,
     JSON.stringify(items.map((x) => x.shop)))
   t.ok('в свой магазин не ходим', !items.some((x) => x.id === 'p_kab' && x.shop === 'ozon'),
@@ -603,7 +602,7 @@ function panel() {
   // Не то — предложение убирается и больше не мозолит глаза.
   p.run('applyPriceReports([{ id:"p_br", find:"Брусок", ok:true, found:{ name:"Брусок строганый 40x50x3000 мм сухой", url:"https://www.ozon.ru/product/brusok-2/", price:150 } }])')
   t.ok('дешевле — предложено', !!p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].shopAlt'))
-  p.run('tSpec2();')
+  p.run('tProjects();')
   const drop = p.dom.node({ a: 'price-alt-shop-drop', p: 'p_br' }); p.run('bind();'); drop.onclick()
   t.ok('отказ убирает предложение', !p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].shopAlt'))
   t.ok('и каталог не тронут',
@@ -617,7 +616,7 @@ function panel() {
 {
   t.section('Скачок цены в разы — на проверку')
   const p = panel()
-  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const stN = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).stages[0].n')
   const open = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); open.onclick()
   p.run('applyPriceReports([{ id:"p_kab", ok:true, price:61200, inStock:true }])')   // ×12
   t.ok('цена не подменилась', p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].unitCost') === 5100,
@@ -627,7 +626,7 @@ function panel() {
   t.ok('сверенной не считается', !p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].priceOkAt'),
     'помечена сверенной, хотя цена не принята')
 
-  const html = p.run('tSpec2()')
+  const html = estHtml(p)
   t.ok('в панели видно расхождение', /61 200|в 12|комплект|проверьте/i.test(html.replace(/[  ]/g, ' ')),
     'нет предупреждения о скачке')
   t.ok('есть кнопка принять как есть', html.indexOf('data-a="price-suspect-take"') >= 0)
@@ -651,11 +650,11 @@ function panel() {
 {
   t.section('Материал без карточки — завести из сверки')
   const p = panel()
-  const plain = () => p.run('tSpec2()').replace(/[  ]/g, ' ')
-  const stN = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+  const plain = () => estHtml(p).replace(/[  ]/g, ' ')
+  const stN = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).stages[0].n')
   // Дописываем материал, которого нет в каталоге — так их и вписывают на ходу.
-  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].positions[0].key')
-  p.run('matsOpen[' + JSON.stringify(key) + ']=1;tSpec2();')
+  const key = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).stages[0].positions[0].key')
+  p.run('matsOpen[' + JSON.stringify(key) + ']=1;tProjects();')
   const addOpen = p.dom.node({ a: 'est-mat-add-open', k: key }); p.run('bind();'); addOpen.onclick()
   p.dom.field('mad-n', 'Хомут стяжной 300 мм'); p.dom.field('mad-qty', '50'); p.dom.field('mad-cost', '3')
   p.dom.field('mad-url', ''); p.dom.field('mad-base', '')      // в базу НЕ заводим — вот он и без карточки
@@ -668,14 +667,14 @@ function panel() {
   t.ok('и называет товар', /Хомут стяжной 300 мм/.test(html))
   t.ok('с кнопкой завести', html.indexOf('data-a="price-card-add"') >= 0)
 
-  const mid = p.q('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].id')
+  const mid = p.q('proj(projOpenId).matAdd[' + JSON.stringify(key) + '][0].id')
   const add = p.dom.node({ a: 'price-card-add', k: key, m: mid, n: 'Хомут стяжной 300 мм' })
   p.run('bind();'); add.onclick()
   t.ok('товар завёлся', p.q('expProducts.length') === was + 1)
   const np = p.q('expProducts.filter(function(x){return /Хомут/.test(x.name||"");})[0]')
   t.ok('с ценой из строки', np && np.unitCost === 3, JSON.stringify(np && np.unitCost))
   t.ok('строка связана с карточкой',
-    p.q('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].pid') === np.id)
+    p.q('proj(projOpenId).matAdd[' + JSON.stringify(key) + '][0].pid') === np.id)
   t.ok('и из «нет в базе» он ушёл', !/НЕТ В БАЗЕ/.test(plain()), 'остался в списке')
   t.ok('зато попал в сверку по магазинам', /Хомут стяжной 300 мм/.test(plain()))
 }

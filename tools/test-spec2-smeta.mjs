@@ -10,6 +10,7 @@ import { presetModel, MODEL_PRESETS } from '../src/model.js'
 import { sheetPositions } from '../src/spec.js'
 import { works2, gaps2, positionWhy, modelFacts, probeSheet } from '../src/spec2.js'
 import { boot, reporter } from './harness/panel-vm.js'
+import { openProject, estHtml } from './helpers/open-project.mjs'
 
 const t = reporter()
 
@@ -167,9 +168,9 @@ const SHEET = {
   t.ok('и фактов нет', w.facts.rooms.length === 0, 'получили: ' + w.facts.rooms.length)
 }
 
-// ── 6. Вкладка в панели ─────────────────────────────────────────────────────
+// ── 6. Смета в панели ───────────────────────────────────────────────────────
 {
-  t.section('Вкладка «Смета»')
+  t.section('Полоса «Состав»')
   const p = boot({})
   p.set({
     expProducts: PRODUCTS, estimates: EST, dbPlans: [], crmClients: [],
@@ -177,11 +178,12 @@ const SHEET = {
     contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
     buildRules: [],
   })
-  const scheme = p.run('spec2Tab="scheme";tSpec2()')
-  t.ok('вкладки есть на обоих видах', scheme.indexOf('data-a="spec2-tab"') >= 0)
-  t.ok('на схеме смета не печатается', scheme.indexOf('ОТКУДА ЧИСЛА') < 0)
+  openProject(p)
+  const scheme = p.run('projBand="plan";tProjects()')
+  t.ok('полосы проекта на месте', scheme.indexOf('data-a="proj-band"') >= 0)
+  t.ok('на чертеже смета не печатается', scheme.indexOf('ОТКУДА ЧИСЛА') < 0)
 
-  const est = p.run('stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2()')
+  const est = p.run('stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};projBand="parts";tProjects()')
   t.ok('смета показана', /СЕБЕСТОИМОСТЬ ПО ЧЕРТЕЖУ/.test(est))
   // Смета проекта и смета этого раздела — ОДИН экран (`estBodyHtml`), поэтому
   // раскладка себестоимости обязана быть и здесь: разъехавшиеся экраны означают,
@@ -195,7 +197,7 @@ const SHEET = {
   t.ok('справка есть, но свёрнута', /ОТКУДА ЧИСЛА/.test(est) && !/РАСКЛАДКА/.test(est))
   t.ok('и в шапке видно главные числа', /пол [\d,]+ · стены [\d,]+ м²/.test(est))
   const factsHead = p.dom.node({ a: 'est-facts-open' }); p.run('bind();'); factsHead.onclick()
-  const estOpen = p.run('tSpec2()')
+  const estOpen = estHtml(p)
   t.ok('факты рядом с ней', /ОТКУДА ЧИСЛА/.test(estOpen) && /РАСКЛАДКА/.test(estOpen))
   t.ok('изделия проёмов перечислены', /ИЗДЕЛИЯ В ПРО/.test(estOpen))
   t.ok('и у каждого стоит его площадь', /\d+×\d+ · [\d,]+ м²/.test(estOpen))
@@ -210,8 +212,8 @@ const SHEET = {
   // Формулу площади спрашивают у самого числа: наведение отвечает подсказкой,
   // тап — разбором под строкой.
   t.ok('у стен есть подсказка с формулой', /title="Стены: периметр [^"]*высота [^"]+"/.test(estOpen))
-  // Высоту записывать некуда, пока лист не заведён: на заготовке она просто число.
-  t.ok('у заготовки высота не правится', estOpen.indexOf('data-a="est-model-h"') < 0)
+  // Высота стен правится прямо в справке: лист живой, и записывать её есть куда.
+  t.ok('высота стен правится', estOpen.indexOf('data-a="est-model-h"') >= 0)
   t.ok('но показана', /ВЫСОТА СТЕН/.test(estOpen))
   // Дом без проёмов: чистые и полные стены — одно и то же число, и вторая колонка
   // была бы не вторым мнением, а лишней шириной.
@@ -227,31 +229,25 @@ const SHEET = {
   t.ok('пробелы показаны', /В СМЕТУ НЕ ПОПАЛО/.test(est))
   t.ok('и свёрнуты', !/правило, которого пока нет/.test(est))
   const gapsHead = p.dom.node({ a: 'est-gaps-open' }); p.run('bind();'); gapsHead.onclick()
-  t.ok('раскрываются по тапу', /правило, которого пока нет/.test(p.run('tSpec2()')))
+  t.ok('раскрываются по тапу', /правило, которого пока нет/.test(estHtml(p)))
   p.run('bind();'); gapsHead.onclick()
-  // Заготовка нигде не сохранена — заводить из неё объект не из чего.
-  t.ok('объекта из заготовки нет', est.indexOf('data-a="spec-to-object"') < 0)
-  t.ok('и договора тоже', est.indexOf('data-a="spec-to-contract"') < 0)
-  t.ok('чертёж на этой вкладке не рисуется', est.indexOf('<svg') < 0)
+  t.ok('чертёж в смете не рисуется — он на своей полосе', est.indexOf('<svg') < 0)
 
-  // Лист заведён — кнопки появились.
-  p.run('spec2Tab="scheme";')
-  const edit = p.dom.node({ a: 'spec2-edit' })
-  p.run('bind();')
-  edit.onclick()
-  const est2 = p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2()')
-  t.ok('по заведённому листу объект собирается', est2.indexOf('data-a="spec-to-object"') >= 0)
-  // Лист есть — высоту стен есть куда записать, и поле появляется.
-  t.ok('и высота стен правится', p.run('factsOpen=true;tSpec2()').indexOf('data-a="est-model-h"') >= 0)
-  t.ok('и договор заводится', est2.indexOf('data-a="spec-to-contract"') >= 0)
+  // «Собрать объект» и «завести договор» живут на полосе «Деньги»: две одинаковые
+  // кнопки в соседних полосах читались бы как два разных действия.
+  const money = p.run('projBand="money";tProjects()')
+  t.ok('по проекту объект собирается', money.indexOf('data-a="spec-to-object"') >= 0)
+  t.ok('и договор заводится', money.indexOf('data-a="spec-to-contract"') >= 0)
+  t.ok('в смете этих кнопок нет', est.indexOf('data-a="spec-to-object"') < 0)
+  // Лист живой — высоту стен есть куда записать, и поле появляется.
+  t.ok('высота стен правится', p.run('projBand="parts";factsOpen=true;tProjects()').indexOf('data-a="est-model-h"') >= 0)
+  p.run('factsOpen=false;')
 
-  // Порядок внутри этапа: строку перетаскивают за ручку. У заготовки листа нет,
-  // и записывать порядок некуда, поэтому ручки там нет.
-  t.ok('у заготовки строку не перетаскивают', est.indexOf('data-a="est-pos-drag"') < 0)
+  // Порядок внутри этапа: строку перетаскивают за ручку.
   // Переставлять есть что, когда в этапе не одна работа.
   p.run('estimates=estimates.concat([{id:"e_more",kind:"house",name:"Обшивка ОСП",stage:2,lines:[{pid:"p_osb",qty:1}]}]);')
-  t.ok('а у листа ручка есть', p.run('tSpec2()').indexOf('data-a="est-pos-drag"') >= 0)
-  const stKeys = () => p.q('(works2(specSheets2[0], Object.assign(specCtx(specSheets2[0]),{winTypes:winTypes})).stages.filter(function(s){return s.n===2;})[0]||{positions:[]}).positions.map(function(x){return x.key;})')
+  t.ok('а у листа ручка есть', estHtml(p).indexOf('data-a="est-pos-drag"') >= 0)
+  const stKeys = () => p.q('(works2(proj(projOpenId), Object.assign(specCtx(proj(projOpenId)),{winTypes:winTypes})).stages.filter(function(s){return s.n===2;})[0]||{positions:[]}).positions.map(function(x){return x.key;})')
   const was = stKeys()
   if (was.length > 1) {
     // Жест руками не проверить — проверяем то, чем он заканчивается: строку
@@ -259,7 +255,7 @@ const SHEET = {
     t.ok('строка встала в конец', p.q('estPosPutBefore(' + JSON.stringify(was[0]) + ', "")') === true)
     t.ok('порядок именно такой', stKeys().join(',') === was.slice(1).concat([was[0]]).join(','),
       was.join(',') + ' → ' + stKeys().join(','))
-    t.ok('порядок записан в опытный лист', !!p.q('specSheets2[0].posOrder'))
+    t.ok('порядок записан в опытный лист', !!p.q('proj(projOpenId).posOrder'))
     t.ok('справочник не тронут', p.q('estimates.length') === 4)
     t.ok('и вернулась обратно',
       p.q('estPosPutBefore(' + JSON.stringify(was[0]) + ',' + JSON.stringify(was[1]) + ')') === true &&
@@ -285,16 +281,12 @@ const SHEET = {
     contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
     buildRules: [],
   })
-  const rules = p.run('spec2Tab="rules";tSpec2()')
-  t.ok('вкладка правил есть', rules.indexOf('data-a="rule-add"') >= 0)
-  t.ok('и объясняет, что это', /ПРАВИЛА СБОРКИ/.test(rules))
+  openProject(p)
+  const rules = p.run('projBand="parts";projRulesOpen=true;tProjects()')
+  t.ok('правила раскрываются в «Составе»', rules.indexOf('data-a="rule-add"') >= 0)
+  t.ok('и объясняют, что это', /ПРАВИЛА СБОРКИ/.test(rules))
 
-  // Заводим лист и правило руками, как это делает человек.
-  p.run('spec2Tab="scheme";')
-  const edit = p.dom.node({ a: 'spec2-edit' })
-  p.run('bind();')
-  edit.onclick()
-  p.run('modelFull=false;spec2Tab="rules";tSpec2();')
+  // Заводим правило руками, как это делает человек.
   const add = p.dom.node({ a: 'rule-add' })
   p.run('bind();')
   add.onclick()
@@ -302,23 +294,23 @@ const SHEET = {
   const rid = p.q('buildRules[0].id')
   p.run('ruleSet(' + JSON.stringify(rid) + ', function(r){ r.estId="e_wall"; r.what="surface"; r.k="wall"; r.scope="room"; });')
 
-  const shown = p.run('tSpec2()')
+  const shown = estHtml(p)
   t.ok('правило показано словами', /каждого помещения/.test(shown))
   t.ok('и сколько строк даёт', /строк на/.test(shown))
 
-  const est = p.run('stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2()')
+  const est = p.run('stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};projBand="parts";tProjects()')
   t.ok('строки правила попали в смету', /ОСП/.test(est))
   t.ok('стены больше не пробел', est.indexOf('стены') < 0 || !/В СМЕТУ НЕ ПОПАЛО[\s\S]{0,400}стены/.test(est))
 
   // Объект собирается ТЕМ ЖЕ списком: иначе продали одно, а строят другое.
-  const nWorks = p.q('specBuildStages(spec2Sheet()).reduce(function(a,s){return a+s.works.length;},0)')
-  const nPos = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.length')
+  const nWorks = p.q('specBuildStages(proj(projOpenId)).reduce(function(a,s){return a+s.works.length;},0)')
+  const nPos = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.length')
   t.ok('в объекте столько же работ, сколько в смете', nWorks === nPos, 'объект ' + nWorks + ', смета ' + nPos)
 
   // Боевая спецификация правил не видит — по ней заведены договора и транши.
   p.run('specSheets=[{id:"war",name:"Боевая",kind:"house",markup:30,specs:{height:2.5,rooms:[{id:"r1",name:"Зал",w:3,l:4,wallLen:14,pts:{}}]},rooms:{},global:{},qty:{}}];')
   const warRules = p.q('specCtx(specSheet("war")).rules.length')
-  const labRules = p.q('specCtx(spec2Sheet()).rules.length')
+  const labRules = p.q('specCtx(proj(projOpenId)).rules.length')
   t.ok('у боевого листа правил нет', warRules === 0)
   t.ok('у опытного — есть', labRules === 1)
 }
@@ -338,16 +330,15 @@ const SHEET = {
     contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
     buildRules: [],
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+  openProject(p)
 
-  const est = p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2()')
+  const est = p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};projBand="parts";tProjects()')
   t.ok('чип «откуда число» — кнопка', est.indexOf('data-a="est-why"') >= 0)
   t.ok('и он у обязательной строки тоже', /data-a="est-why" data-est="e_box"/.test(est))
   t.ok('редактор закрыт, пока не тапнули', est.indexOf('ЧЕМ МЕРЯЕТСЯ') < 0)
 
   const chip = p.dom.node({ a: 'est-why', est: 'e_box' }); p.run('bind();'); chip.onclick()
-  const open = p.run('tSpec2()')
+  const open = estHtml(p)
   t.ok('тап раскрыл редактор', /ЧЕМ МЕРЯЕТСЯ ЭТА СТРОКА/.test(open))
   // Сверху — объёмы из чертежа; без помещений в чертеже — прежние способы сразу.
   t.ok('и предлагает, чем мерять', /ОБЪЁМ ИЗ ЧЕРТЕЖА/.test(open) ||
@@ -355,12 +346,12 @@ const SHEET = {
   t.ok('правило от одного открытия не завелось', p.q('buildRules.length') === 0)
 
   // Меняем счёт: «на весь дом» → «по площади пола каждого помещения».
-  const costBefore = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_box";})[0].cost')
+  const costBefore = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.estId==="e_box";})[0].cost')
   const pick = p.dom.node({ a: 'est-rule-set', est: 'e_box', f: 'what', v: 'surface' }); p.run('bind();'); pick.onclick()
   const floor = p.dom.node({ a: 'est-rule-set', est: 'e_box', f: 'k', v: 'floor' }); p.run('bind();'); floor.onclick()
   t.ok('правило завелось по первой правке', p.q('buildRules.length') === 1)
   t.ok('и привязано к этой смете', p.q('buildRules[0].estId') === 'e_box')
-  const rows = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_box";})')
+  const rows = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.estId==="e_box";})')
   t.ok('строка стала считаться по помещениям', rows.length > 1, 'строк: ' + rows.length)
   t.ok('и это уже строки правила', rows.every((x) => x.from === 'rule'))
   t.ok('обязательная строка не осталась второй', rows.every((x) => String(x.key).indexOf('base:') !== 0))
@@ -369,12 +360,12 @@ const SHEET = {
   t.ok('цена пересчиталась', rows[0].cost !== costBefore, costBefore + ' → ' + rows[0].cost)
   t.ok('и сумма по строке выросла на весь дом',
     rows.reduce((a, x) => a + x.cost, 0) > costBefore)
-  t.ok('и в строке видно, откуда число', /пол [\d,]+ м²/.test(p.run('tSpec2()')))
+  t.ok('и в строке видно, откуда число', /пол [\d,]+ м²/.test(estHtml(p)))
 
   // Убрали правило — вернулся счёт «как в справочнике».
   const del = p.dom.node({ a: 'est-rule-del', est: 'e_box' }); p.run('bind();'); del.onclick()
   t.ok('правило убрано', p.q('buildRules.length') === 0)
-  const back = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_box";})')
+  const back = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.estId==="e_box";})')
   t.ok('строка снова одна', back.length === 1 && back[0].from === 'est')
   t.ok('и цена прежняя', back[0].cost === costBefore)
 }
@@ -392,46 +383,45 @@ const SHEET = {
     contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
     buildRules: [],
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
+  openProject(p)
   p.run('modelFull=false;')
 
-  const node = p.run('spec2Tab="scheme";schemeView="dim";nodeTab="n3";tSpec2()')
+  const node = p.run('projBand="plan";schemeView="dim";nodeTab="n3";tProjects()')
   t.ok('в узле можно выбрать товар слоя', node.indexOf('data-a="model-layer-pid"') >= 0)
   t.ok('и видно, что слои без цены', /без товара/.test(node))
 
-  const before = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.length')
-  const sel = p.dom.node({ a: 'model-layer-pid', sh: p.q('spec2Sheet().id'), key: 'skin', i: '1' })
+  const before = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.length')
+  const sel = p.dom.node({ a: 'model-layer-pid', sh: p.q('proj(projOpenId).id'), key: 'skin', i: '1' })
   sel.value = 'p_ppu'
   p.run('bind();'); sel.onchange()
-  t.ok('товар записан в слой', p.q('spec2Sheet().model.skin[1].pid') === 'p_ppu')
+  t.ok('товар записан в слой', p.q('proj(projOpenId).model.skin[1].pid') === 'p_ppu')
 
-  const pos = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.from==="layer";})')
+  const pos = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.from==="layer";})')
   t.ok('слой стал строкой сметы', pos.length === 1)
   t.ok('и посчитан по площади стен', pos[0].area > 10 && pos[0].cost > 0)
-  t.ok('всего строк стало больше', p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.length') === before + 1)
+  t.ok('всего строк стало больше', p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.length') === before + 1)
 
-  const node2 = p.run('nodeTab="n3";tSpec2()')
+  const node2 = p.run('nodeTab="n3";tProjects()')
   t.ok('узел показывает деньги пирога', /₽\/м²/.test(node2))
 
   // Толщину правим — товар остаётся: слой это не только миллиметры.
-  const mm = p.dom.node({ a: 'model-layer-mm', sh: p.q('spec2Sheet().id'), key: 'skin', i: '1' })
+  const mm = p.dom.node({ a: 'model-layer-mm', sh: p.q('proj(projOpenId).id'), key: 'skin', i: '1' })
   mm.value = '60'
   p.run('bind();'); mm.oninput ? mm.oninput() : (mm.onchange && mm.onchange())
-  t.ok('товар пережил правку толщины', p.q('spec2Sheet().model.skin[1].pid') === 'p_ppu')
+  t.ok('товар пережил правку толщины', p.q('proj(projOpenId).model.skin[1].pid') === 'p_ppu')
 
   // Замена материала в строке пирога правит САМ ПИРОГ: у стены один источник
   // правды о том, из чего она сделана.
-  const lkey = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.from==="layer";})[0].key') + '|p_ppu'
-  const lopen = p.dom.node({ a: 'est-mat-open', k: lkey }); p.run('stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();bind();'); lopen.onclick()
+  const lkey = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.from==="layer";})[0].key') + '|p_ppu'
+  const lopen = p.dom.node({ a: 'est-mat-open', k: lkey }); p.run('stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};projBand="parts";tProjects();bind();'); lopen.onclick()
   p.dom.field('msw-input', 'Монтажный комплект окна')
   const ldo = p.dom.node({ a: 'est-mat-do', k: lkey }); p.run('bind();'); ldo.onclick()
-  t.ok('замена слоя ушла в пирог', p.q('spec2Sheet().model.skin[1].pid') === 'p_win')
-  t.ok('и лист заменами не оброс', p.q('Object.keys(spec2Sheet().mats||{}).length') === 0)
+  t.ok('замена слоя ушла в пирог', p.q('proj(projOpenId).model.skin[1].pid') === 'p_win')
+  t.ok('и лист заменами не оброс', p.q('Object.keys(proj(projOpenId).mats||{}).length') === 0)
 
   // Объект собирается тем же списком — вместе со строками пирога.
-  const shown = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.length')
-  const nWorks = p.q('specBuildStages(spec2Sheet()).reduce(function(a,s){return a+s.works.length;},0)')
+  const shown = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.length')
+  const nWorks = p.q('specBuildStages(proj(projOpenId)).reduce(function(a,s){return a+s.works.length;},0)')
   t.ok('строки пирога уехали в объект', nWorks === shown, 'объект ' + nWorks + ', смета ' + shown)
 }
 
@@ -455,14 +445,13 @@ const SHEET = {
     contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
     buildRules: [],
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  const est0 = p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2()')
+  openProject(p)
+  const est0 = p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};projBand="parts";tProjects()')
   // Список читают РАБОТАМИ: материалы свёрнуты за одну строку, пока в них не лезут.
   t.ok('материалы по умолчанию свёрнуты',
     est0.indexOf('data-a="est-mats-open"') >= 0 && est0.indexOf('data-a="est-mat-open"') < 0)
-  p.run('(works2(spec2Sheet(), specCtx(spec2Sheet())).positions||[]).forEach(function(x){ matsOpen[x.key]=1; });')
-  const est = p.run('tSpec2()')
+  p.run('(works2(proj(projOpenId), specCtx(proj(projOpenId))).positions||[]).forEach(function(x){ matsOpen[x.key]=1; });')
+  const est = estHtml(p)
 
   t.ok('материалы идут перечнем, а не строкой', (est.match(/data-a="est-mat-open"/g) || []).length >= 2)
   t.ok('у каждого своя цена', /₽\/шт ×/.test(est))
@@ -470,43 +459,43 @@ const SHEET = {
     est.indexOf('data-a="est-mat-qty"') >= 0 && /value="50"/.test(est))
 
   // Тап по ⇄ раскрывает выбор из базы.
-  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0].key') + '|p_dr'
+  const key = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.estId==="e_el";})[0].key') + '|p_dr'
   const open = p.dom.node({ a: 'est-mat-open', k: key }); p.run('bind();'); open.onclick()
-  const shown = p.run('tSpec2()')
+  const shown = estHtml(p)
   t.ok('раскрылся выбор из базы', /ЗАМЕНИТЬ НА МАТЕРИАЛ ИЗ БАЗЫ/.test(shown))
   t.ok('и это список каталога', shown.indexOf('id="msw-cat2"') >= 0 && /Гофра усиленная/.test(shown))
 
   // Меняем товар.
-  const before = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0].cost')
+  const before = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.estId==="e_el";})[0].cost')
   p.dom.field('msw-input', 'Гофра усиленная')
   const go = p.dom.node({ a: 'est-mat-do', k: key }); p.run('bind();'); go.onclick()
-  const pos = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0]')
+  const pos = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.estId==="e_el";})[0]')
   t.ok('материал заменён', pos.mats.some((m) => m.pid === 'p_alt' && m.n === 'Гофра усиленная'))
   t.ok('количество сохранено', pos.mats.find((m) => m.pid === 'p_alt').qty === 50)
   t.ok('цена строки пересчиталась', pos.cost !== before, before + ' → ' + pos.cost)
-  t.ok('замена лежит на листе', p.q('Object.keys(spec2Sheet().mats).length') === 1)
+  t.ok('замена лежит на листе', p.q('Object.keys(proj(projOpenId).mats).length') === 1)
   t.ok('справочник не тронут', p.q('estimates.find(function(e){return e.id==="e_el";}).lines[1].pid') === 'p_dr')
-  t.ok('в строке видно, что материал заменён', /заменён/.test(p.run('tSpec2()')))
+  t.ok('в строке видно, что материал заменён', /заменён/.test(estHtml(p)))
 
   // Материал можно дописать руками: смета описывает типовой дом, а на этом бывает
   // лишний уголок.
-  t.ok('кнопка «+ материал» есть у строки', p.run('tSpec2()').indexOf('data-a="est-mat-add-open"') >= 0)
+  t.ok('кнопка «+ материал» есть у строки', estHtml(p).indexOf('data-a="est-mat-add-open"') >= 0)
   const addOpen = p.dom.node({ a: 'est-mat-add-open', k: pos.key }); p.run('bind();'); addOpen.onclick()
-  t.ok('форма раскрылась', /ДОБАВИТЬ МАТЕРИАЛ В ЭТУ СТРОКУ/.test(p.run('tSpec2()')))
+  t.ok('форма раскрылась', /ДОБАВИТЬ МАТЕРИАЛ В ЭТУ СТРОКУ/.test(estHtml(p)))
   p.dom.field('mad-n', 'Гофра усиленная')
   p.dom.field('mad-qty', '7')
   p.dom.field('mad-cost', '')
   const addDo = p.dom.node({ a: 'est-mat-add-do', k: pos.key }); p.run('bind();'); addDo.onclick()
-  const withAdd = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0]')
+  const withAdd = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.estId==="e_el";})[0]')
   const extra = withAdd.mats.filter((m) => m.added)
   t.ok('материал дописан', extra.length === 1 && extra[0].n === 'Гофра усиленная')
   t.ok('цена подтянулась из базы', extra[0].cost === 90)
   t.ok('количество своё', extra[0].qty === 7)
   t.ok('и сумма строки выросла', withAdd.cost === pos.cost + 90 * 7, withAdd.cost + ' против ' + pos.cost)
-  t.ok('помечен как добавленный', /добавлен/.test(p.run('tSpec2()')))
+  t.ok('помечен как добавленный', /добавлен/.test(estHtml(p)))
   t.ok('справочник не тронут', p.q('estimates.find(function(e){return e.id==="e_el";}).lines.length') === 2)
   t.ok('уехал в объект',
-    p.q('specBuildStages(spec2Sheet()).reduce(function(a,s){return a.concat(s.works);},[])')
+    p.q('specBuildStages(proj(projOpenId)).reduce(function(a,s){return a.concat(s.works);},[])')
       .some((w) => (w.mats || []).some((m) => m.n === 'Гофра усиленная' && m.qty === 7)))
 
   // Ручной материал без базы — с ценой из формы.
@@ -515,17 +504,17 @@ const SHEET = {
   p.dom.field('mad-qty', '4')
   p.dom.field('mad-cost', '120')
   const addDo2 = p.dom.node({ a: 'est-mat-add-do', k: pos.key }); p.run('bind();'); addDo2.onclick()
-  const hand = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0].mats').filter((m) => m.added)
+  const hand = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.estId==="e_el";})[0].mats').filter((m) => m.added)
   t.ok('материала не из базы тоже можно', hand.length === 2 && hand[1].n === 'Уголок монтажный')
   t.ok('и цена из формы', hand[1].cost === 120 && hand[1].pid === '')
 
   // Убрали дописанное.
   const del = p.dom.node({ a: 'est-mat-add-del', k: pos.key, m: hand[0].id }); p.run('bind();'); del.onclick()
   const del2 = p.dom.node({ a: 'est-mat-add-del', k: pos.key, m: hand[1].id }); p.run('bind();'); del2.onclick()
-  t.ok('дописанное убирается', p.q('Object.keys(spec2Sheet().matAdd||{}).length') === 0)
+  t.ok('дописанное убирается', p.q('Object.keys(proj(projOpenId).matAdd||{}).length') === 0)
 
   // Замена уезжает в объект вместе с составом.
-  const works = p.q('specBuildStages(spec2Sheet()).reduce(function(a,s){return a.concat(s.works);},[])')
+  const works = p.q('specBuildStages(proj(projOpenId)).reduce(function(a,s){return a.concat(s.works);},[])')
   t.ok('объект собран с новым материалом',
     works.some((w) => (w.mats || []).some((m) => m.pid === 'p_alt')))
 
@@ -533,48 +522,48 @@ const SHEET = {
   const key2 = pos.key + '|p_alt'
   const open2 = p.dom.node({ a: 'est-mat-open', k: key2 }); p.run('bind();'); open2.onclick()
   const back = p.dom.node({ a: 'est-mat-reset', k: key2 }); p.run('bind();'); back.onclick()
-  const after = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0]')
+  const after = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.estId==="e_el";})[0]')
   t.ok('вернулся товар из справочника', after.mats.some((m) => m.pid === 'p_dr'))
   t.ok('и цена прежняя', after.cost === before)
-  t.ok('замена с листа убрана', p.q('Object.keys(spec2Sheet().mats).length') === 0)
+  t.ok('замена с листа убрана', p.q('Object.keys(proj(projOpenId).mats).length') === 0)
 
   // Количество правится руками — и это тоже правка дома, а не справочника.
   const qk = after.key + '|p_dr'
   const qi = p.dom.node({ a: 'est-mat-qty', k: qk })
   qi.value = '80'
   p.run('bind();'); qi.onchange()
-  const q1 = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0]')
+  const q1 = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.estId==="e_el";})[0]')
   t.ok('количество поставлено руками', q1.mats.find((m) => m.pid === 'p_dr').qty === 80)
   t.ok('и помечено как ручное', q1.mats.find((m) => m.pid === 'p_dr').qtySet === true)
   t.ok('цена пересчиталась по нему', q1.cost === 1500 + 800 * 80, 'строка ' + q1.cost)
   t.ok('справочник по-прежнему не тронут', p.q('estimates.find(function(e){return e.id==="e_el";}).lines[1].qty') === 50)
   t.ok('в объект уехало ручное число',
-    p.q('specBuildStages(spec2Sheet()).reduce(function(a,s){return a.concat(s.works);},[])')
+    p.q('specBuildStages(proj(projOpenId)).reduce(function(a,s){return a.concat(s.works);},[])')
       .some((w) => (w.mats || []).some((m) => m.pid === 'p_dr' && m.qty === 80)))
   // Запятая — тоже число: браузер и человек пишут по-разному.
   qi.value = '12,5'
   p.run('bind();'); qi.onchange()
-  t.ok('запятая понимается', p.q('spec2Sheet().matQty[' + JSON.stringify(after.key) + '].p_dr') === 12.5)
+  t.ok('запятая понимается', p.q('proj(projOpenId).matQty[' + JSON.stringify(after.key) + '].p_dr') === 12.5)
 
   const qr = p.dom.node({ a: 'est-mat-qty-reset', k: qk })
-  p.run('tSpec2();bind();'); qr.onclick()
-  const q2 = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0]')
+  p.run('tProjects();bind();'); qr.onclick()
+  const q2 = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.estId==="e_el";})[0]')
   t.ok('расчётное количество вернулось', q2.mats.find((m) => m.pid === 'p_dr').qty === 50)
-  t.ok('и лист чист', p.q('Object.keys(spec2Sheet().matQty||{}).length') === 0)
+  t.ok('и лист чист', p.q('Object.keys(proj(projOpenId).matQty||{}).length') === 0)
 
   // Порядок материалов внутри строки — тот же жест, что у работ: тянут за ручку.
   {
-    const mkeys = () => p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0].mats.map(function(m){return m.pid||m.id;})')
+    const mkeys = () => p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.estId==="e_el";})[0].mats.map(function(m){return m.pid||m.id;})')
     const before = mkeys()
     t.ok('в строке несколько материалов', before.length >= 2, before.join(','))
     const mk = q2.key + '|' + before[before.length - 1]
-    const shown = p.run('tSpec2()')
+    const shown = estHtml(p)
     t.ok('у материала есть ручка', shown.indexOf('data-a="est-mat-drag"') >= 0)
     t.ok('мест «сюда» нет', shown.indexOf('data-a="est-mat-drop"') < 0)
     t.ok('материал встал первым',
       p.q('matPutBefore(' + JSON.stringify(mk) + ',' + JSON.stringify(before[0]) + ')') === true &&
       mkeys()[0] === before[before.length - 1], mkeys().join(','))
-    t.ok('порядок записан в опытный лист', !!p.q('spec2Sheet().matOrder'))
+    t.ok('порядок записан в опытный лист', !!p.q('proj(projOpenId).matOrder'))
     t.ok('и возвращается на место',
       p.q('matPutBefore(' + JSON.stringify(mk) + ', "")') === true &&
       mkeys().join(',') === before.join(','), mkeys().join(','))
@@ -584,36 +573,36 @@ const SHEET = {
   // в готовом кабель-канале. Справочник при этом общий — правка живёт на листе.
   const wasCost = q2.cost
   const okey = q2.key + '|p_dr'
-  t.ok('крестик есть у каждого материала', p.run('tSpec2()').indexOf('data-a="est-mat-off"') >= 0)
+  t.ok('крестик есть у каждого материала', estHtml(p).indexOf('data-a="est-mat-off"') >= 0)
   const drop = p.dom.node({ a: 'est-mat-off', k: okey }); p.run('bind();'); drop.onclick()
-  const d1 = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0]')
+  const d1 = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.estId==="e_el";})[0]')
   t.ok('материала в строке нет', !d1.mats.some((m) => m.pid === 'p_dr'))
   t.ok('и цена строки упала на него', d1.cost === wasCost - 800 * 50, 'строка ' + d1.cost)
-  t.ok('убранное лежит на листе', p.q('spec2Sheet().matOff[' + JSON.stringify(q2.key) + '].join(",")') === 'p_dr')
+  t.ok('убранное лежит на листе', p.q('proj(projOpenId).matOff[' + JSON.stringify(q2.key) + '].join(",")') === 'p_dr')
   t.ok('справочник не тронут', p.q('estimates.find(function(e){return e.id==="e_el";}).lines.length') === 2)
-  const shownOff = p.run('tSpec2()')
+  const shownOff = estHtml(p)
   t.ok('в строке видно, что убрано', /УБРАНО ИЗ ЭТОГО ДОМА/.test(shownOff))
   t.ok('и названо по имени', /Наличник ⟲/.test(shownOff))
   // Смотрим ИМЕННО эту работу: тот же товар честно стоит и в монтаже двери.
-  const built2 = p.q('specBuildStages(spec2Sheet()).reduce(function(a,s){return a.concat(s.works);},[])')
+  const built2 = p.q('specBuildStages(proj(projOpenId)).reduce(function(a,s){return a.concat(s.works);},[])')
     .filter((w) => w.estId === 'e_el')
   t.ok('работа на стройке есть', built2.length === 1, 'работ: ' + built2.length)
   t.ok('на стройку убранное не уезжает', !(built2[0].mats || []).some((m) => m.pid === 'p_dr'))
 
   // Возвращается тем же тапом: «нет в этом доме» — решение, а не удаление.
   const back2 = p.dom.node({ a: 'est-mat-on', k: okey }); p.run('bind();'); back2.onclick()
-  const d2 = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0]')
+  const d2 = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.estId==="e_el";})[0]')
   t.ok('материал вернулся', d2.mats.some((m) => m.pid === 'p_dr'))
   t.ok('и цена прежняя', d2.cost === wasCost, 'строка ' + d2.cost)
-  t.ok('лист чист', !p.q('spec2Sheet().matOff'))
+  t.ok('лист чист', !p.q('proj(projOpenId).matOff'))
 
   // Убрали всё — список всё равно показан: иначе вернуть было бы нечем.
   const o1 = p.dom.node({ a: 'est-mat-off', k: okey }); p.run('bind();'); o1.onclick()
   const o2 = p.dom.node({ a: 'est-mat-off', k: q2.key + '|p_win' }); p.run('bind();'); o2.onclick()
-  const empty = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_el";})[0]')
+  const empty = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.estId==="e_el";})[0]')
   t.ok('в строке не осталось материалов', empty.mats.length === 0)
   t.ok('и она ничего не стоит', empty.cost === 0)
-  t.ok('но вернуть можно оба', (p.run('tSpec2()').match(/data-a="est-mat-on"/g) || []).length === 2)
+  t.ok('но вернуть можно оба', (estHtml(p).match(/data-a="est-mat-on"/g) || []).length === 2)
 }
 
 // ── 11. Варианты выбираются переключателем ──────────────────────────────────
@@ -633,17 +622,16 @@ const SHEET = {
     contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
     buildRules: [],
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";')
+  openProject(p)
+  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};projBand="parts";')
 
-  const three = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return /ППУ/.test(x.name);}).length')
+  const three = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return /ППУ/.test(x.name);}).length')
   t.ok('до группировки в доме все три', three === 3)
 
   // Общее начало имени о выборе ничего не говорит: «Электрика — кабель» и
   // «Электрика — щиток» — разные работы. Поэтому список ничего не предлагает
   // сам: состав работ — это работы, а группу человек собирает руками.
-  const before = p.run('tSpec2()')
+  const before = estHtml(p)
   t.ok('подсказка в списке не появляется', !/Похоже, это один выбор/.test(before))
   t.ok('и кнопок сборки в списке нет', !/data-a="est-opt-auto"/.test(before))
   t.ok('все три остались отдельными строками',
@@ -651,17 +639,17 @@ const SHEET = {
 
   // Собрать в группу можно из редактора строки — там, где человек уже решил.
   p.run('estWhyOpen="e_p5";')
-  const opened = p.run('tSpec2()')
+  const opened = estHtml(p)
   t.ok('в редакторе строки сборка предлагается',
     /data-a="est-opt-auto"[^>]*data-g="Утепление стен и потолка"/.test(opened))
   const auto = p.dom.node({ a: 'est-opt-auto', e: 'e_p5', g: 'Утепление стен и потолка' })
-  p.run('tSpec2();bind();'); auto.onclick()
-  t.ok('все три размечены группой', p.q('Object.keys(spec2Sheet().optOf).length') === 3)
-  const one = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return /ППУ/.test(x.name);})')
+  p.run('tProjects();bind();'); auto.onclick()
+  t.ok('все три размечены группой', p.q('Object.keys(proj(projOpenId).optOf).length') === 3)
+  const one = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return /ППУ/.test(x.name);})')
   t.ok('в доме остался один', one.length === 1)
   t.ok('и это тот, из строки которого группировали', one[0].estId === 'e_p5')
 
-  const html = p.run('tSpec2()')
+  const html = estHtml(p)
   // Выбор — БЛОК вокруг строки, и в ряду стоят ВСЕ варианты, включая выбранный:
   // ряд из двух кнопок, где текущего нет, читается как «переключить на что-то»,
   // а не как «выбрано это из трёх».
@@ -699,60 +687,60 @@ const SHEET = {
       contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
       buildRules: [],
     })
-    q.run('spec2Tab="scheme";tSpec2();')
-    const ed = q.dom.node({ a: 'spec2-edit' }); q.run('bind();'); ed.onclick()
-    q.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
-    const keyOf = (id) => q.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions'
+    q.run('projBand="plan";tProjects();')
+    openProject(q)
+    q.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};projBand="parts";tProjects();')
+    const keyOf = (id) => q.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions'
       + '.filter(function(x){return x.estId==="' + id + '";})[0].key')
     const k5 = keyOf('e_p5'), k8 = keyOf('e_p8')
     const off5 = q.dom.node({ a: 'est-pos-on', k: k5 }); q.run('bind();'); off5.onclick()
-    const off8 = q.dom.node({ a: 'est-pos-on', k: k8 }); q.run('tSpec2();bind();'); off8.onclick()
-    t.ok('две строки убраны руками', Object.keys(q.q('spec2Sheet().posOff||{}')).length === 2)
+    const off8 = q.dom.node({ a: 'est-pos-on', k: k8 }); q.run('tProjects();bind();'); off8.onclick()
+    t.ok('две строки убраны руками', Object.keys(q.q('proj(projOpenId).posOff||{}')).length === 2)
 
-    q.run('estWhyOpen="e_p3";tSpec2();')
+    q.run('estWhyOpen="e_p3";tProjects();')
     const auto3 = q.dom.node({ a: 'est-opt-auto', e: 'e_p3', g: 'Утепление стен и потолка' })
     q.run('bind();'); auto3.onclick()
     t.ok('группировка сняла отметки «не в итоге»',
-      Object.keys(q.q('spec2Sheet().posOff||{}')).length === 0)
+      Object.keys(q.q('proj(projOpenId).posOff||{}')).length === 0)
 
-    q.run('estWhyOpen="";tSpec2();')
+    q.run('estWhyOpen="";tProjects();')
     const pick8 = q.dom.node({ a: 'est-opt-pick', g: 'Утепление стен и потолка', e: 'e_p8' })
     q.run('bind();'); pick8.onclick()
-    const got = q.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions'
+    const got = q.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions'
       + '.filter(function(x){return /ППУ/.test(x.name);})')
     t.ok('выбранный вариант в доме, а не выброшен', got.length === 1 && got[0].estId === 'e_p8')
-    t.ok('и блок выбора на месте', /один из 3/.test(q.run('tSpec2()')))
+    t.ok('и блок выбора на месте', /один из 3/.test(q.run('tProjects()')))
   }
 
   // Переключаем вариант.
   const pick = p.dom.node({ a: 'est-opt-pick', g: 'Утепление стен и потолка', e: 'e_p8' })
   p.run('bind();'); pick.onclick()
-  const now = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return /ППУ/.test(x.name);})')
+  const now = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return /ППУ/.test(x.name);})')
   t.ok('в доме теперь другой вариант', now.length === 1 && now[0].estId === 'e_p8')
   t.ok('цена дома поехала за выбором', now[0].cost === 1500 * 3)
   t.ok('в объект уходит только выбранный',
-    p.q('specBuildStages(spec2Sheet()).reduce(function(a,s){return a.concat(s.works);},[])')
+    p.q('specBuildStages(proj(projOpenId)).reduce(function(a,s){return a.concat(s.works);},[])')
       .filter((w) => /ППУ/.test(w.n)).length === 1)
   t.ok('справочник не тронут', p.q('estimates.filter(function(e){return /ППУ/.test(e.name);}).length') === 3)
 
   // Убрали строку из группы — она снова отдельная работа, остальные остались выбором.
-  p.run('estWhyOpen="e_p8";tSpec2();')
+  p.run('estWhyOpen="e_p8";tProjects();')
   const off = p.dom.node({ a: 'est-opt-off', e: 'e_p8' })
   p.run('bind();'); off.onclick()
-  t.ok('в группе осталось двое', p.q('Object.keys(spec2Sheet().optOf||{}).length') === 2)
-  const after2 = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return /ППУ/.test(x.name);})')
+  t.ok('в группе осталось двое', p.q('Object.keys(proj(projOpenId).optOf||{}).length') === 2)
+  const after2 = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return /ППУ/.test(x.name);})')
   t.ok('в доме вышедший и один из группы', after2.length === 2)
   t.ok('вышедший — снова отдельная работа', after2.some((x) => x.estId === 'e_p8'))
   // Выбор указывал на вышедшего — берём первый оставшийся, а не обнуляем группу.
   t.ok('группа выбрала оставшийся вариант', after2.some((x) => x.estId === 'e_p3'))
 
   // Второй выход распускает группу: выбор из одного — не выбор.
-  p.run('estWhyOpen="e_p5";tSpec2();')
+  p.run('estWhyOpen="e_p5";tProjects();')
   const off2 = p.dom.node({ a: 'est-opt-off', e: 'e_p5' })
   p.run('bind();'); off2.onclick()
-  t.ok('группа распалась', p.q('Object.keys(spec2Sheet().optOf||{}).length') === 0)
+  t.ok('группа распалась', p.q('Object.keys(proj(projOpenId).optOf||{}).length') === 0)
   t.ok('и в доме снова все три',
-    p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return /ППУ/.test(x.name);}).length') === 3)
+    p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return /ППУ/.test(x.name);}).length') === 3)
 }
 
 // ── 12. Этап читается блоками по помещениям ─────────────────────────────────
@@ -770,10 +758,9 @@ const SHEET = {
       { id: 'r_f', kind: 'house', estId: 'e_dr', what: 'surface', k: 'floor', scope: 'room', qty: 1, stage: 3 },
     ],
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  const est = p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2()')
-  const st = () => p.q('works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes})).stages.filter(function(s){return s.n===3;})[0]')
+  openProject(p)
+  const est = p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};projBand="parts";tProjects()')
+  const st = () => p.q('works2(proj(projOpenId), Object.assign(specCtx(proj(projOpenId)),{winTypes:winTypes})).stages.filter(function(s){return s.n===3;})[0]')
   const blocks = st().blocks
   t.ok('этап разложен по комнатам', blocks.length >= 2, 'блоков: ' + blocks.length)
   t.ok('в блоке работы одной комнаты',
@@ -807,23 +794,23 @@ const SHEET = {
   const head = p.dom.node({ a: 'est-block-open', b: '3|' + blocks[0].key })
   p.run('bind();'); head.onclick()
   t.ok('блок сворачивается',
-    (p.run('tSpec2()').match(/data-a="est-block-open"/g) || []).length === blocks.length)
-  t.ok('и в листе от этого ничего не записалось', !p.q('spec2Sheet().blockShut'))
+    (estHtml(p).match(/data-a="est-block-open"/g) || []).length === blocks.length)
+  t.ok('и в листе от этого ничего не записалось', !p.q('proj(projOpenId).blockShut'))
   p.run('bind();'); head.onclick()
 
   // Блоки правятся и здесь: экран сметы у двух разделов один.
-  const st2 = () => p.q('works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes})).stages.filter(function(s){return s.n===3;})[0]')
+  const st2 = () => p.q('works2(proj(projOpenId), Object.assign(specCtx(proj(projOpenId)),{winTypes:winTypes})).stages.filter(function(s){return s.n===3;})[0]')
   const key = blocks[0].positions[0].key
-  const to = p.q('works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes})).rooms')
+  const to = p.q('works2(proj(projOpenId), Object.assign(specCtx(proj(projOpenId)),{winTypes:winTypes})).rooms')
     .filter((r) => r.id !== blocks[0].key)[0]
-  t.ok('просто так комнаты не предлагаются', !/ПЕРЕНЕСТИ В/.test(p.run('tSpec2()')))
+  t.ok('просто так комнаты не предлагаются', !/ПЕРЕНЕСТИ В/.test(estHtml(p)))
   const pick = p.dom.node({ a: 'est-pos-room-pick', k: key }); p.run('bind();'); pick.onclick()
-  t.ok('комнаты предложены', /ПЕРЕНЕСТИ В/.test(p.run('tSpec2()')))
+  t.ok('комнаты предложены', /ПЕРЕНЕСТИ В/.test(estHtml(p)))
   const chip = p.dom.node({ a: 'est-pos-room', k: key, r: to.id }); p.run('bind();'); chip.onclick()
   t.ok('работа переехала в другую комнату',
     st2().blocks.filter((b) => b.key === to.id)[0].positions.some((x) => x.key === key),
     st2().blocks.map((b) => (b.room || 'ДОМ') + ':' + b.positions.length).join(' | '))
-  t.ok('приписка лежит в опытном листе', p.q('spec2Sheet().posRoom[' + JSON.stringify(key) + ']') === to.id)
+  t.ok('приписка лежит в опытном листе', p.q('proj(projOpenId).posRoom[' + JSON.stringify(key) + ']') === to.id)
 
   // Имя помещения правится над его работами и живёт в модели.
   p.run('window.prompt=function(){return "Мойка"};')
@@ -831,7 +818,7 @@ const SHEET = {
   t.ok('помещение переименовано', st2().blocks.some((b) => b.room === 'Мойка'),
     st2().blocks.map((b) => b.room).join(','))
   t.ok('и имя взято из модели',
-    p.q('modelRooms(spec2Sheet().model).filter(function(r){return r.id===' + JSON.stringify(to.id) + ';})[0].name') === 'Мойка')
+    p.q('modelRooms(proj(projOpenId).model).filter(function(r){return r.id===' + JSON.stringify(to.id) + ';})[0].name') === 'Мойка')
 }
 
 // ── 13. Своя работа и её цена ───────────────────────────────────────────────
@@ -846,23 +833,21 @@ const SHEET = {
     contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
     buildRules: [],
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
-  const open = p.dom.node({ a: 'est-pos-add-open', k: p.q('spec2Sheet().id') })
+  openProject(p)
+  const open = p.dom.node({ a: 'est-pos-add-open', k: p.q('proj(projOpenId).id') })
   p.run('bind();'); open.onclick()
   // Своя работа заводится часами: деньги — по ставке листа.
-  p.run('spec2Sheet().hourRate=1000;')
+  p.run('proj(projOpenId).hourRate=1000;')
   p.dom.field('pad-n', 'Сборка стеллажей'); p.dom.field('pad-hours', '0,5'); p.dom.field('pad-stage', '1')
-  p.run('tSpec2();')
-  const go = p.dom.node({ a: 'est-pos-add-do', k: p.q('spec2Sheet().id') })
+  p.run('tProjects();')
+  const go = p.dom.node({ a: 'est-pos-add-do', k: p.q('proj(projOpenId).id') })
   p.run('bind();'); go.onclick()
-  const own = () => p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.name==="Сборка стеллажей";})[0]')
+  const own = () => p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.name==="Сборка стеллажей";})[0]')
   t.ok('работа появилась', !!own() && own().cost === 500)
   const key = own().key
   p.run('matsOpen[' + JSON.stringify(key) + ']=1;')
   openRow(p, key)
-  const html = p.run('tSpec2()')
+  const html = estHtml(p)
   t.ok('фантомной строки материала нет', html.indexOf('data-a="est-mat-off" data-k="' + key + '|"') < 0)
   t.ok('крестик работы на месте', html.indexOf('data-a="est-pos-del" data-k="' + key + '"') >= 0)
   const del = p.dom.node({ a: 'est-pos-del', k: key }); p.run('bind();'); del.onclick()
@@ -880,27 +865,25 @@ const SHEET = {
     contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
     buildRules: [],
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
-  const plain = () => p.run('tSpec2()').replace(/<[^>]*>/g, '').replace(/[\u00a0\u202f]/g, ' ')
+  openProject(p)
+  const plain = () => estHtml(p).replace(/<[^>]*>/g, '').replace(/[\u00a0\u202f]/g, ' ')
   t.ok('раскладка есть в каждой строке', /материалы [\d ]+ ₽ · работа [\d ]+ ₽/.test(plain()), 'нет раскладки')
 
-  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key')
+  const key = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions[0].key')
   openRow(p, key)
-  const fieldHtml = () => (p.run('tSpec2()').match(/data-a="est-pos-cost"[^>]*/) || [''])[0]
+  const fieldHtml = () => (estHtml(p).match(/data-a="est-pos-cost"[^>]*/) || [''])[0]
   // Поля цены у обычной строки нет: работа считается по часам и норма-часу.
   t.ok('поля цены в строке нет', fieldHtml() === '', fieldHtml().slice(0, 120))
   const inp = p.dom.node({ a: 'est-pos-cost', k: key })
   p.run('bind();'); inp.value = '7000'; inp.onchange()
   t.ok('цена бригаде видна отдельно', /· работа 7 000 ₽/.test(plain()))
 
-  const st = p.q('works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes})).stages.filter(function(s){return s.positions.some(function(x){return x.key===' + JSON.stringify(key) + ';});})[0]')
+  const st = p.q('works2(proj(projOpenId), Object.assign(specCtx(proj(projOpenId)),{winTypes:winTypes})).stages.filter(function(s){return s.positions.some(function(x){return x.key===' + JSON.stringify(key) + ';});})[0]')
   t.ok('этап делит свою сумму так же', st.mats + st.labor === Math.round(st.cost), st.mats + ' + ' + st.labor + ' vs ' + st.cost)
   t.ok('и подытоги видны в шапке этапа', /материалы [\d ]+ ₽ · работа [\d ]+ ₽/.test(plain()))
   // Итог по стройке целиком — последняя строка списка этапов: складывать этапы
   // глазами приходилось при каждом разговоре с закупщиком.
-  const tot = p.q('(function(){var w=works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes}));return {m:w.mats,l:w.labor,c:w.cost};})()')
+  const tot = p.q('(function(){var w=works2(proj(projOpenId), Object.assign(specCtx(proj(projOpenId)),{winTypes:winTypes}));return {m:w.mats,l:w.labor,c:w.cost};})()')
   const ru = (n) => n.toLocaleString('ru-RU').replace(/[\u00a0\u202f]/g, ' ')
   const totBlock = plain().split('ИТОГО ПО ВСЕМ ЭТАПАМ')[1] || ''
   t.ok('итог стоит под этапами', totBlock.length > 0, 'блока нет')
@@ -908,7 +891,7 @@ const SHEET = {
   t.ok('и те же два кармана',
     totBlock.indexOf('материалы ' + ru(tot.m) + ' ₽ · работа ' + ru(tot.l) + ' ₽') >= 0, totBlock.slice(0, 180))
   // Те же пять правок строки — экран сметы у двух разделов один.
-  const html2 = p.run('tSpec2()')
+  const html2 = estHtml(p)
   t.ok('итог строки виден в шапке',
     /font-size:13px;font-weight:800[^>]*white-space:nowrap">[\d\s\u00a0]+ ₽/.test(html2))
   t.ok('«работа» в раскладке ведёт к часам', html2.indexOf('data-a="est-pos-cost-focus"') >= 0)
@@ -918,7 +901,7 @@ const SHEET = {
   t.ok('этап спрятан за кнопкой', html2.indexOf('data-a="est-pos-stage-pick"') >= 0)
   t.ok('строки разделяет воздух', /padding:12px 0/.test(html2))
   p.run('matsOpen[' + JSON.stringify(key) + ']=1;')
-  const marks2 = p.run('tSpec2()')
+  const marks2 = estHtml(p)
   // Оба крестика серые (просьба Юрия, 11.09.2026), но у работы крупнее: одинаковые
   // рядом стирали работу вместо материала. Удалённое к тому же возвращается.
   t.ok('✕ материала приглушён', /data-a="est-mat-off"[^>]*width:24px[^>]*color:#9aabbf/.test(marks2))
@@ -939,35 +922,33 @@ const SHEET = {
     contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
     buildRules: [],
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
+  openProject(p)
 
-  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key')
+  const key = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions[0].key')
   openRow(p, key)
-  const html = p.run('tSpec2()')
+  const html = estHtml(p)
   t.ok('у работы есть поле часов', html.indexOf('data-a="est-pos-hours"') >= 0)
   t.ok('и оно подписано часами', /placeholder="ч"/.test(html) || /план, ч/.test(html), 'нет подписи')
 
   const inp = p.dom.node({ a: 'est-pos-hours', k: key })
   p.run('bind();'); inp.value = '8'; inp.onchange()
-  t.ok('план записан в лист дома', p.q('spec2Sheet().posHours[' + JSON.stringify(key) + ']') === 8,
-    'получили: ' + p.q('spec2Sheet().posHours[' + JSON.stringify(key) + ']'))
+  t.ok('план записан в лист дома', p.q('proj(projOpenId).posHours[' + JSON.stringify(key) + ']') === 8,
+    'получили: ' + p.q('proj(projOpenId).posHours[' + JSON.stringify(key) + ']'))
   t.ok('справочник смет не тронут', p.q('estimates.every(function(e){return e.hours==null;})'))
 
-  const w = () => p.q('(function(){var x=works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes}));return {h:x.hours,ph:x.positions.filter(function(q){return q.key===' + JSON.stringify(key) + ';})[0].hours,sh:x.stages.map(function(s){return s.hours;})};})()')
+  const w = () => p.q('(function(){var x=works2(proj(projOpenId), Object.assign(specCtx(proj(projOpenId)),{winTypes:winTypes}));return {h:x.hours,ph:x.positions.filter(function(q){return q.key===' + JSON.stringify(key) + ';})[0].hours,sh:x.stages.map(function(s){return s.hours;})};})()')
   t.ok('позиция знает свой план', w().ph === 8, 'получили: ' + w().ph)
   t.ok('часы сложились по смете', w().h === 8, 'получили: ' + w().h)
   t.ok('и по этапу', w().sh.reduce((a, b) => a + b, 0) === 8, 'получили: ' + JSON.stringify(w().sh))
 
-  const plain = () => p.run('tSpec2()').replace(/<[^>]*>/g, '').replace(/[\u00a0\u202f]/g, ' ')
+  const plain = () => estHtml(p).replace(/<[^>]*>/g, '').replace(/[\u00a0\u202f]/g, ' ')
   t.ok('план виден в итоге', /план 8 ч/.test(plain()), 'нет строки плана')
 
   // Пустое поле — это «плана нет», а не «ноль часов»: иначе лист копил бы нули по
   // каждой строке, которую человек просто потрогал.
   p.run('bind();'); inp.value = ''; inp.onchange()
-  t.ok('пустое поле убирает план', p.q('spec2Sheet().posHours[' + JSON.stringify(key) + ']') == null)
-  t.ok('и часы из итога уходят', p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).hours') === 0)
+  t.ok('пустое поле убирает план', p.q('proj(projOpenId).posHours[' + JSON.stringify(key) + ']') == null)
+  t.ok('и часы из итога уходят', p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).hours') === 0)
 }
 
 // ── 10. Часы вводятся тапом, а не набором ───────────────────────────────────
@@ -983,13 +964,11 @@ const SHEET = {
     contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
     buildRules: [],
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
-  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key')
+  openProject(p)
+  const key = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions[0].key')
 
   openRow(p, key)
-  t.ok('пока не тапнули — ряда нет', p.run('tSpec2()').indexOf('data-a="est-pos-hours-set"') < 0)
+  t.ok('пока не тапнули — ряда нет', estHtml(p).indexOf('data-a="est-pos-hours-set"') < 0)
 
   // Поле зарегистрировано и по id: тап перерисовывает строку, и курсор должен
   // вернуться в НОВОЕ поле — ловим это подменённым focus.
@@ -998,7 +977,7 @@ const SHEET = {
   inp.focus = () => { focused++ }
   inp.select = () => {}
   p.run('bind();'); inp.onclick()
-  const opened = p.run('tSpec2()')
+  const opened = estHtml(p)
   const chips = opened.match(/data-a="est-pos-hours-set"/g) || []
   t.ok('по тапу открывается ряд часов', chips.length >= 10, 'кнопок: ' + chips.length)
   t.ok('есть и 1, и 10', /data-h="1"/.test(opened) && /data-h="10"/.test(opened))
@@ -1009,13 +988,13 @@ const SHEET = {
   t.ok('у поля есть адрес для курсора', opened.indexOf('id="ph-' + key + '"') >= 0)
   t.ok('после тапа курсор в поле — можно печатать', focused === 1, 'focus вызван ' + focused + ' раз')
   p.run('bind();'); inp.onclick()
-  t.ok('повторный тап ряд не закрывает', p.run('tSpec2()').indexOf('data-a="est-pos-hours-set"') >= 0)
+  t.ok('повторный тап ряд не закрывает', estHtml(p).indexOf('data-a="est-pos-hours-set"') >= 0)
 
   const chip = p.dom.node({ a: 'est-pos-hours-set', k: key, h: '6' })
   p.run('bind();'); chip.onclick()
-  t.ok('тап по «6» ставит план', p.q('spec2Sheet().posHours[' + JSON.stringify(key) + ']') === 6,
-    'получили: ' + p.q('spec2Sheet().posHours[' + JSON.stringify(key) + ']'))
-  t.ok('и ряд закрывается', p.run('tSpec2()').indexOf('data-a="est-pos-hours-set"') < 0)
+  t.ok('тап по «6» ставит план', p.q('proj(projOpenId).posHours[' + JSON.stringify(key) + ']') === 6,
+    'получили: ' + p.q('proj(projOpenId).posHours[' + JSON.stringify(key) + ']'))
+  t.ok('и ряд закрывается', estHtml(p).indexOf('data-a="est-pos-hours-set"') < 0)
 }
 
 // ── 11. Комнаты — только на чистовом этапе ──────────────────────────────────
@@ -1038,17 +1017,15 @@ const SHEET = {
       { id: 'r_w3', kind: 'house', estId: 'e_wall', what: 'surface', k: 'wall', scope: 'room', qty: 1, stage: 3 },
     ],
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
+  openProject(p)
 
-  const stg = (n) => p.q('works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes})).stages.filter(function(s){return s.n===' + n + ';})[0]')
+  const stg = (n) => p.q('works2(proj(projOpenId), Object.assign(specCtx(proj(projOpenId)),{winTypes:winTypes})).stages.filter(function(s){return s.n===' + n + ';})[0]')
   const s2 = stg(2), s3 = stg(3)
   t.ok('на черновом работы по комнатам есть', s2 && s2.positions.length >= 2, 'позиций: ' + (s2 && s2.positions.length))
   t.ok('но блоков он не заводит', s2 && s2.blocks.length === 0, 'блоков: ' + (s2 && s2.blocks.length))
   t.ok('чистовой по-прежнему делится', s3 && s3.blocks.length >= 2, 'блоков: ' + (s3 && s3.blocks.length))
   // Строки при этом никуда не деваются — пропасть работам нельзя.
-  const html = p.run('tSpec2()')
+  const html = estHtml(p)
   t.ok('работы чернового видны', (html.match(/data-pos-row=/g) || []).length >=
     (s2.positions.length + s3.positions.length), 'строк меньше, чем позиций')
   t.ok('сумма этапа сходится со строками',
@@ -1069,24 +1046,22 @@ const SHEET = {
     contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
     buildRules: [],
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
-  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_win";})[0].key')
-  const posOf = () => p.q('allPositions(spec2Sheet(), specCtx(spec2Sheet())).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0]')
-  p.run('matsOpen[' + JSON.stringify(key) + ']=1;tSpec2();')
+  openProject(p)
+  const key = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.estId==="e_win";})[0].key')
+  const posOf = () => p.q('allPositions(proj(projOpenId), specCtx(proj(projOpenId))).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0]')
+  p.run('matsOpen[' + JSON.stringify(key) + ']=1;tProjects();')
 
   // Дописываем товар ИЗ БАЗЫ, но по своей цене: 300 ₽ против 800 ₽ в каталоге.
   const addOpen = p.dom.node({ a: 'est-mat-add-open', k: key }); p.run('bind();'); addOpen.onclick()
   p.dom.field('mad-n', 'Наличник'); p.dom.field('mad-qty', '2'); p.dom.field('mad-cost', '300')
   const addDo = p.dom.node({ a: 'est-mat-add-do', k: key }); p.run('bind();'); addDo.onclick()
-  const mid = p.q('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].id')
+  const mid = p.q('proj(projOpenId).matAdd[' + JSON.stringify(key) + '][0].id')
 
-  const html = p.run('tSpec2()').replace(/[  ]/g, ' ')
+  const html = estHtml(p).replace(/[  ]/g, ' ')
   t.ok('строка говорит, что в базе дороже', /в базе 800 ₽/.test(html), 'нет пометки о каталоге')
   t.ok('и обновление — одним тапом',
     html.indexOf('data-a="est-mat-price" data-k="' + key + '|+' + mid + '"') >= 0, 'нет кнопки у материала')
-  const stN = p.q('works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes})).stages.filter(function(s){return (s.positions||[]).some(function(x){return x.key===' + JSON.stringify(key) + ';});})[0].n')
+  const stN = p.q('works2(proj(projOpenId), Object.assign(specCtx(proj(projOpenId)),{winTypes:winTypes})).stages.filter(function(s){return (s.positions||[]).some(function(x){return x.key===' + JSON.stringify(key) + ';});})[0].n')
   t.ok('и кнопка этапа зажглась',
     new RegExp('data-a="est-stage-prices" data-n="' + stN + '"(?! disabled)').test(html), 'кнопка выключена')
 
@@ -1098,26 +1073,26 @@ const SHEET = {
     JSON.stringify((posA.mats || []).filter((m) => m.added).map((m) => m.cost)))
   t.ok('и строка подорожала на разницу', posA.cost === cost0 + 1000, cost0 + ' → ' + posA.cost)
   t.ok('правка легла в опытный лист',
-    p.q('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].cost') === 800)
+    p.q('proj(projOpenId).matAdd[' + JSON.stringify(key) + '][0].cost') === 800)
   t.ok('справочник товаров не тронут',
     p.q('expProducts.filter(function(x){return x.id==="p_dr";})[0].unitCost') === 800)
   // Кнопка не гаснет: сверить цены хотят и тогда, когда всё сошлось, — иначе
   // «не работает» неотличимо от «нечего обновлять». Гаснет не кнопка, а тревога.
   t.ok('кнопка осталась рабочей',
-    new RegExp('data-a="est-stage-prices" data-n="' + stN + '"(?! disabled)').test(p.run('tSpec2()')),
+    new RegExp('data-a="est-stage-prices" data-n="' + stN + '"(?! disabled)').test(estHtml(p)),
     'кнопку выключили')
   t.ok('и точки-тревоги на ней больше нет',
-    !/💱 цены •/.test(p.run('tSpec2()')), 'тревога висит после обновления')
+    !/💱 цены •/.test(estHtml(p)), 'тревога висит после обновления')
 
   // И тот же материал — кнопкой этапа, оптом.
-  p.run('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].cost=300;tSpec2();')
+  p.run('proj(projOpenId).matAdd[' + JSON.stringify(key) + '][0].cost=300;tProjects();')
   const stage = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); stage.onclick()
-  t.ok('этап обновил копию', p.q('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].cost') === 800,
-    String(p.q('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].cost')))
+  t.ok('этап обновил копию', p.q('proj(projOpenId).matAdd[' + JSON.stringify(key) + '][0].cost') === 800,
+    String(p.q('proj(projOpenId).matAdd[' + JSON.stringify(key) + '][0].cost')))
 
   // История цены товара: строка отвечает на «почему подорожало» сама.
   p.run('expProducts.filter(function(x){return x.id==="p_win";})[0].hist=[{at:"2026-01-10T00:00:00Z",c:1200,by:"Иван"},{at:"2026-03-01T00:00:00Z",c:1500,by:"Иван"}];')
-  const withHist = p.run('tSpec2()').replace(/[  ]/g, ' ')
+  const withHist = estHtml(p).replace(/[  ]/g, ' ')
   t.ok('в строке видно прежнюю цену', /было 1 200 ₽/.test(withHist), 'истории нет в строке')
   t.ok('и когда её правили', withHist.indexOf('цена до 10.01.26') >= 0, 'нет даты правки')
 }
@@ -1135,19 +1110,17 @@ const SHEET = {
     contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
     buildRules: [],
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
-  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_win";})[0].key')
-  const posOf = () => p.q('allPositions(spec2Sheet(), specCtx(spec2Sheet())).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0]')
-  p.run('matsOpen[' + JSON.stringify(key) + ']=1;tSpec2();')
+  openProject(p)
+  const key = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.estId==="e_win";})[0].key')
+  const posOf = () => p.q('allPositions(proj(projOpenId), specCtx(proj(projOpenId))).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0]')
+  p.run('matsOpen[' + JSON.stringify(key) + ']=1;tProjects();')
   const base = (posOf().mats || []).filter((m) => m.pid === 'p_win')[0]
   t.ok('в строке уже есть этот товар', !!base)
 
   const addOpen = p.dom.node({ a: 'est-mat-add-open', k: key }); p.run('bind();'); addOpen.onclick()
   p.dom.field('mad-n', 'Монтажный комплект окна'); p.dom.field('mad-qty', '1'); p.dom.field('mad-cost', '1500')
   const addDo = p.dom.node({ a: 'est-mat-add-do', k: key }); p.run('bind();'); addDo.onclick()
-  const mid = p.q('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].id')
+  const mid = p.q('proj(projOpenId).matAdd[' + JSON.stringify(key) + '][0].id')
   t.ok('в строке две записи товара',
     (posOf().mats || []).filter((m) => m.pid === 'p_win').length === 2)
 
@@ -1160,7 +1133,7 @@ const SHEET = {
   t.ok('а расчётный остался как был', calc && calc.qty === base.qty && !calc.qtySet,
     JSON.stringify(calc && [calc.qty, !!calc.qtySet]))
   t.ok('правка адресована своим ключом',
-    p.q('spec2Sheet().matQty[' + JSON.stringify(key) + '][' + JSON.stringify('+' + mid) + ']') === 5)
+    p.q('proj(projOpenId).matQty[' + JSON.stringify(key) + '][' + JSON.stringify('+' + mid) + ']') === 5)
 
   const drop = p.dom.node({ a: 'est-mat-off', k: key + '|p_win' }); p.run('bind();'); drop.onclick()
   const left = posOf()
@@ -1185,22 +1158,20 @@ const SHEET = {
     templates: [], contractDocs: [], purchases: [], issues: [], users: [], stock: [],
     settings: { specMarkup: 30 }, buildRules: [],
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
-  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_win";})[0].key')
-  const posOf = () => p.q('allPositions(spec2Sheet(), specCtx(spec2Sheet())).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0]')
-  p.run('matsOpen[' + JSON.stringify(key) + ']=1;tSpec2();')
+  openProject(p)
+  const key = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.estId==="e_win";})[0].key')
+  const posOf = () => p.q('allPositions(proj(projOpenId), specCtx(proj(projOpenId))).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0]')
+  p.run('matsOpen[' + JSON.stringify(key) + ']=1;tProjects();')
   t.ok('в строке две записи товара', posOf().mats.length === 2,
     JSON.stringify(posOf().mats.map((m) => [m.pid, m.qty])))
 
-  const html = p.run('tSpec2()')
+  const html = estHtml(p)
   t.ok('у первой прежний адрес', html.indexOf('data-a="est-mat-qty" data-k="' + key + '|p_win"') >= 0)
   t.ok('у повтора свой', html.indexOf('data-a="est-mat-qty" data-k="' + key + '|p_win#2"') >= 0,
     'адрес повтора не проставлен')
 
   const open = p.dom.node({ a: 'est-mat-open', k: key + '|p_win' }); p.run('bind();'); open.onclick()
-  p.run('tSpec2();')
+  p.run('tProjects();')
   p.dom.field('msw-input', 'Фанера 4 мм')
   const doIt = p.dom.node({ a: 'est-mat-do', k: key + '|p_win' }); p.run('bind();'); doIt.onclick()
   const after = posOf().mats
@@ -1234,14 +1205,12 @@ const SHEET = {
   t.ok('и они предсказуемы', p.q('estimates[0].lines.map(function(l){return l.id;}).join(",")')
     === 'ln_e_win_1,ln_e_win_2')
 
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
-  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions.filter(function(x){return x.estId==="e_win";})[0].key')
-  const matsOf = () => p.q('allPositions(spec2Sheet(), specCtx(spec2Sheet())).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0].mats')
-  p.run('matsOpen[' + JSON.stringify(key) + ']=1;tSpec2();')
+  openProject(p)
+  const key = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.estId==="e_win";})[0].key')
+  const matsOf = () => p.q('allPositions(proj(projOpenId), specCtx(proj(projOpenId))).filter(function(x){return x.key===' + JSON.stringify(key) + ';})[0].mats')
+  p.run('matsOpen[' + JSON.stringify(key) + ']=1;tProjects();')
   t.ok('адрес на экране — по строке',
-    p.run('tSpec2()').indexOf('data-a="est-mat-qty" data-k="' + key + '|l:ln_e_win_2"') >= 0,
+    estHtml(p).indexOf('data-a="est-mat-qty" data-k="' + key + '|l:ln_e_win_2"') >= 0,
     'адрес по строке не проставлен')
 
   // Позиция считается по раскладке (окна ×N), поэтому «как было» берём у самой
@@ -1250,7 +1219,7 @@ const SHEET = {
   const qty = p.dom.node({ a: 'est-mat-qty', k: key + '|l:ln_e_win_2' })
   qty.value = '9'; p.run('bind();'); qty.onchange()
   t.ok('правка легла на строку',
-    p.q('spec2Sheet().matQty[' + JSON.stringify(key) + ']["l:ln_e_win_2"]') === 9)
+    p.q('proj(projOpenId).matQty[' + JSON.stringify(key) + ']["l:ln_e_win_2"]') === 9)
 
   p.run('estimates[0].lines=[estimates[0].lines[1],estimates[0].lines[0]];')
   const after = matsOf()
@@ -1277,43 +1246,43 @@ const SHEET = {
     users: [{ id: 'u1', name: 'Юрий', roles: ['admin'], objs: [], c: '#000', av: '👤' }],
     stock: [], settings: { specMarkup: 30 }, buildRules: [],
   })
-  p.run('currentUser=users[0];spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
-  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key')
-  const stN = p.q('works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes})).stages.filter(function(s){return (s.positions||[]).some(function(x){return x.key===' + JSON.stringify(key) + ';});})[0].n')
+  p.run('currentUser=users[0];projBand="plan";tProjects();')
+  openProject(p)
+  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};projBand="parts";tProjects();')
+  const key = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions[0].key')
+  const stN = p.q('works2(proj(projOpenId), Object.assign(specCtx(proj(projOpenId)),{winTypes:winTypes})).stages.filter(function(s){return (s.positions||[]).some(function(x){return x.key===' + JSON.stringify(key) + ';});})[0].n')
 
   // Дописанный материал с отставшей ценой: в каталоге 300, в смете 100.
-  p.run('var sh=spec2Sheet(); sh.matAdd={}; sh.matAdd[' + JSON.stringify(key) + ']=[{id:"m1",pid:"p_sock",n:"Розетка",cost:100,qty:2,mode:"piece"}]; tSpec2();')
-  t.ok('кнопка зовёт на сверку', /💱 цены •/.test(p.run('tSpec2()')), 'нет тревоги на кнопке')
+  p.run('var sh=proj(projOpenId); sh.matAdd={}; sh.matAdd[' + JSON.stringify(key) + ']=[{id:"m1",pid:"p_sock",n:"Розетка",cost:100,qty:2,mode:"piece"}]; tProjects();')
+  t.ok('кнопка зовёт на сверку', /💱 цены •/.test(estHtml(p)), 'нет тревоги на кнопке')
 
   const stage = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); stage.onclick()
-  t.ok('цена подтянулась из базы', p.q('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].cost') === 300)
+  t.ok('цена подтянулась из базы', p.q('proj(projOpenId).matAdd[' + JSON.stringify(key) + '][0].cost') === 300)
 
-  t.ok('но зелёной отметки не даёт', !/цены сверены/i.test(p.run('tSpec2()')),
+  t.ok('но зелёной отметки не даёт', !/цены сверены/i.test(estHtml(p)),
     'кнопка обещает сверку с магазинами, которой не было')
 
-  const log = p.q('spec2Sheet().priceLog')
+  const log = p.q('proj(projOpenId).priceLog')
   t.ok('в журнале появилась запись', Array.isArray(log) && log.length === 1, JSON.stringify(log))
   t.ok('в ней — что и на сколько поехало', log[0].cnt === 1 && log[0].diff === 400,
     'позиций ' + log[0].cnt + ', разница ' + log[0].diff)
 
-  const html = p.run('tSpec2()').replace(/[  ]/g, ' ')
+  const html = estHtml(p).replace(/[  ]/g, ' ')
   t.ok('тревоги больше нет', !/💱 цены •/.test(html))
 
   // Зелёная отметка приходит только после похода в магазины — по карточкам.
   p.run('expProducts.forEach(function(x){ x.priceOkAt="2026-09-06"; });')
   t.ok('после обхода магазинов галочка есть',
-    /✓ цены сверены/.test(p.run('tSpec2()').replace(/[  ]/g, ' ')), 'нет отметки после сверки')
+    /✓ цены сверены/.test(estHtml(p).replace(/[  ]/g, ' ')), 'нет отметки после сверки')
 
   // Повторное выравнивание по каталогу, когда всё сошлось, журнал не засоряет.
   const again = p.dom.node({ a: 'est-stage-prices', n: String(stN) }); p.run('bind();'); again.onclick()
-  t.ok('пустая сверка журнал не засоряет', p.q('spec2Sheet().priceLog.length') === 1,
-    'записей: ' + p.q('spec2Sheet().priceLog.length'))
+  t.ok('пустая сверка журнал не засоряет', p.q('proj(projOpenId).priceLog.length') === 1,
+    'записей: ' + p.q('proj(projOpenId).priceLog.length'))
 
   // Цена в каталоге снова уехала — галочка гаснет сама, без действий человека.
-  p.run('expProducts=expProducts.map(function(x){return x.id==="p_sock"?Object.assign({},x,{unitCost:900}):x;});tSpec2();')
-  const html2 = p.run('tSpec2()').replace(/[  ]/g, ' ')
+  p.run('expProducts=expProducts.map(function(x){return x.id==="p_sock"?Object.assign({},x,{unitCost:900}):x;});tProjects();')
+  const html2 = estHtml(p).replace(/[  ]/g, ' ')
   const btnHtml = (html2.match(new RegExp('data-a="est-stage-prices" data-n="' + stN + '"[^>]*>[^<]*')) || [''])[0]
   t.ok('отметка гаснет при новом расхождении', !/✓ цены сверены/.test(btnHtml), 'галочка врёт: ' + btnHtml.slice(-40))
   t.ok('и снова зовёт на сверку', /💱 цены •/.test(btnHtml), btnHtml.slice(-40))
@@ -1332,12 +1301,10 @@ const SHEET = {
     contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
     buildRules: [],
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
+  openProject(p)
 
-  openRow(p, p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key'))
-  const html = p.run('tSpec2()')
+  openRow(p, p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions[0].key'))
+  const html = estHtml(p)
   const group = (html.match(/<span data-row-actions="1"[\s\S]*?<\/span>\s*<\/div>/) || [''])[0]
   t.ok('правые кнопки собраны в группу', group.length > 0, 'группы нет')
   t.ok('удаление внутри группы', group.indexOf('data-a="est-pos-del"') >= 0, 'крестик снаружи группы')
@@ -1358,28 +1325,27 @@ const SHEET = {
     contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
     buildRules: [],
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  p.run('modelFull=false;stageOpen={};spec2Tab="est";estFind="";matsOpen={};tSpec2();')
-  t.ok('поле поиска есть', p.run('tSpec2()').indexOf('data-a="est-find"') >= 0)
+  openProject(p)
+  p.run('modelFull=false;stageOpen={};projBand="parts";estFind="";matsOpen={};tProjects();')
+  t.ok('поле поиска есть', estHtml(p).indexOf('data-a="est-find"') >= 0)
 
   // По имени работы — и этап раскрывается сам, хотя все свёрнуты.
   p.run('estFind="окн";')
-  const byName = p.run('tSpec2()')
+  const byName = estHtml(p)
   t.ok('нашлась работа', /Монтаж окна/.test(byName), 'работа не найдена')
   t.ok('чужая скрыта', !/Монтаж двери/.test(byName), 'в выдаче лишнее')
   t.ok('счётчик находок есть', /найдено \d+ из /.test(byName))
 
   // По материалу — с раскрытым составом.
   p.run('estFind="наличник";')
-  const byMat = p.run('tSpec2()')
+  const byMat = estHtml(p)
   t.ok('нашлось по материалу', /Монтаж двери/.test(byMat), 'по материалу не ищет')
   t.ok('и состав раскрыт', byMat.indexOf('data-a="est-mat-qty"') >= 0, 'состав не показан')
 
   p.run('estFind="абракадабра";')
-  t.ok('пустая выдача объясняет', /в этой смете ничего нет/.test(p.run('tSpec2()')))
+  t.ok('пустая выдача объясняет', /в этой смете ничего нет/.test(estHtml(p)))
   p.run('estFind="";')
-  t.ok('сброс возвращает смету', !/ничего нет/.test(p.run('tSpec2()')))
+  t.ok('сброс возвращает смету', !/ничего нет/.test(estHtml(p)))
 }
 
 // ── Дописанный материал заводится в базу ────────────────────────────────────
@@ -1393,11 +1359,9 @@ const SHEET = {
     contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
     buildRules: [],
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
-  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key')
-  p.run('matsOpen[' + JSON.stringify(key) + ']=1;tSpec2();')
+  openProject(p)
+  const key = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions[0].key')
+  p.run('matsOpen[' + JSON.stringify(key) + ']=1;tProjects();')
   const was = p.q('expProducts.length')
 
   const addOpen = p.dom.node({ a: 'est-mat-add-open', k: key }); p.run('bind();'); addOpen.onclick()
@@ -1411,7 +1375,7 @@ const SHEET = {
   const np = p.q('expProducts.filter(function(x){return /Уголок/.test(x.name||"");})[0]')
   t.ok('магазин узнан по ссылке', np && np.store === 'Озон', JSON.stringify(np && np.store))
   t.ok('строка связана с карточкой',
-    p.q('spec2Sheet().matAdd[' + JSON.stringify(key) + '][0].pid') === np.id)
+    p.q('proj(projOpenId).matAdd[' + JSON.stringify(key) + '][0].pid') === np.id)
 }
 
 // ── «30 листов» — это сколько квадратов ─────────────────────────────────────
@@ -1428,13 +1392,11 @@ const SHEET = {
     templates: [], contractDocs: [], purchases: [], issues: [], users: [], stock: [],
     settings: { specMarkup: 30 }, buildRules: [],
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
-  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key')
+  openProject(p)
+  const key = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions[0].key')
   p.run('matsOpen[' + JSON.stringify(key) + ']=1;')
-  const html = p.run('tSpec2()').replace(/[  ]/g, ' ')
-  const qty = p.q('allPositions(spec2Sheet(), specCtx(spec2Sheet()))[0].mats[0].qty')
+  const html = estHtml(p).replace(/[  ]/g, ' ')
+  const qty = p.q('allPositions(proj(projOpenId), specCtx(proj(projOpenId)))[0].mats[0].qty')
   t.ok('листы переведены в квадраты',
     html.indexOf('= ' + String(Math.round(qty * 3.12 * 100) / 100).replace('.', ',') + ' м²') >= 0,
     'нет пересчёта: ' + JSON.stringify(html.match(/= [^<]+/g)))
@@ -1451,12 +1413,10 @@ const SHEET = {
     contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
     buildRules: [],
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
-  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key')
+  openProject(p)
+  const key = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions[0].key')
   p.run('matsOpen[' + JSON.stringify(key) + ']=1;')
-  const html = p.run('tSpec2()')
+  const html = estHtml(p)
   t.ok('у списка своя рейка слева', /border-left:3px solid #c9d6e4/.test(html), 'нет рейки')
   t.ok('и подпись блока', /СОСТАВ · \d/.test(html), 'нет подписи блока')
 }
@@ -1475,12 +1435,10 @@ const SHEET = {
     templates: [], contractDocs: [], purchases: [], issues: [], users: [], stock: [],
     settings: { specMarkup: 30 }, buildRules: [],
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
-  const key = p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions[0].key')
+  openProject(p)
+  const key = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions[0].key')
   p.run('matsOpen[' + JSON.stringify(key) + ']=1;')
-  const html = p.run('tSpec2()').replace(/[  ]/g, ' ')
+  const html = estHtml(p).replace(/[  ]/g, ' ')
   t.ok('пересчёт называет рулон рулоном', /≈ [\d,]+ рулон/.test(html),
     JSON.stringify(html.match(/≈ [^<]+/g)))
   t.ok('и слова «лист» рядом нет', !/≈ [\d,]+ лист/.test(html), 'остался «лист»')
@@ -1497,17 +1455,15 @@ const SHEET = {
     contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
     buildRules: [],
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
+  openProject(p)
 
-  const w = p.q('works2(spec2Sheet(), Object.assign(specCtx(spec2Sheet()),{winTypes:winTypes}))')
+  const w = p.q('works2(proj(projOpenId), Object.assign(specCtx(proj(projOpenId)),{winTypes:winTypes}))')
   const rooms = w.rooms || []
   t.ok('у дома есть комнаты', rooms.length >= 2, 'комнат: ' + rooms.length)
-  const html = p.run('tSpec2()')
+  const html = estHtml(p)
   t.ok('пустые комнаты предложены', /ЕЩЁ КОМНАТЫ:/.test(html), 'нет ряда пустых комнат')
   t.ok('и ведут в форму работы этой комнаты',
-    html.indexOf('data-a="est-pos-add-open" data-k="' + p.q('spec2Sheet().id') + '@') >= 0,
+    html.indexOf('data-a="est-pos-add-open" data-k="' + p.q('proj(projOpenId).id') + '@') >= 0,
     'нет адреса «лист@этап|комната»')
   t.ok('комната названа', html.indexOf(String(rooms[0].name || '')) >= 0)
 }
@@ -1528,22 +1484,21 @@ const SHEET = {
     contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
     buildRules: [],
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  p.run('modelFull=false;spec2Tab="est";tSpec2();')
+  openProject(p)
+  p.run('modelFull=false;projBand="parts";tProjects();')
 
-  const w = 'works2(spec2Sheet(), specCtx(spec2Sheet()))'
-  t.ok('себестоимость та же', p.q('specTot(spec2Sheet()).cost') === p.q(w + '.cost') && p.q(w + '.cost') > 0,
-    p.q('specTot(spec2Sheet()).cost') + ' / ' + p.q(w + '.cost'))
-  t.ok('цена клиенту та же', p.q('specTot(spec2Sheet()).price') === p.q(w + '.price'))
+  const w = 'works2(proj(projOpenId), specCtx(proj(projOpenId)))'
+  t.ok('себестоимость та же', p.q('specTot(proj(projOpenId)).cost') === p.q(w + '.cost') && p.q(w + '.cost') > 0,
+    p.q('specTot(proj(projOpenId)).cost') + ' / ' + p.q(w + '.cost'))
+  t.ok('цена клиенту та же', p.q('specTot(proj(projOpenId)).price') === p.q(w + '.price'))
 
   // Дописанная руками работа — ровно то, чего короткий путь не видел.
-  const before = p.q('specTot(spec2Sheet()).cost')
-  p.run('spec2Sheet().posAdd=[{id:"a1", name:"Вывоз мусора", cost:5000, stage:2}];')
+  const before = p.q('specTot(proj(projOpenId)).cost')
+  p.run('proj(projOpenId).posAdd=[{id:"a1", name:"Вывоз мусора", cost:5000, stage:2}];')
   t.ok('дописанная работа попала в состав', p.q(w + '.cost') === before + 5000,
     String(p.q(w + '.cost')) + ' было ' + before)
-  t.ok('и в деньги тоже', p.q('specTot(spec2Sheet()).cost') === p.q(w + '.cost'),
-    p.q('specTot(spec2Sheet()).cost') + ' / ' + p.q(w + '.cost'))
+  t.ok('и в деньги тоже', p.q('specTot(proj(projOpenId)).cost') === p.q(w + '.cost'),
+    p.q('specTot(proj(projOpenId)).cost') + ' / ' + p.q(w + '.cost'))
 }
 
 t.done()

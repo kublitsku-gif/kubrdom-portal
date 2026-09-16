@@ -1,11 +1,13 @@
 #!/usr/bin/env node
-// Вкладка «Спецификация 2» и заготовки планировок (public/admin.js).
+// Чертёж проекта: схема, узлы, площади и лист бригаде (public/admin.js).
 //
-// Раздел намеренно пустой, и «пустой» — это тоже требование: любой унаследованный
-// экран решал бы за будущую логику, как ей выглядеть. Поэтому здесь сторожим две
-// вещи: что на вкладке действительно ничего нет и что живой раздел от этого не
-// пострадал, — а ещё что заготовка контейнера доезжает до листа целиком.
+// Раньше это был опытный раздел «Спецификация 2» с одним рабочим листом. Раздел
+// закрыт 16.09.2026: те же экраны показывает проект тем же кодом, а проект вдобавок
+// знает клиента, объект и договор. Здесь сторожим, что при переезде ничего не
+// потерялось — чертёж, три узла, два вида и печать, — и что закрытая дверь
+// действительно закрыта, а лист из неё не пропал.
 import { boot, reporter } from './harness/panel-vm.js'
+import { openProject, planHtml } from './helpers/open-project.mjs'
 
 const t = reporter()
 
@@ -20,9 +22,11 @@ function panel() {
   const p = boot({})
   p.set({
     expProducts: PRODUCTS, estimates: EST, dbPlans: [], crmClients: [],
-    specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [],
+    specSheets: [], specSheets2: [], projects: [], winTypes: [], objects: [], templates: [],
     contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
   })
+  // Чертёж живёт в проекте: заводим его тем же путём, что человек.
+  openProject(p, 'Дом с чертежом')
   return p
 }
 
@@ -43,22 +47,23 @@ function create(p, preset) {
 
 // ── 1. Схема, площади и вход в редактор ──────────────────────────────────────
 {
-  t.section('Вкладка «Спецификация 2»')
+  t.section('Чертёж проекта')
   const p = panel()
-  const html = p.run('tSpec2()')
+  const html = planHtml(p)
   const svg = html.slice(html.indexOf('<svg'), html.indexOf('</svg>') + 6)
   t.ok('схема нарисована', svg.indexOf('sch-hatch') >= 0 && svg.length > 2000)
-  t.ok('размеры на чертеже есть', /<text[^>]*>11952</.test(svg))
+  t.ok('размеры на чертеже есть', /<text[^>]*>11906</.test(svg))
   // На самом чертеже площадей нет — это разные документы; на вкладке рядом есть.
   t.ok('площадей на чертеже нет', svg.indexOf('м²') < 0)
-  t.ok('площади показаны рядом со схемой', /ПЛОЩАДИ/.test(html) && /ПОТОЛОК/.test(html) && /25,52/.test(html))
+  t.ok('площади показаны рядом со схемой', /ПЛОЩАДИ/.test(html) && /ПОТОЛОК/.test(html) && /25,26/.test(html))
   t.ok('и по каждому помещению', /СПАЛЬНЯ/.test(svg) && /Спальня/.test(html))
-  t.ok('вход в редактор есть', html.indexOf('data-a="spec2-edit"') >= 0)
-  // Экрана продажи в разделе по-прежнему нет — его собирают заново.
+  t.ok('вход в редактор есть', html.indexOf('data-a="proj-edit"') >= 0)
+  // Экрана продажи на чертеже нет: дом собирают сметой, а продают из «Спецификации».
   const marks = ['spec-new', 'spec-create', 'spec-open', 'spec-back', 'spec-del', 'spec-view', 'spec-preset']
   marks.forEach((m) => t.ok('нет ' + m, html.indexOf('data-a="' + m + '"') < 0))
-  // Справочник изделий портала от рендера не растёт: заготовка строится копией.
-  t.ok('изделия в портале не заводятся', p.q('winTypes').length === 0, String(p.q('winTypes').length))
+  // Изделия заготовки заводятся РОВНО один раз — при создании проекта.
+  t.ok('изделия заготовки в справочнике', p.q('winTypes').length === 4, String(p.q('winTypes').length))
+  t.ok('и от перерисовки не растут', planHtml(p) && p.q('winTypes').length === 4, String(p.q('winTypes').length))
 }
 
 // ── 1б. Схема на вкладке — миниатюра, крупно она по тапу ─────────────────────
@@ -68,9 +73,9 @@ function create(p, preset) {
 {
   t.section('Миниатюра и увеличение')
   const p = panel()
-  const html = p.run('tSpec2()')
+  const html = planHtml(p)
   t.ok('чертёж вписан в колонку', html.indexOf('min-width:560px') < 0)
-  t.ok('вбок вкладка не едет', html.indexOf('overflow-x:auto') < 0)
+  t.ok('вбок полоса не едет', html.indexOf('overflow-x:auto') < 0)
   t.ok('и понятно, что делать', html.indexOf('data-a="spec2-scheme"') >= 0 && /тап — открыть крупно/.test(html))
   t.ok('пока не тапнули, оверлея нет', p.q('schemeZoom') === 0)
 
@@ -78,7 +83,7 @@ function create(p, preset) {
   t.ok('тап открывает крупно', p.q('schemeZoom') === 1)
   const ov = p.run('spec2SchemeOverlay()')
   const svg = ov.slice(ov.indexOf('<svg'), ov.indexOf('</svg>') + 6)
-  t.ok('в оверлее тот же чертёж', /<text[^>]*>11952</.test(svg) && svg.indexOf('sch-hatch') >= 0)
+  t.ok('в оверлее тот же чертёж', /<text[^>]*>11906</.test(svg) && svg.indexOf('sch-hatch') >= 0)
   t.ok('и он вписан по ширине экрана', svg.indexOf('min-width') < 0)
   t.ok('есть чем увеличить', /data-a="spec2-scheme-zoom" data-z="4"/.test(ov))
 
@@ -97,20 +102,20 @@ function create(p, preset) {
   t.section('Размеры и планировка')
   const p = panel()
   t.ok('по умолчанию — рабочий вид', p.q('schemeView') === 'dim')
-  const dim = p.run('tSpec2()')
+  const dim = planHtml(p)
   t.ok('вкладки предлагаются',
     /data-a="spec2-scheme-view" data-v="dim"/.test(dim) && /data-a="spec2-scheme-view" data-v="plain"/.test(dim))
   const dsvg = dim.slice(dim.indexOf('<svg'), dim.indexOf('</svg>') + 6)
-  t.ok('в рабочем есть цепочки и марки', /<text[^>]*>11952</.test(dsvg) && />Д-1</.test(dsvg))
+  t.ok('в рабочем есть цепочки и марки', /<text[^>]*>11906</.test(dsvg) && />Д-1</.test(dsvg))
   t.ok('и нет площадей — это чертёж, а не план для клиента', dsvg.indexOf('м²') < 0)
 
   const v = p.dom.node({ a: 'spec2-scheme-view', v: 'plain' }); p.run('bind();'); v.onclick()
   t.ok('вид переключился', p.q('schemeView') === 'plain')
-  const pl = p.run('tSpec2()')
+  const pl = planHtml(p)
   const psvg = pl.slice(pl.indexOf('<svg'), pl.indexOf('</svg>') + 6)
   t.ok('у клиента имена помещений', /СПАЛЬНЯ/.test(psvg) && /КУХНЯ-ГОСТИНАЯ/.test(psvg))
-  t.ok('и площадь пола каждой', />14,08 м²</.test(psvg) && />7,04 м²</.test(psvg), psvg.slice(0, 0))
-  t.ok('размеров нет', psvg.indexOf('>11952<') < 0 && psvg.indexOf('>2200<') < 0)
+  t.ok('и площадь пола каждой', />13,96 м²</.test(psvg) && />6,96 м²</.test(psvg), psvg.slice(0, 0))
+  t.ok('размеров нет', psvg.indexOf('>11906<') < 0 && psvg.indexOf('>2200<') < 0)
   t.ok('марок проёмов тоже нет', psvg.indexOf('>Д-1<') < 0 && psvg.indexOf('>О-1<') < 0)
   // Сами окна и двери на плане остаются: клиент читает, где вход и куда открывается.
   t.ok('но проёмы нарисованы', (psvg.match(/stroke-dasharray/g) || []).length > 0)
@@ -183,34 +188,33 @@ function create(p, preset) {
 
   // Возвращаемся на рабочий вид: узлы живут там, клиенту их не показывают.
   const back = p.dom.node({ a: 'spec2-scheme-view', v: 'dim' }); p.run('bind();'); back.onclick()
-  const openNode = (v) => { const el = p.dom.node({ a: 'spec2-node-tab', v: v }); p.run('bind();'); el.onclick(); return p.run('tSpec2()') }
+  const openNode = (v) => { const el = p.dom.node({ a: 'spec2-node-tab', v: v }); p.run('bind();'); el.onclick(); return planHtml(p) }
   const n2 = openNode('n2')
   t.ok('узел перегородки расписан слоями',
     /УЗЕЛ 2 · ПЕРЕГОРОДКА/.test(n2) && /Плитка SPC/.test(n2) && /Фанера шлифованная/.test(n2))
   t.ok('и суммой', /77,2 мм/.test(n2))
-  t.ok('расхождение с планом названо', /а в плане перегородка <b[^>]*>100 мм/.test(n2))
+  // Пироги материализованы при создании проекта, поэтому план идёт ЗА пирогом и
+  // расходиться им негде — раньше здесь стояла заготовка с «просто числом» 100 мм.
+  t.ok('план сходится с пирогом', /столько же, сколько в плане/.test(n2))
   const n3 = openNode('n3')
   t.ok('третий узел — наружная стена', /УЗЕЛ 3 · НАРУЖНАЯ СТЕНА/.test(n3) && /ППУ/.test(n3) && /85 мм/.test(n3))
   // Пирог правится прямо в узле — там, где на него смотрят.
-  t.ok('пока лист не заведён, править нечего',
-    n3.indexOf('data-a="model-layer-mm"') < 0 && /станет пирогом вашего дома/.test(n3))
-  const btn = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); btn.onclick()
   p.run('modelFull=false;')
-  const n3b = p.run('tSpec2()')
-  t.ok('у заведённого листа слои правятся в узле',
+  const n3b = planHtml(p)
+  t.ok('слои правятся в узле',
     /data-a="model-layer-mm"[^>]*data-key="skin"/.test(n3b) && /data-a="model-layer-add"/.test(n3b))
-  const mm = p.dom.node({ a: 'model-layer-mm', sh: p.q('specSheets2[0].id'), key: 'skin', i: '1' })
+  const mm = p.dom.node({ a: 'model-layer-mm', sh: p.q('proj(projOpenId).id'), key: 'skin', i: '1' })
   p.run('bind();')
   mm.value = '80'; mm.onchange()
-  t.ok('правка из узла доехала до модели', p.q('specSheets2[0].model.skin[1].mm') === 80)
-  t.ok('и план пошёл за пирогом', p.q('specSheets2[0].model.finish') === 115,
-    String(p.q('specSheets2[0].model.finish')))
+  t.ok('правка из узла доехала до модели', p.q('proj(projOpenId).model.skin[1].mm') === 80)
+  t.ok('и план пошёл за пирогом', p.q('proj(projOpenId).model.finish') === 115,
+    String(p.q('proj(projOpenId).model.finish')))
   openNode('n1')
 
   // Рез отличается от изделия, и на чертеже это видно: цепочка меряет рез, а под
   // маркой стоит его число — иначе окно вырезают впритык. Трубы В РЕЗ ВХОДЯТ: они
   // стоят в нём (узел 1), рез = окно + два зазора + две трубы.
-  const dim2 = p.run('tSpec2()')
+  const dim2 = planHtml(p)
   t.ok('на чертеже подписан рез', /рез 1120/.test(dim2))
   t.ok('и цепочка меряет его же', /<text[^>]*>1120</.test(dim2))
 
@@ -229,7 +233,7 @@ function create(p, preset) {
   t.ok('есть кнопка печати', /window.print\(\)/.test(sheet))
   // Клиенту этот лист не предлагаем: у него своя печать, из спецификации.
   const v2 = p.dom.node({ a: 'spec2-scheme-view', v: 'plain' }); p.run('bind();'); v2.onclick()
-  t.ok('на клиентском виде кнопки печати нет', p.run('tSpec2()').indexOf('data-a="spec2-print"') < 0)
+  t.ok('на клиентском виде кнопки печати нет', planHtml(p).indexOf('data-a="spec2-print"') < 0)
   const v3 = p.dom.node({ a: 'spec2-scheme-view', v: 'dim' }); p.run('bind();'); v3.onclick()
 
   // Окна на листе клиента выделены цветом и подписаны размером: он читает план
@@ -240,7 +244,7 @@ function create(p, preset) {
   // входная дверь теперь одного каталожного размера, и по самой подписи их уже не
   // различить — подписей должно быть ровно столько, сколько окон.
   const marks = (psvg.match(/<text[^>]*>\d+×\d+</g) || []).length
-  const wins = p.q('specSheets2[0].model.openings.filter(function(o){var t=winTypes.filter(function(x){return x.id===o.typeId;})[0];return t&&t.kind!=="door";}).length')
+  const wins = p.q('proj(projOpenId).model.openings.filter(function(o){var t=winTypes.filter(function(x){return x.id===o.typeId;})[0];return t&&t.kind!=="door";}).length')
   t.ok('дверь размером не подписана', marks === wins, marks + ' подписей на ' + wins + ' окон')
   t.ok('на рабочем чертеже цвета окон нет', dsvg.indexOf('#2980b9') < 0)
 }
@@ -253,9 +257,9 @@ function create(p, preset) {
   const p = panel()
   // Комната с длинным именем и дверью в перегородке — тот самый случай.
   p.run('specSheets2=[];')
-  const btn = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); btn.onclick()
-  p.run('specSheets2[0].model.rooms[2].name="Помещение";modelSync(specSheets2[0]);')
-  const svg = p.run('modelSchemeSvg(specSheets2[0].model, winTypes, 0, "dim")')
+  openProject(p)
+  p.run('proj(projOpenId).model.rooms[2].name="Помещение";modelSync(proj(projOpenId));')
+  const svg = p.run('modelSchemeSvg(proj(projOpenId).model, winTypes, 0, "dim")')
 
   // Коробки текста — по тем же правилам, по которым их считает панель.
   const boxes = []
@@ -295,30 +299,24 @@ function create(p, preset) {
 
 // ── 1.5 Рабочий лист становится источником схемы ─────────────────────────────
 {
-  t.section('Рабочий лист раздела')
+  t.section('Лист проекта')
   const p = panel()
-  const before = p.run('tSpec2()')
-  t.ok('до первого нажатия листа нет', p.q('specSheets2').length === 0)
-  t.ok('и об этом сказано', /станет рабочей моделью/.test(before))
-
-  const btn = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); btn.onclick()
-  t.ok('лист заведён из заготовки', p.q('specSheets2').length === 1)
-  t.ok('в нём есть модель', !!p.q('specSheets2[0].model'))
+  t.ok('лист заведён из заготовки', p.q('projects').length === 1)
+  t.ok('опытных листов при этом не появилось', p.q('specSheets2').length === 0)
+  t.ok('в нём есть модель', !!p.q('proj(projOpenId).model'))
   t.ok('изделия заготовки попали в справочник', p.q('winTypes').length === 4, String(p.q('winTypes').length))
-  t.ok('редактор открыт на этом листе',
-    p.q('modelFull') === true && p.q('specOpenId') === p.q('specSheets2[0].id'))
 
   // Пироги стен приезжают вместе с редактором: план идёт за ними, поэтому обшивка
   // сразу равна сумме своего пирога, а не числу «просто так».
   t.ok('пироги стен материализовались',
-    p.q('specSheets2[0].model.skin.length') === 5 && p.q('specSheets2[0].model.layers.length') === 7)
+    p.q('proj(projOpenId).model.skin.length') === 5 && p.q('proj(projOpenId).model.layers.length') === 7)
   t.ok('и толщины в плане — их суммы',
-    p.q('specSheets2[0].model.finish') === 85 && p.q('specSheets2[0].model.wallThick') === 77,
-    p.q('specSheets2[0].model.finish') + ' / ' + p.q('specSheets2[0].model.wallThick'))
+    p.q('proj(projOpenId).model.finish') === 85 && p.q('proj(projOpenId).model.wallThick') === 77,
+    p.q('proj(projOpenId).model.finish') + ' / ' + p.q('proj(projOpenId).model.wallThick'))
 
   // Правка модели обязана доехать до чертежа: иначе схема показывает вчерашний дом.
-  p.run('specSheets2[0].model.rooms[0].name="Ванная";specSheets2[0].model.rooms[0].len=3085;')
-  const after = p.run('tSpec2()')
+  p.run('proj(projOpenId).model.rooms[0].name="Ванная";proj(projOpenId).model.rooms[0].len=3085;')
+  const after = planHtml(p)
   t.ok('имя помещения на схеме поменялось', /ВАННАЯ/.test(after) && !/САНУЗЕЛ/.test(after))
   t.ok('и размер в цепочке тоже', /<text[^>]*>3000</.test(after), 'нет 3000')
   t.ok('площади пересчитались', /6,55/.test(after), 'нет площади ванной')
@@ -367,25 +365,36 @@ function create(p, preset) {
 
 // ── 4. Раздел как данные ─────────────────────────────────────────────────────
 {
-  t.section('Данные опытного раздела')
+  t.section('Закрытая дверь и старые листы')
   const p = panel()
-  p.run('specSheets2=[' + JSON.stringify(SHEET2) + '];')
-  t.ok('лист находится по id', p.q('(specSheet("old2")||{}).id') === 'old2')
-  t.ok('и опознаётся как опытный', p.q('specIs2(specSheets2[0])') === true)
-  // Удаление обязано доставать лист из обеих коллекций: экрана у раздела нет, но
-  // заведённые раньше листы никуда не делись.
-  p.run('specDrop("old2");')
-  t.ok('удаление достаёт его из опытного раздела', p.q('specSheets2').length === 0)
+  // Вкладки в ленте больше нет, и открыть её нечем.
+  t.ok('вкладки в ленте нет', !p.q('TAB_DEFS.some(function(x){return x.k==="spec2";})'))
+  t.ok('и рисовать её нечем', p.q('typeof tSpec2') === 'undefined')
+  // Чертёж адресует ОТКРЫТЫЙ ПРОЕКТ: запасного листа, в который уходили бы правки
+  // втихую, не осталось.
+  t.ok('чертёж — это открытый проект', p.q('(schemeSheet()||{}).id') === p.q('projOpenId'))
+  p.run('projOpenId="";')
+  t.ok('проект закрыт — чертежа нет', p.q('schemeSheet()') === null)
 
-  // Изделие, стоящее в проёме опытного листа, считается занятым.
-  p.run('specSheets2=[{id:"x1",model:{openings:[{id:"o",typeId:"w1"}]}}];winTypes=[{id:"w1",kind:"win",n:"Окно",w:1500,h:2100,cost:0}];')
-  const used = p.q('specSheets.concat(specSheets2).some(function(x){return ((x.model||{}).openings||[]).some(function(o){return o.typeId==="w1";});})')
-  t.ok('изделие из опытного листа виден занятым', used === true)
+  // Лист, заведённый в разделе до его закрытия, не теряется: он переезжает в
+  // «Проекты» ТЕМ ЖЕ id — иначе от него оторвались бы объект (`o.specId`) и договор.
+  const q = panel()
+  q.run('applyState([{work_id:"specSheets2",data:[' + JSON.stringify(SHEET2) + ']}]);')
+  t.ok('опытных листов не осталось', q.q('specSheets2').length === 0)
+  t.ok('лист стал проектом', q.q('projects.some(function(x){return x.id==="old2";})') === true)
+  t.ok('и находится по своему id', q.q('(specSheet("old2")||{}).id') === 'old2')
+  t.ok('и больше не «опытный»', q.q('specIs2(specSheet("old2"))') === false)
+  // Второй заход ничего не задваивает: снимок с сервера приходит на каждый опрос.
+  q.run('applyState([{work_id:"specSheets2",data:[' + JSON.stringify(SHEET2) + ']}]);')
+  t.ok('повторный снимок не задваивает', q.q('projects.filter(function(x){return x.id==="old2";}).length') === 1)
 
-  const keys = p.q('serializeState().map(function(x){return x.work_id;})')
-  t.ok('specSheets2 уходит в облако', keys.indexOf('specSheets2') >= 0)
-  p.run('applyState([{work_id:"specSheets2",data:[{id:"z1",name:"С сервера"}]}]);')
-  t.ok('и приходит обратно', p.q('specSheets2').length === 1 && p.q('specSheets2')[0].id === 'z1')
+  // Раздел снимка остаётся: старые вкладки и сервер о нём ещё знают.
+  t.ok('specSheets2 по-прежнему уходит в облако',
+    q.q('serializeState().map(function(x){return x.work_id;})').indexOf('specSheets2') >= 0)
+
+  // Удаление достаёт лист из всех трёх коллекций.
+  q.run('specDrop("old2");')
+  t.ok('удаление достаёт переехавший лист', q.q('projects.some(function(x){return x.id==="old2";})') === false)
 }
 
 t.done()

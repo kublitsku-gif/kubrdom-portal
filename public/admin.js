@@ -397,6 +397,7 @@ function applyState(items){
   try{ normalizeWorkCosts(); }catch(e){}   // стоимость работ = сумма материалов
   try{ ensureMatPids(); }catch(e){}        // ссылка материала на карточку каталога (по имени, разово)
   try{ ensureLineIds(); }catch(e){}        // id строкам смет: по ним адресуются правки в листах
+  try{ migrateSpec2Sheets(); }catch(e){}   // рабочий лист закрытого опытного раздела → в «Проекты»
   try{ ensureMatAddrs(); }catch(e){}       // адреса дописанных материалов: был pid, стал +id
   try{ ensureRuleEdits(); }catch(e){ console.warn("ensureRuleEdits", e); } // правки строки — под её правило
   try{ backfillWorkRooms(); }catch(e){}    // комнаты работ из сметы по estId (шаблон → объект)
@@ -1707,7 +1708,6 @@ const TAB_DEFS=[
   {k:"marketing", n:"📣 Маркетинг"},
   {k:"kp",        n:"📋 КП"},
   {k:"spec",      n:"🏠 Спецификация"},
-  {k:"spec2",     n:"🧪 Спецификация 2"},
   {k:"projects",  n:"🏗 Проекты"},
   {k:"labels",    n:"🏷 Таблички"},
   {k:"voiceai",   n:"🎙 Голосовой ИИ"},
@@ -2380,7 +2380,6 @@ let presetPeek="";         // какую ЗАГОТОВКУ разглядыва
 let presetPeekZoom=1;      // и с какой кратностью — ступени те же, что у схемы
 let schemeView="dim";      // чей чертёж: dim — рабочий с размерами, plain — клиенту
 let nodeTab="n1";          // какой узел раскрыт под чертежом
-let spec2Tab="scheme";     // что смотрим в разделе: чертёж или смету по нему
 let estWhyOpen="";         // у какой сметы раскрыт редактор правила прямо в строке
 let ruleMore={};           // у каких строк раскрыты «Другие способы счёта» — только экран
 let matSwapOpen="";        // какой материал сметы сейчас меняют: "<ключ позиции>|<pid>"
@@ -4851,7 +4850,7 @@ function moreSheet(allTabs,accessible,picked){
 }
 
 function tabContentHtml(){
-  return tab==="assign"?tObjects():tab==="myday"?tMyDay():tab==="sheetlist"?tSheetList():tab==="wizard"?tWizardTab():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tab==="kp"?tKP():tab==="spec"?tSpec():tab==="spec2"?tSpec2():tab==="projects"?tProjects():tab==="labels"?tLabels():tab==="voiceai"?tVoiceAi():tab==="issues"?tIssues():tab==="history"?tHistory():tCRM();
+  return tab==="assign"?tObjects():tab==="myday"?tMyDay():tab==="sheetlist"?tSheetList():tab==="wizard"?tWizardTab():tab==="analysis"?tBuildAnalysis():tab==="supply"?tSupply():tab==="finance"?tFinance():tab==="contracts"?tContracts():tab==="works"?tWorks():tab==="team"?tTeam():tab==="marketing"?tMarketing():tab==="clients"?tClients():tab==="kp"?tKP():tab==="spec"?tSpec():tab==="projects"?tProjects():tab==="labels"?tLabels():tab==="voiceai"?tVoiceAi():tab==="issues"?tIssues():tab==="history"?tHistory():tCRM();
 }
 
 function render(){
@@ -8564,6 +8563,23 @@ function ensureLineIds(){
 // загрузке к ним ДОПИСЫВАЕТСЯ новый адрес (см. `migrateMatAddrs`): экран после
 // правки выглядит ровно так же, как до неё, а дальше строки живут порознь.
 // Прогон идемпотентен, поэтому гоняется при каждой загрузке и сохранения не просит.
+// Опытный раздел закрыт — его рабочий лист переезжает в «Проекты» ТЕМ ЖЕ id.
+// Лист живой: на нём модель, смета, правки материалов, а иногда и объект
+// (`o.specId`). Оставить его в `specSheets2` значило бы оставить работу за дверью,
+// которой больше нет, — а переписать id значило бы оторвать от него объект.
+// Переезд идемпотентен: лист с таким id уже в проектах — ничего не делаем.
+// Сохранения не просит: следующий сейв отправит оба раздела разом (они оба
+// изменились), а до него всё работает из памяти.
+function migrateSpec2Sheets(){
+  if(!(specSheets2||[]).length)return 0;
+  const have={}; (projects||[]).forEach(function(x){ if(x&&x.id)have[x.id]=true; });
+  const moved=specSheets2.filter(function(sh){ return sh&&sh.id&&!have[sh.id]; });
+  if(moved.length)projects=(projects||[]).concat(moved.map(function(sh){
+    return Object.assign({}, sh, { name:sh.name||"Рабочий лист" });
+  }));
+  specSheets2=[];
+  return moved.length;
+}
 function ensureMatAddrs(){
   let n=0;
   [specSheets, specSheets2, projects].forEach(function(list){
@@ -13495,20 +13511,23 @@ function modelSchemeSvg(model, types, minW, view, maxH){
   return '<svg viewBox="'+f.vb+'" style="width:100%;'+(mw?'min-width:'+mw+'px;':'')+(mh?'max-height:'+mh+'px;':'')+'height:auto;display:block;margin:0 auto;user-select:none">'+f.g+'</svg>';
 }
 
-// ═══ ВКЛАДКА «СПЕЦИФИКАЦИЯ 2» ════════════════════════════════════════════════
-// В разделе пока одно — схема плана. Списка, формы и карточки здесь нет намеренно:
-// логику раздела собирают с нуля, и унаследованный экран решал бы за неё, как всё
-// должно выглядеть. Схема рисуется по МОДЕЛИ, а не картинкой: подвинется
-// перегородка — поедет и чертёж, и размерные цепочки под ним.
-// Раздел правит ОДИН рабочий лист: модель живёт в снимке, а не в коде, иначе
-// править её можно было бы только правкой заготовки — и правка терялась бы у всех.
-function spec2Sheet(){ return (specSheets2||[])[0]||null; }
-// Чей чертёж сейчас на экране. Схему, узлы и печать открывают из двух мест —
-// опытного раздела и карточки проекта, — и оба показывают ОДНУ модель: ту, что
-// открыта. Второй набор экранов под проект означал бы вторую копию чертежа.
+// ═══ ЧЕРТЁЖ, СМЕТА И ПРАВИЛА: ЭКРАНЫ ОТКРЫТОГО ПРОЕКТА ══════════════════════
+// Опытный раздел «Спецификация 2» закрыт (16.09.2026): он был стендом с ОДНИМ
+// рабочим листом, и к этому дню все его экраны — схема, редактор модели, смета,
+// правила — показывал проект тем же кодом, а проект вдобавок знает клиента,
+// объект и договор. Две двери в один экран означали два места, где правят смету,
+// и вопрос «где настоящая» при каждом расхождении.
+//
+// Имена `spec2*` (`spec2Probe`, `spec2RulesHtml`, действия `spec2-scheme`,
+// `spec2-print`) остались историческими: это общий код чертежа и сметы, а не
+// раздел. Переименование стоило бы полусотни правок в разметке и тестах и по
+// существу ничего бы не изменило.
+//
+// Чей чертёж на экране — всегда ОТКРЫТЫЙ ПРОЕКТ. Раньше здесь был запасной
+// адресат (рабочий лист опытного раздела); после закрытия раздела он означал бы
+// правки, уходящие в лист, которого никто не видит.
 function schemeSheet(){
-  if(tab==="projects"&&projOpenId){ const p=proj(projOpenId); if(p)return p; }
-  return spec2Sheet();
+  return projOpenId?proj(projOpenId):null;
 }
 
 // Два вида одного чертежа: рабочий с размерами и лист для клиента. Ни один не
@@ -14217,23 +14236,6 @@ function modelPresetOverlay(){
     aZoom:"preset-peek-zoom", aClose:"preset-peek-close" });
 }
 
-// ── СМЕТА ПО ЧЕРТЕЖУ ────────────────────────────────────────────────────────
-// Схема и смета — два взгляда на ОДИН дом: подвинули перегородку, и обе цифры
-// поехали. Поэтому это вкладки одного раздела, а не разные экраны: считать
-// смету, глядя на вчерашний чертёж, нельзя.
-const SPEC2_TABS=[
-  ["scheme","📐 Схема",   "чертёж, площади и узлы"],
-  ["est",   "🧾 Смета",   "работы и материалы, посчитанные по этому чертежу"],
-  ["rules", "⚙️ Правила", "по каким правилам смета собирается из чертежа"],
-];
-function spec2TabsHtml(){
-  return '<div style="display:flex;gap:5px;margin-bottom:9px">'+
-    SPEC2_TABS.map(function(t){
-      const on=spec2Tab===t[0];
-      return '<button data-a="spec2-tab" data-v="'+t[0]+'" style="flex:1;border:1.5px solid '+(on?"#0d1b2e":"#dde6f0")+';background:'+(on?"#0d1b2e":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+';border-radius:10px;padding:9px 8px;font-size:12.5px;font-weight:700;cursor:pointer">'+esc(t[1])+'</button>';
-    }).join("")+
-  '</div>';
-}
 // Лист для расчёта. Пока раздел не заведён, считаем по заготовке — экран не
 // должен быть пустым до первого нажатия, а числа на нём те же, что окажутся
 // в листе. Такой лист никуда не сохраняется, поэтому и объекта из него нет.
@@ -15133,7 +15135,7 @@ function matPutBefore(k, beforeMid){
   const cut=String(k||"").lastIndexOf("|");
   if(cut<0)return false;
   const posKey=k.slice(0,cut), mid=k.slice(cut+1);
-  const sh=schemeSheet()||spec2Sheet(); if(!sh||!posKey||!mid)return false;
+  const sh=schemeSheet(); if(!sh||!posKey||!mid)return false;
   estSnap(sh, "перестановку материала");
   const pos=allPositions(sh, specCtx(sh)).filter(function(x){ return x.key===posKey; })[0];
   if(!pos)return false;
@@ -15402,9 +15404,7 @@ function estWhyEditor(p, sh){
     '<div style="display:flex;gap:6px;margin-top:9px;flex-wrap:wrap">'+
       (r?'<button data-a="est-rule-del" data-est="'+p.estId+'" style="padding:7px 11px;background:#fff;border:1px solid #f0d5d0;border-radius:8px;cursor:pointer;color:#c0392b;font-size:11px;font-weight:700">Убрать правило</button>':'')+
       '<button data-a="est-why" data-est="'+p.estId+'" style="padding:7px 11px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:11px;font-weight:700">Свернуть</button>'+
-      (tab==="projects"
-        ? '<button data-a="proj-rules" style="padding:7px 11px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:11px;font-weight:700">Все правила</button>'
-        : '<button data-a="spec2-tab" data-v="rules" style="padding:7px 11px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:11px;font-weight:700">Все правила</button>')+
+      '<button data-a="proj-rules" style="padding:7px 11px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:11px;font-weight:700">Все правила</button>'+
     '</div>'+
     // Правило живёт в справочнике вида, а не в этом доме: сказать это надо здесь,
     // до нажатия, — иначе «поставил стены спальни в Доме СВО» тихо меняет и Мордвес.
@@ -15572,7 +15572,7 @@ function estImportHtml(sh){
 // «Взять». Снимок для «отменить» — ДО записи: перенос это десяток строк сразу, и
 // откатывать его по одной никто не станет.
 function estImportDo(){
-  const sh=schemeSheet()||spec2Sheet(); if(!sh||!estImport)return;
+  const sh=schemeSheet(); if(!sh||!estImport)return;
   const ctx=estImportCtx(sh, estImport);
   const pick=estImport.pick||{};
   const n=ctx.rows.filter(function(r){ return pick[r.key]; }).length;
@@ -16352,7 +16352,7 @@ function estUndoTop(sh){
   return (last&&sh&&String(sh.id||"")===last.id)?last:null;
 }
 function estUndoLast(){
-  const sh=schemeSheet()||spec2Sheet();
+  const sh=schemeSheet();
   const last=estUndoTop(sh);
   if(!last)return false;
   EST_EDIT_FIELDS.forEach(function(f){
@@ -16615,7 +16615,7 @@ function estPosDrag(el, ev, key){
 // Помещение приходит вместе со своим этапом: блок комнаты живёт внутри этапа, и
 // переносить в него, оставляя работу в чужом этапе, значит показать её не там.
 function estPosDropZone(key, z){
-  const sh=schemeSheet()||spec2Sheet(); if(!sh||!key||!z)return false;
+  const sh=schemeSheet(); if(!sh||!key||!z)return false;
   estSnap(sh, "перенос работы");
   const stage=Number(z.dropStage);
   let did=false;
@@ -16633,7 +16633,7 @@ function estPosDropZone(key, z){
 // считать его заново другим кодом значит завести второй порядок. Пишем порядок
 // всего этапа, а не одну строку: соседи разъезжаются от той же перестановки.
 function estPosPutBefore(key, beforeKey){
-  const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return false;
+  const sh=schemeSheet(); if(!sh||!key)return false;
   estSnap(sh, "перестановку работы");
   const w=works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes }));
   const st=(w.stages||[]).find(function(s){ return s.positions.some(function(x){ return x.key===key; }); });
@@ -17281,7 +17281,6 @@ function estBodyHtml(sh, types, live, actions){
     '</div>';
   return h;
 }
-function spec2EstHtml(built, sh, pr){ return estBodyHtml(spec2Probe(built, sh, pr), built.winTypes, sh); }
 
 
 // ═══ ПРОЕКТЫ ═════════════════════════════════════════════════════════════════
@@ -17517,6 +17516,9 @@ function projPlanHtml(p){
       modelSchemeSvg(p.model, winTypes, 0, schemeView)+
       '<div style="font-size:10.5px;color:#9aabbf;text-align:center;margin-top:8px">тап — открыть крупно</div>'+
     '</div>'+
+    // Узлы — под чертежом, там же, где были в закрытом опытном разделе: по «100 мм»
+    // на плане перегородку не собрать, а пирог правят, глядя на неё.
+    schemeLegend()+
     areasCardHtml(p.model, winTypes);
 }
 
@@ -17875,55 +17877,6 @@ function areasCardHtml(model, types){
       '</div>';
     }).join("")+
   '</div>';
-}
-
-function tSpec2(){
-  const sh=spec2Sheet();
-  const pr=MODEL_PRESETS[0];
-  // Пока лист не заведён, показываем заготовку: экран не должен быть пустым до
-  // первого нажатия, а числа на нём — те же, что окажутся в листе.
-  const built=(sh&&sh.model)?{model:sh.model,winTypes:winTypes}:(pr?presetModel(pr, winTypes, gid):null);
-  if(!built)return '<div></div>';
-  const A=modelAreas(built.model, built.winTypes);
-  const cell=function(label,val){
-    return '<div style="text-align:center;background:#f6f8fa;border-radius:9px;padding:7px 5px">'+
-      '<div style="font-size:9px;color:#9aabbf;font-weight:700;letter-spacing:0.5px">'+label+'</div>'+
-      '<div style="font-size:14px;font-weight:800;color:#0d1b2e">'+numRu(val)+' м²</div></div>';
-  };
-  let h='<div>';
-  h+='<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:10px">'+
-    '<div style="flex:1;min-width:0">'+
-      '<div style="font-size:11px;color:#8e44ad;font-weight:700;letter-spacing:1px">'+(spec2Tab==="est"?"🧾 СМЕТА ПО ЧЕРТЕЖУ":"📐 СХЕМА ПЛАНА")+'</div>'+
-      '<div style="font-size:12px;color:#5a7a9a;margin-top:2px;line-height:1.45">'+esc((sh&&sh.name)||(pr&&pr.n)||"")+'</div>'+
-    '</div>'+
-    '<button data-a="spec2-edit" style="padding:9px 15px;background:#8e44ad;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700;flex-shrink:0">⛶ '+(sh?"Редактировать":"Открыть редактор")+'</button>'+
-  '</div>';
-  // Схема и смета — один дом двумя взглядами. Смета считается по ТОЙ ЖЕ модели,
-  // что нарисована рядом: разъехаться им негде.
-  h+=spec2TabsHtml();
-  if(spec2Tab==="est")return h+spec2EstHtml(built, sh, pr)+'</div>';
-  if(spec2Tab==="rules")return h+spec2RulesHtml(built, sh, pr)+'</div>';
-  // Один чертёж, два читателя: бригаде размеры, клиенту имена и метры. Вкладка
-  // выбирает, чей это сейчас лист, — второй чертёж заводить не надо, геометрия одна.
-  // Лист для бригады печатают целиком: чертёж, узлы и таблицы. Кнопка стоит у
-  // рабочего вида — клиенту печатают другой документ, из спецификации.
-  h+=(schemeView==="dim"
-    ? '<button data-a="spec2-print" style="width:100%;padding:10px;background:#0d1b2e;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700;margin-bottom:9px">🖨 Печать для бригады — чертёж, узлы и таблицы</button>'
-    : '')+
-    schemeViewTabs()+
-    '<div data-a="spec2-scheme" title="Открыть крупно" style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:12px;margin-bottom:9px;cursor:zoom-in">'+
-      modelSchemeSvg(built.model, built.winTypes, 0, schemeView)+
-      '<div style="font-size:10.5px;color:#9aabbf;text-align:center;margin-top:8px">тап — открыть крупно</div>'+
-    '</div>'+
-    schemeLegend();
-  // Площади рядом со схемой: их считают по этому же чертежу, и держать их на
-  // другом экране значит заставить сверять два экрана.
-  h+=areasCardHtml(built.model, built.winTypes);
-  h+='<div style="font-size:10.5px;color:#9aabbf;line-height:1.5;margin-bottom:20px">'+
-      'Несущие стены, перегородки, проёмы и размеры — в миллиметрах. Площади чистовые: потолок равен полу, стены — за вычетом проёмов. Мебель и сантехника на схему не выносятся.'+
-      (sh?'':'<br>Это заготовка. Нажмите «Открыть редактор» — она станет рабочей моделью раздела.')+
-    '</div>';
-  return h+'</div>';
 }
 
 // Карточка спецификации: всё решение продавца на одном экране.
@@ -27260,32 +27213,6 @@ function bind(){
     }
     // ─── Полноэкранный редактор ────────────────────────────────────────────
     else if(a==="model-full"){el.onclick=()=>{ modelFull=true; modelTool="sel"; render(); };}
-    // Правка модели раздела: до первого нажатия править нечего — заводим рабочий
-    // лист из заготовки, дальше это обычная модель со своей историей правок.
-    else if(a==="spec2-edit"){el.onclick=()=>{
-      let sh=spec2Sheet();
-      if(!sh){
-        const r=presetModel(MODEL_PRESETS[0], winTypes, gid);
-        if(!r){ alert("Заготовка не найдена."); return; }
-        sh={ id:gid(), name:(MODEL_PRESETS[0].n||"Схема"), kind:"house", clientId:"",
-          specs:{height:2.5,rooms:[],openings:[]}, rooms:{}, global:{}, qty:{},
-          markup:Number((settings&&settings.specMarkup))||30, status:"draft",
-          at:todayISO(), by:(currentUser&&currentUser.id)||"", model:r.model };
-        winTypes=r.winTypes;
-        modelSync(sh);
-        specSheets2=specSheets2.concat([sh]);
-      }
-      // Пироги стен материализуем при входе в редактор: план идёт за ними, и лист,
-      // где толщина стены «просто число», разъедется с узлами на первой правке.
-      if(sh.model&&!(sh.model.layers&&sh.model.layers.length)){
-        sh.model=applyLayers(sh.model, "layers", wallLayers(sh.model));
-      }
-      if(sh.model&&!(sh.model.skin&&sh.model.skin.length)){
-        sh.model=applyLayers(sh.model, "skin", skinLayers(sh.model));
-      }
-      modelSync(sh);
-      specOpenId=sh.id; modelFull=true; modelTool="sel"; fl();
-    };}
     else if(a==="model-full-close"){el.onclick=()=>{ modelFull=false; render(); };}
     else if(a==="spec2-scheme"){el.onclick=()=>{ schemeZoom=1; render(); };}
     else if(a==="spec2-scheme-zoom"){el.onclick=()=>{ schemeZoom=parseInt(el.dataset.z,10)||1; render(); };}
@@ -27299,7 +27226,6 @@ function bind(){
     else if(a==="preset-peek-zoom"){el.onclick=()=>{ presetPeekZoom=parseInt(el.dataset.z,10)||1; render(); };}
     else if(a==="preset-peek-close"){el.onclick=()=>{ presetPeek=""; render(); };}
     else if(a==="spec2-node-tab"){el.onclick=()=>{ nodeTab=el.dataset.v||"n1"; render(); };}
-    else if(a==="spec2-tab"){el.onclick=()=>{ const v=el.dataset.v; spec2Tab=(v==="est"||v==="rules")?v:"scheme"; render(); window.scrollTo(0,0); };}
     // Правила сборки. Правка пишется сразу в раздел снимка: отдельной кнопки
     // «сохранить» в панели нет нигде, и заводить её здесь значило бы объяснять,
     // почему этот экран не такой, как все.
@@ -27311,7 +27237,7 @@ function bind(){
     };}
     else if(a==="est-mat-add-do"){el.onclick=()=>{
       const posKey=el.dataset.k||"";
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!posKey)return;
+      const sh=schemeSheet(); if(!sh||!posKey)return;
       estSnap(sh, "добавленный материал");
       const name=((document.getElementById("mad-n")||{}).value||"").trim();
       if(!name){ alert("Без названия материал не завести."); return; }
@@ -27345,7 +27271,7 @@ function bind(){
     // иначе оно перебило бы только что выбранное, и тап ничего бы не изменил.
     else if(a==="est-mat-need"){el.onclick=()=>{
       const posKey=el.dataset.k||"", mid=el.dataset.m||"", q=parseFloat(el.dataset.q||"0");
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!posKey||!mid||!(q>0))return;
+      const sh=schemeSheet(); if(!sh||!posKey||!mid||!(q>0))return;
       estSnap(sh, "количество по объёму");
       const rows=((sh.matAdd||{})[posKey]||[]).map(function(r){
         return (r&&r.id===mid)?Object.assign({}, r, { qty:q }):r;
@@ -27366,7 +27292,7 @@ function bind(){
     else if(a==="est-mat-qty-to"){el.onclick=()=>{
       const k=el.dataset.k||"", q=parseFloat(el.dataset.q||"0");
       const cut=k.lastIndexOf("|");
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||cut<0||!(q>0))return;
+      const sh=schemeSheet(); if(!sh||cut<0||!(q>0))return;
       estSnap(sh, "количество по объёму");
       sh.matQty=matQtyWith(sh, k.slice(0,cut), k.slice(cut+1), q); fl();
     };}
@@ -27384,7 +27310,7 @@ function bind(){
     // «＋ Tytan Classic Fix · 10 шт» — клей с Леманы в строку, сразу нужным числом.
     else if(a==="est-glue-add"){el.onclick=()=>{
       const posKey=el.dataset.k||"", q=parseFloat(el.dataset.q||"0");
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!posKey||!(q>0))return;
+      const sh=schemeSheet(); if(!sh||!posKey||!(q>0))return;
       const prod=glueProductOf(expProducts);
       if(!prod){ alert("Клея Tytan Classic Fix нет в базе материалов — заведите карточку с Леманы."); return; }
       estSnap(sh, "клей под обшивку");
@@ -27394,7 +27320,7 @@ function bind(){
     };}
     else if(a==="est-pos-hours-set"){el.onclick=()=>{
       const key=el.dataset.k||"", h=parseFloat(el.dataset.h||"0");
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
+      const sh=schemeSheet(); if(!sh||!key)return;
       const next=Object.assign({}, sh.posHours||{});
       if(!(h>0)) delete next[key]; else next[key]=h;
       sh.posHours=next; hoursPickKey=""; scheduleSave(); fl();
@@ -27414,7 +27340,7 @@ function bind(){
       };
       el.onchange=()=>{
       const key=el.dataset.k||"";
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
+      const sh=schemeSheet(); if(!sh||!key)return;
       estSnap(sh, "план часов");
       const raw=String(el.value||"").replace(/\s/g,"").replace(",",".");
       const v=parseFloat(raw);
@@ -27427,7 +27353,7 @@ function bind(){
     }
     else if(a==="est-pos-cost"){el.onchange=()=>{
       const key=el.dataset.k||"";
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
+      const sh=schemeSheet(); if(!sh||!key)return;
       estSnap(sh, "цену работы");
       const v=parseFloat(String(el.value).replace(/\s/g,"").replace(",","."));
       if(!isFinite(v)||v<0){ fl(); return; }
@@ -27448,14 +27374,14 @@ function bind(){
     };}
     else if(a==="est-pos-cost-mode"){el.onclick=()=>{
       const key=el.dataset.k||"";
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
+      const sh=schemeSheet(); if(!sh||!key)return;
       const now=costModeOf(sh, key);
       sh.posCostMode=Object.assign({}, sh.posCostMode||{}, { [key]: now==="labor"?"all":"labor" });
       scheduleSave(); fl();
     };}
     else if(a==="est-pos-cost-reset"){el.onclick=()=>{
       const key=el.dataset.k||"";
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!sh.posCost)return;
+      const sh=schemeSheet(); if(!sh||!sh.posCost)return;
       const map=Object.assign({}, sh.posCost); delete map[key];
       if(Object.keys(map).length)sh.posCost=map; else delete sh.posCost;
       const mm=Object.assign({}, sh.posCostMode||{}); delete mm[key];
@@ -27492,7 +27418,7 @@ function bind(){
     // чертёж, и развёртка. Поэтому пишем её в модель и синхронизируем
     // характеристики, а не заводим второе число рядом со сметой.
     else if(a==="est-model-h"){el.onchange=()=>{
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!sh.model)return;
+      const sh=schemeSheet(); if(!sh||!sh.model)return;
       const mm=Math.round((parseFloat(String(el.value).replace(",","."))||0)*1000);
       // Дом высотой в метр или в пять — это опечатка, а не планировка, и молча
       // пересчитать по ней всю смету хуже, чем не принять число.
@@ -27513,7 +27439,7 @@ function bind(){
     // дописанные руками материалы. У остальных цена и так приезжает из карточки
     // товара при каждом расчёте, и «обновлять» там нечего.
     else if(a==="price-ext-run"){el.onclick=()=>{
-      const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
+      const sh=schemeSheet(); if(!sh)return;
       const w=works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes }));
       const st=(w.stages||[]).find(function(x){ return String(x.n)===String(el.dataset.n||""); }); if(!st)return;
       // Шлём ровно то, что расширение умеет открыть: без ссылки идти некуда.
@@ -27541,7 +27467,7 @@ function bind(){
     // Поиск товара там, где нашей карточки нет: обход по своим карточкам отвечает
     // «сколько стоит там, где мы покупаем», а этот — «а дешевле нигде нет?».
     else if(a==="price-ext-find"){el.onclick=()=>{
-      const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
+      const sh=schemeSheet(); if(!sh)return;
       const w=works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes }));
       const st=(w.stages||[]).find(function(x){ return String(x.n)===String(el.dataset.n||""); }); if(!st)return;
       const items=priceFindItems(priceShopRows(st));
@@ -27584,7 +27510,7 @@ function bind(){
     else if(a==="price-wiz-close"){el.onclick=()=>{ priceWizStage=""; priceWizIdx=0; fl(); };}
     else if(a==="price-wiz-ok"||a==="price-wiz-oos"||a==="price-wiz-skip"||a==="price-wiz-price"||a==="price-wiz-per"){
       const step=()=>{
-        const sh=schemeSheet()||spec2Sheet(); if(!sh)return null;
+        const sh=schemeSheet(); if(!sh)return null;
         const w=works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes }));
         const st=(w.stages||[]).find(function(x){ return String(x.n)===priceWizStage; }); if(!st)return null;
         const list=priceWizList(st);
@@ -27593,7 +27519,7 @@ function bind(){
       // Пройденную карточку не показываем снова: мастер тем и хорош, что ведёт
       // сам. Дошли до конца — закрываемся, а не упираемся в пустой экран.
       const nextCard=()=>{
-        const sh=schemeSheet()||spec2Sheet();
+        const sh=schemeSheet();
         const w=sh?works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes })):null;
         const st=w?(w.stages||[]).find(function(x){ return String(x.n)===priceWizStage; }):null;
         const n=st?priceWizList(st).length:0;
@@ -27656,7 +27582,7 @@ function bind(){
     // все: цена из базы, история, сверка по магазинам.
     else if(a==="price-card-add"){el.onclick=()=>{
       const posKey=el.dataset.k||"", mid=el.dataset.m||"", name=el.dataset.n||"";
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!name)return;
+      const sh=schemeSheet(); if(!sh||!name)return;
       const rows=(sh.matAdd||{})[posKey]||[];
       const row=rows.find(function(x){ return String(x.id||"")===mid; })||null;
       const src=row||{ n:name, cost:0, store:"", url:"", mode:"piece" };
@@ -27720,7 +27646,7 @@ function bind(){
     else if(a==="price-alt-take"){el.onclick=()=>{
       const pid=el.dataset.p||"";
       const prod=(expProducts||[]).find(function(x){ return x&&x.id===pid; }); if(!prod||!prod.alt)return;
-      const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
+      const sh=schemeSheet(); if(!sh)return;
       const a=prod.alt;
       // Имя со страницы магазина бывает плашкой акции. Товар с именем «10%
       // БАЛЛАМИ» встанет в смету дома, и найти его потом нельзя — поэтому без
@@ -27814,7 +27740,7 @@ function bind(){
       scheduleSave(); fl();
     };}
     else if(a==="est-stage-prices"){el.onclick=()=>{
-      const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
+      const sh=schemeSheet(); if(!sh)return;
       const n=Number(el.dataset.n)||0;
       const w=works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes }));
       const st=(w.stages||[]).find(function(x){ return x.n===n; }); if(!st)return;
@@ -27933,7 +27859,7 @@ function bind(){
     // Массовые правки — один снимок на всю пачку: отменять «убрал десять работ»
     // по одной значит десять раз нажать «вернуть» и всё равно не собрать как было.
     else if(a==="est-pick-del"){el.onclick=()=>{
-      const sh=schemeSheet()||spec2Sheet(); const keys=Object.keys(estPick||{});
+      const sh=schemeSheet(); const keys=Object.keys(estPick||{});
       if(!sh||!keys.length)return;
       estSnap(sh, "удаление "+keys.length+" работ");
       const gone=[];
@@ -27952,7 +27878,7 @@ function bind(){
       estFlash("Удалено работ: "+keys.length);
     };}
     else if(a==="est-pick-stage-set"){el.onclick=()=>{
-      const sh=schemeSheet()||spec2Sheet(); const keys=Object.keys(estPick||{});
+      const sh=schemeSheet(); const keys=Object.keys(estPick||{});
       const n=Number(el.dataset.n)||0;
       if(!sh||!keys.length||!n)return;
       estSnap(sh, "перенос "+keys.length+" работ");
@@ -27962,7 +27888,7 @@ function bind(){
       estFlash("Перенесено работ: "+keys.length);
     };}
     else if(a==="est-pick-room-set"){el.onclick=()=>{
-      const sh=schemeSheet()||spec2Sheet(); const keys=Object.keys(estPick||{});
+      const sh=schemeSheet(); const keys=Object.keys(estPick||{});
       if(!sh||!keys.length)return;
       estSnap(sh, "перенос "+keys.length+" работ");
       const to=String(el.dataset.r||"");
@@ -27992,7 +27918,7 @@ function bind(){
     };}
     else if(a==="est-pos-k"){el.onclick=()=>{
       const key=el.dataset.k||"";
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
+      const sh=schemeSheet(); if(!sh||!key)return;
       estSnap(sh, "коэффициент работы");
       const v=parseFloat(String(el.dataset.v||"").replace(",","."));
       const map=Object.assign({}, sh.posK||{});
@@ -28006,14 +27932,14 @@ function bind(){
     };}
     else if(a==="est-pos-stage"){el.onchange=()=>{
       const key=el.dataset.k||"";
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
+      const sh=schemeSheet(); if(!sh||!key)return;
       estSnap(sh, "смену этапа");
       sh.posStage=Object.assign({}, sh.posStage||{}, { [key]:Number(el.value)||0 });
       scheduleSave(); fl();
     };}
     else if(a==="est-pos-stage-reset"){el.onclick=()=>{
       const key=el.dataset.k||"";
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!sh.posStage)return;
+      const sh=schemeSheet(); if(!sh||!sh.posStage)return;
       const map=Object.assign({}, sh.posStage); delete map[key];
       if(Object.keys(map).length)sh.posStage=map; else delete sh.posStage;
       scheduleSave(); fl();
@@ -28026,7 +27952,7 @@ function bind(){
     };}
     else if(a==="est-import-close"){el.onclick=()=>{ estImport=null; ui(); };}
     else if(a==="est-import-src"||a==="est-import-stage"){el.onclick=()=>{
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!estImport)return;
+      const sh=schemeSheet(); if(!sh||!estImport)return;
       const patch=el.dataset.a==="est-import-src"?{ src:String(el.dataset.id||"") }:{ stage:String(el.dataset.n||"") };
       estImport=estImportReset(sh, Object.assign({}, estImport, patch)); ui();
     };}
@@ -28037,7 +27963,7 @@ function bind(){
       estImport=Object.assign({}, estImport, { pick:pick }); ui();
     };}
     else if(a==="est-import-all"){el.onclick=()=>{
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!estImport)return;
+      const sh=schemeSheet(); if(!sh||!estImport)return;
       const fresh=estImportCtx(sh, estImport).rows.filter(function(r){ return !r.exists; });
       const cur=estImport.pick||{};
       const allOn=fresh.length>0&&fresh.every(function(r){ return cur[r.key]; });
@@ -28046,7 +27972,7 @@ function bind(){
     };}
     else if(a==="est-import-do"){el.onclick=()=>{ estImportDo(); };}
     else if(a==="est-pos-add-do"){el.onclick=()=>{
-      const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
+      const sh=schemeSheet(); if(!sh)return;
       estSnap(sh, "добавленную работу");
       // Адрес «<лист>@<этап>|<комната>»: кнопка «+» в шапке помещения знает, куда
       // кладут работу, и спрашивать этап второй раз незачем.
@@ -28085,7 +28011,7 @@ function bind(){
     // по нему считал, а делают её всё равно в санузле.
     else if(a==="est-pos-room"){el.onclick=()=>{
       const key=el.dataset.k||"", to=String(el.dataset.r||"");
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
+      const sh=schemeSheet(); if(!sh||!key)return;
       estSnap(sh, "перенос в помещение");
       const map=Object.assign({}, sh.posRoom||{});
       if(to==="~")delete map[key]; else map[key]=to||ROOM_HOUSE;
@@ -28096,7 +28022,7 @@ function bind(){
     // стоит на чертеже и в площадях, и второй копии у него быть не должно.
     else if(a==="est-room-name"){el.onclick=()=>{
       const id=String(el.dataset.r||"");
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!id)return;
+      const sh=schemeSheet(); if(!sh||!id)return;
       const w=works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes }));
       const cur=((w.rooms||[]).find(function(r){ return r.id===id; })||{}).name||"";
       const next=prompt("Название помещения", cur);
@@ -28106,7 +28032,7 @@ function bind(){
     };}
     else if(a==="est-pos-del"){el.onclick=()=>{
       const key=el.dataset.k||"";
-      const sh=schemeSheet()||spec2Sheet();
+      const sh=schemeSheet();
       if(!sh||!key)return;
       // Не спрашиваем, а даём вернуть: вопрос перед каждым ✕ останавливает на
       // каждой строке, а промах пальцем случается раз в сотню правок — и вот там
@@ -28132,7 +28058,7 @@ function bind(){
     // стройка. Строка остаётся на месте серой — это прикидка, а не удаление.
     else if(a==="est-pos-on"){el.onclick=()=>{
       const key=el.dataset.k||"";
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!key)return;
+      const sh=schemeSheet(); if(!sh||!key)return;
       const wasOff=!!((sh.posOff||{})[key]);
       estSnap(sh, wasOff?"включение работы":"выключение работы");
       const map=Object.assign({}, sh.posOff||{});
@@ -28142,7 +28068,7 @@ function bind(){
     };}
     else if(a==="est-pos-back"){el.onclick=()=>{
       const key=el.dataset.k||"";
-      const sh=schemeSheet()||spec2Sheet();
+      const sh=schemeSheet();
       if(!sh||!sh.posOff)return;
       estSnap(sh, "возврат работы");
       estUnmark(sh, "posOff", key);                 // пустой ключ — «вернуть все»
@@ -28151,7 +28077,7 @@ function bind(){
     // Вернуть удалённую ✕ работу (или все — пустой ключ) из перечня «удалено».
     else if(a==="est-pos-undel"){el.onclick=()=>{
       const key=el.dataset.k||"";
-      const sh=schemeSheet()||spec2Sheet();
+      const sh=schemeSheet();
       if(!sh||!sh.posDel)return;
       estSnap(sh, "возврат удалённой работы");
       estUnmark(sh, "posDel", key);
@@ -28159,7 +28085,7 @@ function bind(){
     };}
     else if(a==="est-mat-add-del"){el.onclick=()=>{
       const posKey=el.dataset.k||"", mid=el.dataset.m||"";
-      const sh=schemeSheet()||spec2Sheet();
+      const sh=schemeSheet();
       if(!sh||!sh.matAdd||!sh.matAdd[posKey])return;
       const map=Object.assign({}, sh.matAdd);
       const row=(map[posKey]||[]).filter(function(x){return x.id!==mid;});
@@ -28168,7 +28094,7 @@ function bind(){
     };}
     // ── Варианты: один из нескольких ───────────────────────────────────────
     else if(a==="est-opt-pick"){el.onclick=()=>{
-      const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
+      const sh=schemeSheet(); if(!sh)return;
       const pick=Object.assign({}, sh.optPick||{});
       pick[el.dataset.g]=el.dataset.e;
       sh.optPick=pick;
@@ -28180,7 +28106,7 @@ function bind(){
     // подряд — это одно решение, и объединять их по одной значит трижды объяснять
     // порталу очевидное.
     else if(a==="est-opt-auto"){el.onclick=()=>{
-      const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
+      const sh=schemeSheet(); if(!sh)return;
       const g=el.dataset.g||"";
       if(!g)return;
       const pos=works2(sh, specCtx(sh)).positions;
@@ -28207,7 +28133,7 @@ function bind(){
       fl();
     };}
     else if(a==="est-opt-off"){el.onclick=()=>{
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!sh.optOf)return;
+      const sh=schemeSheet(); if(!sh||!sh.optOf)return;
       const id=el.dataset.e||"";
       const g=optGroupOf(sh, id);
       const map=Object.assign({}, sh.optOf);
@@ -28231,7 +28157,7 @@ function bind(){
       const k=el.dataset.k||"";
       const cut=k.lastIndexOf("|");
       const posKey=k.slice(0,cut), oldPid=k.slice(cut+1);
-      const sh=schemeSheet()||spec2Sheet();
+      const sh=schemeSheet();
       if(!sh)return;
       estSnap(sh, "замену материала");
       const name=((document.getElementById("msw-input")||{}).value||"").trim();
@@ -28277,7 +28203,7 @@ function bind(){
       const k=el.dataset.k||"";
       const cut=k.lastIndexOf("|");
       const posKey=k.slice(0,cut), mk=k.slice(cut+1);
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!posKey||!mk)return;
+      const sh=schemeSheet(); if(!sh||!posKey||!mk)return;
       const byId={}; (expProducts||[]).forEach(function(x){ if(x&&x.id)byId[x.id]=x; });
       const add=Object.assign({}, sh.matAdd||{});
       const rows=(add[posKey]||[]).map(function(m){ return Object.assign({}, m); });
@@ -28291,7 +28217,7 @@ function bind(){
       const k=el.dataset.k||"";
       const cut=k.lastIndexOf("|");
       const posKey=k.slice(0,cut), pid=k.slice(cut+1);
-      const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
+      const sh=schemeSheet(); if(!sh)return;
       const v=parseFloat(String(el.value).replace(",","."));
       sh.matQty=matQtyWith(sh, posKey, pid, v); fl();
     };}
@@ -28306,7 +28232,7 @@ function bind(){
       const k=el.dataset.k||"";
       const cut=k.lastIndexOf("|");
       const posKey=k.slice(0,cut), pid=k.slice(cut+1);
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!posKey||!pid)return;
+      const sh=schemeSheet(); if(!sh||!posKey||!pid)return;
       estSnap(sh, "убранный материал");
       const map=Object.assign({}, sh.matOff||{});
       const row=(map[posKey]||[]).filter(function(x){ return String(x)!==pid; });
@@ -28318,7 +28244,7 @@ function bind(){
       const k=el.dataset.k||"";
       const cut=k.lastIndexOf("|");
       const posKey=k.slice(0,cut), pid=k.slice(cut+1);
-      const sh=schemeSheet()||spec2Sheet(); if(!sh||!sh.matOff)return;
+      const sh=schemeSheet(); if(!sh||!sh.matOff)return;
       const map=Object.assign({}, sh.matOff);
       const gone=matAddrsAt(sh, posKey, pid).concat([pid]);
       const row=(map[posKey]||[]).filter(function(x){ return gone.indexOf(String(x))<0; });
@@ -28330,7 +28256,7 @@ function bind(){
       const k=el.dataset.k||"";
       const cut=k.lastIndexOf("|");
       const posKey=k.slice(0,cut), pid=k.slice(cut+1);
-      const sh=schemeSheet()||spec2Sheet();
+      const sh=schemeSheet();
       if(!sh||!sh.matQty||!sh.matQty[posKey])return;
       const map=Object.assign({}, sh.matQty);
       const row=Object.assign({}, map[posKey]);
@@ -28342,7 +28268,7 @@ function bind(){
       const k=el.dataset.k||"";
       const cut=k.lastIndexOf("|");
       const posKey=k.slice(0,cut), pid=k.slice(cut+1);
-      const sh=schemeSheet()||spec2Sheet();
+      const sh=schemeSheet();
       if(!sh||!sh.mats||!sh.mats[posKey])return;
       const mats=Object.assign({}, sh.mats);
       const row=Object.assign({}, mats[posKey]);
@@ -28361,12 +28287,12 @@ function bind(){
       ui();
     };}
     else if(a==="est-rule-set"){el.onclick=()=>{
-      const sh=schemeSheet()||spec2Sheet();
+      const sh=schemeSheet();
       estRuleSet(el.dataset.est, (sh&&sh.kind)||"house", el.dataset.f, el.dataset.v);
     };}
     // Клетка «объёма из чертежа» — правило одним шагом (estRuleVol).
     else if(a==="est-rule-vol"){el.onclick=()=>{
-      const sh=schemeSheet()||spec2Sheet();
+      const sh=schemeSheet();
       estRuleVol(el.dataset.est, (sh&&sh.kind)||"house", el.dataset.k, el.dataset.room||"");
     };}
     else if(a==="est-rule-more"){el.onclick=()=>{
@@ -28375,15 +28301,15 @@ function bind(){
       ruleMore=m; ui();
     };}
     else if(a==="est-rule-room"){el.onchange=()=>{
-      const sh=schemeSheet()||spec2Sheet();
+      const sh=schemeSheet();
       estRuleSet(el.dataset.est, (sh&&sh.kind)||"house", "room", el.value);
     };}
     else if(a==="est-rule-qty"){el.onchange=()=>{
-      const sh=schemeSheet()||spec2Sheet();
+      const sh=schemeSheet();
       estRuleSet(el.dataset.est, (sh&&sh.kind)||"house", "qty", el.value);
     };}
     else if(a==="est-rule-del"){el.onclick=()=>{
-      const sh=schemeSheet()||spec2Sheet();
+      const sh=schemeSheet();
       const r=ruleOfEst(el.dataset.est, (sh&&sh.kind)||"house");
       if(!r)return;
       if(!confirm("Убрать правило?\n\nСтрока вернётся к счёту «как в справочнике»."))return;
@@ -28514,7 +28440,7 @@ function bind(){
     };}
     else if(a==="rule-add"){el.onclick=()=>{
       // Вид берём у открытого листа: правила заводят и из проекта тоже.
-      const sh=schemeSheet()||spec2Sheet();
+      const sh=schemeSheet();
       const kind=(sh&&sh.kind)||"house";
       buildRules=buildRules.concat([{ id:gid(), kind:kind, estId:"", what:"surface", k:"wall",
         scope:"room", room:"", qty:1, stage:0, off:false }]);

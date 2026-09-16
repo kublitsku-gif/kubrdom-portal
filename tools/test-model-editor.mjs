@@ -7,6 +7,7 @@
 // попавшуюся, список показывает только её проёмы, а развёртка не пытается
 // нарисовать стену, которой на ней нет.
 import { boot, reporter } from './harness/panel-vm.js'
+import { openProject } from './helpers/open-project.mjs'
 
 const t = reporter()
 
@@ -25,11 +26,13 @@ function panel() {
   return p
 }
 const click = (p, dataset) => { const el = p.dom.node(dataset); p.run('bind();'); el.onclick(); return el }
-// Лист опытного раздела «Спецификация 2»: те же перегородки и проёмы, но окна и
-// двери разведены по своим инструментам. Боевые листы этой обкатки не видят.
+// Лист ПРОЕКТА: те же перегородки и проёмы, но окна и двери разведены по своим
+// инструментам. Боевые спецификации этой обкатки не видят — она обкатана в
+// проектах, и с закрытием «Спецификации 2» (16.09.2026) редактор открывают оттуда.
 function lab() {
   const p = panel()
-  click(p, { a: 'spec2-edit' })
+  openProject(p, 'Редактор')
+  click(p, { a: 'proj-edit', id: p.q('projOpenId') })
   return p
 }
 const doors = (p) => p.q('specSheets[0].model.openings.filter(function(o){return o.side==="part";})')

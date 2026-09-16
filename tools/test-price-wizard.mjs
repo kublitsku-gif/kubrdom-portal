@@ -6,6 +6,7 @@
 // показывает ОДНУ карточку крупно, кнопки в палец шириной, и сам ведёт по списку:
 // принял цену — следующая. Работа сводится к «смотрю в магазин → тап».
 import { boot, reporter } from './harness/panel-vm.js'
+import { openProject, estHtml } from './helpers/open-project.mjs'
 
 const t = reporter()
 
@@ -28,12 +29,10 @@ function panel() {
     specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [], contractDocs: [],
     purchases: [], issues: [], users: [], stock: [], settings: {}, buildRules: RULES,
   })
-  p.run('spec2Tab="scheme";tSpec2();')
-  const edit = p.dom.node({ a: 'spec2-edit' }); p.run('bind();'); edit.onclick()
-  p.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
+  openProject(p)
   return p
 }
-const stageOf = (p) => p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0].n')
+const stageOf = (p) => p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).stages[0].n')
 
 // ── 1. Открытие и навигация ─────────────────────────────────────────────────
 {
@@ -43,7 +42,7 @@ const stageOf = (p) => p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0
   const open = p.dom.node({ a: 'price-wiz-open', n: String(stN) })
   p.run('bind();'); open.onclick()
 
-  const html = p.run('tSpec2()')
+  const html = estHtml(p)
   t.ok('мастер открылся', html.indexOf('data-a="price-wiz-ok"') >= 0)
   t.ok('показывает первую карточку', /Кабель ВВГ 3х1,5 100 м/.test(html))
   t.ok('и только её', !/Брусок строганый/.test(html), 'на экране больше одной карточки')
@@ -53,7 +52,7 @@ const stageOf = (p) => p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0
 
   // «Цена верна» — самый частый случай: ничего не изменилось, идём дальше.
   const ok = p.dom.node({ a: 'price-wiz-ok' }); p.run('bind();'); ok.onclick()
-  const html2 = p.run('tSpec2()')
+  const html2 = estHtml(p)
   t.ok('карточка подтверждена', !!p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].priceOkAt'))
   t.ok('мастер сам перешёл к следующей', /Брусок строганый/.test(html2), 'остался на прежней')
   t.ok('счётчик поехал', /2 из 3/.test(html2))
@@ -70,11 +69,11 @@ const stageOf = (p) => p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0
   p.run('bind();'); inp.value = '5600'; inp.onchange()
   t.ok('цена ушла в каталог', p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].unitCost') === 5600)
   t.ok('история записана', (p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].hist') || []).length > 0)
-  t.ok('и сразу следующая карточка', /Брусок строганый/.test(p.run('tSpec2()')))
+  t.ok('и сразу следующая карточка', /Брусок строганый/.test(estHtml(p)))
 
   const oos = p.dom.node({ a: 'price-wiz-oos' }); p.run('bind();'); oos.onclick()
   t.ok('брусок помечен «кончился»', !!p.q('expProducts.filter(function(x){return x.id==="p_br";})[0].oosAt'))
-  t.ok('перешли к третьей', /Подвес прямой/.test(p.run('tSpec2()')))
+  t.ok('перешли к третьей', /Подвес прямой/.test(estHtml(p)))
 }
 
 // ── 3. Пропуск и финиш ──────────────────────────────────────────────────────
@@ -87,11 +86,11 @@ const stageOf = (p) => p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0
   // Пропустили — статус не тронут: «не смотрел» и «смотрел, всё то же» это разное.
   const skip = p.dom.node({ a: 'price-wiz-skip' }); p.run('bind();'); skip.onclick()
   t.ok('пропущенная осталась несверенной', !p.q('expProducts.filter(function(x){return x.id==="p_kab";})[0].priceOkAt'))
-  t.ok('но мастер пошёл дальше', /Брусок строганый/.test(p.run('tSpec2()')))
+  t.ok('но мастер пошёл дальше', /Брусок строганый/.test(estHtml(p)))
 
   const tap = () => { const b = p.dom.node({ a: 'price-wiz-skip' }); p.run('bind();'); b.onclick() }
   tap(); tap()
-  const done = p.run('tSpec2()')
+  const done = estHtml(p)
   t.ok('после последней мастер закрылся', done.indexOf('data-a="price-wiz-ok"') < 0, 'мастер не закрылся')
   // Закрыли — и снова видно смету, а не пустой экран.
   t.ok('смета на месте', /ЭТАП/.test(done))
@@ -109,7 +108,7 @@ const stageOf = (p) => p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0
   p.run('(function(){var x=expProducts.filter(function(y){return y.id==="p_kab";})[0];'
     + 'x.hist=[{at:"2026-08-01T00:00:00Z",c:4600,by:"Юрий"},{at:"2026-09-01T00:00:00Z",c:5100,by:"Юрий"}];})();')
   const open = p.dom.node({ a: 'price-wiz-open', n: String(stN) }); p.run('bind();'); open.onclick()
-  const html = p.run('tSpec2()').replace(/[\u00a0\u202f]/g, ' ')
+  const html = estHtml(p).replace(/[\u00a0\u202f]/g, ' ')
   t.ok('в карточке видно рост', /▲ \+500 ₽/.test(html), 'нет динамики в мастере')
   t.ok('и в процентах', /▲ \+500 ₽ · 11%/.test(html), 'нет процента')
   t.ok('чип ведёт в карточку товара', html.indexOf('data-a="price-hist" data-p="p_kab"') >= 0)
@@ -118,7 +117,7 @@ const stageOf = (p) => p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0
   // «цена не менялась», чего мы не знаем.
   const next = p.dom.node({ a: 'price-wiz-skip' }); p.run('bind();'); next.onclick()
   t.ok('у товара без истории чипа нет',
-    p.run('tSpec2()').indexOf('data-a="price-hist"') < 0, 'чип нарисован без истории')
+    estHtml(p).indexOf('data-a="price-hist"') < 0, 'чип нарисован без истории')
 }
 
 // ── Упаковка в мастере ──────────────────────────────────────────────────────
@@ -128,7 +127,7 @@ const stageOf = (p) => p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0
 {
   t.section('Упаковка в мастере сверки')
   const p = panel()
-  const plain = () => p.run('tSpec2()').replace(/[  ]/g, ' ')
+  const plain = () => estHtml(p).replace(/[  ]/g, ' ')
   const stN = stageOf(p)
   const open = p.dom.node({ a: 'price-wiz-open', n: String(stN) }); p.run('bind();'); open.onclick()
   t.ok('поле упаковки есть', plain().indexOf('data-a="price-wiz-per"') >= 0, 'нет поля упаковки')
@@ -162,7 +161,7 @@ const stageOf = (p) => p.q('works2(spec2Sheet(), specCtx(spec2Sheet())).stages[0
   const p = panel()
   const stN = stageOf(p)
   const open = p.dom.node({ a: 'price-wiz-open', n: String(stN) }); p.run('bind();'); open.onclick()
-  const html = p.run('tSpec2()')
+  const html = estHtml(p)
 
   t.ok('упаковка спрашивается до цены',
     html.indexOf('data-a="price-wiz-per"') < html.indexOf('data-a="price-wiz-price"'),
