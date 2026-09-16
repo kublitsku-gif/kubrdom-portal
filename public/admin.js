@@ -14580,30 +14580,87 @@ function optEditorHtml(p, sh){
   '</div>';
 }
 
-// Выбор варианта — ПИЛЮЛЯМИ в строке материалов, а не блоком под строкой.
-// Выбранный вариант уже написан в имени строки («Утепление пола — ЭППС 10 см») и
-// стоит её суммой справа; кнопка с ним же и подпись «ВЫБОР · …» занимали две
-// строки экрана ради того, что и так видно. Остались только ДРУГИЕ варианты.
+// Выбор варианта — БЛОКОМ, а не пилюлями в ряду чипов. Пилюли показывали только
+// ДРУГИЕ варианты, и по ним не читалось главное: что здесь вообще решение, а не
+// работа. В «Бане-буханке» три утепления стен стояли тремя строками — одна с
+// галочкой, две «не в итоге», — а два утепления пола стояли обе включёнными и
+// обе шли в дом. Оба случая — один вопрос «сколько сантиметров», и отвечать на
+// него надо в одном месте: рамка, подпись «ВЫБОР · <группа>» и ряд вариантов.
 //
-// На пилюле — ПОЛНАЯ цена варианта, а не разница с текущим. Разница врала:
+// Блок — это САМА строка (рамка на её `<div>`), а не обёртка вокруг неё: перенос
+// работ ищет соседей по детям общего родителя (`dragRow`), и строка, спрятанная
+// внутрь лишнего `<div>`, осталась бы без соседей — переставить её было бы
+// нельзя. Заодно и рамка «сюда» встаёт в высоту всего блока.
+//
+// Выбранный вариант в ряду ОБЯЗАТЕЛЬНО есть, хотя он же написан в имени строки:
+// ряд из двух кнопок, где текущего нет, читается как «переключить на что-то», а
+// не как «выбрано это из трёх». Цена стоит на каждой — выбирают по ней.
+//
+// На кнопке — ПОЛНАЯ цена варианта, а не разница с текущим. Разница врала:
 // правило «по каждому помещению» бывает заведено на один вариант группы, и тогда
 // он посчитан по трём комнатам, а соседи — одной строкой на дом; вдобавок в сумму
 // варианта входят строки, убранные из дома. На Доме СВО это читалось как «ППУ 8 см
 // · −194 500 ₽» — толще и втрое дешевле. Пока правило не действует на всю группу,
 // честнее сказать, сколько стоит сам вариант, чем обещать разницу, которой в доме
-// не будет. Цвет нейтральный: зелёный в смете закреплён за фактом (EST_COL).
-function optChipsHtml(pos, sh, w){
-  const g=optGroupOf(sh, pos.estId);
-  if(!g)return "";
-  const grp=(w.groups||[]).find(function(x){return x.group===g;});
-  if(!grp||grp.variants.length<2)return "";
+// не будет. Цвет группы — фиолетовый (RULE_COL): зелёный в смете закреплён за
+// фактом со стройки, а выбор — та же разметка листа, что и правила.
+function optGrpOf(pos, sh, w){
+  const g=optGroupOf(sh, pos&&pos.estId);
+  if(!g)return null;
+  const grp=((w&&w.groups)||[]).find(function(x){return x.group===g;});
+  return (grp&&grp.variants.length>1)?grp:null;
+}
+// Рамка строки-выбора. Дописывается В КОНЕЦ её же style, поэтому здесь свой
+// padding: он перекрывает базовый «12px 0» (в CSS побеждает последнее правило) —
+// у блока есть рамка, и текст не должен лежать на ней.
+function optRowStyle(pos, sh, w){
+  return optGrpOf(pos, sh, w)
+    ? ';border:1.5px solid #e2d4ee;border-radius:12px;background:#fcfaff;padding:8px 10px 2px;margin:9px 0'
+    : '';
+}
+function optPickerHtml(pos, sh, w){
+  const grp=optGrpOf(pos, sh, w); if(!grp)return "";
+  const g=grp.group;
   const rub=function(n){ return Math.round(n).toLocaleString("ru-RU")+' ₽'; };
-  return grp.variants.filter(function(v){ return !v.on; }).map(function(v){
+  const btns=grp.variants.map(function(v){
+    const on=!!v.on;
     return '<button data-a="est-opt-pick" data-g="'+esc(g)+'" data-e="'+esc(v.estId)+'" '+
-      'title="'+esc(g+': переключить на «'+(v.label||v.name)+'»')+'" '+
-      'style="border:1px solid #d0dae8;background:#fff;color:#5a7a9a;border-radius:7px;padding:2px 7px;font-size:10.5px;font-weight:700;cursor:pointer;white-space:nowrap">'+
-      '⇄ '+esc(v.label||v.name)+' · '+rub(v.cost)+'</button>';
+      'title="'+esc(g+': '+(on?'выбрано — «'+(v.label||v.name)+'»':'переключить на «'+(v.label||v.name)+'»'))+'" '+
+      'style="flex:1 1 auto;min-width:0;display:flex;align-items:baseline;justify-content:center;gap:6px;'+
+        'border:1.5px solid '+(on?RULE_COL:'#ddd2ea')+';background:'+(on?RULE_COL:'#fff')+';color:'+(on?'#fff':'#6b5a85')+';'+
+        'border-radius:9px;padding:6px 10px;font-size:11.5px;font-weight:700;cursor:pointer;white-space:nowrap">'+
+      (on?'✓ ':'')+esc(v.label||v.name)+
+      '<span style="font-weight:800'+(on?'':';color:#0d1b2e')+'">'+rub(v.cost)+'</span>'+
+    '</button>';
   }).join("");
+  return '<div style="display:flex;align-items:baseline;gap:7px;margin-bottom:6px">'+
+      '<span style="font-size:9.5px;font-weight:800;color:'+RULE_COL+';letter-spacing:0.5px">ВЫБОР</span>'+
+      '<span style="flex:1;min-width:0;font-size:11px;font-weight:700;color:#6b5a85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(g)+'</span>'+
+            // Подпись справа короткая: на телефоне «в дом идёт один из 3» съедало
+      // половину строки, и имя группы — единственное, чем блок отличается от
+      // соседнего такого же, — обрезалось до «Утепление стен и пот…».
+      '<span title="В дом идёт один вариант из '+grp.variants.length+'" style="font-size:10px;color:#9d8fb3;white-space:nowrap">один из '+grp.variants.length+'</span>'+
+    '</div>'+
+    '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px">'+btns+'</div>';
+}
+
+// Выбор группы главнее отметок «не в итоге» и «удалено». До группировки лишние
+// варианты убирали из дома руками, и эти отметки остаются лежать в листе: в
+// «Бане-буханке» ППУ 5 и 8 см так и стояли «не в итоге». Переключиться на такой
+// вариант значило выбрать строку, которую тут же выбрасывал `dropOff`, — в доме
+// не оставалось ни одного утепления, а вместе с последней строкой группы с
+// экрана пропадал и сам блок выбора, то есть вернуться было уже некуда.
+// Поэтому у строк группы отметки снимаются: в группе «в доме или нет» решает
+// переключатель, и второй ответ на тот же вопрос в листе не нужен.
+function optClearMarks(sh, ids){
+  if(!sh||!ids||!ids.length)return;
+  const want={}; ids.forEach(function(id){ if(id)want[id]=true; });
+  const raw=allPositionsRaw(sh, specCtx(sh));
+  (raw.shown||[]).concat(raw.deleted||[]).forEach(function(p){
+    if(!p.estId||!want[p.estId])return;
+    estUnmark(sh, "posOff", p.key);
+    estUnmark(sh, "posDel", p.key);
+  });
 }
 
 // ── МАТЕРИАЛЫ СТРОКИ СМЕТЫ: ПЕРЕЧНЕМ И С ЗАМЕНОЙ ────────────────────────────
@@ -17029,7 +17086,10 @@ function estBodyHtml(sh, types, live, actions){
             // отнимала зелёный у «факта со стройки», единственного цвета, который в
             // смете значит «это уже случилось». Тот же приём, что у блока «СОСТАВ»:
             // приписано отступом и рейкой, а не подписью.
-            '<div'+addr+' style="padding:12px 0'+(p.added?';border-left:2px solid '+EST_COL.added+';padding-left:9px;margin-left:-2px':'')+(rowOpen?';background:#fbfcfe':'')+'">'+
+            // Строка группы вариантов сама себе блок: рамка на ней же, а над
+            // именем — ряд вариантов (`optRowStyle` / `optPickerHtml`).
+            '<div'+addr+' style="padding:12px 0'+(p.added?';border-left:2px solid '+EST_COL.added+';padding-left:9px;margin-left:-2px':'')+(rowOpen?';background:#fbfcfe':'')+optRowStyle(p, sh, w)+'">'+
+            optPickerHtml(p, sh, w)+
             // Имя во всю ширину и не длиннее двух строк (полное — в подсказке):
             // одно наименование на пол-экрана прятало соседние работы. Итог прижат
             // к правому краю, у всех строк он встаёт в одну колонку.
@@ -17064,7 +17124,6 @@ function estBodyHtml(sh, types, live, actions){
               })()+
               estVolGuessHtml(p, sh, canRule)+
               estSplitHtml(p, matsShown(p).length, !!matsOpen[p.key])+
-              optChipsHtml(p, sh, w)+
               // «Цена отстала» — В САМОЙ СТРОКЕ, а не только под чипом-фильтром.
               // Предикат для фильтра уже был, но строка о себе молчала: устаревшую
               // цену видел лишь тот, кто догадался включить отбор. Читают смету
@@ -28112,7 +28171,10 @@ function bind(){
       const sh=schemeSheet()||spec2Sheet(); if(!sh)return;
       const pick=Object.assign({}, sh.optPick||{});
       pick[el.dataset.g]=el.dataset.e;
-      sh.optPick=pick; fl();
+      sh.optPick=pick;
+      // Выбранный вариант не может быть «не в итоге»: см. `optClearMarks`.
+      optClearMarks(sh, [el.dataset.e||""]);
+      fl();
     };}
     // Собираем в группу СРАЗУ все строки с тем же началом имени: три «Утепления»
     // подряд — это одно решение, и объединять их по одной значит трижды объяснять
@@ -28133,12 +28195,15 @@ function bind(){
       pos.forEach(function(x){ if(x.estId&&optPrefixOf(x.name||"")===g)ids[x.estId]=true; });
       const n=Object.keys(ids).length;
       if(n<2){ alert("Рядом нет других строк с таким же началом имени — группировать нечего."); return; }
+      // Отметки «не в итоге» снимаем ДО разметки: после неё невыбранных строк в
+      // составе уже не видно, и снимать их было бы не с чего.
+      optClearMarks(sh, Object.keys(ids));
       const map=Object.assign({}, sh.optOf||{});
       Object.keys(ids).forEach(function(id){ map[id]=g; });
       const pick=Object.assign({}, sh.optPick||{});
       if(!pick[g])pick[g]=el.dataset.e||Object.keys(ids)[0];
       sh.optOf=map; sh.optPick=pick; matSwapOpen=""; estWhyOpen="";
-      alert("Собрано в группу «"+g+"»: "+n+" вариант(а).\n\nВ дом идёт один — переключается чипами в строке.");
+      alert("Собрано в группу «"+g+"»: "+n+" вариант(а).\n\nВ дом идёт один — переключается в блоке выбора над строкой.");
       fl();
     };}
     else if(a==="est-opt-off"){el.onclick=()=>{

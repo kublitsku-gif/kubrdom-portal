@@ -397,8 +397,12 @@ function create(p, name) {
   t.ok('в доме один вариант',
     p.q('works2(projects[0], specCtx(projects[0])).positions.filter(function(x){return /ППУ/.test(x.name);}).length') === 1)
   const chips = p.run('estWhyOpen="";tProjects()')
-  // Два варианта — одна пилюля: выбранный уже в имени строки.
-  t.ok('и переключатель на месте', (chips.match(/data-a="est-opt-pick"/g) || []).length === 1)
+  // Выбор показан БЛОКОМ вокруг строки, и выбранный вариант в ряду тоже есть:
+  // ряд, где текущего нет, читается как «переключить на что-то», а не как
+  // «выбрано это из двух».
+  t.ok('и переключатель на месте', (chips.match(/data-a="est-opt-pick"/g) || []).length === 2)
+  t.ok('блок выбора подписан группой', /ВЫБОР<\/span><span[^>]*>Утепление</.test(chips))
+  t.ok('выбранный вариант отмечен', /data-a="est-opt-pick"[^>]*data-e="e_p5"[^>]*>✓ /.test(chips))
 
   // Всё это уезжает в объект тем же составом.
   const shown = p.q('works2(projects[0], specCtx(projects[0])).positions.length')

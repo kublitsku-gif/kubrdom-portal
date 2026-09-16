@@ -662,15 +662,67 @@ const SHEET = {
   t.ok('и это тот, из строки которого группировали', one[0].estId === 'e_p5')
 
   const html = p.run('tSpec2()')
-  // Выбранный вариант уже написан в имени строки и стоит её суммой справа —
-  // кнопками показаны только ДРУГИЕ, пилюлями в строке материалов.
-  t.ok('варианты показаны переключателем', (html.match(/data-a="est-opt-pick"/g) || []).length === 2)
+  // Выбор — БЛОК вокруг строки, и в ряду стоят ВСЕ варианты, включая выбранный:
+  // ряд из двух кнопок, где текущего нет, читается как «переключить на что-то»,
+  // а не как «выбрано это из трёх».
+  t.ok('варианты показаны переключателем', (html.match(/data-a="est-opt-pick"/g) || []).length === 3)
+  t.ok('блок подписан группой', /ВЫБОР<\/span><span[^>]*>Утепление стен и потолка</.test(html))
+  t.ok('и говорит, что в дом идёт один', /один из 3/.test(html))
+  t.ok('выбранный отмечен галочкой', /data-a="est-opt-pick"[^>]*data-e="e_p5"[^>]*>✓ /.test(html))
   t.ok('подсказка больше не нужна', !/Похоже, это один выбор/.test(html))
-  // На пилюле — полная цена варианта: разница с текущим врала, когда правило по
-  // помещениям заведено на один вариант из группы (см. optChipsHtml).
-  t.ok('у каждого своя цена', /ППУ 8 см · 4[\s\u00a0\u202f]500 ₽/.test(html))
+  // На кнопке — полная цена варианта: разница с текущим врала, когда правило по
+  // помещениям заведено на один вариант из группы (см. optBlockHtml).
+  t.ok('у каждого своя цена', /ППУ 8 см<[^>]*>4[\s\u00a0\u202f]500 ₽/.test(html))
   t.ok('группа подписана', /title="Утепление стен и потолка: /.test(html))
-  t.ok('отдельного блока «ВЫБОР» под строкой нет', !/ВЫБОР · /.test(html))
+  // Блок — это САМА строка, а не обёртка вокруг неё: перенос работ ищет соседей
+  // среди детей общего родителя (`dragRow`), и строка внутри лишнего <div>
+  // осталась бы без соседей — переставить её было бы нельзя.
+  {
+    const i5 = html.indexOf('data-pos-row="base:e_p5')
+    const tag = html.slice(i5, html.indexOf('>', i5))
+    t.ok('рамка блока стоит на самой строке', /border:1\.5px solid #e2d4ee/.test(tag), tag)
+    const pick = html.indexOf('один из 3')
+    t.ok('переключатель внутри строки', pick > i5)
+    t.ok('и над её именем', pick < html.indexOf('ППУ 5 см<', i5))
+  }
+
+  // «Баня-буханка»: лишние варианты там убрали руками ЕЩЁ ДО группировки, и
+  // отметки «не в итоге» остались лежать в листе. Переключиться на такой вариант
+  // значило выбрать строку, которую тут же выбрасывал `dropOff`: в доме не
+  // оставалось ни одного утепления, а с последней строкой группы пропадал и сам
+  // блок выбора — вернуться было уже некуда.
+  {
+    const q = boot({})
+    q.set({
+      expProducts: PRODUCTS, estimates: EST4, dbPlans: [], crmClients: [],
+      specSheets: [], specSheets2: [], winTypes: [], objects: [], templates: [],
+      contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: { specMarkup: 30 },
+      buildRules: [],
+    })
+    q.run('spec2Tab="scheme";tSpec2();')
+    const ed = q.dom.node({ a: 'spec2-edit' }); q.run('bind();'); ed.onclick()
+    q.run('modelFull=false;stageOpen={0:1,1:1,2:1,3:1,4:1,5:1,6:1};spec2Tab="est";tSpec2();')
+    const keyOf = (id) => q.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions'
+      + '.filter(function(x){return x.estId==="' + id + '";})[0].key')
+    const k5 = keyOf('e_p5'), k8 = keyOf('e_p8')
+    const off5 = q.dom.node({ a: 'est-pos-on', k: k5 }); q.run('bind();'); off5.onclick()
+    const off8 = q.dom.node({ a: 'est-pos-on', k: k8 }); q.run('tSpec2();bind();'); off8.onclick()
+    t.ok('две строки убраны руками', Object.keys(q.q('spec2Sheet().posOff||{}')).length === 2)
+
+    q.run('estWhyOpen="e_p3";tSpec2();')
+    const auto3 = q.dom.node({ a: 'est-opt-auto', e: 'e_p3', g: 'Утепление стен и потолка' })
+    q.run('bind();'); auto3.onclick()
+    t.ok('группировка сняла отметки «не в итоге»',
+      Object.keys(q.q('spec2Sheet().posOff||{}')).length === 0)
+
+    q.run('estWhyOpen="";tSpec2();')
+    const pick8 = q.dom.node({ a: 'est-opt-pick', g: 'Утепление стен и потолка', e: 'e_p8' })
+    q.run('bind();'); pick8.onclick()
+    const got = q.q('works2(spec2Sheet(), specCtx(spec2Sheet())).positions'
+      + '.filter(function(x){return /ППУ/.test(x.name);})')
+    t.ok('выбранный вариант в доме, а не выброшен', got.length === 1 && got[0].estId === 'e_p8')
+    t.ok('и блок выбора на месте', /один из 3/.test(q.run('tSpec2()')))
+  }
 
   // Переключаем вариант.
   const pick = p.dom.node({ a: 'est-opt-pick', g: 'Утепление стен и потолка', e: 'e_p8' })
