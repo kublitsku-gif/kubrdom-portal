@@ -130,6 +130,73 @@ export function emptyModel(k) {
   };
 }
 
+// ─── КВАРТИРА: ВТОРОЙ ТИП МОДЕЛИ ─────────────────────────────────────────────
+// Контейнер портал СТРОИТ: коробка известна, отсеки идут вдоль длины, и площади
+// считаются из геометрии. Квартиру он не строит, а ОТДЕЛЫВАЕТ — её обмерил
+// дизайнер, и на листе уже стоит экспликация: «Кухня 15,93 м²». Считать эти
+// площади заново не из чего и незачем: контура в модели нет, а подписанная
+// площадь и есть замер, по которому выставят счёт.
+//
+// Поэтому квартира — не «контейнер с другими числами», а модель, у которой
+// помещение хранится ГОТОВЫМ: площадь пола, периметр, высота. Ниже ровно один
+// переходник — `flatRooms`: он отдаёт тот же список, что `modelRooms` собирает
+// из геометрии контейнера. Всё, что считает смету (`modelAreas`, `modelToSpecs`,
+// плинтусы, пироги, правила), работает дальше без единой правки — оно и не
+// узнаёт, откуда пришли метры.
+//
+// Единицы — как во всей модели: миллиметры у размеров, КВАДРАТНЫЕ МЕТРЫ у
+// площади и ПОГОННЫЕ у периметра, потому что такими их подписывают на чертеже.
+export const FLAT_TYPE = "flat";
+export const FLAT_HEIGHT = 2700;   // типовая высота этажа: правят на первом же обмере
+
+export function isFlat(model) { return !!model && model.type === FLAT_TYPE; }
+
+export function emptyFlat() {
+  return {
+    type: FLAT_TYPE, l: 0, w: 0, h: FLAT_HEIGHT, wallThick: WALL_THICK, finish: 0,
+    // Возводимые перегородки — погонные метры по «плану возводимых перегородок».
+    // Из геометрии их не достать (её нет), а в смете это отдельные деньги.
+    partLen: 0,
+    rooms: [], openings: [],
+  };
+}
+
+// Помещения квартиры в форме `modelRooms`. Порядок — тот, в котором помещения
+// стоят в экспликации: у квартиры нет «слева направо вдоль контейнера», а список
+// на листе уже упорядочен человеком, и переставлять его нам не за чем.
+//
+// `x0` — это номер по порядку, а не миллиметры: `modelRooms` сортирует список по
+// нему, и порядок экспликации так доживает до сметы.
+export function flatRooms(model) {
+  const m = model || {};
+  return (m.rooms || []).map(function (r, i) {
+    const w = Number(r.w) || 0, l = Number(r.l) || 0;
+    const area = Math.round((Number(r.floor) || 0) * 100) / 100;
+    return {
+      id: r.id, name: String(r.name || "").trim() || "Помещение", bayId: r.id, sub: false,
+      len: (w && l) ? Math.min(w, l) : 0,
+      x0: i, x1: i, y0: 0, y1: 0,
+      pts: r.pts || {},
+      // Прямоугольная комната описана шириной и длиной; у Г-образной честны только
+      // площадь и периметр — ровно то же правило, что у контейнера.
+      rect: !!(w && l), finW: w, finL: l,
+      area: area,
+      wallLen: Math.round((Number(r.wallLen) || 0) * 1000) / 1000,
+      label: String(r.name || ""), cells: null,
+    };
+  });
+}
+
+// Помещение проёма в квартире названо прямо (`roomId`): контура нет, и вывести
+// его из координат, как у контейнера, не из чего. Межкомнатная дверь принадлежит
+// двум комнатам — вторая лежит в `roomId2` и нужна только плинтусам: монтаж двери
+// по-прежнему считается один раз, за `roomId`.
+export function flatOpeningRoom(model, op) {
+  const id = op && op.roomId;
+  if (!id) return null;
+  return flatRooms(model).find(function (r) { return r.id === id; }) || null;
+}
+
 // ─── КАТАЛОГ ИЗДЕЛИЙ ─────────────────────────────────────────────────────────
 // Окна и двери приходят от поставщика спецификацией: система, размер, раскладка и
 // цена. Их заказывают повторно, поэтому каталог живёт в коде рядом с заготовками
@@ -771,6 +838,7 @@ function assignRooms(model, regs) {
 // случаях настоящие, поэтому смета считается по ним, а не по габариту.
 export function modelRooms(model) {
   const m = model || {};
+  if (isFlat(m)) return flatRooms(m).sort(function (a, b) { return a.x0 - b.x0; });
   const W = Number(m.w) || 0;
   const L = totalLength(m);
   const regs = regions(L, W, modelWalls(m));
@@ -852,6 +920,7 @@ export function totalLength(model) {
 // В каком помещении оказался проём. У торцов ответ известен заранее: первое и
 // последнее помещение. У длинных стен — то, в чьи границы попала позиция.
 export function openingRoom(model, op) {
+  if (isFlat(model)) return flatOpeningRoom(model, op);
   const rooms = modelRooms(model);
   if (!rooms.length) return null;
   const W = Number((model || {}).w) || 0;
@@ -1179,6 +1248,29 @@ export function modelTotals(model, winTypes) {
   const byType = {};
   (winTypes || []).forEach(function (t) { if (t && t.id) byType[t.id] = t; });
   let openings = 0, area = 0;
+  if (isFlat(model)) {
+    (model.openings || []).forEach(function (op) {
+      const t = byType[op.typeId];
+      if (!t) return;
+      openings += Number(t.cost) || 0;
+      area += (Number(t.w) || 0) * (Number(t.h) || 0) / 1000000;
+    });
+    // Перегородки квартиры — погонные метры с «плана возводимых перегородок»,
+    // помноженные на высоту. Их не из чего вывести: помещение здесь хранится
+    // площадью, а не контуром, и посчитать по площадям длину новой стены нельзя.
+    const len = Number(model.partLen) || 0;
+    const H = (Number(model.h) || 0) / 1000;
+    return {
+      openingsCost: Math.round(openings),
+      openingsArea: Math.round(area * 100) / 100,
+      // Штук перегородок квартира не знает: на «плане возводимых» это ломаная, а
+      // не «столько-то стен». Считают её метрами — их и отдаём.
+      partitions: 0,
+      partitionLen: Math.round(len * 100) / 100,
+      partitionArea: Math.round(len * H * 100) / 100,
+      floorArea: Math.round(flatRooms(model).reduce(function (a, r) { return a + r.area; }, 0) * 100) / 100,
+    };
+  }
   (model.openings || []).forEach(function (op) {
     const t = byType[op.typeId];
     if (!t) return;
@@ -1282,6 +1374,15 @@ function opReachesFloor(op, t) {
 // выбирает одну комнату, чтобы монтаж двери не посчитался дважды, а плинтуса нет
 // с ОБЕИХ сторон двери — и в перегородке, и в куске стены.
 function openingPlinthRooms(m, rooms, op, width) {
+  // В квартире стороны двери названы прямо: `roomId` — та, за которую считают
+  // монтаж, `roomId2` — вторая. Плинтус прерывается в обеих.
+  if (isFlat(m)) {
+    const byId = function (id) { return id ? (rooms.find(function (r) { return r.id === id; }) || null) : null; };
+    const pair = [byId(op.roomId), byId(op.roomId2)];
+    return pair.filter(function (r, i) {
+      return r && pair.findIndex(function (x) { return x && x.id === r.id; }) === i;
+    });
+  }
   const mid = (Number(op.pos) || 0) + width / 2;
   const atPoint = function (x, y) {
     return rooms.find(function (r) {
@@ -1391,6 +1492,14 @@ export function frameNeeded(op, type) {
 
 export function modelScheme(model, winTypes) {
   const m = model || {};
+  // Чертежа у квартиры нет и быть не может: её планировку нарисовал дизайнер, а
+  // портал хранит замер. Рисовать по площадям «похожий план» значит выдать бригаде
+  // документ, которого никто не мерял, — поэтому отдаём пустую схему, а экран
+  // показывает лист заказчика и таблицу помещений.
+  if (isFlat(m)) {
+    return { l: Number(m.l) || 0, w: Number(m.w) || 0, finish: 0, wallThick: Number(m.wallThick) || 0,
+      flat: true, walls: [], outline: [], openings: [], labels: [], dims: [] };
+  }
   const fin = (m.finish == null) ? FINISH_THICK : (Number(m.finish) || 0);
   const th = Number(m.wallThick) || 0;
   const W = Number(m.w) || 0;
@@ -1669,6 +1778,39 @@ export function modelScheme(model, winTypes) {
 export function modelIssues(model, winTypes) {
   const out = [];
   const rooms = modelRooms(model);
+  // У квартиры свои болячки. Контейнерные проверки — «проём за стеной», «створка
+  // упирается», «отсек меньше 900» — здесь не просто неприменимы: они спрашивают
+  // геометрию, которой у квартиры нет, и ответили бы уверенным враньём. Квартиру
+  // проверяют по другому: сошлись ли метры, которые ввёл человек.
+  if (isFlat(model)) {
+    if (!rooms.length) out.push("В квартире нет помещений — смете не от чего считать");
+    if (!(Number((model || {}).h) > 0)) out.push("Не задана высота помещений — стены посчитаются нулём");
+    rooms.forEach(function (r) {
+      if (!(r.area > 0)) out.push("«" + r.name + "»: не задана площадь пола");
+      if (!(r.wallLen > 0)) out.push("«" + r.name + "»: не задан периметр — стены и плинтус посчитаются нулём");
+    });
+    const byId = {};
+    rooms.forEach(function (r) { byId[r.id] = true; });
+    const byType = {};
+    (winTypes || []).forEach(function (t) { if (t && t.id) byType[t.id] = t; });
+    (model.openings || []).forEach(function (op) {
+      const t = byType[op.typeId];
+      if (!t) out.push("Проём без типового изделия — цена не посчитается");
+      if (!op.roomId || !byId[op.roomId]) {
+        out.push("«" + ((t && t.n) || "Проём") + "» не привязан к помещению — не попадёт ни в одну комнату");
+      }
+    });
+    // Габарит квартиры — проверка чтения, а не данные: сумма площадей помещений
+    // не обязана сойтись с прямоугольником, но разойтись ВДВОЕ она может только
+    // если единицы перепутаны.
+    const gross = (Number(model.l) || 0) * (Number(model.w) || 0) / 1000000;
+    const sum = rooms.reduce(function (a, r) { return a + r.area; }, 0);
+    if (gross > 0 && sum > 0 && sum > gross * 1.05) {
+      out.push("Сумма площадей помещений (" + Math.round(sum * 100) / 100 + " м²) больше габарита квартиры ("
+        + Math.round(gross * 100) / 100 + " м²) — проверьте площади или габарит");
+    }
+    return out;
+  }
   if (!rooms.length) out.push("В модели нет помещений");
   rooms.forEach(function (r) {
     if (r.len < MIN_ROOM) out.push("«" + r.name + "»: меньше " + MIN_ROOM + " мм — это уже не помещение");
