@@ -8,7 +8,7 @@
 // порядок объектов в выборе, защиту от второго основного договора, имя и шаблон
 // объекта из договора, прогресс стройки и даты по-русски.
 import { dateRu, CT_STEPS, ctStep, ctMissing, objPickList, mainContractOf, ctObjName, ctTemplateFor, objProgress,
-  ctMainConflict, ctOthersOnObject, ctCanBecomeMain, ctPayProgress } from '../src/contract-card.js'
+  ctMainConflict, ctOthersOnObject, ctMergeCandidate, ctMergeDraft, ctRepoint, ctPayProgress } from '../src/contract-card.js'
 
 const t = reporterOf()
 function reporterOf() {
@@ -173,9 +173,29 @@ const stage = (n, works, o) => Object.assign({ id: 's' + n, n: 'Этап ' + n, 
   t.ok('объекта нет — конфликта нет', ctMainConflict([draft59], kut, '') === null && ctMainConflict([], kut, 'svo') === null)
 
   const kutExtra = Object.assign({}, kut, { type: 'extra', objId: 'svo' })
-  t.ok('подписанный доп. при черновике-основном — можно сделать основным', (ctCanBecomeMain([draft59, kutExtra], kutExtra) || {}).id === 'c59')
-  t.ok('при подписанном основном — нельзя', ctCanBecomeMain([signedMain, kutExtra], kutExtra) === null)
-  t.ok('черновик сам себя основным не делает', ctCanBecomeMain([draft59, Object.assign({}, kutExtra, { status: 'draft' })], Object.assign({}, kutExtra, { status: 'draft' })) === null)
+  t.ok('подписанный при черновике-основном — объединяем', (ctMergeCandidate([draft59, kutExtra], kutExtra) || {}).id === 'c59')
+  t.ok('без объекта — по объекту, к которому привязывают', (ctMergeCandidate([draft59], kut, 'svo') || {}).id === 'c59')
+  t.ok('при подписанном основном — нечего объединять', ctMergeCandidate([signedMain, kutExtra], kutExtra) === null)
+  t.ok('черновик с черновиком не сливаем', ctMergeCandidate([draft59, Object.assign({}, kutExtra, { status: 'draft' })], Object.assign({}, kutExtra, { status: 'draft' })) === null)
+
+  const keep = { id: 'cK', type: 'extra', status: 'signed', amount: 1752000, objId: 'svo', client: 'Кутьин',
+    responsible: ['inna', 'alexandr'], salaries: { inna: { plan: 300000 } }, files: [{ name: 'Договор.pdf', data: 'u1' }],
+    deadlines: { inna: { deadline: '2026-09-30' }, valera: { deadline: '' } }, tranches: [{ id: 't1', amount: 1 }] }
+  const drf = { id: 'c59', type: 'main', status: 'draft', amount: 1039684, objId: 'svo', specId: 'sp', client: '',
+    responsible: ['alexandr', 'valera'], salaries: { inna: { plan: 1 }, valera: { plan: 5 } },
+    files: [{ name: 'Договор.pdf', data: 'u1' }, { name: 'Спец.pdf', data: 'u2' }],
+    deadlines: { valera: { deadline: '2026-10-01' } }, tranches: [{ id: 't2', amount: 2 }] }
+  const m = ctMergeDraft(keep, drf)
+  t.ok('слитый — основной, деньги и клиент подписанного', m.type === 'main' && m.amount === 1752000 && m.client === 'Кутьин' && m.id === 'cK')
+  t.ok('спецификация черновика перешла', m.specId === 'sp')
+  t.ok('ответственные без повторов', m.responsible.join(',') === 'inna,alexandr,valera', m.responsible.join(','))
+  t.ok('файлы без дублей', m.files.map((f) => f.name).join(',') === 'Договор.pdf,Спец.pdf')
+  t.ok('оплата бригадиров — подписанного, недостающие из черновика', m.salaries.inna.plan === 300000 && m.salaries.valera.plan === 5)
+  t.ok('пустой срок добирается из черновика', m.deadlines.valera.deadline === '2026-10-01' && m.deadlines.inna.deadline === '2026-09-30')
+  t.ok('график оплаты подписанного не трогаем', m.tranches.length === 1 && m.tranches[0].id === 't1')
+  t.ok('исходные не мутированы', keep.type === 'extra' && keep.responsible.length === 2 && !keep.specId)
+  const moved = ctRepoint([{ id: 'p', contractId: 'c59' }, { id: 'q', contractId: 'x' }], 'c59', 'cK')
+  t.ok('ссылки переставлены только у черновика', moved[0].contractId === 'cK' && moved[1].contractId === 'x')
   t.ok('остальные договоры на объекте', ctOthersOnObject([draft59, signedMain, kutExtra, { id: 'x', objId: 'svo', archived: true }], kutExtra).map((x) => x.id).join(',') === 'c59,cS')
   t.ok('без объекта — никого', ctOthersOnObject([draft59], { id: 'n' }).length === 0)
 }

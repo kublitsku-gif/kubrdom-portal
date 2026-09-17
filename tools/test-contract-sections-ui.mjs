@@ -129,21 +129,38 @@ const sec = (p, s) => click(p, { a: 'ct-sec', cid: 'cK', sec: s })
 }
 
 {
-  t.section('Черновик на объекте не перебивает подписанный')
-  const p = panel()
+  t.section('Черновик и подписанный на одном объекте — объединяются')
+  const withRefs = (opts) => {
+    const q = panel(opts)
+    q.run('contractDocs=contractDocs.map(function(c){ return c.id!=="c59"?c:Object.assign({},c,{specId:"sp1",responsible:["u3"],'
+      + 'files:[{id:"f9",kind:"spec",name:"Спец.pdf",data:"https://x/s.pdf"}]}); });'
+      + 'projects=[{id:"pr1",name:"Дом СВО",contractId:"c59"}];'
+      + 'finTxns=[{id:"t9",type:"income",amount:1,date:"2026-09-01",contractId:"c59"}];')
+    return q
+  }
+  const p = withRefs({ confirm: true })
   const h = view(p)
   const txt = plain(h)
   t.ok('в сводке — кто ещё на объекте', /на объекте ещё/i.test(txt) && /№59/.test(txt) && /черновик/i.test(txt), txt.slice(0, 900))
-  t.ok('и «сделать основным»', h.indexOf('data-a="ct-make-main" data-cid="cK"') >= 0)
-  click(p, { a: 'ct-make-main', cid: 'cK' })
-  t.ok('этот стал основным', p.q('contractDocs.find(function(c){return c.id==="cK";}).type') === 'main')
-  t.ok('черновик — доп. работами', p.q('contractDocs.find(function(c){return c.id==="c59";}).type') === 'extra')
+  t.ok('и «объединить с черновиком»', h.indexOf('data-a="ct-merge" data-cid="cK" data-did="c59"') >= 0)
+  click(p, { a: 'ct-merge', cid: 'cK', did: 'c59' })
+  const k = p.q('contractDocs.find(function(c){return c.id==="cK";})')
+  t.ok('черновика больше нет', p.q('contractDocs.some(function(c){return c.id==="c59";})') === false)
+  t.ok('подписанный — основной, сумма и клиент его', k.type === 'main' && k.amount === 1752000 && k.client === 'Кутьин Алексей Владимирович')
+  t.ok('спецификация, ответственные и файлы черновика перешли', k.specId === 'sp1' && k.responsible.join(',') === 'u1,u2,u3' && k.files.length === 3,
+    JSON.stringify({ specId: k.specId, responsible: k.responsible, files: k.files.length }))
+  t.ok('проект и платёж смотрят на подписанный', p.q('projects[0].contractId') === 'cK' && p.q('finTxns[0].contractId') === 'cK')
 
+  const kept = withRefs({ confirm: false })
+  click(kept, { a: 'ct-merge', cid: 'cK', did: 'c59' })
+  t.ok('отказались от объединения — оба на месте', kept.q('contractDocs.length') === 3 && kept.q('projects[0].contractId') === 'c59')
+
+  // Живой случай «Кончаловского»: подписанный без объекта привязывают к объекту с черновиком.
   const yes = panel({ confirm: true })
   click(yes, { a: 'ct-objpick-do', cid: 'cNew', oid: 'oSVO' })
   t.ok('подписанный к объекту с черновиком — привязан основным', yes.q('contractDocs.find(function(c){return c.id==="cNew";}).objId') === 'oSVO'
     && yes.q('contractDocs.find(function(c){return c.id==="cNew";}).type') === 'main')
-  t.ok('а черновик стал доп. работами', yes.q('contractDocs.find(function(c){return c.id==="c59";}).type') === 'extra')
+  t.ok('а черновик влился в него', yes.q('contractDocs.some(function(c){return c.id==="c59";})') === false)
   const no = panel({ confirm: false })
   click(no, { a: 'ct-objpick-do', cid: 'cNew', oid: 'oSVO' })
   t.ok('отказались — ничего не поменялось', no.q('contractDocs.find(function(c){return c.id==="cNew";}).objId') === ''

@@ -59,7 +59,7 @@ import { priceHist, priceWas, pricePush, priceStale, refreshPrices } from "../sr
 import { UNIT_WORDS, PACK_AS_WORD, normProduct } from "../src/catalog.js";
 import { glueForRow, isGlueMat, glueProductOf, glueRateOf, glueRateParse, GLUE_G_PER_TUBE, GLUE_RATE_MAX } from "../src/glue.js";
 import { dateRu, CT_STEPS, ctStep, ctMissing, objPickList, mainContractOf, ctObjName, ctTemplateFor, objProgress,
-  ctMainConflict, ctOthersOnObject, ctCanBecomeMain, ctPayProgress } from "../src/contract-card.js";
+  ctMainConflict, ctOthersOnObject, ctMergeCandidate, ctMergeDraft, ctRepoint, ctPayProgress } from "../src/contract-card.js";
 import { allPositions, allPositionsRaw, addedPositions, guessVolume, carryRuleEdits, matKeyOf, matAddKey, matAddrs, matAddrPid, matAddrSwap, migrateMatAddrs, rulePositions, positionWork, ruleText, ruleReady, ruleAreas, RULE_WHATS, RULE_SURFACES, RULE_SCOPES,
   pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
   optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf, ROOM_HOUSE, roomKeyOf, positionSplit,
@@ -10417,26 +10417,43 @@ function objFromTemplate(tmpl, name, icon, extra){
 // Привязать объект к договору (пустой oid — отвязать). Если у объекта уже есть
 // основной договор, спрашиваем. Черновик не перебивает подписанный: предлагаем
 // поменять их местами. Иначе этот договор становится доп. работами.
+// Слить черновик в подписанный договор: остаётся одна запись, а проект, спецификация,
+// платежи и чеки черновика смотрят на подписанный.
+function ctMergeInto(keepId, draftId, oid){
+  const keep=contractDocs.find(function(x){return x.id===keepId;});
+  const draft=contractDocs.find(function(x){return x.id===draftId;});
+  if(!keep||!draft||keepId===draftId)return false;
+  const merged=ctMergeDraft(oid?Object.assign({},keep,{objId:oid}):keep, draft);
+  contractDocs=contractDocs.filter(function(x){return x.id!==draftId;}).map(function(x){return x.id===keepId?merged:x;});
+  projects=ctRepoint(projects, draftId, keepId);
+  specSheets=ctRepoint(specSheets, draftId, keepId);
+  specSheets2=ctRepoint(specSheets2, draftId, keepId);
+  finTxns=ctRepoint(finTxns, draftId, keepId);
+  receipts=ctRepoint(receipts, draftId, keepId);
+  return true;
+}
+function ctMergeAsk(keep, draft, objName){
+  return confirm("На объекте «"+(objName||"")+"» основным стоит черновик «"+(draft.name||"")+"».\n\n"+
+    "Объединить его с «"+(keep.name||"")+"»? Останется один договор: сумма, даты и клиент — подписанного, "+
+    "а проект, спецификация, ответственные и файлы черновика перейдут в него. Черновик исчезнет.");
+}
 function ctLinkObject(cid, oid){
   const c=contractDocs.find(function(x){return x.id===cid;});
   if(!c)return false;
+  const o=objects.find(function(x){return x.id===oid;})||{};
+  const draft=(c.type||"main")==="main"?ctMergeCandidate(contractDocs, c, oid):null;
+  if(draft){
+    if(!ctMergeAsk(c, draft, o.name))return false;
+    return ctMergeInto(cid, draft.id, oid);
+  }
   const conflict=ctMainConflict(contractDocs, c, oid);
-  let type=c.type||"main", demoteId="";
+  let type=c.type||"main";
   if(conflict){
-    const o=objects.find(function(x){return x.id===oid;})||{};
-    const other=conflict.other;
-    if(conflict.mode==="swap"){
-      if(!confirm("На объекте «"+(o.name||"")+"» основным стоит черновик «"+(other.name||"")+"».\n\nСделать основным этот договор, а черновик перевести в доп. работы?"))return false;
-      demoteId=other.id;
-    } else {
-      if(!confirm("У объекта «"+(o.name||"")+"» уже есть основной договор «"+(other.name||"")+"».\n\nПривязать этот договор как доп. работы?"))return false;
-      type="extra";
-    }
+    if(!confirm("У объекта «"+(o.name||"")+"» уже есть основной договор «"+(conflict.other.name||"")+"».\n\nПривязать этот договор как доп. работы?"))return false;
+    type="extra";
   }
   contractDocs=contractDocs.map(function(x){
-    if(x.id===cid)return Object.assign({},x,{objId:oid,type:type});
-    if(demoteId&&x.id===demoteId)return Object.assign({},x,{type:"extra"});
-    return x;
+    return x.id===cid?Object.assign({},x,{objId:oid,type:type}):x;
   });
   return true;
 }
@@ -10529,20 +10546,20 @@ function ctDeadlinesLineHtml(c){
   }).filter(Boolean);
   return items.length?'<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:8px">'+items.join("")+'</div>':"";
 }
-// Кто ещё на том же объекте. Если этот договор стал доп. работами из-за черновика —
-// кнопка «сделать основным»: так чинится случай, когда черновик перебил подписанный.
+// Кто ещё на том же объекте. Если основным стоит черновик — кнопка «объединить»:
+// черновик портал собрал по проекту, а подписанный — тот же договор.
 function ctOthersLineHtml(c){
   const others=ctOthersOnObject(contractDocs, c);
   if(!others.length)return "";
-  const draft=ctCanBecomeMain(contractDocs, c);
+  const draft=ctMergeCandidate(contractDocs, c);
   return '<div style="margin-top:9px;padding:8px 10px;background:#f7fafc;border-radius:9px;font-size:11px;color:#5a7a9a;line-height:1.5">'+
     'На объекте ещё: '+others.map(function(x){
       return '<button data-a="obj-ct-open" data-cid="'+x.id+'" style="border:none;background:transparent;padding:0;color:#2980b9;font-size:11px;font-weight:700;cursor:pointer">'+esc(x.name||"договор")+'</button>'+
         ' <span style="color:#9aabbf">('+((x.type||"main")==="main"?"основной":"доп.")+' · '+String(CT_STATUS_LABEL[x.status]||"").toLowerCase()+')</span>';
     }).join(", ")+
     (draft?'<div style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">'+
-      '<button data-a="ct-make-main" data-cid="'+c.id+'" style="padding:6px 10px;border:1px solid #2980b9;background:#fff;border-radius:8px;color:#2980b9;font-size:11.5px;font-weight:700;cursor:pointer">⭐ Сделать этот договор основным</button>'+
-      '<span style="color:#9aabbf">«'+esc(draft.name||"")+'» станет доп. работами</span></div>':'')+
+      '<button data-a="ct-merge" data-cid="'+c.id+'" data-did="'+draft.id+'" style="padding:6px 10px;border:1px solid #2980b9;background:#fff;border-radius:8px;color:#2980b9;font-size:11.5px;font-weight:700;cursor:pointer">🔗 Объединить с черновиком</button>'+
+      '<span style="color:#9aabbf">«'+esc(draft.name||"")+'» — тот же договор, останется один</span></div>':'')+
   '</div>';
 }
 // Выбор объекта — тапом по строке «Объект», без режима правки. Сверху текущий и
@@ -29597,18 +29614,15 @@ function bind(){
     else if(a==="ct-resp-edit"){el.onclick=()=>{ const cid=el.dataset.cid; ctRespEdit=Object.assign({},ctRespEdit,{[cid]:!ctRespEdit[cid]}); render(); };}
     // Подписанный договор, ставший доп. работами из-за черновика-основного, — основным;
     // черновик уступает место и становится доп. работами.
-    else if(a==="ct-make-main"){el.onclick=()=>{
-      const cid=el.dataset.cid;
-      const c0=contractDocs.find(function(x){return x.id===cid;});
-      const draft=c0&&ctCanBecomeMain(contractDocs, c0);
-      if(!draft)return;
-      contractDocs=contractDocs.map(function(x){
-        if(x.id===cid)return Object.assign({},x,{type:"main"});
-        if(x.id===draft.id)return Object.assign({},x,{type:"extra"});
-        return x;
-      });
+    else if(a==="ct-merge"){el.onclick=()=>{
+      const keep=contractDocs.find(function(x){return x.id===el.dataset.cid;});
+      const draft=contractDocs.find(function(x){return x.id===el.dataset.did;});
+      if(!keep||!draft)return;
+      const o=objects.find(function(x){return x.id===draft.objId;})||{};
+      if(!ctMergeAsk(keep, draft, o.name))return;
+      if(!ctMergeInto(keep.id, draft.id, ""))return;
       fl();
-      fileToast("✓ Договор основной, «"+(draft.name||"")+"» — доп. работы");
+      fileToast("✓ Договоры объединены: «"+(keep.name||"")+"»");
     };}
     else if(a==="ct-pin-open"){el.onclick=()=>{ const cid=el.dataset.cid; ctPinOpen=Object.assign({},ctPinOpen,{[cid]:!ctPinOpen[cid]}); render(); };}
     else if(a==="ct-note-open"){el.onclick=()=>{ const cid=el.dataset.cid; ctNoteOpen=Object.assign({},ctNoteOpen,{[cid]:!ctNoteOpen[cid]}); render(); };}

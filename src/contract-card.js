@@ -102,8 +102,8 @@ export function mainContractOf(contracts, objId, exceptId) {
 }
 
 // Что делать, если у объекта уже есть основной договор, а привязывают ещё один
-// основной. Черновик не перебивает подписанный: предлагаем поменять их местами
-// (этот — основным, черновик — доп. работами). Иначе этот становится доп. работами.
+// основной. Черновик при подписанном панель не меняет местами, а сливает с ним
+// (`ctMergeCandidate`); остальные случаи — этот становится доп. работами.
 // Живой случай 11.09.2026: подписанный договор Кутьина стал «доп. работами» из-за
 // черновика №59 на том же объекте.
 export function ctMainConflict(contracts, c, oid) {
@@ -121,13 +121,64 @@ export function ctOthersOnObject(contracts, c) {
   return (contracts || []).filter(function (x) { return x && x.objId === me.objId && x.id !== me.id && !x.archived; });
 }
 
-// Подписанный договор, ставший доп. работами из-за черновика-основного, можно
-// сделать основным. Возвращает тот черновик, который уступит место, иначе null.
-export function ctCanBecomeMain(contracts, c) {
+// Подписанный договор, у объекта которого основным стоит черновик, — один и тот же
+// договор: черновик портал собрал по проекту, а подписали его отдельной записью.
+// Живые случаи 17.09.2026: Кутьин и №59 («Дом СВО»), Кончаловского и №60. Поменять
+// их местами мало — черновик оставался «доп. работами» и двоил договоры объекта.
+export function ctMergeCandidate(contracts, c, oid) {
   const me = c || {};
-  if (!me.objId || me.type !== "extra" || me.status === "draft") return null;
-  const other = mainContractOf(contracts, me.objId, me.id);
+  if (me.status === "draft") return null;
+  const other = mainContractOf(contracts, oid || me.objId, me.id);
   return other && other.status === "draft" ? other : null;
+}
+
+function ctUniq(list) {
+  return list.filter(function (x, i) { return x && list.indexOf(x) === i; });
+}
+
+// Срок бригадира берём у того договора, где он вообще назначен.
+function ctMergeDeadlines(keep, draft) {
+  const out = Object.assign({}, keep);
+  Object.keys(draft).forEach(function (uid) {
+    if (!out[uid] || !out[uid].deadline) out[uid] = draft[uid];
+  });
+  return out;
+}
+
+// Слитый договор. Деньги, даты, клиент и статус — подписанного: подписывали его.
+// От черновика — то, чего у подписанного нет: объект, спецификация, ответственные,
+// файлы, сроки и оплата бригадиров, график оплаты.
+export function ctMergeDraft(keep, draft) {
+  const k = keep || {};
+  const d = draft || {};
+  const seen = {};
+  const files = (k.files || []).concat(d.files || []).filter(function (f) {
+    const key = f && (f.data || f.name);
+    if (!key) return !!f;
+    if (seen[key]) return false;
+    seen[key] = 1;
+    return true;
+  });
+  const out = Object.assign({}, k, {
+    type: "main",
+    objId: k.objId || d.objId || "",
+    crmClientId: k.crmClientId || d.crmClientId || "",
+    responsible: ctUniq((k.responsible || []).concat(d.responsible || [])),
+    files: files,
+    extraWorks: (k.extraWorks || []).concat(d.extraWorks || []),
+    salaries: Object.assign({}, d.salaries, k.salaries),
+    deadlines: ctMergeDeadlines(k.deadlines || {}, d.deadlines || {}),
+  });
+  if (!k.specId && d.specId) out.specId = d.specId;
+  if (!(k.tranches && k.tranches.length) && d.tranches && d.tranches.length) out.tranches = d.tranches;
+  return out;
+}
+
+// Ссылки на договор в других разделах (проект, спецификация, платежи, чеки).
+export function ctRepoint(list, fromId, toId) {
+  return (list || []).map(function (x) {
+    return x && x.contractId === fromId ? Object.assign({}, x, { contractId: toId }) : x;
+  });
 }
 
 // ── Оплата клиента по графику ────────────────────────────────────────────────
