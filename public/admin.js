@@ -551,6 +551,27 @@ async function compressVideo(file, opts){
   }catch(e){ cleanup(); return file; }
 }
 
+// Размер кадра и длина ролика — для Telegram (см. src/tgvideo.js). Браузер отдаёт
+// размер уже с учётом поворота из метаданных. Не вышло — нули: видео всё равно уйдёт.
+async function videoMeta(file){
+  let url=null, vid=null;
+  try{
+    url=URL.createObjectURL(file);
+    vid=document.createElement("video");
+    vid.muted=true; vid.preload="metadata"; vid.src=url;
+    const ok=await new Promise(function(res){
+      vid.onloadedmetadata=function(){res(true);}; vid.onerror=function(){res(false);}; setTimeout(function(){res(false);},8000);
+    });
+    if(!ok)return {w:0,h:0,dur:0};
+    const dur=isFinite(vid.duration)&&vid.duration>0?Math.round(vid.duration):0;
+    return {w:vid.videoWidth||0, h:vid.videoHeight||0, dur:dur};
+  }catch(e){ return {w:0,h:0,dur:0}; }
+  finally{
+    try{ if(vid){ vid.removeAttribute("src"); vid.load(); } }catch(e){}
+    try{ if(url) URL.revokeObjectURL(url); }catch(e){}
+  }
+}
+
 // Плавающий тост прогресса для видео (сжатие/загрузка) — живёт на body, переживает перерисовки.
 function _videoToast(msg){
   let t=document.getElementById("kubr-vid-toast");
@@ -589,7 +610,8 @@ async function handleObjVideoFile(file, oid, tagName){
     }
     _videoToast("☁️ Загружаю видео…");
     const nm=(tagName? (tagName+" — "):"")+(file.name||"video");
-    const r=await fetch(API_BASE+"/api/video?objName="+encodeURIComponent(o.name)+"&topicId="+(o.tgTopicId||0)+"&name="+encodeURIComponent(nm),{
+    const meta=await videoMeta(up);
+    const r=await fetch(API_BASE+"/api/video?objName="+encodeURIComponent(o.name)+"&topicId="+(o.tgTopicId||0)+"&name="+encodeURIComponent(nm)+"&w="+meta.w+"&h="+meta.h+"&dur="+meta.dur,{
       method:"POST", headers:authHeaders({ "Content-Type": up.type||"video/mp4" }), body:up
     });
     const j=await r.json();

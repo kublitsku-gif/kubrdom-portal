@@ -12,6 +12,7 @@ import { runReminders } from "./reminders.js";
 import { finText, finCallback, answerCb } from "./botfin.js";
 import { viewText, viewCallback } from "./botview.js";
 import { ensureTopic } from "./tgapi.js";
+import { videoForm, videoMetaFromQuery } from "./tgvideo.js";
 import { workText, workCallback, workMedia } from "./botwork.js";
 import { dayText, dayCallback } from "./botday.js";
 import { issueText, issueCallback, issueMedia, issueReplyToAuthor } from "./botissue.js";
@@ -825,7 +826,7 @@ function base64of(buf) {
 
 // ensureTopic живёт в src/tgapi.js — им пользуется и бот при приёме фото от бригадира.
 
-// POST /api/video?objName=...&topicId=...&name=... — видео в Telegram-тему объекта (≤50 МБ). Требует токен.
+// POST /api/video?objName=...&topicId=...&name=...&w=&h=&dur= — видео в Telegram-тему объекта (≤50 МБ). Требует токен.
 async function postVideo(env, request, url) {
   if (!env.TG_BOT_TOKEN || !env.TG_CHAT_ID) return json({ success: false, error: "Telegram не настроен" }, 500);
   const body = await request.arrayBuffer();
@@ -837,11 +838,13 @@ async function postVideo(env, request, url) {
   if (topic.error) return json({ success: false, error: topic.error }, 502);
   const topicId = topic.topicId;
   // отправить видео в тему
-  const fd = new FormData();
-  fd.append("chat_id", String(env.TG_CHAT_ID));
-  fd.append("message_thread_id", String(topicId));
-  fd.append("video", new Blob([body], { type: request.headers.get("Content-Type") || "video/mp4" }), url.searchParams.get("name") || "video.mp4");
-  fd.append("caption", objName);
+  const fd = videoForm({
+    chatId: env.TG_CHAT_ID, topicId,
+    blob: new Blob([body], { type: request.headers.get("Content-Type") || "video/mp4" }),
+    fileName: url.searchParams.get("name") || "video.mp4",
+    caption: objName,
+    meta: videoMetaFromQuery(url.searchParams),
+  });
   const r2 = await fetch(tg + "/sendVideo", { method: "POST", body: fd });
   const j2 = await r2.json();
   if (!j2.ok) return json({ success: false, error: "Отправка: " + j2.description, topicId }, 502);
