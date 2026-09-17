@@ -6220,6 +6220,102 @@ function buildProjDiffSection(obj){
     '<span style="color:'+PROJ_COL+'">'+d.items.length+' поз.'+(d.safe<d.items.length?' · '+(d.items.length-d.safe)+' спорных':'')+'</span>', body, true);
 }
 
+// Карточка вопроса с кнопками решения. Одна на объект и на вкладку «❓ Вопросы»:
+// из сводки раньше уводили в объект, и вопрос с удалённым объектом нельзя было закрыть.
+// withObj — строка объекта под текстом (в карточке объекта она лишняя).
+function issueCardHtml(t,canAns,canApp,withObj){
+  const st=ISSUE_ST[t.status]||ISSUE_ST.new;
+  const kd=ISSUE_KIND[t.kind]||ISSUE_KIND.question;
+  const wn=issueWorkName(t);
+  const isOpen=ISSUE_OPEN(t);
+  // Пять раскрытых вопросов с формами решения занимали больше экрана, чем вся стройка.
+  // В списке — строка с сутью, форма открывается у того вопроса, которым занялись.
+  const _full=!!objIssueOpen[t.id]||t.kind==="matchg";   // заявка на замену — сама по себе просьба решить
+  let h='<div style="background:#fff;border:1px solid #e3eaf2;border-left:4px solid '+st.c+';border-radius:10px;padding:9px 11px;margin-bottom:6px">';
+  h+='<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">'+
+    '<span style="font-size:9.5px;font-weight:700;border-radius:5px;padding:2px 7px;background:'+st.bg+';color:'+st.c+'">'+st.i+' '+st.n+'</span>'+
+    '<span style="font-size:9.5px;font-weight:700;border-radius:5px;padding:2px 7px;background:'+kd.c+'14;color:'+kd.c+'">'+kd.i+' '+kd.n+'</span>'+
+    (function(){
+      // Адресат и возраст — две вещи, ради которых карточку читают в списке.
+      if(!isOpen)return "";
+      const ad=ISSUE_ADDR[issueTo(t)]||ISSUE_ADDR.admin;
+      const n=issueAge(t), tone=issueAgeTone(n);
+      const who=issueAddressees(t).map(function(u){return u.name;}).join(", ");
+      return '<span title="'+esc(who||"никто не назначен")+'" style="font-size:9.5px;font-weight:700;border-radius:5px;padding:2px 7px;background:'+ad.c+'14;color:'+ad.c+'">'+ad.i+' '+ad.n+'</span>'+
+        '<span style="font-size:9.5px;font-weight:800;border-radius:5px;padding:2px 7px;background:'+tone.bg+';color:'+tone.c+'">'+issueAgeLabel(n)+'</span>';
+    })()+
+    '<span style="font-size:9.5px;color:#9aabbf">'+esc(issueAuthor(t))+' · '+issueDate(t)+(t.src==="bot"?' · из бота':'')+'</span>'+
+  '</div>';
+  h+='<div style="font-size:12.5px;font-weight:600;color:'+(isOpen?"#1a2a3a":"#7a9aaa")+';line-height:1.35">'+esc(t.text||"—")+'</div>';
+  if(withObj)h+=issueObjLine(t);
+  if(wn)h+='<div style="font-size:10px;color:#9aabbf;margin-top:2px">↳ '+esc(wn)+'</div>';
+  if(t.tgLink)h+='<div style="margin-top:4px"><a href="'+esc(t.tgLink)+'" target="_blank" rel="noopener" style="font-size:10px;font-weight:700;color:#0088cc;text-decoration:none">📎 Фото и голосовое в теме объекта →</a></div>';
+  if(t.answer)h+='<div style="margin-top:5px;padding:6px 8px;background:#f4f9f6;border-left:2px solid #27ae60;border-radius:0 6px 6px 0;font-size:11px;color:#2f6a4b;line-height:1.4"><b>Ответ:</b> '+esc(t.answer)+'</div>';
+  // Лента переадресаций. Видно, что вопрос не «просто висит», а его перекидывали —
+  // и кто именно это сделал.
+  if((t.route||[]).length)h+='<div style="margin-top:5px;font-size:9.5px;color:#9aabbf;line-height:1.45">'+
+    t.route.map(function(r){
+      const a=ISSUE_ADDR[r.from]||{n:r.from}, b=ISSUE_ADDR[r.to]||{n:r.to};
+      return '↪ '+esc(a.n)+' → <b style="color:#7a8b99">'+esc(b.n)+'</b> · '+esc(r.byName||"—")+' · '+esc(String(r.at||"").slice(0,10).split("-").reverse().join("."));
+    }).join('<br>')+'</div>';
+  if(t.linkedNote)h+='<div style="margin-top:5px;font-size:10px;font-weight:700;color:#8e44ad">→ '+esc(t.linkedNote)+'</div>';
+  // Заявка на замену материала: что на что меняют и куда это уедет. Согласующему
+  // нужен не текст вопроса, а перечень потребностей — по нему видно, что заденет правка.
+  if(t.kind==="matchg"&&t.mat)h+=matChangeCard(t);
+
+  // Деньги: сумма и за чей счёт. Показываем только там, где вопрос стоит денег.
+  if(_full&&isOpen&&canApp&&(t.kind==="supply"||t.kind==="change"||t.kind==="matchg")){
+    const payer=t.payer||(t.kind==="supply"?"company":"client");
+    h+='<div style="margin-top:7px;padding-top:7px;border-top:1px solid #f0f3f7;display:flex;align-items:center;gap:6px;flex-wrap:wrap">'+
+      '<span style="font-size:10px;color:#8497a5;font-weight:600">Сумма</span>'+
+      '<input id="iss-amt-'+t.id+'" type="text" inputmode="numeric" data-money="1" data-issamt="1" data-iid="'+t.id+'" value="'+(t.amount?fmtMoney(t.amount):"")+'" placeholder="0" style="width:88px;padding:5px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;text-align:right;box-sizing:border-box">'+
+      ['company','client'].map(function(p){
+        const on=payer===p;
+        return '<button data-a="iss-payer" data-iid="'+t.id+'" data-p="'+p+'" style="padding:5px 9px;border-radius:7px;cursor:pointer;font-size:10px;font-weight:700;border:1.5px solid '+(on?"#26456E":"#dde6f0")+';background:'+(on?"#26456E":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+'">'+(p==="company"?"за счёт компании":"за счёт клиента")+'</button>';
+      }).join("")+
+    '</div>';
+    // У заявки на замену свой путь: не «завести докупку», а применить готовую правку
+    // к потребностям. Доп работа из неё родится сама, если разница за счёт клиента.
+    h+=t.kind==="matchg"
+      ? '<div style="display:flex;gap:5px;margin-top:6px;flex-wrap:wrap">'+
+          '<button data-a="iss-mat-apply" data-iid="'+t.id+'" style="flex:1;min-width:150px;padding:7px 9px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;border:none;background:#27ae60;color:#fff">✅ Применить замену</button>'+
+        '</div>'
+      : '<div style="display:flex;gap:5px;margin-top:6px;flex-wrap:wrap">'+
+          '<button data-a="iss-to-supply" data-iid="'+t.id+'" style="flex:1;min-width:120px;padding:7px 9px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;border:none;background:#e67e22;color:#fff">📦 В докупку</button>'+
+          '<button data-a="iss-to-extra" data-iid="'+t.id+'" style="flex:1;min-width:120px;padding:7px 9px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;border:none;background:#8e44ad;color:#fff">🛠 В доп работы</button>'+
+        '</div>';
+  }
+  if(_full&&isOpen&&canAns){
+    // Переадресация нативным select: на телефоне это привычное колесо, а не ещё
+    // один самодельный список, который надо листать пальцем.
+    h+='<div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap">'+
+      '<span style="font-size:10px;color:#8497a5;font-weight:600">Адресовано</span>'+
+      '<select data-a="iss-route" data-iid="'+t.id+'" style="padding:5px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:11px;font-weight:700;color:#5a7080;background:#fff;outline:none;font-family:inherit">'+
+        Object.keys(ISSUE_ADDR).map(function(r){
+          return '<option value="'+r+'"'+(issueTo(t)===r?' selected':'')+'>'+ISSUE_ADDR[r].i+' '+ISSUE_ADDR[r].n+'</option>';
+        }).join("")+
+      '</select>'+
+    '</div>';
+    h+='<div style="display:flex;gap:5px;margin-top:6px;flex-wrap:wrap">'+
+      (t.status==="new"?'<button data-a="iss-status" data-iid="'+t.id+'" data-s="work" style="padding:6px 10px;border-radius:7px;cursor:pointer;font-size:10.5px;font-weight:700;border:1.5px solid #2980b9;background:#fff;color:#2980b9">Взять в работу</button>':'')+
+      (t.status!=="hold"&&canApp?'<button data-a="iss-status" data-iid="'+t.id+'" data-s="hold" style="padding:6px 10px;border-radius:7px;cursor:pointer;font-size:10.5px;font-weight:700;border:1.5px solid #c08a1e;background:#fff;color:#c08a1e">Нужно решение</button>':'')+
+      '<button data-a="iss-answer" data-iid="'+t.id+'" style="padding:6px 10px;border-radius:7px;cursor:pointer;font-size:10.5px;font-weight:700;border:none;background:#27ae60;color:#fff">Ответить и закрыть</button>'+
+      '<button data-a="iss-status" data-iid="'+t.id+'" data-s="rejected" style="padding:6px 10px;border-radius:7px;cursor:pointer;font-size:10.5px;font-weight:700;border:1.5px solid #e74c3c55;background:#fff;color:#c0392b">Отклонить</button>'+
+    '</div>';
+  }
+  if(isOpen&&(canAns||canApp))h+='<div style="margin-top:6px"><button data-a="obj-iss-open" data-iid="'+t.id+'" style="padding:5px 10px;border-radius:7px;cursor:pointer;font-size:10.5px;font-weight:700;border:1px solid #c0392b44;background:#fff;color:#c0392b">'+(_full?"свернуть":"Решить ▸")+'</button></div>';
+  if(!isOpen&&canAns)h+='<div style="margin-top:6px"><button data-a="iss-status" data-iid="'+t.id+'" data-s="work" style="padding:5px 10px;border-radius:7px;cursor:pointer;font-size:10px;font-weight:700;border:1px solid #d0dae8;background:#fff;color:#7a9aaa">↩ Вернуть в работу</button></div>';
+  return h+'</div>';
+}
+
+// Куда относится вопрос. Кнопка перехода — только к живому объекту: удалённый
+// открывал пустой экран.
+function issueObjLine(t){
+  const o=t.objId?objects.find(function(x){return x.id===t.objId;}):null;
+  if(o)return '<button data-a="iss-goto-obj" data-oid="'+esc(o.id)+'" style="margin-top:4px;padding:0;border:none;background:transparent;cursor:pointer;font-size:10.5px;font-weight:700;color:#2980b9;text-align:left">'+(o.icon||"🏗")+' '+esc(o.name||"Объект")+' →</button>';
+  return '<div style="margin-top:4px;font-size:10.5px;color:#9aabbf">🏗 '+(t.objId?"объект удалён":"без объекта")+'</div>';
+}
+
 function buildIssuesSection(obj){
   if(!obj)return "";
   const list=objIssues(obj.id);
@@ -6229,89 +6325,7 @@ function buildIssuesSection(obj){
   const showDone=!!issueShowDone[obj.id];
   const formOpen=issueFormOid===obj.id;
 
-  const card=function(t){
-    const st=ISSUE_ST[t.status]||ISSUE_ST.new;
-    const kd=ISSUE_KIND[t.kind]||ISSUE_KIND.question;
-    const wn=issueWorkName(t);
-    const isOpen=ISSUE_OPEN(t);
-    // Пять раскрытых вопросов с формами решения занимали больше экрана, чем вся стройка.
-    // В списке — строка с сутью, форма открывается у того вопроса, которым занялись.
-    const _full=!!objIssueOpen[t.id]||t.kind==="matchg";   // заявка на замену — сама по себе просьба решить
-    let h='<div style="background:#fff;border:1px solid #e3eaf2;border-left:4px solid '+st.c+';border-radius:10px;padding:9px 11px;margin-bottom:6px">';
-    h+='<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">'+
-      '<span style="font-size:9.5px;font-weight:700;border-radius:5px;padding:2px 7px;background:'+st.bg+';color:'+st.c+'">'+st.i+' '+st.n+'</span>'+
-      '<span style="font-size:9.5px;font-weight:700;border-radius:5px;padding:2px 7px;background:'+kd.c+'14;color:'+kd.c+'">'+kd.i+' '+kd.n+'</span>'+
-      (function(){
-        // Адресат и возраст — две вещи, ради которых карточку читают в списке.
-        if(!isOpen)return "";
-        const ad=ISSUE_ADDR[issueTo(t)]||ISSUE_ADDR.admin;
-        const n=issueAge(t), tone=issueAgeTone(n);
-        const who=issueAddressees(t).map(function(u){return u.name;}).join(", ");
-        return '<span title="'+esc(who||"никто не назначен")+'" style="font-size:9.5px;font-weight:700;border-radius:5px;padding:2px 7px;background:'+ad.c+'14;color:'+ad.c+'">'+ad.i+' '+ad.n+'</span>'+
-          '<span style="font-size:9.5px;font-weight:800;border-radius:5px;padding:2px 7px;background:'+tone.bg+';color:'+tone.c+'">'+issueAgeLabel(n)+'</span>';
-      })()+
-      '<span style="font-size:9.5px;color:#9aabbf">'+esc(issueAuthor(t))+' · '+issueDate(t)+(t.src==="bot"?' · из бота':'')+'</span>'+
-    '</div>';
-    h+='<div style="font-size:12.5px;font-weight:600;color:'+(isOpen?"#1a2a3a":"#7a9aaa")+';line-height:1.35">'+esc(t.text||"—")+'</div>';
-    if(wn)h+='<div style="font-size:10px;color:#9aabbf;margin-top:2px">↳ '+esc(wn)+'</div>';
-    if(t.tgLink)h+='<div style="margin-top:4px"><a href="'+esc(t.tgLink)+'" target="_blank" rel="noopener" style="font-size:10px;font-weight:700;color:#0088cc;text-decoration:none">📎 Фото и голосовое в теме объекта →</a></div>';
-    if(t.answer)h+='<div style="margin-top:5px;padding:6px 8px;background:#f4f9f6;border-left:2px solid #27ae60;border-radius:0 6px 6px 0;font-size:11px;color:#2f6a4b;line-height:1.4"><b>Ответ:</b> '+esc(t.answer)+'</div>';
-    // Лента переадресаций. Видно, что вопрос не «просто висит», а его перекидывали —
-    // и кто именно это сделал.
-    if((t.route||[]).length)h+='<div style="margin-top:5px;font-size:9.5px;color:#9aabbf;line-height:1.45">'+
-      t.route.map(function(r){
-        const a=ISSUE_ADDR[r.from]||{n:r.from}, b=ISSUE_ADDR[r.to]||{n:r.to};
-        return '↪ '+esc(a.n)+' → <b style="color:#7a8b99">'+esc(b.n)+'</b> · '+esc(r.byName||"—")+' · '+esc(String(r.at||"").slice(0,10).split("-").reverse().join("."));
-      }).join('<br>')+'</div>';
-    if(t.linkedNote)h+='<div style="margin-top:5px;font-size:10px;font-weight:700;color:#8e44ad">→ '+esc(t.linkedNote)+'</div>';
-    // Заявка на замену материала: что на что меняют и куда это уедет. Согласующему
-    // нужен не текст вопроса, а перечень потребностей — по нему видно, что заденет правка.
-    if(t.kind==="matchg"&&t.mat)h+=matChangeCard(t);
-
-    // Деньги: сумма и за чей счёт. Показываем только там, где вопрос стоит денег.
-    if(_full&&isOpen&&canApp&&(t.kind==="supply"||t.kind==="change"||t.kind==="matchg")){
-      const payer=t.payer||(t.kind==="supply"?"company":"client");
-      h+='<div style="margin-top:7px;padding-top:7px;border-top:1px solid #f0f3f7;display:flex;align-items:center;gap:6px;flex-wrap:wrap">'+
-        '<span style="font-size:10px;color:#8497a5;font-weight:600">Сумма</span>'+
-        '<input id="iss-amt-'+t.id+'" type="text" inputmode="numeric" data-money="1" data-issamt="1" data-iid="'+t.id+'" value="'+(t.amount?fmtMoney(t.amount):"")+'" placeholder="0" style="width:88px;padding:5px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:12px;outline:none;text-align:right;box-sizing:border-box">'+
-        ['company','client'].map(function(p){
-          const on=payer===p;
-          return '<button data-a="iss-payer" data-iid="'+t.id+'" data-p="'+p+'" style="padding:5px 9px;border-radius:7px;cursor:pointer;font-size:10px;font-weight:700;border:1.5px solid '+(on?"#26456E":"#dde6f0")+';background:'+(on?"#26456E":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+'">'+(p==="company"?"за счёт компании":"за счёт клиента")+'</button>';
-        }).join("")+
-      '</div>';
-      // У заявки на замену свой путь: не «завести докупку», а применить готовую правку
-      // к потребностям. Доп работа из неё родится сама, если разница за счёт клиента.
-      h+=t.kind==="matchg"
-        ? '<div style="display:flex;gap:5px;margin-top:6px;flex-wrap:wrap">'+
-            '<button data-a="iss-mat-apply" data-iid="'+t.id+'" style="flex:1;min-width:150px;padding:7px 9px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;border:none;background:#27ae60;color:#fff">✅ Применить замену</button>'+
-          '</div>'
-        : '<div style="display:flex;gap:5px;margin-top:6px;flex-wrap:wrap">'+
-            '<button data-a="iss-to-supply" data-iid="'+t.id+'" style="flex:1;min-width:120px;padding:7px 9px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;border:none;background:#e67e22;color:#fff">📦 В докупку</button>'+
-            '<button data-a="iss-to-extra" data-iid="'+t.id+'" style="flex:1;min-width:120px;padding:7px 9px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;border:none;background:#8e44ad;color:#fff">🛠 В доп работы</button>'+
-          '</div>';
-    }
-    if(_full&&isOpen&&canAns){
-      // Переадресация нативным select: на телефоне это привычное колесо, а не ещё
-      // один самодельный список, который надо листать пальцем.
-      h+='<div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap">'+
-        '<span style="font-size:10px;color:#8497a5;font-weight:600">Адресовано</span>'+
-        '<select data-a="iss-route" data-iid="'+t.id+'" style="padding:5px 8px;border-radius:7px;border:1px solid #d0dae8;font-size:11px;font-weight:700;color:#5a7080;background:#fff;outline:none;font-family:inherit">'+
-          Object.keys(ISSUE_ADDR).map(function(r){
-            return '<option value="'+r+'"'+(issueTo(t)===r?' selected':'')+'>'+ISSUE_ADDR[r].i+' '+ISSUE_ADDR[r].n+'</option>';
-          }).join("")+
-        '</select>'+
-      '</div>';
-      h+='<div style="display:flex;gap:5px;margin-top:6px;flex-wrap:wrap">'+
-        (t.status==="new"?'<button data-a="iss-status" data-iid="'+t.id+'" data-s="work" style="padding:6px 10px;border-radius:7px;cursor:pointer;font-size:10.5px;font-weight:700;border:1.5px solid #2980b9;background:#fff;color:#2980b9">Взять в работу</button>':'')+
-        (t.status!=="hold"&&canApp?'<button data-a="iss-status" data-iid="'+t.id+'" data-s="hold" style="padding:6px 10px;border-radius:7px;cursor:pointer;font-size:10.5px;font-weight:700;border:1.5px solid #c08a1e;background:#fff;color:#c08a1e">Нужно решение</button>':'')+
-        '<button data-a="iss-answer" data-iid="'+t.id+'" style="padding:6px 10px;border-radius:7px;cursor:pointer;font-size:10.5px;font-weight:700;border:none;background:#27ae60;color:#fff">Ответить и закрыть</button>'+
-        '<button data-a="iss-status" data-iid="'+t.id+'" data-s="rejected" style="padding:6px 10px;border-radius:7px;cursor:pointer;font-size:10.5px;font-weight:700;border:1.5px solid #e74c3c55;background:#fff;color:#c0392b">Отклонить</button>'+
-      '</div>';
-    }
-    if(isOpen&&(canAns||canApp))h+='<div style="margin-top:6px"><button data-a="obj-iss-open" data-iid="'+t.id+'" style="padding:5px 10px;border-radius:7px;cursor:pointer;font-size:10.5px;font-weight:700;border:1px solid #c0392b44;background:#fff;color:#c0392b">'+(_full?"свернуть":"Решить ▸")+'</button></div>';
-    if(!isOpen&&canAns)h+='<div style="margin-top:6px"><button data-a="iss-status" data-iid="'+t.id+'" data-s="work" style="padding:5px 10px;border-radius:7px;cursor:pointer;font-size:10px;font-weight:700;border:1px solid #d0dae8;background:#fff;color:#7a9aaa">↩ Вернуть в работу</button></div>';
-    return h+'</div>';
-  };
+  const card=function(t){ return issueCardHtml(t,canAns,canApp,false); };
 
   let body="";
   if(formOpen){
@@ -6449,8 +6463,8 @@ function tIssues(){
       objKeys.map(function(oid,i){
         const o=objects.find(function(x){return x.id===oid;});
         const v=s.byObj[oid], tone=issueAgeTone(v.max);
-        return '<div data-a="iss-goto-obj" data-oid="'+oid+'" style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer'+(i<objKeys.length-1?';border-bottom:1px solid #eef2f7':'')+'">'+
-          '<span style="flex:1;min-width:0;font-size:11.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+((o&&o.icon)||"🏗")+' '+esc((o&&o.name)||"Без объекта")+'</span>'+
+        return '<div'+(o?' data-a="iss-goto-obj" data-oid="'+esc(oid)+'"':'')+' style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer'+(i<objKeys.length-1?';border-bottom:1px solid #eef2f7':'')+'">'+
+          '<span style="flex:1;min-width:0;font-size:11.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+((o&&o.icon)||"🏗")+' '+esc((o&&o.name)||(oid?"Объект удалён":"Без объекта"))+'</span>'+
           '<span style="font-size:9.5px;font-weight:800;border-radius:4px;padding:2px 6px;background:'+tone.bg+';color:'+tone.c+'">'+issueAgeLabel(v.max)+'</span>'+
           '<span style="font-size:13px;font-weight:800;color:'+tone.c+'">'+v.n+'</span>'+
         '</div>';
@@ -6460,35 +6474,15 @@ function tIssues(){
 
   // ── Список: самое старое сверху.
   h+='<div style="font-size:9px;letter-spacing:1px;font-weight:700;color:#8497a5;margin:0 2px 5px">СНАЧАЛА САМЫЕ СТАРЫЕ</div>';
-  h+=issuesByAge(s.open).map(issueRowCompact).join("");
+  const canAns=canAnswerIssue(), canApp=canApproveIssue();
+  const row=function(t){ return issueCardHtml(t,canAns,canApp,true); };
+  h+=issuesByAge(s.open).map(row).join("");
   const closed=list.filter(function(t){return !ISSUE_OPEN(t);});
   if(closed.length){
     h+='<button data-a="iss-tab-done" style="width:100%;margin-top:8px;padding:8px;border-radius:9px;cursor:pointer;font-size:11.5px;font-weight:700;border:1px solid #e3eaf2;background:#f8fafc;color:#7a9aaa">'+(issueTabDone?"▲ Скрыть закрытые":"▼ Закрытые · "+closed.length)+'</button>';
-    if(issueTabDone)h+='<div style="margin-top:7px">'+issuesByAge(closed).map(issueRowCompact).join("")+'</div>';
+    if(issueTabDone)h+='<div style="margin-top:7px">'+issuesByAge(closed).map(row).join("")+'</div>';
   }
   return h+'<div style="height:16px"></div></div>';
-}
-
-// Строка вопроса в сводке: возраст, адресат, объект. Тап уводит в карточку объекта,
-// где вопрос можно взять в работу и ответить — второй копии тех же кнопок не заводим.
-function issueRowCompact(t){
-  const st=ISSUE_ST[t.status]||ISSUE_ST.new;
-  const kd=ISSUE_KIND[t.kind]||ISSUE_KIND.question;
-  const ad=ISSUE_ADDR[issueTo(t)]||ISSUE_ADDR.admin;
-  const o=objects.find(function(x){return x.id===t.objId;});
-  const isOpen=ISSUE_OPEN(t);
-  const n=issueAge(t), tone=issueAgeTone(n);
-  return '<div data-a="iss-goto-obj" data-oid="'+esc(t.objId||"")+'" style="background:#fff;border:1px solid #e3eaf2;border-left:4px solid '+(isOpen?tone.c:st.c)+';border-radius:10px;padding:9px 11px;margin-bottom:6px;cursor:pointer">'+
-    '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">'+
-      (isOpen?'<span style="font-size:9.5px;font-weight:800;border-radius:5px;padding:2px 7px;background:'+tone.bg+';color:'+tone.c+'">'+issueAgeLabel(n)+'</span>'
-             :'<span style="font-size:9.5px;font-weight:700;border-radius:5px;padding:2px 7px;background:'+st.bg+';color:'+st.c+'">'+st.i+' '+st.n+'</span>')+
-      '<span style="font-size:9.5px;font-weight:700;border-radius:5px;padding:2px 7px;background:'+kd.c+'14;color:'+kd.c+'">'+kd.i+' '+kd.n+'</span>'+
-      (isOpen?'<span style="font-size:9.5px;font-weight:700;border-radius:5px;padding:2px 7px;background:'+ad.c+'14;color:'+ad.c+'">'+ad.i+' '+ad.n+'</span>':"")+
-    '</div>'+
-    '<div style="font-size:12.5px;font-weight:600;color:'+(isOpen?"#1a2a3a":"#7a9aaa")+';line-height:1.35">'+esc(t.text||"—")+'</div>'+
-    '<div style="font-size:9.5px;color:#9aabbf;margin-top:3px">'+((o&&o.icon)||"🏗")+' '+esc((o&&o.name)||"без объекта")+' · '+esc(issueAuthor(t))+' · '+issueDate(t)+
-      (Number(t.amount)>0?' · <b style="color:#26456E">'+Number(t.amount).toLocaleString("ru-RU")+' ₽</b>':'')+'</div>'+
-  '</div>';
 }
 
 // ── СВОДКА: сделанные работы + затраченное время по объекту ──
@@ -6585,9 +6579,10 @@ function getMatStatus(mats){
 function tObjects(){
   const isAdmin=currentUser&&currentUser.roles.includes("admin");
   const isBrigWorker=currentUser&&currentUser.roles.some(function(r){return r==="brigadier"||r==="worker";})&&!isAdmin;
+  // Объект удалили (здесь или на другом устройстве) — показываем список, а не пустой экран.
+  if(openObject&&!objects.some(x=>x.id===openObject))openObject=null;
   if(openObject){
     const obj=objects.find(x=>x.id===openObject);
-    if(!obj)return"";
     const allWorks=obj.stages.flatMap(s=>s.works);
     const totalCost=allWorks.reduce((a,w)=>a+w.cost,0);
     const assigned=users.filter(u=>u.objs.includes(obj.id));
@@ -30642,11 +30637,10 @@ function bind(){
       fl();
     };}
     else if(a==="iss-tab-done"){el.onclick=()=>{ issueTabDone=!issueTabDone; rerenderTab(); };}
-    // Из сводки уводим в карточку объекта: кнопки «взять в работу» и «ответить» живут
-    // там, и второй их копии заводить не надо — разъедутся при первой же правке.
+    // Из вопроса — в его объект. Кнопки решения рисует общая issueCardHtml, копий нет.
     else if(a==="iss-goto-obj"){el.onclick=()=>{
       const oid=el.dataset.oid;
-      if(!oid)return;
+      if(!oid||!objects.some(function(o){return o.id===oid;}))return;
       tab="assign"; openObject=oid;
       objSecOpen[oid+"|issues"]=true;   // иначе человек попадёт в свёрнутую секцию и решит, что вопрос потерялся
       render();
