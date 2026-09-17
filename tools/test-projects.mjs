@@ -634,9 +634,10 @@ function create(p, name) {
   t.ok('деньги выросли ровно на неё',
     p.q('works2(projects[0], Object.assign(specCtx(projects[0]),{winTypes:winTypes})).cost') === costR + 9000)
   t.ok('справочник не тронут', p.q('estimates.length') === 2)
-  // Дописанная помечена РЕЙКОЙ слева, а не зелёной пилюлей у имени: «дописана» —
-  // свойство всей строки, а зелёный в смете значит «факт со стройки» и занят.
-  t.ok('на экране помечена дописанной', /border-left:2px solid #e67e22/.test(p.run('tProjects()')))
+  // Оранжевую рейку слева убрали (просьба Юрия, 17.09.2026) — «дописана» живёт в подсказке у имени.
+  const _addedView = p.run('tProjects()')
+  t.ok('на экране помечена дописанной', /дописана в этот дом руками/.test(_addedView))
+  t.ok('без оранжевой рейки', !/border-left:2px solid #e67e22/.test(_addedView))
 
   // Имя из справочника — строка берётся целиком, со своими материалами и ценой.
   const open2 = p.dom.node({ a: 'est-pos-add-open', k: tag1 })

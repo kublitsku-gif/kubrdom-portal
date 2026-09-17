@@ -16427,7 +16427,7 @@ function estDelBtn(p){
 // Рядом с пометкой — крестик «удалить»: сняли галочку и поняли, что работы в доме
 // не будет, — удаляют тут же, не раскрывая управление строкой.
 function estOffRowHtml(p, canRule){
-  return '<div data-pos-off="'+esc(p.key)+'" style="padding:12px 0'+(p.added?';border-left:2px solid '+EST_COL.added+';padding-left:9px;margin-left:-2px':'')+'">'+
+  return '<div data-pos-off="'+esc(p.key)+'" style="padding:12px 0'+'">'+
     '<div style="display:flex;align-items:flex-start;gap:8px">'+
       (canRule?estOnBoxHtml(p.key, false):'')+
       '<span title="'+esc(p.name)+' · не считается в смете" style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#9aabbf;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+esc(p.name)+'</span>'+
@@ -16798,7 +16798,7 @@ const EST_FILTERS=[
 // «Дописана» цвета лишилась вовсе: она свойство ВСЕЙ строки, а не одного числа,
 // и живёт рейкой слева (см. ряд строки) — так же, как блок «СОСТАВ» отделён от
 // соседей рейкой, а не пилюлей.
-const EST_COL={ money:"#8e44ad", time:"#2980b9", fact:"#16a085", note:"#9aabbf", added:"#e67e22" };
+const EST_COL={ money:"#8e44ad", time:"#2980b9", fact:"#16a085", note:"#9aabbf" };
 // Подпись правила по умолчанию — ровно та, что отдаёт `positionWhy` в src/recipe.js,
 // когда у строки нет ни площади, ни точек, ни помещения. Держим её здесь строкой,
 // а не переписываем условие: разойдись они, смета начала бы прятать подпись не у
@@ -17058,19 +17058,6 @@ function estBodyHtml(sh, types, live, actions){
           })():'')+
           estStageAddBtn(sh, st, canRule)+
         '</div>'+
-        // Доля этапа в смете — полоской. «531 478 ₽» и «17 335 ₽» стоят рядом
-        // одинаковым кеглем, и во что из них упираются деньги дома, приходится
-        // считать в уме при каждом взгляде. Полоска отвечает мгновенно и не
-        // занимает строки. Считаем от СЕБЕСТОИМОСТИ дома, а не от самого
-        // большого этапа: вопрос «какая часть сметы здесь», а не «кто длиннее».
-        (function(){
-          const all=Math.round(Number(w.cost)||0);
-          if(all<=0)return '';
-          const part=Math.max(0, Math.min(1, Math.round(st.cost)/all));
-          return '<div title="'+Math.round(part*100)+' % себестоимости дома" style="height:3px;border-radius:2px;background:#eef2f7;overflow:hidden;margin:0 0 7px">'+
-            '<div style="width:'+(part*100).toFixed(1)+'%;height:100%;background:'+st.color+';border-radius:2px"></div>'+
-          '</div>';
-        })()+
         // Форма «+ работа» — сразу под шапкой, у той кнопки, которой её открыли,
         // и ВНЕ зависимости от того, свёрнут этап или нет: добавляют работу как
         // раз в свёрнутый, не разворачивая ради этого сорок чужих строк.
@@ -17108,7 +17095,7 @@ function estBodyHtml(sh, types, live, actions){
             // приписано отступом и рейкой, а не подписью.
             // Строка группы вариантов сама себе блок: рамка на ней же, а над
             // именем — ряд вариантов (`optRowStyle` / `optPickerHtml`).
-            '<div'+addr+' style="padding:12px 0'+(p.added?';border-left:2px solid '+EST_COL.added+';padding-left:9px;margin-left:-2px':'')+(rowOpen?';background:#fbfcfe':'')+optRowStyle(p, sh, w)+'">'+
+            '<div'+addr+' style="padding:12px 0'+(rowOpen?';background:#fbfcfe':'')+optRowStyle(p, sh, w)+'">'+
             optPickerHtml(p, sh, w)+
             // Имя во всю ширину и не длиннее двух строк (полное — в подсказке):
             // одно наименование на пол-экрана прятало соседние работы. Итог прижат
