@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// «📋 Из проекта» на экране сметы (public/admin.js): кнопка, выбор источника,
+// «📋 Взять готовые» на экране сметы (public/admin.js): кнопка, выбор источника (проект или вид базы смет),
 // отметки, «взять» и «отменить». Сам перенос сторожит test-import-works.mjs —
 // здесь то, что человек видит и нажимает.
 import { boot, reporter } from './harness/panel-vm.js'
@@ -12,6 +12,7 @@ const PRODUCTS = [
 ]
 const EST = [
   { id: 'e_osb', kind: 'house', name: 'Обшивка стен ОСП', stage: 2, lines: [{ pid: 'p_osb', qty: 1 }] },
+  { id: 'e_bath', kind: 'banya', name: 'Разводка воды в парной', stage: 3, lines: [{ pid: 'p_pipe', qty: 6 }] },
 ]
 const WATER = 'Водоснабжение — полипропилен'
 
@@ -60,10 +61,10 @@ function setup() {
 {
   t.section('Взять работы из проекта')
   const { p, srcId, newId } = setup()
-  t.ok('кнопка «📋 Из проекта» есть', p.run('tProjects()').indexOf('data-a="est-import-open"') >= 0)
+  t.ok('кнопка «📋 Взять готовые» есть', p.run('tProjects()').indexOf('data-a="est-import-open"') >= 0)
   click(p, { a: 'est-import-open' })
   let html = p.run('tProjects()')
-  t.ok('панель открылась', /ВЗЯТЬ РАБОТЫ ИЗ ДРУГОГО ПРОЕКТА/.test(html))
+  t.ok('панель открылась', /ВЗЯТЬ ГОТОВЫЕ РАБОТЫ/.test(html))
   t.ok('источник в списке', html.indexOf('data-a="est-import-src" data-id="' + srcId + '"') >= 0)
   t.ok('открытого дома в списке нет', html.indexOf('data-a="est-import-src" data-id="' + newId + '"') < 0)
 
@@ -81,7 +82,7 @@ function setup() {
     'var r=w.positions.filter(function(x){return x.name===' + JSON.stringify(WATER) + ';})[0];return r?r.cost:-1;})()')
   t.ok('со своими деньгами: работа + трубы', cost === 15000 + 55 * 13, String(cost))
   html = p.run('tProjects()')
-  t.ok('панель закрылась', !/ВЗЯТЬ РАБОТЫ ИЗ ДРУГОГО ПРОЕКТА/.test(html))
+  t.ok('панель закрылась', !/ВЗЯТЬ ГОТОВЫЕ РАБОТЫ/.test(html))
   t.ok('перенос можно отменить одним нажатием', /Отменить работы из «Источник»/.test(html))
   t.ok('источник не тронут', p.q(byName('Источник') + '.matAdd["add:w1"][0].id') === 'm1')
 
@@ -109,7 +110,7 @@ function setup() {
   t.ok('«все этапы» показывают и его', html.indexOf('data-a="est-import-pick" data-k="add:w1"') >= 0)
   t.ok('и отмечают заново', /Взять 1 работу/.test(html))
   click(p, { a: 'est-import-close' })
-  t.ok('✕ закрывает панель', !/ВЗЯТЬ РАБОТЫ ИЗ ДРУГОГО ПРОЕКТА/.test(p.run('tProjects()')))
+  t.ok('✕ закрывает панель', !/ВЗЯТЬ ГОТОВЫЕ РАБОТЫ/.test(p.run('tProjects()')))
   t.ok('и ничего не пишет', p.q('(' + byName('Новый дом') + '.posAdd||[]).length') === 0)
 }
 
@@ -127,6 +128,34 @@ function setup() {
   t.ok('«отметить новые» отмечает', /Взять 1 работу/.test(p.run('tProjects()')))
   click(p, { a: 'est-import-all' })
   t.ok('второе нажатие снимает', /Отметьте работы/.test(p.run('tProjects()')))
+}
+
+// ── 5. Из базы смет другого вида ────────────────────────────────────────────
+// «Баня Буханка» заведена проектом вида «Дом», а работы для неё лежат в сметах
+// «Баня»: форма «+ работа» их не видит, берём через ту же панель.
+{
+  t.section('Взять работы из базы смет другого вида')
+  const { p, newId } = setup()
+  t.ok('дом — вида «Дом»', p.q(byName('Новый дом') + '.kind') === 'house')
+  click(p, { a: 'est-import-open' })
+  let html = p.run('tProjects()')
+  t.ok('в панели есть база смет «Баня»', /ИЗ БАЗЫ СМЕТ/.test(html) && html.indexOf('data-a="est-import-src" data-id="kind:banya"') >= 0)
+  click(p, { a: 'est-import-src', id: 'kind:banya' })
+  html = p.run('tProjects()')
+  t.ok('банная работа показана с материалом', html.indexOf('Разводка воды в парной') >= 0 && /1 материал/.test(html))
+  t.ok('отмечена сама', /Взять 1 работу/.test(html), (html.match(/Взять[^<]*/) || [''])[0])
+  click(p, { a: 'est-import-do' })
+  const took = p.q('(' + byName('Новый дом') + '.posAdd||[]).filter(function(r){return r.name==="Разводка воды в парной";})')
+  t.ok('работа встала в дом', took.length === 1, JSON.stringify(took))
+  t.ok('помнит смету базы', took[0] && took[0].srcEstId === 'e_bath' && took[0].from.p === 'kind:banya')
+  const mats = p.q(byName('Новый дом') + '.matAdd["add:"+' + JSON.stringify(took[0] && took[0].id) + ']') || []
+  t.ok('с материалом и количеством', mats.length === 1 && mats[0].pid === 'p_pipe' && Number(mats[0].qty) > 0, JSON.stringify(mats))
+  t.ok('в «Деньгах» дома строка стоит денег', p.q('(function(){var s=' + byName('Новый дом') + ';var w=works2(s,Object.assign(specCtx(s),{winTypes:winTypes}));' +
+    'var r=w.positions.filter(function(x){return x.name==="Разводка воды в парной";})[0];return r?r.cost:0;})()') > 0)
+  click(p, { a: 'est-import-open' })
+  click(p, { a: 'est-import-src', id: 'kind:banya' })
+  t.ok('второй раз — «уже есть»', /уже есть|уже взята/.test(p.run('tProjects()')) && /Отметьте работы/.test(p.run('tProjects()')))
+  t.ok('открытый дом не трогали лишним', p.q('(' + byName('Новый дом') + '.posAdd||[]).length') === 1 && newId)
 }
 
 t.done()

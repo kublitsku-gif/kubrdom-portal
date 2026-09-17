@@ -914,7 +914,7 @@ function importExists(sp, targetPositions, target, srcId) {
   const taken = ((target && target.posAdd) || []).some(function (r) {
     return r && r.from && r.from.p === srcId && r.from.k === sp.key;
   });
-  return taken ? "уже взята из этого проекта" : "";
+  return taken ? "уже взята отсюда" : "";
 }
 
 // Перечень строк источника для выбора: что это, сколько стоит, есть ли уже.

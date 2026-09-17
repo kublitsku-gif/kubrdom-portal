@@ -15509,10 +15509,10 @@ function estAddFormHtml(sh, tag, where){
     // «а в Мордвесе она уже собрана» вспоминают именно в этот момент. Этап формы
     // едет с кнопкой: открылись из «+» этапа 2 — показываем работы этапа 2.
     (function(){
-      if(!estImportSources(sh).length)return '';
+      if(!estImportSources(sh).length&&!estImportKinds().length)return '';
       const at=String(tag||"").indexOf("@");
       const st=at>0?String(tag).slice(at+1).split("|")[0]:"";
-      return '<button data-a="est-import-open" data-st="'+esc(st)+'" style="margin-top:7px;border:none;background:transparent;padding:2px 0;font-size:11px;font-weight:700;color:#2980b9;cursor:pointer;text-align:left">📋 или взять готовые из другого проекта →</button>';
+      return '<button data-a="est-import-open" data-st="'+esc(st)+'" style="margin-top:7px;border:none;background:transparent;padding:2px 0;font-size:11px;font-weight:700;color:#2980b9;cursor:pointer;text-align:left">📋 или взять готовые — из проекта или базы смет →</button>';
     })()+
   '</div>';
 }
@@ -15523,14 +15523,47 @@ function estAddFormHtml(sh, tag, where){
 function estImportSources(sh){
   return (projects||[]).filter(function(p){ return p&&p.id&&p.id!==(sh&&sh.id); });
 }
+// Второй источник — база смет любого вида («Баня», «Дом»…). «Баня Буханка» заведена
+// проектом вида «Дом», и форма «+ работа» видит только сметы своего вида: банные
+// работы с материалами оставалось перепечатывать руками (просьба Юрия, 17.09.2026).
+const EST_IMPORT_KIND="kind:";
+const EST_IMPORT_KEY="add:kb_";
+function estImportKinds(){
+  return (EST_KINDS||[]).filter(function(k){
+    return (estimates||[]).some(function(e){ return e&&(e.kind||"banya")===k.k; });
+  });
+}
+// Строки вида считаем ЭТИМ домом: сметы вида временно становятся его дописанными
+// работами, и расчёт даёт ту же строку, что встала бы после «+ работа», — с
+// материалами, нормой часов и ценой бригаде по ставке этого дома.
+function estImportKindPositions(sh, k){
+  const list=(estimates||[]).filter(function(e){ return e&&e.id&&(e.kind||"banya")===k; });
+  if(!list.length)return [];
+  const probe=Object.assign({}, sh, { posAdd:list.map(function(e){ return { id:"kb_"+e.id, estId:e.id }; }) });
+  return works2(probe, Object.assign(specCtx(probe), { winTypes:winTypes })).positions.filter(function(p){
+    return String(p.key||"").indexOf(EST_IMPORT_KEY)===0;
+  });
+}
+// Источник по id: проект или вид базы смет. `positions` — строки, как их отдаёт works2().
+function estImportSrc(sh, id){
+  const sid=String(id||"");
+  if(sid.indexOf(EST_IMPORT_KIND)===0){
+    const k=sid.slice(EST_IMPORT_KIND.length);
+    const kind=estImportKinds().find(function(x){ return x.k===k; });
+    if(!kind)return null;
+    return { id:sid, name:"База смет · "+(kind.n||k), positions:estImportKindPositions(sh, k) };
+  }
+  const p=estImportSources(sh).find(function(x){ return x.id===sid; });
+  if(!p)return null;
+  return { id:p.id, name:p.name||"Проект", positions:works2(p, Object.assign(specCtx(p), { winTypes:winTypes })).positions };
+}
 // Строки источника против ЭТОГО дома: что в нём уже есть, считается по его
 // собственной смете — иначе «уже есть» врало бы про дом, который открыт.
 function estImportCtx(sh, imp){
   const w=works2(sh, Object.assign(specCtx(sh), { winTypes:winTypes }));
-  const src=estImportSources(sh).find(function(p){ return p.id===(imp&&imp.src); })||null;
+  const src=estImportSrc(sh, imp&&imp.src);
   if(!src)return { src:null, w:w, all:[], rows:[] };
-  const sw=works2(src, Object.assign(specCtx(src), { winTypes:winTypes }));
-  const all=importRows(sw.positions, w.positions, sh, src.id);
+  const all=importRows(src.positions, w.positions, sh, src.id);
   const st=String((imp&&imp.stage)||"");
   return { src:src, w:w, all:all, rows:st?all.filter(function(r){ return String(r.stage)===st; }):all };
 }
@@ -15567,15 +15600,24 @@ function estImportHtml(sh){
   };
   let h='<div style="background:#f5f9ff;border:1px solid #2980b944;border-radius:13px;padding:11px 12px;margin-bottom:9px">'+
     '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
-      '<span style="flex:1;min-width:0;font-size:10px;font-weight:800;color:#2980b9;letter-spacing:0.4px">📋 ВЗЯТЬ РАБОТЫ ИЗ ДРУГОГО ПРОЕКТА</span>'+
+      '<span style="flex:1;min-width:0;font-size:10px;font-weight:800;color:#2980b9;letter-spacing:0.4px">📋 ВЗЯТЬ ГОТОВЫЕ РАБОТЫ</span>'+
       '<button data-a="est-import-close" title="Закрыть" style="width:24px;height:24px;background:#fff;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;color:#7a9aaa;font-size:11px;padding:0;line-height:1">✕</button>'+
     '</div>'+
-    '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px">'+
-      estImportSources(sh).map(function(p){
-        return chip(!!ctx.src&&ctx.src.id===p.id, 'data-a="est-import-src" data-id="'+esc(p.id)+'"', esc(p.name||"Проект"));
-      }).join("")+
-    '</div>';
-  if(!ctx.src)return h+'<div style="font-size:11px;color:#7a9aaa;line-height:1.45">Выберите проект — покажу его работы с материалами, количеством и ценой бригаде.</div></div>';
+    (function(){
+      const projs=estImportSources(sh);
+      const kinds=estImportKinds();
+      const label=function(txt){ return '<div style="font-size:9.5px;font-weight:800;color:#9aabbf;letter-spacing:0.4px;margin:0 0 4px">'+txt+'</div>'; };
+      return (projs.length?label('ИЗ ПРОЕКТА')+'<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px">'+
+          projs.map(function(p){
+            return chip(!!ctx.src&&ctx.src.id===p.id, 'data-a="est-import-src" data-id="'+esc(p.id)+'"', esc(p.name||"Проект"));
+          }).join("")+'</div>':'')+
+        (kinds.length?label('ИЗ БАЗЫ СМЕТ')+'<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px">'+
+          kinds.map(function(k){
+            const id=EST_IMPORT_KIND+k.k;
+            return chip(!!ctx.src&&ctx.src.id===id, 'data-a="est-import-src" data-id="'+esc(id)+'"', esc((k.emoji?k.emoji+" ":"")+(k.n||k.k)));
+          }).join("")+'</div>':'');
+    })();
+  if(!ctx.src)return h+'<div style="font-size:11px;color:#7a9aaa;line-height:1.45">Выберите проект или вид сметы — покажу работы с материалами, количеством и ценой бригаде.</div></div>';
   // Этапы — по порядку стройки, «без этапа» в конце.
   const stages=[];
   ctx.all.forEach(function(r){ if(stages.indexOf(r.stage)<0)stages.push(r.stage); });
@@ -16412,9 +16454,9 @@ function estToolsHtml(sh){
       'style="border:1px solid '+(estPickOn?RULE_COL:"#d0dae8")+';background:'+(estPickOn?RULE_COL:"#fff")+';color:'+(estPickOn?"#fff":"#5a7a9a")+';border-radius:9px;padding:6px 11px;font-size:11.5px;font-weight:700;cursor:pointer">☑ Выбрать</button>'+
     // Взять готовые работы из соседнего проекта — рядом с «Выбрать», на уровне
     // всего листа, а не этапа: перечень из Мордвеса идёт сразу в несколько этапов.
-    (estImportSources(sh).length
-      ? '<button data-a="est-import-open" title="Взять готовые работы с материалами из другого проекта" '+
-        'style="border:1px solid '+(estImport?"#2980b9":"#d0dae8")+';background:'+(estImport?"#2980b9":"#fff")+';color:'+(estImport?"#fff":"#5a7a9a")+';border-radius:9px;padding:6px 11px;font-size:11.5px;font-weight:700;cursor:pointer">📋 Из проекта</button>'
+    (estImportSources(sh).length||estImportKinds().length
+      ? '<button data-a="est-import-open" title="Взять готовые работы с материалами из другого проекта или из базы смет" '+
+        'style="border:1px solid '+(estImport?"#2980b9":"#d0dae8")+';background:'+(estImport?"#2980b9":"#fff")+';color:'+(estImport?"#fff":"#5a7a9a")+';border-radius:9px;padding:6px 11px;font-size:11.5px;font-weight:700;cursor:pointer">📋 Взять готовые</button>'
       : '')+
   '</div>';
 }
