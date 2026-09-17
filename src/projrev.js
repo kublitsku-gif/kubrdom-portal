@@ -18,6 +18,7 @@
 // лимиту строки D1.
 
 import { positionWork } from "./recipe.js";
+import { nameKey } from "./catalog.js";
 
 function fnv(str) {
   let h = 0x811c9dc5;
@@ -133,4 +134,36 @@ export function projDiff(positions, obj) {
   });
 
   return { items: items, safe: items.filter(function (x) { return x.safe; }).length, total: items.length };
+}
+
+// Работу со следами стройки убрали из проекта — а рядом в объекте уже стоит НОВАЯ
+// строка с тем же именем: в проекте работу удалили и завели заново (своей строкой,
+// из базы смет). Это одна работа, и в объекте она двоится: у старой часы и фото, у
+// новой план. Живой случай 17.09.2026, «Баня Буханка»: «Разводка электрики кабелем»
+// и «Монтаж подвесов». Возвращает новую строку объекта, с которой старую можно слить.
+export function projTwin(obj, item) {
+  if (!item || item.kind !== "removed" || !item.obj || !workTouched(item.obj.w)) return null;
+  const k = nameKey(item.obj.w.n);
+  if (!k) return null;
+  const map = objWorkMap(obj);
+  const twinKey = Object.keys(map).find(function (key) {
+    const w = map[key].w;
+    return key !== item.key && nameKey(w.n) === k && !workTouched(w);
+  });
+  return twinKey ? { key: twinKey, w: map[twinKey].w, s: map[twinKey].s } : null;
+}
+
+// Слитая работа: id, часы, фото и «выполнено» — старой (на них ссылаются вопросы,
+// табель и оплата бригаде), план — новой: имя, цена с её половиной, материалы,
+// план часов и адрес позиции. Материалы берём с их id: новую строку уже могли
+// закупать, и отметки «куплено» висят на них.
+export function projMergeWork(oldW, newW) {
+  const o = oldW || {};
+  const n = newW || {};
+  const out = Object.assign({}, o, {
+    n: n.n, cost: Number(n.cost) || 0, labor: Number(n.labor) || 0, costAll: !!n.costAll,
+    planHours: Number(n.planHours) || 0, mats: (n.mats || []).slice(), posKey: n.posKey,
+  });
+  delete out.projMark;
+  return out;
 }

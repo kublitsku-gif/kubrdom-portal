@@ -64,7 +64,7 @@ import { allPositions, allPositionsRaw, addedPositions, guessVolume, carryRuleEd
   pieCost, pieMeta, layerMat, matSwapsOf, matQtyOf,
   optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf, ROOM_HOUSE, roomKeyOf, positionSplit,
   importRows, importPatch } from "../src/recipe.js";
-import { projBaseline, projDiff, sigOf, workTouched } from "../src/projrev.js";
+import { projBaseline, projDiff, sigOf, workTouched, projTwin, projMergeWork } from "../src/projrev.js";
 import { SHELVES_DEFAULT, labelWorks, labelUnits, shelfLayout, shelfPages, houseNums, labelSheetCount, matPinKey } from "../src/labels.js";
 import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, flatNormalize, flatToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
@@ -6154,15 +6154,25 @@ function projDiffRows(obj, d, oid){
     const oldCost=it.obj?(Number(it.obj.w.cost)||0):0;
     const newCost=it.proj?(Number(it.proj.w.cost)||0):0;
     const stuck=it.kind==="removed"&&workTouched(it.obj&&it.obj.w);
+    const twin=stuck?projTwin(obj, it):null;
+    const btn=function(a, txt, filled, title){
+      return '<button data-a="'+a+'" data-oid="'+oid+'" data-key="'+esc(it.key)+'" title="'+esc(title||"")+'" style="padding:6px 11px;background:'+(filled?k.c:"#fff")+';border:1.5px solid '+k.c+';border-radius:7px;cursor:pointer;font-size:11px;font-weight:700;color:'+(filled?"#fff":k.c)+';white-space:nowrap">'+txt+'</button>';
+    };
     return '<div style="display:flex;align-items:center;gap:9px;padding:8px 10px;border:1px solid '+k.c+'33;background:'+k.c+'08;border-radius:9px;margin-bottom:6px">'+
       '<span style="font-size:14px">'+k.i+'</span>'+
       '<div style="flex:1;min-width:0">'+
         '<div style="font-size:12.5px;font-weight:700;color:#1a2a3a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(nm)+'</div>'+
         '<div style="font-size:10px;color:'+k.c+';margin-top:2px">'+k.n+
           (it.kind==="changed"&&oldCost!==newCost?' · '+oldCost.toLocaleString("ru-RU")+' → '+newCost.toLocaleString("ru-RU")+' ₽':'')+
-          (stuck?' · <b>по ней есть часы или фото — не убираем</b>':(it.safe?'':' · <b>в объекте её тоже правили</b>'))+'</div>'+
+          (stuck?(twin
+            ?' · <b>в объекте уже есть новая такая строка — слейте: часы и фото останутся, план возьмём из новой</b>'
+            :' · <b>по ней есть часы или фото — удалять не будем, оставьте её в объекте</b>')
+            :(it.safe?'':' · <b>в объекте её тоже правили</b>'))+'</div>'+
       '</div>'+
-      (stuck?'':'<button data-a="obj-proj-apply" data-oid="'+oid+'" data-key="'+esc(it.key)+'" style="padding:6px 11px;background:'+(it.safe?k.c:"#fff")+';border:1.5px solid '+k.c+';border-radius:7px;cursor:pointer;font-size:11px;font-weight:700;color:'+(it.safe?"#fff":k.c)+';white-space:nowrap">Принять</button>')+
+      (stuck
+        ?(twin?btn("obj-proj-merge","Слить с новой",true,"Одна работа вместо двух: часы, фото и «выполнено» старой, план и материалы новой")
+          :btn("obj-proj-keep","Оставить в объекте",false,"Работа остаётся в объекте со своими часами и фото, строка уходит из списка"))
+        :btn("obj-proj-apply","Принять",it.safe,""))+
     '</div>';
   }).join("");
 }
@@ -8406,6 +8416,31 @@ function projBaseMove(objId, key, sig, hours){
     }
     return Object.assign({},o,{projBase:next});
   });
+}
+// Убранную из проекта работу со следами стройки оставляем в объекте: слепок
+// забывает позицию, и спрашивать о ней больше не будут.
+function objProjKeep(obj, item){
+  if(!obj||!item||item.kind!=="removed")return false;
+  projBaseMove(obj.id, item.key, null);
+  return true;
+}
+// Старая строка (часы, фото) и новая (план) — одна работа: сливаем в старую, новую убираем.
+function objProjMerge(obj, item){
+  const twin=obj&&projTwin(obj, item);
+  if(!twin)return false;
+  const oldKey=item.key;
+  objects=objects.map(function(x){
+    if(x.id!==obj.id)return x;
+    return Object.assign({},x,{stages:(x.stages||[]).map(function(st){
+      const works=(st.works||[]);
+      if(!works.some(function(w){ const pk=w.posKey||""; return pk===oldKey||pk===twin.key; }))return st;
+      return Object.assign({},st,{works:works
+        .filter(function(w){ return (w.posKey||"")!==twin.key; })
+        .map(function(w){ return (w.posKey||"")===oldKey?projMergeWork(w, twin.w):w; })});
+    })});
+  });
+  projBaseMove(obj.id, oldKey, null);
+  return true;
 }
 // auto — перенос сделал портал сам (projAutoSync): такую правку подсвечиваем в объекте.
 function objProjApply(obj, item, auto){
@@ -30781,6 +30816,19 @@ function bind(){
       if(!it.safe&&!confirm("Эту работу правили и в объекте.\n\nПринять версию из проекта? Правка объекта будет заменена."))return;
       objProjApply(obj,it);
       normalizeWorkCosts(); fl();
+    };}
+    else if(a==="obj-proj-keep"||a==="obj-proj-merge"){el.onclick=()=>{
+      const {oid,key}=el.dataset;
+      const obj=objects.find(function(o){return o.id===oid;});
+      const d=obj&&objProjDiff(obj);
+      const it=d&&d.items.find(function(x){return x.key===key;});
+      if(!it)return;
+      if(a==="obj-proj-merge"){
+        if(!confirm("Слить «"+((it.obj&&it.obj.w&&it.obj.w.n)||"работу")+"» с новой строкой?\n\nОстанется одна работа: часы, фото и отметка «выполнено» — старой, план, цена и материалы — новой."))return;
+        if(!objProjMerge(obj,it))return;
+        normalizeWorkCosts();
+      } else if(!objProjKeep(obj,it))return;
+      fl();
     };}
     else if(a==="obj-proj-apply-safe"){el.onclick=()=>{
       const oid=el.dataset.oid;

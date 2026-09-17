@@ -6,7 +6,7 @@
 // состава на момент сборки. Сторожим главное: что правка проекта доезжает до
 // стройки, что след работы бригады при этом не стирается и что спорную правку
 // портал не применяет молча.
-import { projDiff, projBaseline, sigOf, workTouched } from '../src/projrev.js'
+import { projDiff, projBaseline, sigOf, workTouched, projTwin, projMergeWork } from '../src/projrev.js'
 import { positionWork } from '../src/recipe.js'
 import { boot, reporter } from './harness/panel-vm.js'
 
@@ -338,6 +338,53 @@ const objOf = (positions, base) => ({
   t.ok('метка ведёт в объект', p.q('openObject') === oid)
   t.ok('и не сворачивает карточку', stopped)
   t.ok('спорные правки раскрыты', p.q('objSecOpen[' + JSON.stringify(oid + '|projdiff') + ']') === true)
+}
+
+// ── 7. Убрали из проекта, а по работе есть часы или фото ─────────────────────
+// Живой случай 17.09.2026, «Баня Буханка»: шесть таких строк и ни одной кнопки —
+// только «Ничего не принимать». Две из них в проекте удалили и завели заново, и в
+// объекте они задвоились: старая с часами и новая с планом.
+{
+  t.section('Убрано из проекта, но работа уже шла')
+  const oldW = { id: 'wOld', n: 'Разводка электрики кабелем', posKey: 'base:e1', cost: 17335, done: true, doneAt: '2026-09-10',
+    timeLogs: [{ h: 4 }], photos: [], mats: [{ id: 'mOld', n: 'Кабель', cost: 50, qty: 10 }], projMark: { kind: 'changed' } }
+  const newW = { id: 'wNew', n: 'Разводка электрики  кабелем', posKey: 'add:x1', cost: 26308, labor: 8000, planHours: 6,
+    timeLogs: [], photos: [], mats: [{ id: 'mNew', n: 'Кабель ВВГ', cost: 60, qty: 20 }] }
+  const lone = { id: 'wLone', n: 'Утепление пола — ЭППС 10 см', posKey: 'base:e2', cost: 24091, photos: ['p'], timeLogs: [], mats: [] }
+  const obj = { id: 'o', stages: [{ id: 's', n: 'ЭТАП 1', works: [oldW, newW, lone] }] }
+  const item = (w) => ({ kind: 'removed', key: w.posKey, obj: { w: w, s: obj.stages[0] }, safe: false })
+  const tw = projTwin(obj, item(oldW))
+  t.ok('новая строка с тем же именем найдена', tw && tw.key === 'add:x1')
+  t.ok('без тёзки — сливать не с чем', projTwin(obj, item(lone)) === null)
+  t.ok('нетронутую убранную не трогаем (её и так можно принять)', projTwin(obj, item(Object.assign({}, oldW, { timeLogs: [], done: false, doneAt: '' }))) === null)
+  const m = projMergeWork(oldW, newW)
+  t.ok('id, часы и «выполнено» — старой', m.id === 'wOld' && m.timeLogs.length === 1 && m.doneAt === '2026-09-10')
+  t.ok('план — новой', m.cost === 26308 && m.labor === 8000 && m.planHours === 6 && m.posKey === 'add:x1' && m.mats[0].id === 'mNew')
+  t.ok('подсветка правки снята, исходные не мутированы', !m.projMark && oldW.projMark && oldW.posKey === 'base:e1')
+
+  const p = boot({})
+  p.set({
+    expProducts: PRODUCTS, estimates: EST, dbPlans: [], crmClients: [], specSheets: [], specSheets2: [], projects: [], buildRules: RULES,
+    winTypes: [], templates: [], contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: {},
+    objects: [Object.assign({}, obj, { projBase: { at: '2026-09-01', sig: { 'base:e1': 'a', 'base:e2': 'b', 'add:x1': 'c' } } })],
+  })
+  // Диф подставляем: здесь проверяем кнопки и запись, а сам диф сторожат разделы выше.
+  p.run('objProjDiff=function(o){ var m={}; (o.stages||[]).forEach(function(s){(s.works||[]).forEach(function(w){m[w.posKey]={w:w,s:s};});});' +
+    ' var items=["base:e1","base:e2"].filter(function(k){return !!m[k]&&!!(o.projBase.sig||{})[k];}).map(function(k){return {kind:"removed",key:k,obj:m[k],safe:false};});' +
+    ' return {items:items,safe:0,total:items.length,proj:{name:"Баня"}}; };')
+  const rows = p.run('projDiffRows(objects[0], objProjDiff(objects[0]), "o")')
+  t.ok('у задвоенной — «Слить с новой»', rows.indexOf('data-a="obj-proj-merge" data-oid="o" data-key="base:e1"') >= 0)
+  t.ok('у одиночной — «Оставить в объекте»', rows.indexOf('data-a="obj-proj-keep" data-oid="o" data-key="base:e2"') >= 0)
+  p.run('document.body.innerHTML=projDiffRows(objects[0], objProjDiff(objects[0]), "o");')
+  const keep = p.dom.node({ a: 'obj-proj-keep', oid: 'o', key: 'base:e2' }); p.run('bind();'); keep.onclick()
+  t.ok('«Оставить» — работа на месте, строка ушла', p.q('objects[0].stages[0].works.some(function(w){return w.id==="wLone";})') === true
+    && p.q('objects[0].projBase.sig["base:e2"]===undefined') === true, JSON.stringify(p.q('objects[0].projBase.sig')))
+  p.run('document.body.innerHTML=projDiffRows(objects[0], objProjDiff(objects[0]), "o");')
+  const merge = p.dom.node({ a: 'obj-proj-merge', oid: 'o', key: 'base:e1' }); p.run('bind();'); merge.onclick()
+  const works = p.q('objects[0].stages[0].works.map(function(w){return w.id+":"+w.posKey;})')
+  t.ok('«Слить» — одна работа вместо двух', works.join(',') === 'wOld:add:x1,wLone:base:e2', works.join(','))
+  t.ok('с часами старой и ценой новой', p.q('objects[0].stages[0].works[0].timeLogs.length') === 1 && Math.round(p.q('objects[0].stages[0].works[0].cost')) > 0)
+  t.ok('в списке правок её больше нет', p.q('objProjDiff(objects[0]).items.length') === 0)
 }
 
 t.done()
