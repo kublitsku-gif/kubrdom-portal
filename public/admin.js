@@ -17625,8 +17625,10 @@ function projMoneyHtml(p){
 }
 
 function projCardHtml(p){
-  let h='<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:10px">'+
-    '<button data-a="proj-back" style="border:1px solid #dde6f0;background:#fff;border-radius:9px;padding:7px 11px;font-size:12px;color:#7a9aaa;cursor:pointer;flex-shrink:0">‹</button>'+
+  // Назад — подписанной кнопкой отдельной строкой, как в сметах: серую «‹» рядом
+  // с крупным названием не замечали и искали выход через верхние вкладки.
+  let h='<button data-a="proj-back" style="display:inline-flex;align-items:center;gap:6px;margin-bottom:10px;padding:8px 13px;background:#fff;border:1px solid #c9d6e4;border-radius:9px;cursor:pointer;font-size:12.5px;font-weight:700;color:#2a5298">← Проекты</button>'+
+    '<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:10px">'+
     '<div style="flex:1;min-width:0">'+
       '<input data-a="proj-name" data-id="'+p.id+'" value="'+esc(p.name||"")+'" style="width:100%;border:none;background:transparent;font-size:16px;font-weight:800;color:#0d1b2e;outline:none;padding:0">'+
       '<div style="font-size:11.5px;color:#7a9aaa;margin-top:2px">'+esc(estKindMeta(p.kind).n)+((crmClients.find(function(c){return c.id===p.clientId;})||{}).name?' · '+esc(crmClients.find(function(c){return c.id===p.clientId;}).name):'')+'</div>'+

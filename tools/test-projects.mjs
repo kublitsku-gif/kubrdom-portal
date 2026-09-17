@@ -103,6 +103,8 @@ function create(p, name) {
   t.ok('площади рядом', /ПЛОЩАДИ/.test(plan))
   t.ok('и печать для бригады', plan.indexOf('data-a="spec2-print"') >= 0)
   t.ok('редактор открывается отсюда', plan.indexOf('data-a="proj-edit"') >= 0)
+  // Серую «‹» рядом с названием не замечали — назад подписан словами.
+  t.ok('кнопка назад подписана', /data-a="proj-back"[^>]*>← Проекты</.test(plan))
 
   const parts = p.run('projBand="parts";tProjects()')
   t.ok('состав посчитан', /СЕБЕСТОИМОСТЬ/.test(parts) && /ОСП/.test(parts))
