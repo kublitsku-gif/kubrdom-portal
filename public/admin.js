@@ -15571,6 +15571,9 @@ function estImportCtx(sh, imp){
 // оставшиеся от другого этапа, взялись бы строками, которых человек не видит.
 function estImportReset(sh, imp){
   const pick={};
+  // База смет — перечень ВАРИАНТОВ («ППУ 5 см», «ППУ 8 см»), а не собранный дом:
+  // отметить всё новое значит одним нажатием задвоить утепление. Там выбирают руками.
+  if(String((imp&&imp.src)||"").indexOf(EST_IMPORT_KIND)===0)return Object.assign({}, imp, { pick:pick });
   estImportCtx(sh, imp).rows.forEach(function(r){ if(!r.exists)pick[r.key]=1; });
   return Object.assign({}, imp, { pick:pick });
 }
