@@ -5743,6 +5743,7 @@ function renderObjCard(obj, isAdmin){
     html+='<div style="margin-top:5px"><span style="display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;color:'+st.c+';background:'+st.bg+';border-radius:6px;padding:2px 8px">'+
       st.i+' '+esc(w.stage.n||"Этап")+': '+esc(stageSchedText(w.sc))+'</span></div>';
   })();
+  html+=projPendingChipHtml(obj);
   html+='</div>';
   html+='<button data-a="open-obj" data-oid="'+obj.id+'" style="padding:7px 14px;background:#e8f0fa;border:1px solid #4a7ac844;border-radius:8px;cursor:pointer;font-size:12px;color:#2a5298;font-weight:600;flex-shrink:0;white-space:nowrap">✏️ Открыть</button>';
   html+='</div>';
@@ -6172,8 +6173,27 @@ function projDiffButtons(d, oid){
     '</div>'+
     '<div style="font-size:10px;color:#a0b4c8;text-align:center;margin-top:6px">«Ничего не принимать» просто запомнит нынешний проект как просмотренный.</div>';
 }
+function canSeeProjDiff(){
+  return !!currentUser&&currentUser.roles.some(function(r){return ["admin","prod_head","client_mgr"].indexOf(r)>=0;});
+}
+// Сколько правок проекта ждёт человека в объекте: подсвеченные «Видел», убранные
+// в проекте и спорные (их переносит только человек). Нужна списку объектов — иначе
+// правку проекта видно, лишь открыв нужный объект и догадавшись туда заглянуть.
+function objProjPending(obj){
+  const marked=(obj.stages||[]).reduce(function(a,s){ return a+(s.works||[]).filter(function(w){ return !!w.projMark; }).length; },0);
+  const gone=(obj.projGone||[]).length;
+  const d=canSeeProjDiff()?objProjDiff(obj):null;
+  const diff=d&&!d.noBase?d.items.length:0;
+  return { marked:marked, gone:gone, diff:diff, total:marked+gone+diff };
+}
+function projPendingChipHtml(obj){
+  const pd=objProjPending(obj);
+  if(!pd.total)return "";
+  return '<div style="margin-top:5px"><button data-a="obj-proj-goto" data-oid="'+obj.id+'" style="display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:800;color:#fff;background:'+PROJ_COL+';border:none;border-radius:6px;padding:3px 9px;cursor:pointer;animation:pulse 1.4s ease-in-out infinite">'+
+    '🏗 Изменения в проекте: '+pd.total+' — принять</button></div>';
+}
 function buildProjDiffSection(obj){
-  if(!currentUser||!currentUser.roles.some(function(r){return ["admin","prod_head","client_mgr"].indexOf(r)>=0;}))return "";
+  if(!canSeeProjDiff())return "";
   const d=objProjDiff(obj);
   if(!d)return "";
   if(d.noBase){
@@ -26089,6 +26109,16 @@ function bind(){
     else if(a==="obj-done-open"){el.onclick=()=>{ const sid=el.dataset.sid||""; objDoneOpen=Object.assign({},objDoneOpen,{[sid]:!objDoneOpen[sid]}); render(); };}
     else if(a==="obj-room-toggle"){el.onclick=()=>{ const k=el.dataset.k||""; objRoomOpen=Object.assign({},objRoomOpen,{[k]:!objRoomOpen[k]}); render(); };}
     else if(a==="open-obj"){el.onclick=()=>{openObject=el.dataset.oid;render();};}
+    // Метка «Изменения в проекте» живёт внутри шапки, которая сворачивает карточку, —
+    // тап не должен её сворачивать. Спорные правки раскрываем: за ними и шли.
+    else if(a==="obj-proj-goto"){el.onclick=(e)=>{
+      if(e&&e.stopPropagation)e.stopPropagation();
+      const oid=el.dataset.oid;
+      if(!oid)return;
+      openObject=oid;
+      objSecOpen[oid+"|projdiff"]=true;
+      render();
+    };}
     else if(a==="obj-prev-toggle"){el.onclick=()=>{ const oid=el.dataset.oid; objPrevExpanded=Object.assign({},objPrevExpanded,{[oid]:!objPrevExpanded[oid]}); render(); };}
     else if(a==="close-obj"){el.onclick=()=>{openObject=null;objMenuOpen=null;render();};}
     else if(a==="tog-obj"){el.onclick=()=>{const uid=el.dataset.uid,oid=el.dataset.oid;users=users.map(u=>{if(u.id!==uid)return u;const o=u.objs.includes(oid)?u.objs.filter(x=>x!==oid):[...u.objs,oid];return{...u,objs:o};});fl();};}

@@ -318,6 +318,8 @@ const objOf = (positions, base) => ({
   t.ok('в объекте видно, что убрано', /УБРАНО В ПРОЕКТЕ/.test(card2) && goneName && card2.indexOf(goneName) >= 0)
   const all = p.dom.node({ a: 'obj-proj-seen-all', oid: oid }); p.run('bind();'); all.onclick()
   t.ok('«Видел всё» убирает и убранные', !(p.q('objects[0].projGone') || []).length)
+  const list0 = p.run('tab="assign";openObject=null;tObjects()')
+  t.ok('в списке объектов метки нет — ждать нечего', list0.indexOf('data-a="obj-proj-goto"') < 0)
 
   // Работу правили в объекте руками — правку проекта сами не переносим.
   p.run('objects[0].stages.forEach(function(s){(s.works||[]).forEach(function(w){ if(w.posKey===' + JSON.stringify(key) + ')w.cost=1; });});')
@@ -325,6 +327,17 @@ const objOf = (positions, base) => ({
   setHours(4)
   t.ok('спорная правка сама не переехала', Number(work(key).planHours) === 9, String(work(key).planHours))
   t.ok('и ждёт решения', p.q('objProjDiff(objects[0]).items.filter(function(x){return !x.safe;}).length') === 1)
+
+  // Список объектов: правку проекта видно, не открывая объект.
+  const list = p.run('tab="assign";openObject=null;tObjects()')
+  t.ok('в списке объектов горит «Изменения в проекте»', list.indexOf('data-a="obj-proj-goto" data-oid="' + oid + '"') >= 0 && /Изменения в проекте: 1/.test(list),
+    (list.match(/Изменения в проекте[^<]*/) || ['метки нет'])[0])
+  const go = p.dom.node({ a: 'obj-proj-goto', oid: oid }); p.run('bind();')
+  let stopped = false
+  go.onclick({ stopPropagation() { stopped = true } })
+  t.ok('метка ведёт в объект', p.q('openObject') === oid)
+  t.ok('и не сворачивает карточку', stopped)
+  t.ok('спорные правки раскрыты', p.q('objSecOpen[' + JSON.stringify(oid + '|projdiff') + ']') === true)
 }
 
 t.done()
