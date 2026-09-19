@@ -191,6 +191,7 @@ const plain = (h) => h.replace(/<[^>]*>/g, ' ').replace(/&quot;/g, '"').replace(
     + 'return {opened:__opened, overlay:!!document.getElementById("ct-doc-overlay"), len:doc.length,'
     + ' num:doc.indexOf("1909-1/26")>=0, org:doc.indexOf("\u0420\u0423\u0417\u0421\u041a\u041e\u0415")>=0};})()')
   t.ok('всплывающее окно не открывается', info.opened === 0, JSON.stringify(info))
+  t.ok('диалог печати сам не всплывает', p.q('typeof __made.filter(function(x){return x.tag==="iframe";}).pop().e.onload') === 'undefined')
   t.ok('оверлей на странице', info.overlay === true)
   t.ok('документ отдан в iframe', info.len > 5000, JSON.stringify(info))
   t.ok('в документе номер и заказчик', info.num && info.org)
