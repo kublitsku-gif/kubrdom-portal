@@ -24651,7 +24651,11 @@ function ctOpenDocPrint(html,title){
   ov.appendChild(bar);
   ov.appendChild(frame);
   document.body.appendChild(ov);
-  frame.srcdoc=html;
+  // У самого документа есть тулбар с кнопкой печати — он был нужен всплывающему
+  // окну. В оверлее своя кнопка сверху, так что внутренний тулбар прячем, иначе
+  // кнопка «Печать» стоит на экране дважды.
+  frame.srcdoc=String(html).replace("</head>",
+    "<style>.toolbar{display:none!important}@media screen{body{padding-top:24px!important}}</style></head>");
   const printIt=function(){
     try{ frame.contentWindow.focus(); frame.contentWindow.print(); }catch(e){}
   };
