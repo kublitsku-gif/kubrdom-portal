@@ -387,4 +387,78 @@ const objOf = (positions, base) => ({
   t.ok('в списке правок её больше нет', p.q('objProjDiff(objects[0]).items.length') === 0)
 }
 
+// ── 8. Выключенный материал уходит со стройки и из закупки ──────────────────
+// Галочка у материала в смете проекта — это не «спрятать в проекте»: снабженец
+// закупает ПО ОБЪЕКТУ, и выключенный материал не должен попасть ни в состав
+// работы на стройке, ни в список закупки. Новый объект собирается уже без него, а
+// собранному раньше правку переносит `projAutoSync` — пока правка безопасна, то
+// есть эту работу на стройке ещё не трогали. Тронутую (часы, фото, своя цена)
+// портал молча не переписывает: она ждёт человека в «в проекте изменилось».
+{
+  t.section('Выключенный в проекте материал — и на стройке, и в закупке')
+  const PR2 = [
+    { id: 'p_osb', name: 'ОСП 9 мм', unitCost: 1000, store: 'Лемана', mode: 'm2' },
+    { id: 'p_gofra', name: 'Гофра', unitCost: 50, store: 'Озон', mode: 'piece' },
+  ]
+  const EST2 = [{ id: 'e_osb', kind: 'house', name: 'Обшивка стен ОСП', stage: 2,
+    lines: [{ id: 'l_osb', pid: 'p_osb', qty: 1 }, { id: 'l_gof', pid: 'p_gofra', qty: 4 }] }]
+  const p = boot({})
+  p.set({
+    expProducts: PR2, estimates: EST2, dbPlans: [], crmClients: [],
+    specSheets: [], specSheets2: [], projects: [], buildRules: RULES,
+    winTypes: [], objects: [], templates: [], contractDocs: [], purchases: [], issues: [],
+    users: [], stock: [], settings: { specMarkup: 30 },
+  })
+  p.run('tab="projects";tProjects();')
+  const nb = p.dom.node({ a: 'proj-new' }); p.run('bind();'); nb.onclick()
+  p.dom.field('proj-n-name', 'Дом'); p.dom.field('proj-n-client', '')
+  p.run('tProjects();')
+  const cb = p.dom.node({ a: 'proj-create' }); p.run('bind();'); cb.onclick()
+  const pid = p.q('projects[0].id')
+  p.run('projBand="money";tProjects();')
+  const ob = p.dom.node({ a: 'spec-to-object', id: pid }); p.run('bind();'); ob.onclick()
+
+  const inObj = (x) => p.q('objects[0].stages.reduce(function(a,s){return a.concat(s.works);},[])')
+    .reduce((a, w) => a.concat(w.mats || []), []).filter((m) => m.pid === x).length
+  const inSupply = (x) => p.q('supplyCollect(objects).mats').filter((m) => m.pid === x).length
+  const wasObj = inObj('p_gofra')
+  t.ok('материал в объекте есть', wasObj > 0, 'в объекте: ' + wasObj)
+  t.ok('и в закупке тоже', inSupply('p_gofra') === wasObj, 'в закупке: ' + inSupply('p_gofra'))
+
+  // Выключаем галочкой в смете проекта. Правило даёт по строке на помещение —
+  // снимаем галочку в каждой, как это сделал бы человек.
+  p.run('projOpenId=' + JSON.stringify(pid) + ';projBand="parts";tProjects();')
+  const keysOf = (pidWant) => p.q('works2(projects[0], specCtx(projects[0])).positions'
+    + '.filter(function(x){return (x.mats||[]).some(function(m){return m.pid==="' + pidWant + '";});})'
+    + '.map(function(x){return x.key+"|"+matKeyOf((x.mats||[]).filter(function(m){return m.pid==="' + pidWant + '";})[0]);})')
+  const keys = keysOf('p_gofra')
+  t.ok('строк с материалом столько же, сколько в объекте', keys.length === wasObj, 'строк: ' + keys.length)
+  const tap = function (k, a) {
+    const openMats = p.dom.node({ a: 'est-mats-open', k: k.slice(0, k.lastIndexOf('|')) })
+    p.run('bind();'); openMats.onclick()
+    const btn = p.dom.node({ a: a, k: k }); p.run('bind();'); btn.onclick()
+    p.run('tProjects();')                  // перерисовка проекта = projSyncOpen
+  }
+  keys.forEach(function (k) { tap(k, 'est-mat-off') })
+
+  t.ok('в смете проекта его нет',
+    !p.q('works2(projects[0], specCtx(projects[0])).positions')
+      .some((x) => (x.mats || []).some((m) => m.pid === 'p_gofra')))
+  t.ok('новый объект собрался бы уже без него',
+    !p.q('specBuildStages(projects[0]).reduce(function(a,s){return a.concat(s.works);},[])')
+      .some((w) => (w.mats || []).some((m) => m.pid === 'p_gofra')))
+  // Главное: собранный объект и закупка следуют за проектом сами (projAutoSync),
+  // пока работу на стройке не трогали.
+  t.ok('со стройки материал ушёл', inObj('p_gofra') === 0, 'в объекте: ' + inObj('p_gofra'))
+  t.ok('и из закупки тоже', inSupply('p_gofra') === 0, 'в закупке: ' + inSupply('p_gofra'))
+  t.ok('расхождений с проектом не осталось', p.q('objProjDiff(objects[0]).items.length') === 0)
+  t.ok('а соседний материал на месте', inSupply('p_osb') > 0)
+
+  // Вернули галочку — материал вернулся и на стройку, и в закупку.
+  const back = p.q('Object.keys(projects[0].matOff||{}).map(function(k){return k+"|"+(projects[0].matOff[k]||[])[0];})')
+  back.forEach(function (k) { tap(k, 'est-mat-on') })
+  t.ok('материал вернулся на стройку', inObj('p_gofra') === wasObj, 'в объекте: ' + inObj('p_gofra'))
+  t.ok('и в закупку', inSupply('p_gofra') === wasObj, 'в закупке: ' + inSupply('p_gofra'))
+}
+
 t.done()
