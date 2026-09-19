@@ -984,7 +984,7 @@ function create(p, name) {
     pos0.cost + ' → ' + pos1.cost)
   t.ok('правка лежит в проекте', p.q('projects[0].matOff[' + JSON.stringify(key) + '].join(",")') === mat.pid)
   t.ok('справочник не тронут', p.q('estimates.length') === 2)
-  t.ok('в строке видно, что убрано', /УБРАНО ИЗ ЭТОГО ДОМА/.test(p.run('tProjects()')))
+  t.ok('в строке видно, что выключено', /ВЫКЛЮЧЕНО В ЭТОМ ДОМЕ/.test(p.run('tProjects()')))
 
   // Объект собирается тем же составом, что показан: продали одно — строят то же.
   p.run('projBand="money";tProjects();')
@@ -1311,7 +1311,10 @@ function create(p, name) {
   // так поправим — удалённая работа лежит в «удалено» и возвращается отменой.
   p.run('matsOpen[' + JSON.stringify(key) + ']=1;')
   const marks = p.run('tProjects()')
-  t.ok('✕ материала приглушён', /data-a="est-mat-off"[^>]*width:24px[^>]*color:#9aabbf/.test(marks))
+  // Расчётный материал не стирается крестиком — выключается галочкой (18 px),
+  // и она меньше галочки работы: рядом их путали.
+  t.ok('галочка материала меньше галочки работы',
+    /data-a="est-mat-off"[^>]*width:18px/.test(marks) && /data-a="est-pos-on"[^>]*width:22px/.test(marks))
   t.ok('✕ работы серый, но крупнее материального', /data-a="est-pos-del"[^>]*width:28px[^>]*color:#9aabbf/.test(marks)
     && !/data-a="est-pos-del"[^>]*color:#e74c3c/.test(marks))
   t.ok('«+ материал» во всю ширину', /est-mat-add-open[^>]*width:100%/.test(marks))

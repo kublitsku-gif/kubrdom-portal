@@ -508,6 +508,32 @@ const SHEET = {
   t.ok('материала не из базы тоже можно', hand.length === 2 && hand[1].n === 'Уголок монтажный')
   t.ok('и цена из формы', hand[1].cost === 120 && hand[1].pid === '')
 
+  // Дописанный материал тоже ВЫКЛЮЧАЕТСЯ галочкой, а не только стирается: его
+  // вписали по чертежу, а на этом доме он пока не нужен — удалять и вписывать
+  // заново значит потерять цену, магазин и количество.
+  {
+    const addKey = pos.key + '|+' + hand[1].id
+    const wasCost = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.estId==="e_el";})[0].cost')
+    const box = p.dom.node({ a: 'est-mat-off', k: addKey }); p.run('bind();'); box.onclick()
+    const offNow = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.estId==="e_el";})[0]')
+    t.ok('выключенного дописанного в строке нет', !offNow.mats.some((m) => m.n === 'Уголок монтажный'))
+    t.ok('и цена строки упала на него', offNow.cost === wasCost - 120 * 4, offNow.cost + ' против ' + wasCost)
+    t.ok('сам материал остался в листе',
+      p.q('(proj(projOpenId).matAdd[' + JSON.stringify(pos.key) + ']||[]).length') === 2)
+    const offHtml = estHtml(p)
+    t.ok('выключенное видно строкой', /ВЫКЛЮЧЕНО В ЭТОМ ДОМЕ/.test(offHtml))
+    t.ok('и названо по имени', /Уголок монтажный/.test(offHtml))
+    const on = p.dom.node({ a: 'est-mat-on', k: addKey }); p.run('bind();'); on.onclick()
+    const backOn = p.q('works2(proj(projOpenId), specCtx(proj(projOpenId))).positions.filter(function(x){return x.estId==="e_el";})[0]')
+    t.ok('галочка возвращает материал', backOn.mats.some((m) => m.n === 'Уголок монтажный'))
+    t.ok('и цену строки', backOn.cost === wasCost, backOn.cost + ' против ' + wasCost)
+    // Выключили и удалили совсем: адрес не должен остаться в листе строкой-призраком.
+    const off2 = p.dom.node({ a: 'est-mat-off', k: addKey }); p.run('bind();'); off2.onclick()
+    const kill = p.dom.node({ a: 'est-mat-add-del', k: pos.key, m: hand[1].id }); p.run('bind();'); kill.onclick()
+    t.ok('удалённый не остаётся выключенным', !p.q('(((proj(projOpenId).matOff||{})[' + JSON.stringify(pos.key) + '])||[]).length'))
+    t.ok('и призрака в списке нет', !/ВЫКЛЮЧЕНО В ЭТОМ ДОМЕ/.test(estHtml(p)))
+  }
+
   // Убрали дописанное.
   const del = p.dom.node({ a: 'est-mat-add-del', k: pos.key, m: hand[0].id }); p.run('bind();'); del.onclick()
   const del2 = p.dom.node({ a: 'est-mat-add-del', k: pos.key, m: hand[1].id }); p.run('bind();'); del2.onclick()
@@ -581,8 +607,10 @@ const SHEET = {
   t.ok('убранное лежит на листе', p.q('proj(projOpenId).matOff[' + JSON.stringify(q2.key) + '].join(",")') === 'p_dr')
   t.ok('справочник не тронут', p.q('estimates.find(function(e){return e.id==="e_el";}).lines.length') === 2)
   const shownOff = estHtml(p)
-  t.ok('в строке видно, что убрано', /УБРАНО ИЗ ЭТОГО ДОМА/.test(shownOff))
-  t.ok('и названо по имени', /Наличник ⟲/.test(shownOff))
+  t.ok('в строке видно, что выключено', /ВЫКЛЮЧЕНО В ЭТОМ ДОМЕ · 1/.test(shownOff))
+  t.ok('и названо по имени', /Наличник/.test(shownOff))
+  t.ok('выключенное — строка со снятой галочкой, а не чип',
+    /data-a="est-mat-on"[^>]*aria-checked="false"/.test(shownOff))
   // Смотрим ИМЕННО эту работу: тот же товар честно стоит и в монтаже двери.
   const built2 = p.q('specBuildStages(proj(projOpenId)).reduce(function(a,s){return a.concat(s.works);},[])')
     .filter((w) => w.estId === 'e_el')
@@ -904,7 +932,12 @@ const SHEET = {
   const marks2 = estHtml(p)
   // Оба крестика серые (просьба Юрия, 11.09.2026), но у работы крупнее: одинаковые
   // рядом стирали работу вместо материала. Удалённое к тому же возвращается.
-  t.ok('✕ материала приглушён', /data-a="est-mat-off"[^>]*width:24px[^>]*color:#9aabbf/.test(marks2))
+  // Крестик у материала остался только у дописанного руками (удалить совсем);
+  // расчётный выключается галочкой, и она меньше галочки работы (18 против 22),
+  // чтобы рядом не путали «выключить материал» с «выключить всю работу».
+  t.ok('расчётный материал крестиком не стирается', !/data-a="est-mat-off"[^>]*>✕</.test(marks2))
+  t.ok('галочка материала меньше галочки работы',
+    /data-a="est-mat-off"[^>]*width:18px/.test(marks2) && /data-a="est-pos-on"[^>]*width:22px/.test(marks2))
   t.ok('✕ работы серый, но крупнее материального', /data-a="est-pos-del"[^>]*width:28px[^>]*color:#9aabbf/.test(marks2)
     && !/data-a="est-pos-del"[^>]*color:#e74c3c/.test(marks2))
 }

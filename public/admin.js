@@ -14820,6 +14820,17 @@ function matAddrsAt(sh, posKey, addr){
   }catch(e){}
   return [addr];
 }
+// Снять с материала отметку «выключен» в этой строке. Снимаем ВСЕ его адреса —
+// нынешний и прежний (`matAddrsAt`): иначе выключенный старым адресом материал
+// вернулся бы обратно при следующей перерисовке.
+function estUnmarkMatOff(sh, posKey, addr){
+  if(!sh||!sh.matOff)return;
+  const map=Object.assign({}, sh.matOff);
+  const gone=matAddrsAt(sh, posKey, addr).concat([addr]);
+  const row=(map[posKey]||[]).filter(function(x){ return gone.indexOf(String(x))<0; });
+  if(row.length)map[posKey]=row; else delete map[posKey];
+  if(Object.keys(map).length)sh.matOff=map; else delete sh.matOff;
+}
 // Ручные количества листа с новым числом у материала строки. Прежний адрес того
 // же материала стираем: иначе он остался бы лежать в снимке и всплыл бы, как
 // только ручное число вернут к расчётному. Пустое число — правка снимается.
@@ -14935,6 +14946,7 @@ function specMatsListHtml(pos, sh, live){
       return '<div data-mat-row="'+esc(matKeyOf(m))+'" data-mat-grp="'+esc(pos.key)+'" '+
         'style="padding:5px 0'+(midx<mats.length-1?';border-bottom:1px solid #eaf0f6':'')+'">'+
         '<div style="display:flex;align-items:baseline;gap:7px">'+
+          (can?matOnBoxHtml(matSwapKey(pos,m), true):'')+
           '<span style="flex:1;min-width:0;font-size:11.5px;color:#0d1b2e;line-height:1.35">'+esc(m.n||"")+
             (was?' <span style="font-size:9.5px;font-weight:700;color:#8e44ad;background:#f3ecf9;border-radius:5px;padding:1px 5px">заменён</span>':'')+
             (added?' <span style="font-size:9.5px;font-weight:700;color:#16a085;background:#e8f6f3;border-radius:5px;padding:1px 5px">добавлен</span>':'')+
@@ -14979,11 +14991,7 @@ function specMatsListHtml(pos, sh, live){
           // Заменять дописанный руками материал нечем: у него нет товара в базе,
           // а есть крестик — удалить и вписать заново.
           (can&&!added?'<button data-a="est-mat-open" data-k="'+esc(matSwapKey(pos,m))+'" title="Заменить материал из базы" style="width:24px;height:24px;background:'+(open?"#2980b9":"transparent")+';border:1px solid #2980b955;border-radius:6px;cursor:pointer;color:'+(open?"#fff":"#2980b9")+';font-size:11px;flex-shrink:0">⇄</button>':'')+
-          (can&&added?'<button data-a="est-mat-add-del" data-k="'+esc(pos.key)+'" data-m="'+esc(m.id||"")+'" title="Убрать дописанный материал" style="width:24px;height:24px;background:transparent;border:1px solid #dde6f0;border-radius:6px;cursor:pointer;color:#9aabbf;font-size:11px;flex-shrink:0">✕</button>':'')+
-          // Убрать материал из ЭТОГО дома: справочник общий, и удалять из него
-          // ради одного дома значит менять состав всех будущих. Материал
-          // выключается в листе и возвращается тем же тапом.
-          (can&&!added?'<button data-a="est-mat-off" data-k="'+esc(matSwapKey(pos,m))+'" title="Убрать материал из этой строки" style="width:24px;height:24px;background:transparent;border:1px solid #dde6f0;border-radius:6px;cursor:pointer;color:#9aabbf;font-size:11px;flex-shrink:0">✕</button>':'')+
+          (can&&added?'<button data-a="est-mat-add-del" data-k="'+esc(pos.key)+'" data-m="'+esc(m.id||"")+'" title="Удалить дописанный материал совсем — выключить можно галочкой" style="width:24px;height:24px;background:transparent;border:1px solid #dde6f0;border-radius:6px;cursor:pointer;color:#9aabbf;font-size:11px;flex-shrink:0">✕</button>':'')+
           // Порядок материалов — тот же жест, что у работ: взял и указал место, а
           // на соседнюю строку быстрее тапнуть стрелкой. Список читают сверху вниз
           // и по нему закупают.
@@ -15172,14 +15180,27 @@ function glueAddHtml(pos, mats, off, sh, can, glue){
     glueRateHtml(glue, true)+
   '</div>';
 }
+// Выключенный материал — СТРОКА со снятой галочкой, а не чип: тот же вид, что у
+// выключенной работы. Чипом он читался как «что-то тут было», и было неясно,
+// считается ли он; строка с пустым квадратом отвечает на это сама. Стоит ниже
+// живых — порядок внутри работы читают сверху вниз и по нему закупают, и
+// выключенному в этом списке места нет.
 function matOffHtml(pos, off, sh){
   if(!off||!off.length)return '';
-  return '<div style="padding:6px 0 2px;display:flex;flex-wrap:wrap;align-items:center;gap:5px">'+
-    '<span style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.3px">УБРАНО ИЗ ЭТОГО ДОМА:</span>'+
+  return '<div style="margin-top:4px;border-top:1px solid #eaf0f6;padding-top:4px">'+
+    '<div style="font-size:9px;font-weight:800;color:#a8b8c8;letter-spacing:0.5px;margin-bottom:2px">ВЫКЛЮЧЕНО В ЭТОМ ДОМЕ · '+off.length+'</div>'+
     off.map(function(addr){
-      return '<button data-a="est-mat-on" data-k="'+esc(pos.key+"|"+addr)+'" title="Вернуть материал в строку" '+
-        'style="border:1px solid #dde6f0;background:#fff;border-radius:7px;padding:3px 8px;font-size:10.5px;color:#7a9aaa;cursor:pointer">'+
-        esc(matOffName(pos, sh, addr))+' ⟲</button>';
+      // Дописанный руками материал можно ещё и удалить совсем: выключенный он
+      // остаётся в листе, и тому, кто вписал его по ошибке, нужен крестик.
+      const add=matAddOf(sh, pos.key).find(function(x){ return matAddKey(x)===addr; });
+      return '<div style="display:flex;align-items:baseline;gap:7px;padding:4px 0">'+
+        matOnBoxHtml(pos.key+"|"+addr, false)+
+        '<span style="flex:1;min-width:0;font-size:11.5px;color:#9aabbf;line-height:1.35;text-decoration:line-through">'+
+          esc(matOffName(pos, sh, addr))+'</span>'+
+        '<span style="font-size:10px;font-weight:700;color:#9aabbf;white-space:nowrap">не в итоге</span>'+
+        (add?'<button data-a="est-mat-add-del" data-k="'+esc(pos.key)+'" data-m="'+esc(add.id||"")+'" title="Удалить дописанный материал совсем" '+
+          'style="width:24px;height:24px;background:transparent;border:1px solid #dde6f0;border-radius:6px;cursor:pointer;color:#9aabbf;font-size:11px;flex-shrink:0;padding:0">✕</button>':'')+
+      '</div>';
     }).join("")+
   '</div>';
 }
@@ -15251,6 +15272,18 @@ function estPosSetChips(p, sh, fact){
   const f=factOfPos(fact, p);
   if(f>0)out.push(chip("#16a085","#e8f6f3","факт "+numRu(f)+" ч"));
   return out.join("");
+}
+// Галочка «считать в смете» у материала — тот же жест, что у работы
+// (`estOnBoxHtml`), только меньше: строка работы крупнее строки материала.
+// Снятая галочка не удаляет материал, а выключает его в ЭТОМ доме (`matOff`):
+// справочник смет общий, и правка ради одного дома изменила бы состав всех
+// будущих. Выключенный материал остаётся в списке серым и включается тем же
+// тапом — «нет здесь» это решение, а исчезнувшая строка не отличима от потери.
+function matOnBoxHtml(key, on){
+  return '<button data-a="'+(on?"est-mat-off":"est-mat-on")+'" data-k="'+esc(key)+'" role="checkbox" aria-checked="'+(on?"true":"false")+'" '+
+    'title="'+(on?"Считается в смете — снимите, чтобы выключить материал в этом доме":"Не считается в смете — отметьте, чтобы вернуть материал")+'" '+
+    'style="width:18px;height:18px;align-self:flex-start;margin-top:1px;flex-shrink:0;background:'+(on?"#16a085":"#fff")+';border:1.5px solid '+(on?"#16a085":"#c0ccd8")+';'+
+    'border-radius:5px;cursor:pointer;color:#fff;font-size:10px;font-weight:800;line-height:1;padding:0">'+(on?"✓":"")+'</button>';
 }
 // Ручка переноса материала — тот же жест, что у работ: тянут, а не «берут».
 function matDragBtn(key){
@@ -28275,7 +28308,11 @@ function bind(){
       const map=Object.assign({}, sh.matAdd);
       const row=(map[posKey]||[]).filter(function(x){return x.id!==mid;});
       if(row.length)map[posKey]=row; else delete map[posKey];
-      sh.matAdd=map; fl();
+      sh.matAdd=map;
+      // Удалённый материал не должен остаться выключенным: его адреса в листе
+      // больше не за что зацепить, а в списке он стал бы строкой-призраком.
+      if(sh.matOff)estUnmarkMatOff(sh, posKey, "+"+mid);
+      fl();
     };}
     // ── Варианты: один из нескольких ───────────────────────────────────────
     else if(a==="est-opt-pick"){el.onclick=()=>{
@@ -28418,23 +28455,21 @@ function bind(){
       const cut=k.lastIndexOf("|");
       const posKey=k.slice(0,cut), pid=k.slice(cut+1);
       const sh=schemeSheet(); if(!sh||!posKey||!pid)return;
-      estSnap(sh, "убранный материал");
+      estSnap(sh, "выключение материала");
       const map=Object.assign({}, sh.matOff||{});
       const row=(map[posKey]||[]).filter(function(x){ return String(x)!==pid; });
       map[posKey]=row.concat([pid]);
       sh.matOff=map; matSwapOpen=""; scheduleSave(); fl();
-      estFlash("Материал убран из строки");
+      estFlash("Материал выключен — не считается в смете");
     };}
+    // Галочка вернулась: материал снова считается в смете, закупке и договоре.
     else if(a==="est-mat-on"){el.onclick=()=>{
       const k=el.dataset.k||"";
       const cut=k.lastIndexOf("|");
       const posKey=k.slice(0,cut), pid=k.slice(cut+1);
       const sh=schemeSheet(); if(!sh||!sh.matOff)return;
-      const map=Object.assign({}, sh.matOff);
-      const gone=matAddrsAt(sh, posKey, pid).concat([pid]);
-      const row=(map[posKey]||[]).filter(function(x){ return gone.indexOf(String(x))<0; });
-      if(row.length)map[posKey]=row; else delete map[posKey];
-      if(Object.keys(map).length)sh.matOff=map; else delete sh.matOff;
+      estSnap(sh, "включение материала");
+      estUnmarkMatOff(sh, posKey, pid);
       scheduleSave(); fl();
     };}
     else if(a==="est-mat-qty-reset"){el.onclick=()=>{
