@@ -23921,9 +23921,14 @@ function ctTplDefaults(){
     city:"г. Москва",
     execKey:"kublitskaya",
     objType:ot.k,
+    clientKind:"person",    // заказчик: "person" — физлицо, "org" — юрлицо (безнал)
     fio:"", dob:"", citizenship:"РФ",
     passport:"", passportIssued:"", passportDate:"", passportCode:"",
     regAddress:"", phone:"",
+    // Юрлицо — поля учётной карточки предприятия (заполняются вместо паспортных)
+    orgName:"", orgShort:"", orgInn:"", orgKpp:"", orgOgrn:"", orgAddress:"",
+    orgRepr:"", orgBasis:"Устава", orgSigner:"",
+    orgBank:"", orgBik:"", orgAcc:"", orgCorr:"", orgEmail:"",
     subject:ot.subject,
     amount:0,
     workDays:45,
@@ -24046,11 +24051,101 @@ function ctTplDeadline(){
   return d.toISOString().slice(0,10);
 }
 
-// CRM-клиент шаблона: сперва по ФИО, затем по последним 10 цифрам телефона
-// (в CRM он записан как «+7 (985) …», в шаблоне может быть как угодно).
+// ─── Заказчик: физлицо или юрлицо ────────────────────────────────────────────
+// Юрлицо (безналичный расчёт) раньше завести было нельзя: преамбула и реквизиты
+// собирались жёстко как «Гражданин (ка) …, паспорт …», полей ИНН/КПП/банка не было.
+// Теперь вид заказчика хранит clientKind, а ВЕСЬ текст про него собирают функции
+// ниже — договор, акт и карточка портала берут его только отсюда, иначе формы
+// разъезжаются (в договоре организация, в акте паспорт пустого физлица).
+function ctTplIsOrg(){ return ctTplGet().clientKind==="org"; }
+
+// Имя заказчика: карточка портала, поиск в CRM, проверки «поле не заполнено»
+function ctTplClientName(){
+  const t=ctTplGet();
+  if(t.clientKind==="org")return String(t.orgShort||t.orgName||"").trim();
+  return String(t.fio||"").trim();
+}
+
+// «именуемый (-ая)» / «именуемое» — род слова «Заказчик» в шапке договора
+function ctTplClientNamed(){ return ctTplIsOrg()?"именуемое":"именуемый (-ая)"; }
+
+// Преамбула заказчика для шапки договора
+function ctTplClientPreamble(){
+  const t=ctTplGet();
+  if(t.clientKind==="org"){
+    let s=esc(t.orgName||t.orgShort||"");
+    if(t.orgInn)s+=", ИНН "+esc(t.orgInn);
+    if(t.orgKpp)s+=", КПП "+esc(t.orgKpp);
+    if(t.orgOgrn)s+=", ОГРН "+esc(t.orgOgrn);
+    if(t.orgAddress)s+=", юридический адрес: "+esc(t.orgAddress);
+    if(t.orgRepr)s+=", в лице "+esc(t.orgRepr);
+    s+=", действующего на основании "+esc(t.orgBasis||"Устава");
+    return s;
+  }
+  let s="Гражданин (ка) "+esc(t.citizenship||"РФ")+" "+esc(t.fio);
+  if(t.dob)s+=", "+dateRuShort(t.dob)+" г.р.";
+  s+=", паспорт серия и номер: "+esc(t.passport||"____________");
+  if(t.passportIssued)s+=", кем выдан: "+esc(t.passportIssued);
+  if(t.passportDate)s+=", дата выдачи: "+dateRuShort(t.passportDate)+" г.";
+  if(t.passportCode)s+=", код подразделения "+esc(t.passportCode);
+  if(t.regAddress)s+=", зарегистрированный (-ая) по адресу: "+esc(t.regAddress);
+  return s;
+}
+
+// Короткая преамбула заказчика для акта сдачи-приёмки
+function ctTplClientShort(){
+  const t=ctTplGet();
+  if(t.clientKind==="org"){
+    let s=esc(t.orgShort||t.orgName||"");
+    if(t.orgInn)s+=", ИНН "+esc(t.orgInn);
+    if(t.orgRepr)s+=", в лице "+esc(t.orgRepr);
+    return s;
+  }
+  let s="Гражданин "+esc(t.citizenship||"РФ")+" "+esc(t.fio);
+  s+=", паспорт "+esc(t.passport||"____________");
+  if(t.passportIssued)s+=", выдан "+esc(t.passportIssued);
+  if(t.passportDate)s+=" "+dateRuShort(t.passportDate)+" г.";
+  return s;
+}
+
+// Реквизиты заказчика для п. 12 договора и подписного блока акта
+function ctTplClientReq(){
+  const t=ctTplGet();
+  if(t.clientKind==="org"){
+    let s=esc(t.orgName||t.orgShort||"")+"<br>";
+    if(t.orgInn)s+="ИНН: "+esc(t.orgInn)+(t.orgKpp?" · КПП: "+esc(t.orgKpp):"")+"<br>";
+    if(t.orgOgrn)s+="ОГРН: "+esc(t.orgOgrn)+"<br>";
+    if(t.orgAddress)s+="Юридический адрес: "+esc(t.orgAddress)+"<br>";
+    if(t.orgAcc)s+="Расчетный счет: "+esc(t.orgAcc)+"<br>";
+    if(t.orgBank)s+="Название банка: "+esc(t.orgBank)+"<br>";
+    if(t.orgBik)s+="БИК: "+esc(t.orgBik)+"<br>";
+    if(t.orgCorr)s+="Корреспондентский счет: "+esc(t.orgCorr)+"<br>";
+    if(t.phone)s+="Контактный телефон: "+esc(t.phone)+"<br>";
+    if(t.orgEmail)s+="E-mail: "+esc(t.orgEmail);
+    return s;
+  }
+  let s=esc(t.fio)+"<br>";
+  if(t.dob)s+="Дата рождения: "+dateRuShort(t.dob)+" г.<br>";
+  s+="Паспорт "+esc(t.citizenship||"РФ")+" серия и номер: "+esc(t.passport||"—")+"<br>";
+  if(t.passportIssued)s+="Кем выдан: "+esc(t.passportIssued)+"<br>";
+  if(t.passportDate)s+="Дата выдачи: "+dateRuShort(t.passportDate)+" г."+(t.passportCode?", код подразделения "+esc(t.passportCode):"")+"<br>";
+  if(t.regAddress)s+="Адрес регистрации: "+esc(t.regAddress)+"<br>";
+  if(t.phone)s+="Контактный телефон: "+esc(t.phone);
+  return s;
+}
+
+// Ячейка подписи Заказчика в п. 12: у юрлица подписывает представитель, с печатью
+function ctTplClientSignCell(){
+  const t=ctTplGet();
+  if(t.clientKind==="org")return "Заказчик ____________ / "+esc(t.orgSigner||"________________")+" /<br>М.П.";
+  return "Заказчик _________________";
+}
+
+// CRM-клиент шаблона: сперва по имени заказчика, затем по последним 10 цифрам
+// телефона (в CRM он записан как «+7 (985) …», в шаблоне может быть как угодно).
 function ctTplCrmClient(){
   const t=ctTplGet();
-  const fio=String(t.fio||"").trim().toLowerCase();
+  const fio=ctTplClientName().toLowerCase();
   const digits=String(t.phone||"").replace(/\D/g,"");
   let cl=fio?crmClients.find(function(c){return String(c.name||"").trim().toLowerCase()===fio;}):null;
   if(!cl&&digits.length>=10){
@@ -24065,9 +24160,9 @@ function ctTplCrmClient(){
 // карточку заводить нельзя: по ним договор ищут в списке и по ним считают деньги.
 function ctTplToPortal(){
   const t=ctTplGet();
-  const fio=String(t.fio||"").trim();
+  const fio=ctTplClientName();
   const amount=Number(t.amount)||0;
-  if(!fio){alert("Заполните ФИО заказчика — без него договор в портале не найти.");return "";}
+  if(!fio){alert("Заполните "+(ctTplIsOrg()?"название организации":"ФИО заказчика")+" — без него договор в портале не найти.");return "";}
   if(!amount){alert("Заполните сумму договора.");return "";}
   const num=String(t.num||"").trim();
   const dup=num?contractDocs.find(function(c){return ctShortNum(c.name)===num;}):null;
@@ -24122,7 +24217,7 @@ function ctTplPortalCard(card){
       '<option value=""'+(!t.portalObjId?' selected':'')+'>— Без объекта (черновик) —</option>'+objOpts+
     '</select>'+
     '<div style="font-size:11px;color:#5a7a9a;line-height:1.7;margin-bottom:10px">'+
-      '№ <b>'+esc(String(t.num||"—"))+'</b> · '+esc(String(t.fio||"").trim()||"клиент не заполнен")+' · <b>'+fmtMoney(Number(t.amount)||0)+' ₽</b>'+
+      '№ <b>'+esc(String(t.num||"—"))+'</b> · '+esc(ctTplClientName()||"клиент не заполнен")+' · <b>'+fmtMoney(Number(t.amount)||0)+' ₽</b>'+
       (dl?'<br>Дедлайн: <b>'+dateRuShort(dl)+'</b> ('+dateRuShort(t.date)+' + '+(parseInt(t.workDays,10)||0)+' раб. дн)':'')+
       (cl?'<br>Привяжется к клиенту CRM: <b>'+esc(cl.name)+'</b>':'<br>В CRM такого клиента нет — договор заведётся без привязки')+
       '<br><span style="color:#9aabbf">Паспортные данные в портал не уходят — остаются в этом черновике.</span>'+
@@ -24200,24 +24295,39 @@ function tContractTemplate(){
       inp("subject","ПРЕДМЕТ (ЧТО ИЗГОТАВЛИВАЕМ)",{minw:"100%",ph:"бани в количестве 1 шт. на базе морского контейнера, наружной площадью 20 кв.м"})+
     '</div>');
 
+  // Заказчик: физлицо (паспорт) или юрлицо (реквизиты) — поля взаимоисключающие,
+  // поэтому показываем только нужную половину, а не обе сразу.
+  const row=function(inner,gap){return '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:'+(gap==null?8:gap)+'px">'+inner+'</div>';};
+  const personFields=
+    row(inp("fio","ФИО ПОЛНОСТЬЮ",{minw:"220px",ph:"Иванов Иван Иванович"})+
+        inp("dob","ДАТА РОЖДЕНИЯ",{type:"date"})+
+        inp("citizenship","ГРАЖДАНСТВО",{ph:"РФ"}))+
+    row(inp("passport","ПАСПОРТ: СЕРИЯ И НОМЕР",{ph:"4523 282037"})+
+        inp("passportDate","ДАТА ВЫДАЧИ",{type:"date"})+
+        inp("passportCode","КОД ПОДРАЗДЕЛЕНИЯ",{ph:"770-125"}))+
+    row(inp("passportIssued","КЕМ ВЫДАН",{minw:"100%",ph:"ГУ МВД России по г. Москве"}))+
+    row(inp("regAddress","АДРЕС РЕГИСТРАЦИИ",{minw:"220px",ph:"г. Москва, ул. …, д. …, кв. …"})+
+        inp("phone","ТЕЛЕФОН",{ph:"+7 …"}),0);
+  const orgFields=
+    row(inp("orgName","ПОЛНОЕ НАЗВАНИЕ",{minw:"100%",ph:'Общество с ограниченной ответственностью "…"'}))+
+    row(inp("orgShort","СОКРАЩЁННОЕ",{ph:'ООО "…"'})+
+        inp("orgInn","ИНН",{ph:"5075020003"})+
+        inp("orgKpp","КПП",{ph:"507501001"})+
+        inp("orgOgrn","ОГРН",{ph:"1115075001975"}))+
+    row(inp("orgAddress","ЮРИДИЧЕСКИЙ АДРЕС",{minw:"100%",ph:"143103, Московская обл., г. Руза, …"}))+
+    row(inp("orgRepr","В ЛИЦЕ (РОД. ПАДЕЖ)",{minw:"260px",ph:"генерального директора Иванова Ивана Ивановича"})+
+        inp("orgBasis","ДЕЙСТВУЕТ НА ОСНОВАНИИ",{ph:"Устава"}))+
+    row(inp("orgSigner","ПОДПИСЬ: ДОЛЖНОСТЬ И ФИО",{minw:"220px",ph:"Генеральный директор Иванов И.И."})+
+        inp("phone","ТЕЛЕФОН",{ph:"+7 …"}))+
+    row(inp("orgBank","БАНК",{minw:"220px",ph:"ПАО СБЕРБАНК"})+
+        inp("orgBik","БИК",{ph:"044525225"}))+
+    row(inp("orgAcc","РАСЧЁТНЫЙ СЧЁТ",{minw:"220px",ph:"40702810138260016651"})+
+        inp("orgCorr","КОРР. СЧЁТ",{minw:"220px",ph:"30101810400000000225"}))+
+    row(inp("orgEmail","E-MAIL",{minw:"220px",ph:"info@example.ru"}),0);
   html+=card("👤 ЗАКАЗЧИК",
-    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">'+
-      inp("fio","ФИО ПОЛНОСТЬЮ",{minw:"220px",ph:"Иванов Иван Иванович"})+
-      inp("dob","ДАТА РОЖДЕНИЯ",{type:"date"})+
-      inp("citizenship","ГРАЖДАНСТВО",{ph:"РФ"})+
-    '</div>'+
-    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">'+
-      inp("passport","ПАСПОРТ: СЕРИЯ И НОМЕР",{ph:"4523 282037"})+
-      inp("passportDate","ДАТА ВЫДАЧИ",{type:"date"})+
-      inp("passportCode","КОД ПОДРАЗДЕЛЕНИЯ",{ph:"770-125"})+
-    '</div>'+
-    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">'+
-      inp("passportIssued","КЕМ ВЫДАН",{minw:"100%",ph:"ГУ МВД России по г. Москве"})+
-    '</div>'+
-    '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
-      inp("regAddress","АДРЕС РЕГИСТРАЦИИ",{minw:"220px",ph:"г. Москва, ул. …, д. …, кв. …"})+
-      inp("phone","ТЕЛЕФОН",{ph:"+7 …"})+
-    '</div>');
+    toggleRow("КТО ЗАКАЗЧИК",[{k:"person",n:"👤 Физлицо"},{k:"org",n:"🏢 Юрлицо"}],
+      ctTplIsOrg()?"org":"person","ct-tpl-clientkind")+
+    (ctTplIsOrg()?orgFields:personFields));
 
   // Сумма и сроки
   html+=card("💰 СУММА И СРОКИ",
@@ -24415,22 +24525,9 @@ function ctTplDocHtml(){
   const amount=Number(t.amount)||0;
   const wd=parseInt(t.workDays,10)||45;
   const wm=parseInt(t.warrantyMonths,10)||12;
-  // Преамбула заказчика: Гражданин(ка) + гражданство + ФИО + д.р. + паспорт + регистрация
-  let client="Гражданин (ка) "+esc(t.citizenship||"РФ")+" "+esc(t.fio);
-  if(t.dob)client+=", "+dateRuShort(t.dob)+" г.р.";
-  client+=", паспорт серия и номер: "+esc(t.passport||"____________");
-  if(t.passportIssued)client+=", кем выдан: "+esc(t.passportIssued);
-  if(t.passportDate)client+=", дата выдачи: "+dateRuShort(t.passportDate)+" г.";
-  if(t.passportCode)client+=", код подразделения "+esc(t.passportCode);
-  if(t.regAddress)client+=", зарегистрированный (-ая) по адресу: "+esc(t.regAddress);
-  // Реквизиты заказчика для п. 12 и акта
-  let clientReq=esc(t.fio)+"<br>";
-  if(t.dob)clientReq+="Дата рождения: "+dateRuShort(t.dob)+" г.<br>";
-  clientReq+="Паспорт "+esc(t.citizenship||"РФ")+" серия и номер: "+esc(t.passport||"—")+"<br>";
-  if(t.passportIssued)clientReq+="Кем выдан: "+esc(t.passportIssued)+"<br>";
-  if(t.passportDate)clientReq+="Дата выдачи: "+dateRuShort(t.passportDate)+" г."+(t.passportCode?", код подразделения "+esc(t.passportCode):"")+"<br>";
-  if(t.regAddress)clientReq+="Адрес регистрации: "+esc(t.regAddress)+"<br>";
-  if(t.phone)clientReq+="Контактный телефон: "+esc(t.phone);
+  // Преамбула и реквизиты заказчика — физлицо или юрлицо, см. ctTplClientPreamble
+  const client=ctTplClientPreamble();
+  const clientReq=ctTplClientReq();
   // Пункты графика платежей (3.2.x) — из строк формы
   const pays=(t.payments||[]).filter(function(p){return (Number(p.amount)||0)>0||String(p.note||"").trim();});
   function payItems(prefix){
@@ -24487,14 +24584,14 @@ function ctTplDocHtml(){
     '<h1>Договор подряда № '+num+'</h1>'+
     '<div class="dateline"><span>'+esc(t.city||"г. Москва")+'</span><span>'+dateRuWords(t.date)+'</span></div>'+
 
-    '<p>'+ex.preamble+', именуемый в дальнейшем <b>«Исполнитель»</b>, с одной стороны, и '+client+', именуемый (-ая) в дальнейшем <b>«Заказчик»</b>, с другой стороны, далее именуемые «Стороны», заключили настоящий Договор о следующем:</p>'+
+    '<p>'+ex.preamble+', именуемый в дальнейшем <b>«Исполнитель»</b>, с одной стороны, и '+client+', '+ctTplClientNamed()+' в дальнейшем <b>«Заказчик»</b>, с другой стороны, далее именуемые «Стороны», заключили настоящий Договор о следующем:</p>'+
 
     sectionsHtml+
 
     '<div class="sec">12. Адреса, банковские реквизиты и подписи Сторон</div>'+
     '<table class="req"><tr><td class="rh">Исполнитель</td><td class="rh">Заказчик</td></tr>'+
     '<tr><td>'+ex.req+'</td><td>'+clientReq+'</td></tr>'+
-    '<tr><td style="height:60px">Исполнитель '+ctSignLine('_________________',80,-17,4)+'</td><td>Заказчик _________________</td></tr></table>'+
+    '<tr><td style="height:60px">Исполнитель '+ctSignLine('_________________',80,-17,4)+'</td><td>'+ctTplClientSignCell()+'</td></tr></table>'+
 
     // Приложение № 2 — График платежей
     '<div class="app">'+appHead(2)+
@@ -24521,7 +24618,7 @@ function ctTplOpenPrint(){
   const t=ctTplGet();
   const missing=[];
   if(!String(t.num||"").trim())missing.push("№ договора");
-  if(!String(t.fio||"").trim())missing.push("ФИО заказчика");
+  if(!ctTplClientName())missing.push(ctTplIsOrg()?"название организации":"ФИО заказчика");
   if(!(Number(t.amount)>0))missing.push("сумма договора");
   if(missing.length){ alert("Заполните: "+missing.join(", ")); return; }
   const total=(t.payments||[]).reduce(function(a,p){return a+(Number(p.amount)||0);},0);
@@ -24631,11 +24728,8 @@ function ctActDocHtml(){
   const isFinal=ctActIsFinal();
   const stageNo=ctActStageNo();
   const objWord=(ctTplObjType().k==="house")?"дома":"бани";
-  // Преамбула заказчика (как в договоре)
-  let client="Гражданин "+esc(t.citizenship||"РФ")+" "+esc(t.fio);
-  client+=", паспорт "+esc(t.passport||"____________");
-  if(t.passportIssued)client+=", выдан "+esc(t.passportIssued);
-  if(t.passportDate)client+=" "+dateRuShort(t.passportDate)+" г.";
+  // Преамбула заказчика (как в договоре) — физлицо или юрлицо
+  const client=ctTplClientShort();
   // Строки таблицы расчёта
   const rows=[];
   rows.push(["Стоимость работ по "+(isFinal?"Договору (п. 3.1)":("закрытым этапам (по "+stageNo+")")), fmtMoney(calc.stagesCost)+" ₽"]);
@@ -24654,8 +24748,8 @@ function ctActDocHtml(){
   const sig='<div class="sig"><span>Исполнитель _________________</span><span>Заказчик _________________</span></div>';
   // Реквизиты подписей
   const signBlock='<table class="req"><tr><td class="rh">Исполнитель</td><td class="rh">Заказчик</td></tr>'+
-    '<tr><td>'+ex.req+'</td><td>'+esc(t.fio)+'<br>Паспорт '+esc(t.citizenship||"РФ")+' '+esc(t.passport||"—")+
-      (t.phone?'<br>тел. '+esc(t.phone):'')+(t.actAddress?'<br>адрес: '+esc(t.actAddress):'')+'</td></tr>'+
+    '<tr><td>'+ex.req+'</td><td>'+ctTplClientReq()+
+      (t.actAddress?'<br>адрес: '+esc(t.actAddress):'')+'</td></tr>'+
     '<tr><td style="height:52px">'+ctSignLine('____________',62,-13,44)+' / '+esc(ctExecSignName(ex))+' /<br>М.П.</td><td>____________ / ________________ /<br>(подпись)</td></tr></table>';
 
   const titleLine=isFinal
@@ -24767,7 +24861,7 @@ function ctActOpenPrint(){
   const t=ctTplGet();
   const missing=[];
   if(!String(t.num||"").trim())missing.push("№ договора");
-  if(!String(t.fio||"").trim())missing.push("ФИО заказчика");
+  if(!ctTplClientName())missing.push(ctTplIsOrg()?"название организации":"ФИО заказчика");
   if(!(Number(t.amount)>0))missing.push("сумма договора");
   if(missing.length){ alert("Заполните: "+missing.join(", ")); return; }
   const w=window.open("","_blank");
@@ -29660,6 +29754,13 @@ function bind(){
     // ─── Шаблон договора (подвкладка) ───
     else if(a==="ct-subtab"){el.onclick=()=>{ctSubTab=el.dataset.st;render();};}
     else if(a==="ct-tpl-exec"){el.onclick=()=>{ctTplGet().execKey=el.dataset.k;ctTplPersist();render();};}
+    else if(a==="ct-tpl-clientkind"){el.onclick=()=>{
+      const t=ctTplGet();
+      const k=el.dataset.k==="org"?"org":"person";
+      if(t.clientKind===k)return;
+      t.clientKind=k;   // поля обеих половин остаются в черновике — можно вернуться назад
+      ctTplPersist();render();
+    };}
     else if(a==="ct-tpl-sign"){el.onclick=()=>{const t=ctTplGet();t.signOn=!t.signOn;ctTplPersist();render();};}
     else if(a==="ct-tpl-objtype"){el.onclick=()=>{
       const t=ctTplGet();
@@ -29706,7 +29807,7 @@ function bind(){
       const c=contractDocs.find(function(x){return x.id===el.value;});
       if(!c)return;
       const t=ctTplGet();
-      t.fio=c.client||t.fio;
+      if(c.client){ if(t.clientKind==="org")t.orgShort=c.client; else t.fio=c.client; }
       if(c.amount)t.amount=c.amount;
       const numM=ctShortNum(c.name); if(numM)t.num=numM;
       if(c.signDate)t.date=c.signDate;
@@ -29735,7 +29836,7 @@ function bind(){
       const cl=crmClients.find(function(c){return c.id===el.value;});
       if(!cl)return;
       const t=ctTplGet();
-      t.fio=cl.name||"";
+      if(t.clientKind==="org")t.orgShort=cl.name||""; else t.fio=cl.name||"";
       if(cl.phone)t.phone=cl.phone;
       ctTplPersist();
       render();

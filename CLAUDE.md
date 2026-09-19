@@ -77,6 +77,7 @@
 | замена материала и лимит `matChangeLimit` | `docs/domain/mat-change.md` | `test-mat-change` |
 | бюджет выбора `m.sel`, сроки выбора | `docs/domain/client-selection.md` | `matSelBudget`, `pendingSelections` |
 | вкладка «🏠 Спецификация», продажа собирает объект/договор | `docs/domain/spec-sheet.md` | `src/spec.js`, `tSpec`, `specSheets` |
+| шаблон договора и акта, заказчик физлицо/юрлицо | `docs/domain/contract-template.md` | `ctTplDocHtml`, `ctActDocHtml` |
 | коробка, перегородки, проёмы, площади | `docs/domain/container-model.md` | `src/model.js`, `src/geom.js` |
 | квартира: площади из экспликации вместо чертежа | `docs/domain/flat-model.md` | `isFlat`, `flatRooms`, `flatToModel` |
 | чертёж проекта, узлы, смета по чертежу, редактор модели (большой файл ~70 КБ — читать нужный подраздел) | `docs/domain/spec2.md` | `src/spec2.js`, `estBodyHtml`, `projPlanHtml` |
