@@ -24614,6 +24614,54 @@ function ctTplDocHtml(){
 }
 
 // Открыть печатную форму в новом окне + сразу диалог печати (Сохранить как PDF)
+// Показать готовый документ и отправить его на печать.
+//
+// Раньше документ уходил в window.open+document.write. Всплывающее окно глушат все
+// подряд: встроенный браузер Claude открывает его молча в никуда (window.open даже
+// возвращает объект, так что старая проверка на null не срабатывала), Safari на iOS
+// режет окно, если между тапом и открытием случился await. Кнопка «Сформировать
+// договор» просто переставала работать, и понять почему было нельзя.
+//
+// Поэтому документ теперь рисуется в оверлее поверх панели — в iframe со своим
+// srcdoc, то есть ровно тем же HTML, что уходил в окно. Печатаем сам iframe:
+// @media print в документе прячет тулбар, а панель под оверлеем в печать не идёт.
+function ctOpenDocPrint(html,title){
+  const prev=document.getElementById("ct-doc-overlay");
+  if(prev)prev.remove();
+  const ov=document.createElement("div");
+  ov.id="ct-doc-overlay";
+  ov.style.cssText="position:fixed;inset:0;z-index:10000;background:#1a2a3a;display:flex;flex-direction:column";
+  const bar=document.createElement("div");
+  bar.style.cssText="display:flex;gap:8px;align-items:center;padding:10px 12px;background:#1a2a3a;color:#fff;font-size:13px;flex:0 0 auto";
+  const btnPrint=document.createElement("button");
+  btnPrint.dataset.doc="print";
+  btnPrint.textContent="🖨 Печать / Сохранить в PDF";
+  btnPrint.style.cssText="padding:9px 18px;background:#27ae60;border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer";
+  const cap=document.createElement("span");
+  cap.textContent=String(title||"");
+  cap.style.cssText="flex:1;opacity:0.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+  const btnClose=document.createElement("button");
+  btnClose.dataset.doc="close";
+  btnClose.textContent="✕ Закрыть";
+  btnClose.style.cssText="padding:9px 14px;background:transparent;border:1px solid #ffffff44;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer";
+  bar.appendChild(btnPrint); bar.appendChild(cap); bar.appendChild(btnClose);
+  const frame=document.createElement("iframe");
+  frame.style.cssText="flex:1 1 auto;width:100%;border:0;background:#fff";
+  frame.setAttribute("title",title||"Документ");
+  ov.appendChild(bar);
+  ov.appendChild(frame);
+  document.body.appendChild(ov);
+  frame.srcdoc=html;
+  const printIt=function(){
+    try{ frame.contentWindow.focus(); frame.contentWindow.print(); }catch(e){}
+  };
+  btnPrint.onclick=printIt;
+  btnClose.onclick=function(){ ov.remove(); };
+  // Автодиалог печати, когда документ отрисован. Не выгорит — печать остаётся
+  // по кнопке, документ на экране, и это уже не тупик, как с пустым окном.
+  frame.onload=function(){ setTimeout(printIt,150); };
+}
+
 function ctTplOpenPrint(){
   const t=ctTplGet();
   const missing=[];
@@ -24623,12 +24671,7 @@ function ctTplOpenPrint(){
   if(missing.length){ alert("Заполните: "+missing.join(", ")); return; }
   const total=(t.payments||[]).reduce(function(a,p){return a+(Number(p.amount)||0);},0);
   if(total!==Number(t.amount)&&!confirm("Сумма платежей ("+fmt(total)+") не совпадает с суммой договора ("+fmt(Number(t.amount))+").\nСформировать всё равно?"))return;
-  const w=window.open("","_blank");
-  if(!w){ alert("Браузер заблокировал новое окно. Разрешите всплывающие окна для портала."); return; }
-  w.document.write(ctTplDocHtml());
-  w.document.close();
-  // Авто-диалог печати после отрисовки; кнопка в тулбаре окна — запасной путь (iOS)
-  setTimeout(function(){ try{ w.focus(); w.print(); }catch(e){} },600);
+  ctOpenDocPrint(ctTplDocHtml(),"Договор подряда № "+String(t.num||""));
 }
 
 // ═══ АКТ ВЫПОЛНЕННЫХ РАБОТ ═══════════════════════════════════════════════════
@@ -24864,11 +24907,7 @@ function ctActOpenPrint(){
   if(!ctTplClientName())missing.push(ctTplIsOrg()?"название организации":"ФИО заказчика");
   if(!(Number(t.amount)>0))missing.push("сумма договора");
   if(missing.length){ alert("Заполните: "+missing.join(", ")); return; }
-  const w=window.open("","_blank");
-  if(!w){ alert("Браузер заблокировал новое окно. Разрешите всплывающие окна для портала."); return; }
-  w.document.write(ctActDocHtml());
-  w.document.close();
-  setTimeout(function(){ try{ w.focus(); w.print(); }catch(e){} },600);
+  ctOpenDocPrint(ctActDocHtml(),"Акт по договору № "+String(t.num||""));
 }
 
 // HTML расчётного блока акта (используется в форме и при частичной перерисовке)

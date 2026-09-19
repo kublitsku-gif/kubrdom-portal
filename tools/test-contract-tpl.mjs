@@ -175,4 +175,36 @@ const plain = (h) => h.replace(/<[^>]*>/g, ' ').replace(/&quot;/g, '"').replace(
   t.ok('кривая дата — пустая строка, а не «NaN-NaN-NaN»', p.q('addBusinessDays("не дата",5)') === '')
 }
 
+{
+  t.section('Печать: оверлей вместо всплывающего окна')
+  // Всплывающее окно глушат встроенные браузеры и iOS, причём молча — кнопка
+  // «Сформировать договор» переставала работать. Документ должен рисоваться в
+  // оверлее поверх панели, а window.open не звать вовсе.
+  const p = panel(ORG)
+  p.run('__opened=0; window.open=function(){__opened++; return null;};'
+    + '__made=[]; var _ce=document.createElement.bind(document);'
+    + 'document.createElement=function(tag){const e=_ce(tag); __made.push({tag:tag,e:e}); return e;};')
+  p.run('ctTplOpenPrint();')
+  const info = p.q('(function(){'
+    + 'const f=__made.filter(function(x){return x.tag==="iframe";}).pop();'
+    + 'const doc=f?String(f.e.srcdoc||""):"";'
+    + 'return {opened:__opened, overlay:!!document.getElementById("ct-doc-overlay"), len:doc.length,'
+    + ' num:doc.indexOf("1909-1/26")>=0, org:doc.indexOf("\u0420\u0423\u0417\u0421\u041a\u041e\u0415")>=0};})()')
+  t.ok('всплывающее окно не открывается', info.opened === 0, JSON.stringify(info))
+  t.ok('оверлей на странице', info.overlay === true)
+  t.ok('документ отдан в iframe', info.len > 5000, JSON.stringify(info))
+  t.ok('в документе номер и заказчик', info.num && info.org)
+
+  // Повторный вызов не должен копить оверлеи друг на друге
+  p.run('ctTplOpenPrint();')
+  const again = p.q('__made.filter(function(x){return x.tag==="iframe";}).length')
+  t.ok('второй вызов рисует новый iframe', again === 2)
+  t.ok('окно так и не открывалось', p.q('__opened') === 0)
+
+  // Акт печатается тем же путём
+  p.run('ctTplGet().docType="act"; ctTplGet().actStage=-1; ctActOpenPrint();')
+  t.ok('акт тоже без окна', p.q('__opened') === 0)
+  t.ok('акт отрисован в оверлее', p.q('__made.filter(function(x){return x.tag==="iframe";}).length') === 3)
+}
+
 t.done()
