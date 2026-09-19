@@ -88,7 +88,8 @@ function makeDoc(base) {
     }),
     node: (dataset, id) => {
       const el = { id, dataset, style: {}, onclick: null, onchange: null, oninput: null,
-        querySelectorAll: (sel) => nodes.filter((x) => match(sel, x)) }
+        querySelectorAll: (sel) => nodes.filter((x) => match(sel, x)),
+        querySelector: (sel) => nodes.find((x) => match(sel, x)) || null }
       nodes.push(el)
       if (id) fields.set(id, el)
       return el
@@ -119,7 +120,10 @@ export function boot({ confirm = true, net = null } = {}) {
   const ctx = vm.createContext(base)
   ctx.window = ctx; ctx.globalThis = ctx; ctx.self = ctx
   vm.runInContext(bundled(), ctx, { filename: 'admin.js' })
-  vm.runInContext('render=function(){};scheduleSave=function(){};renderExpCard=function(){};', ctx)
+  // Оригиналы кладём в _realFns: набору про экран каталога нужен НАСТОЯЩИЙ renderExpCard
+  // (счётчик шапки правится точечно внутри него), а глушилка его съедает.
+  vm.runInContext('_realFns={render:render,scheduleSave:scheduleSave,renderExpCard:renderExpCard};'
+    + 'render=function(){};scheduleSave=function(){};renderExpCard=function(){};', ctx)
   const q = (expr) => JSON.parse(vm.runInContext(`JSON.stringify(${expr})`, ctx) ?? 'null')
   return {
     ctx, dom, q, storage: store,

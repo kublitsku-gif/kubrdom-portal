@@ -200,4 +200,55 @@ const PRODUCTS = [
   t.ok('кнопка заведения нарисована', btn !== 'undefined', 'кнопки нет')
 }
 
+// ── Счётчик в шапке «Перечень материалов» ───────────────────────────────────
+// Число печатается во ВНЕШНЕЙ разметке вкладки, а заведение товара перерисовывает
+// только список внутри неё. Пока счётчик не правился точечно, он врал до полной
+// перерисовки вкладки: в каталоге 382 товара, в шапке — 380.
+{
+  t.section('Счётчик перечня материалов')
+  const p = boot()
+  p.set({
+    expProducts: PRODUCTS.slice(), objects: [], templates: [], estimates: [], dbPlans: [],
+    crmClients: [], specSheets: [], specSheets2: [], projects: [], buildRules: [], winTypes: [],
+    contractDocs: [], purchases: [], issues: [], users: [], stock: [], settings: {},
+  })
+
+  const html = p.run('tab="works";dbSection="mats";tWorks()')
+  t.ok('счётчик — отдельный узел', html.indexOf('id="dbmats-count"') >= 0, 'нет id у счётчика')
+  t.ok('на вкладке он печатает весь каталог', /ПЕРЕЧЕНЬ МАТЕРИАЛОВ \(4\)/.test(html),
+    (/ПЕРЕЧЕНЬ МАТЕРИАЛОВ[^<]*/.exec(html) || ['нет строки'])[0])
+
+  // Дальше нужен НАСТОЯЩИЙ рендер списка: счётчик правится внутри него.
+  p.run('renderExpCard=_realFns.renderExpCard;')
+  const head = p.dom.node({}, 'dbmats-count')
+  p.dom.node({}, 'dbmats-list')
+  p.run('expOpenId=null;expSearch="";renderExpCard("dbmats-list");')
+  t.ok('список нашёл счётчик шапки', head.textContent === 'ПЕРЕЧЕНЬ МАТЕРИАЛОВ (4)', head.textContent)
+
+  // Заведение товара («🔗 по ссылке», «📋 из таблицы») перерисовывает только список.
+  p.run('productNew({name:"Пена монтажная",cost:450,store:"Лемана"});renderExpCard();')
+  t.ok('число выросло без перерисовки вкладки',
+    head.textContent === 'ПЕРЕЧЕНЬ МАТЕРИАЛОВ (5)', head.textContent)
+
+  // «+ Добавить товар» уводит в карточку нового товара: счётчик обязан вырасти и там,
+  // иначе он врёт ровно до возврата в список.
+  p.run('expProducts.unshift({id:"p_new",emoji:"📦",name:"Новый товар",store:"",url:"",photo:"",'
+    + 'mode:"piece",unitCost:0,qty:1});expOpenId="p_new";renderExpCard();')
+  t.ok('карточка нового товара тоже двигает счётчик',
+    head.textContent === 'ПЕРЕЧЕНЬ МАТЕРИАЛОВ (6)', head.textContent)
+
+  // Удаление: то же место, обратная сторона.
+  p.run('expOpenId=null;expProducts=expProducts.filter(function(x){return x.id!=="p_new";});renderExpCard();')
+  t.ok('после удаления число падает', head.textContent === 'ПЕРЕЧЕНЬ МАТЕРИАЛОВ (5)', head.textContent)
+
+  // При поиске список отфильтрован, и счётчик говорит о том, что на экране — иначе
+  // шапка спорит со списком под ней.
+  p.run('expSearch="Саморез";renderExpCard();')
+  t.ok('поиск показывает «найдено N из M»',
+    head.textContent === 'ПЕРЕЧЕНЬ МАТЕРИАЛОВ (найдено 2 из 5)', head.textContent)
+  p.run('expSearch="";renderExpCard();')
+  t.ok('со снятым поиском снова весь каталог',
+    head.textContent === 'ПЕРЕЧЕНЬ МАТЕРИАЛОВ (5)', head.textContent)
+}
+
 t.done()

@@ -7981,7 +7981,7 @@ ${showNDBWork?`<div style="background:#fff;border-radius:12px;border:2px solid #
 </div>
 <div id="dbmats-list-wrap" style="display:none">
 <div style="margin-bottom:10px">
-  <div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">ПЕРЕЧЕНЬ МАТЕРИАЛОВ (${expProducts.length})</div>
+  <div id="dbmats-count" style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">${expCountLabel(expMatsFiltered().length)}</div>
   <div style="font-size:12px;color:#5a7a9a;margin-top:2px">Цена за единицу · пачка / лист / хлыст / м² / шт</div>
 </div>
 <div id="dbmats-list"></div>
@@ -9226,10 +9226,32 @@ function renderEstimates(){
     });
   });
 }
+// Каталог, суженный поиском: тот же набор, что уходит в карточки списка и в
+// счётчик шапки — иначе шапка спорит со списком под ней.
+function expMatsFiltered(){
+  const q=(expSearch||"").trim().toLowerCase();
+  if(!q)return expProducts;
+  return expProducts.filter(function(p){return (p.name||"").toLowerCase().indexOf(q)>=0||(p.store||"").toLowerCase().indexOf(q)>=0;});
+}
+
+// Число в шапке: без поиска — сколько всего в каталоге; с поиском — сколько
+// строк сейчас на экране и из скольких, как в подписи поиска по смете.
+function expCountLabel(shown){
+  const total=expProducts.length;
+  const n=(shown==null||shown===total)?String(total):("найдено "+shown+" из "+total);
+  return "ПЕРЕЧЕНЬ МАТЕРИАЛОВ ("+n+")";
+}
+
 function renderExpCard(containerId){
   if(containerId)expContainer=containerId;
   const el=document.getElementById(expContainer);
   if(!el)return;
+  const list=expMatsFiltered();
+  // Счётчик напечатан во ВНЕШНЕЙ разметке вкладки, а заведение и удаление товара
+  // перерисовывает только этот контейнер — поэтому число правим точечно здесь, иначе
+  // оно врёт до полной перерисовки вкладки (в каталоге 382, в шапке 380).
+  const cnt=document.getElementById("dbmats-count");
+  if(cnt)cnt.textContent=expCountLabel(list.length);
   // Режим редактора одного товара
   if(expOpenId){
     const p=expProducts.find(function(x){return x.id===expOpenId;});
@@ -9237,8 +9259,6 @@ function renderExpCard(containerId){
     expOpenId=null;
   }
   // Режим списка: поиск + отфильтрованные карточки
-  const q=(expSearch||"").trim().toLowerCase();
-  const list=q?expProducts.filter(function(p){return (p.name||"").toLowerCase().indexOf(q)>=0||(p.store||"").toLowerCase().indexOf(q)>=0;}):expProducts;
   // Был ли фокус в поиске ДО перерисовки — чтобы не выдёргивать клавиатуру при тапе на переключатель
   const _wasSearch=document.activeElement&&document.activeElement.id==="exp-search";
   const _wasTsv=document.activeElement&&document.activeElement.id==="ptsv-text";
