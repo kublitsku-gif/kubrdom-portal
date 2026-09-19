@@ -92,6 +92,7 @@
 | внешняя ручка добавления товара в каталог | `docs/domain/catalog-add-api.md` | `src/catalog.js`, `POST /api/catalog/add` |
 | какой набор `tools/test-*.mjs` что сторожит, панель в `node:vm` | `docs/domain/tests.md` | `tools/run-tests.mjs`, `tools/harness/` |
 | вкладка «🕘 История», журнал `audit_log` | `docs/domain/audit-history.md` | `src/audit.js`, `tHistory` |
+| ответственные за договор: кому видны объект и зарплата | `docs/domain/responsible-access.md` | `ctDefaultResponsible`, `getUserObjects`, `myFinContracts` |
 | офлайн-очередь фото в IndexedDB | `docs/domain/photo-queue.md` | раздел «ОЧЕРЕДЬ ЗАГРУЗКИ ФОТО» в admin.js |
 | ежедневный отчёт, выходной, штраф за незакрытый день | `docs/domain/day-close.md` | `src/dayclose.js`, `src/botday.js`, `runDayClose` |
 | «Снять фото/видео» открывал галерею в Telegram на Android, своя камера | `docs/domain/camera.md` | `src/camera.js` |

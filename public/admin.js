@@ -24025,13 +24025,18 @@ function dateRuShort(iso){ // 2026-04-21 → 21.04.2026
 
 // Ответственные по умолчанию: менеджеры по договорам + один РОП + один производственник
 // (ФОТ правится в карточке). Общее для «+ Договор» и «Завести из шаблона».
+// Ответственные по умолчанию — ТОЛЬКО менеджеры по договорам: они договор заводят и
+// обязаны его видеть. Бригадира и РОПа сюда НЕ подставляем.
+// Раньше сюда доклеивались первый по списку sales_head и первый worker/brigadier —
+// а «первый бригадир» это всегда один и тот же человек (Валера), и он становился
+// ответственным по КАЖДОМУ новому договору. Последствия живые (19.09.2026): в его
+// «Финансах» висели «Квартира на Кончаловского» и «Дом СВО» (объект Инны) с планом
+// 200 000 ₽ — подставленным по умолчанию, потому что ФОТ ему никто не назначал, —
+// а getUserObjects открывал ему эти объекты со сметами и закупками.
+// Кто на объекте реально работает, знает только человек: назначает админ в карточке
+// договора, раздел «Люди» → «Ответственные за договор».
 function ctDefaultResponsible(){
-  const ids=users.filter(function(u){return u.roles.includes("contract_mgr");}).map(function(u){return u.id;});
-  const rop=users.find(function(u){return u.roles.includes("sales_head");});
-  const prod=users.find(function(u){return u.roles.some(function(r){return r==="worker"||r==="brigadier";});});
-  if(rop&&ids.indexOf(rop.id)<0)ids.push(rop.id);
-  if(prod&&ids.indexOf(prod.id)<0)ids.push(prod.id);
-  return ids;
+  return users.filter(function(u){return u.roles.includes("contract_mgr");}).map(function(u){return u.id;});
 }
 
 // Дедлайн договора = дата подписания + срок работ. Срок в договоре считается в РАБОЧИХ
@@ -29783,8 +29788,8 @@ function bind(){
       }
       const cl=crmClients.find(function(c){return c.name===client;});
       const crmClientId=cl?cl.id:"";
-      // ФОТ (РАБОТА) по умолчанию = РОП 150k + производство 200k: гарантируем в ответственных
-      // одного sales_head и одного worker/brigadier; суммы/людей правят в карточке.
+      // Ответственные по умолчанию — только менеджеры по договорам (ctDefaultResponsible):
+      // бригадира и РОПа назначают в карточке, ФОТ считается уже по ним.
       const _defResp=ctDefaultResponsible();
       contractDocs.push({id:gid(),objId,type:contractNew.type,name:name.trim(),amount,signDate:date,deadlineDate,client,status:"draft",note,crmClientId,responsible:_defResp,salaries:{},extraWorks:contractNew.extraWorks||[],files:contractNew.files||[]});
       contractAddForm=false;
