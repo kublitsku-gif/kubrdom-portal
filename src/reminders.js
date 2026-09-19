@@ -10,6 +10,7 @@ import { stagesNeedingAttention } from "./stages.js";
 import { pendingSelections } from "./supply.js";
 import { dayCloseState, dayFineCfg, softDay, fineStarted, hasDayFine, dayFineTxn, underDayFine, DAY_FINE_CAT } from "./dayclose.js";
 import { logEvent } from "./audit.js";
+import { isoLocal } from "./dates.js";
 
 const MSK_OFFSET_MS = 3 * 3600 * 1000;
 const FINE_PER_DAY = 2000;
@@ -32,7 +33,9 @@ function addBusinessDays(dateStr, days) {
   if (isNaN(d.getTime())) return "";
   let added = 0;
   while (added < days) { d.setDate(d.getDate() + 1); const wd = d.getDay(); if (wd !== 0 && wd !== 6) added++; }
-  return d.toISOString().slice(0, 10);
+  // Считали локальным календарём — и обратно в строку локальным: на воркере пояс
+  // всё равно UTC, но тот же код гоняют тесты, а там пояс машины (см. src/dates.js).
+  return isoLocal(d);
 }
 export function deadlineInfo(c, uid, today) {
   const dl = (c && c.deadlines && c.deadlines[uid]) || {};

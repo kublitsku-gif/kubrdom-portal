@@ -4,7 +4,20 @@
 // (безнал) выписать было нельзя. Сторожим: физлицо не изменилось, у юрлица в шапке
 // ИНН/КПП/ОГРН и «в лице», в п. 12 банковские реквизиты и М.П., слова «Гражданин» и
 // «паспорт» не всплывают, и в портал уходит название организации, а не пустое ФИО.
+//
+// Плюс дедлайн: он считается локальным календарём, и раньше уезжал на день назад,
+// потому что обратно в строку его клали через toISOString() (UTC). Набор гоняем
+// в МСК принудительно — в UTC-поясе (CI, воркер) баг не воспроизводится вовсе.
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { boot, reporter } from './harness/panel-vm.js'
+
+const TZ = 'Europe/Moscow'
+if (process.env.TZ !== TZ) {
+  const r = spawnSync(process.execPath, [fileURLToPath(import.meta.url)],
+    { stdio: 'inherit', env: { ...process.env, TZ } })
+  process.exit(r.status === null ? 1 : r.status)
+}
 
 const t = reporter()
 
@@ -115,6 +128,51 @@ const plain = (h) => h.replace(/<[^>]*>/g, ' ').replace(/&quot;/g, '"').replace(
   t.ok('в акте нет паспорта', h.indexOf('Паспорт РФ') < 0 && h.indexOf('Гражданин') < 0)
   t.ok('в подписном блоке реквизиты организации', /ИНН: 5075020003 · КПП: 507501001/.test(h))
   t.ok('адрес установки остался', /адрес: г. Руза, уч. 12/.test(h))
+}
+
+{
+  t.section('Дедлайн договора — локальный календарь, не UTC')
+  // Тот самый случай из договора № 1909-1/26: 19.09.2026 + 60 рабочих дней.
+  // Локально это пятница 11 декабря; toISOString() в МСК отдавал «2026-12-10».
+  const p = panel(Object.assign({}, PERSON, { date: '2026-09-19', workDays: 60 }))
+  t.ok('пояс набора — МСК', new Date('2026-12-11T00:00:00').getTimezoneOffset() === -180,
+    String(new Date('2026-12-11T00:00:00').getTimezoneOffset()))
+  t.ok('60 рабочих дней от 19.09.2026 → 11.12.2026', p.q('ctTplDeadline()') === '2026-12-11', p.q('ctTplDeadline()'))
+  t.ok('день недели совпадает с расчётным (пятница)',
+    new Date(p.q('ctTplDeadline()') + 'T00:00:00').getDay() === 5)
+  t.ok('в карточку портала уходит тот же дедлайн',
+    (p.run('ctTplToPortal();contractDocs[contractDocs.length-1].deadlineDate')) === '2026-12-11')
+
+  // Круглый год: ни один день не должен съезжать назад — это ловит и UTC-сдвиг,
+  // и переход на летнее время в поясах, где оно есть.
+  let shifted = null
+  for (let i = 0; i < 366 && !shifted; i++) {
+    const start = new Date(2026, 0, 1 + i)
+    const iso = start.getFullYear() + '-' + String(start.getMonth() + 1).padStart(2, '0') + '-' + String(start.getDate()).padStart(2, '0')
+    const got = panel(Object.assign({}, PERSON, { date: iso, workDays: 45 })).q('ctTplDeadline()')
+    const want = new Date(start); let left = 45
+    while (left > 0) { want.setDate(want.getDate() + 1); const wd = want.getDay(); if (wd !== 0 && wd !== 6) left-- }
+    const wantIso = want.getFullYear() + '-' + String(want.getMonth() + 1).padStart(2, '0') + '-' + String(want.getDate()).padStart(2, '0')
+    if (got !== wantIso) shifted = iso + ': ' + got + ' вместо ' + wantIso
+  }
+  t.ok('45 рабочих дней от любой даты 2026 года — без сдвига', !shifted, shifted || '')
+}
+
+{
+  t.section('Сегодня и рабочие дни — те же правила')
+  const p = panel(PERSON)
+  const now = new Date()
+  const iso = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0')
+  // Вечером после 21:00 МСК UTC-дата — уже вчерашняя; todayISO() обязан дать сегодня.
+  t.ok('todayISO() — сегодня по местному календарю', p.q('todayISO()') === iso, p.q('todayISO()') + ' ≠ ' + iso)
+  t.ok('дата договора по умолчанию — сегодня', p.q('ctTplDefaults().date') === iso)
+  t.ok('дата акта по умолчанию — сегодня', p.q('ctTplDefaults().actDate') === iso)
+  // Дедлайн бригадира (тот же расчёт, другая точка входа).
+  t.ok('addBusinessDays: 19.09.2026 + 60 → 11.12.2026',
+    p.q('addBusinessDays("2026-09-19",60)') === '2026-12-11', p.q('addBusinessDays("2026-09-19",60)'))
+  t.ok('addBusinessDays: 1 рабочий день от пятницы — понедельник',
+    p.q('addBusinessDays("2026-09-18",1)') === '2026-09-21', p.q('addBusinessDays("2026-09-18",1)'))
+  t.ok('кривая дата — пустая строка, а не «NaN-NaN-NaN»', p.q('addBusinessDays("не дата",5)') === '')
 }
 
 t.done()

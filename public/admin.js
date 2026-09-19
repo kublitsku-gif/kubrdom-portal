@@ -66,6 +66,7 @@ import { allPositions, allPositionsRaw, addedPositions, guessVolume, carryRuleEd
   importRows, importPatch } from "../src/recipe.js";
 import { projBaseline, projDiff, sigOf, workTouched, projTwin, projMergeWork } from "../src/projrev.js";
 import { SHELVES_DEFAULT, labelWorks, labelUnits, shelfLayout, shelfPages, houseNums, labelSheetCount, matPinKey } from "../src/labels.js";
+import { isoLocal, todayISO } from "../src/dates.js";
 import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, flatNormalize, flatToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
@@ -3863,12 +3864,12 @@ function tBuildAnalysis(){
   Object.keys(dayOff).forEach(function(d){dset[d]=true;});
   let allDates=Object.keys(dset).sort();
   // Всегда включаем сегодняшний день, чтобы маркер «сегодня» был виден
-  const _todayISO=new Date().toISOString().slice(0,10);
+  const _todayISO=todayISO();
   if(allDates.length && !dset[_todayISO]){ allDates.push(_todayISO); allDates.sort(); }
   // Если часов/выходных нет — показываем шкалу на 14 дней от сегодня (чтобы все работы были видны на сетке)
   if(!allDates.length){
     const base=new Date(); base.setHours(0,0,0,0);
-    allDates=[base.toISOString().slice(0,10), new Date(base.getTime()+13*86400000).toISOString().slice(0,10)];
+    allDates=[isoLocal(base), isoLocal(new Date(base.getTime()+13*86400000))];
   }
   // Полный список дней от min до max
   const days=[];
@@ -3876,7 +3877,7 @@ function tBuildAnalysis(){
   const end=new Date(allDates[allDates.length-1]+"T00:00:00");
   let guard=0;
   while(cur<=end&&guard<180){
-    days.push(cur.toISOString().slice(0,10));
+    days.push(isoLocal(cur));
     cur=new Date(cur.getTime()+86400000);
     guard++;
   }
@@ -3896,7 +3897,7 @@ function tBuildAnalysis(){
   const monFull=["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
   const wdShort=["вс","пн","вт","ср","чт","пт","сб"];
   function dCell(d){ const dt=new Date(d+"T00:00:00"); return {day:dt.getDate(),wd:wdShort[dt.getDay()],mon:monShort[dt.getMonth()],monIdx:dt.getMonth(),year:dt.getFullYear(),weekend:(dt.getDay()===0||dt.getDay()===6)}; }
-  const todayISOg=new Date().toISOString().slice(0,10);
+  const todayISOg=todayISO();
 
   // Группировка дней по месяцам для верхней строки
   const monthSpans=[];
@@ -4281,8 +4282,7 @@ function clientPortal(){
 function _mdH(h){return String(h).replace(".",",");}
 function _mdShiftISO(iso,days){
   const d=new Date(iso+"T00:00:00");d.setDate(d.getDate()+days);
-  const p=function(n){return (n<10?"0":"")+n;};
-  return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());
+  return isoLocal(d);
 }
 function _mdDayLabel(iso){
   const today=todayISO();
@@ -6785,7 +6785,7 @@ ${(()=>{
   objContractsAll.forEach(d=>(d.responsible||[]).forEach(uid=>respIds.add(uid)));
   if(isProd&&!respIds.has(currentUser.id))return "";
   
-  const todayISOd=new Date().toISOString().slice(0,10);
+  const todayISOd=todayISO();
   const todayLabel=new Date().toLocaleDateString("ru-RU",{day:"2-digit",month:"long",weekday:"long"});
   
   // For admin — show today's report for all prod users; for prod — show their own
@@ -7340,7 +7340,7 @@ ${obj.stages.map(s=>{
           eligibleUsers=eligibleUsers.filter(u=>u.id===currentUser.id);
         }
         const HOURS=[0.5,1,1.5,2,2.5,3,4,5,6,7,8];
-        const today=new Date().toISOString().slice(0,10);
+        const today=todayISO();
         h+=`<div style="padding:10px 12px;background:#16a08508;border-top:1px solid #16a08522">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
             <div style="flex:1;font-size:10px;color:#16a085;font-weight:700;letter-spacing:0.5px">⏱ УЧЁТ ВРЕМЕНИ</div>
@@ -8138,7 +8138,7 @@ function _matApplyPrice(p,newPrice){
   // Первая правка застаёт историю пустой: прежнюю цифру нигде не записывали, и
   // без неё «было 900 ₽» взять неоткуда. Дописываем её тем же ключом.
   if(newPrice!==old&&!priceHist(p).length)pricePush(p, old, p.priceCheckedAt||"", "");
-  p.unitCost=newPrice; p.priceCheckedAt=new Date().toISOString().slice(0,10);
+  p.unitCost=newPrice; p.priceCheckedAt=todayISO();
   pricePush(p, newPrice, new Date().toISOString(), (typeof currentUser!=="undefined"&&currentUser&&currentUser.name)||"");
   scheduleSave();
   return true;
@@ -20409,7 +20409,7 @@ function renderAddTxnForm(c){
     '</select>'+
     '<div style="display:flex;gap:8px;margin-bottom:8px">'+
       '<input id="fin-amt" type="text" inputmode="numeric" data-money="1" value="'+(finNewTxn.amount?fmtMoney(finNewTxn.amount):"")+'" placeholder="Сумма ₽" style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;font-weight:600;outline:none">'+
-      '<input id="fin-date" type="date" value="'+(finNewTxn.date||new Date().toISOString().slice(0,10))+'" style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none">'+
+      '<input id="fin-date" type="date" value="'+(finNewTxn.date||todayISO())+'" style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;outline:none">'+
     '</div>'+
     '<input id="fin-note" value="'+(finNewTxn.note||"")+'" placeholder="Примечание" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;margin-bottom:10px;outline:none;box-sizing:border-box">'+
     payMethodSelector()+
@@ -23197,7 +23197,7 @@ let finMineOpen={};     // {contractId: bool} — раскрыт ли догов
 let finSelectedContractIds=[]; // contracts selected for dashboard aggregation
 let finAddForm=false;
 let finCtSection="income"; // активный раздел в P&L договора (income|supply|salary_prod|extra|salary_escort)
-let finNewTxn={type:"income",category:"",amount:"",date:new Date().toISOString().slice(0,10),note:"",method:"transfer"};
+let finNewTxn={type:"income",category:"",amount:"",date:todayISO(),note:"",method:"transfer"};
 // Contracts
 let contractDocs=[
   {
@@ -23673,7 +23673,7 @@ window._ctBindPickers=function(){
   }
 };
 let contractAddForm=false;
-let contractNew={objId:"",type:"main",name:"",amount:"",signDate:new Date().toISOString().slice(0,10),client:"",status:"draft",note:"",deadlineDate:"",responsible:[],salaries:{},files:[]};
+let contractNew={objId:"",type:"main",name:"",amount:"",signDate:todayISO(),client:"",status:"draft",note:"",deadlineDate:"",responsible:[],salaries:{},files:[]};
 
 // ═══ Шаблон договора (подвкладка раздела «Договора») ═══════════════════════════════
 // Форма реквизитов → печатная форма договора подряда (по образцу действующего договора
@@ -23917,7 +23917,7 @@ function ctTplDefaults(){
   const ot=CT_OBJ_TYPES[0]; // по умолчанию баня
   return {
     num:dd+mm+"-1/"+yy,
-    date:d.toISOString().slice(0,10),
+    date:isoLocal(d),
     city:"г. Москва",
     execKey:"kublitskaya",
     objType:ot.k,
@@ -23940,10 +23940,10 @@ function ctTplDefaults(){
     // ─── Акт выполненных работ (docType="act") ───
     docType:"contract",     // "contract" | "act"
     actStage:0,             // индекс закрываемого этапа в payments; -1 = финальный (весь договор)
-    actDate:d.toISOString().slice(0,10),
+    actDate:isoLocal(d),
     actAddress:"",          // адрес установки объекта
     actDeadline:"",         // плановый срок сдачи (дедлайн договора)
-    actActualDate:d.toISOString().slice(0,10), // фактическая дата передачи
+    actActualDate:isoLocal(d), // фактическая дата передачи
     actExtra:[],            // доп. работы [{name,cost}] (подтягиваются из договоров)
     actExcluded:[],         // исключённые работы [{name,cost}]
     actAdvancePaid:0,       // уже внесено авансом (₽)
@@ -24048,7 +24048,7 @@ function ctTplDeadline(){
     const wd=d.getDay();
     if(wd!==0&&wd!==6)days--;
   }
-  return d.toISOString().slice(0,10);
+  return isoLocal(d);
 }
 
 // ─── Заказчик: физлицо или юрлицо ────────────────────────────────────────────
@@ -24178,7 +24178,7 @@ function ctTplToPortal(){
     id, objId, type:"main",
     name:num?("Договор подряда № "+num):("Договор №"+(contractDocs.length+47)+(obj?" — "+obj.name:"")),
     amount,
-    signDate:t.date||new Date().toISOString().slice(0,10),
+    signDate:t.date||todayISO(),
     deadlineDate:ctTplDeadline(),
     client:fio, status:"draft",
     // Телефон кладём в примечание: поиск по договорам берёт номер у привязанного
@@ -24991,7 +24991,7 @@ let finExtraWorks={}; // {objId: [{id,name,amount,date,note}]}
 // status: "pending" (ждёт возмещения) | "paid" (возмещено) | "rejected" (отклонён)
 let receipts=[];
 let receiptAddFor=null;   // contractId, для которого открыта форма добавления чека
-let receiptNew={amount:"",note:"",date:new Date().toISOString().slice(0,10),files:[]};
+let receiptNew={amount:"",note:"",date:todayISO(),files:[]};
 
 // Итоги по чекам: сколько должны рабочему (pending) и сколько уже возмещено
 function receiptTotals(filterFn){
@@ -25186,7 +25186,7 @@ function addBusinessDays(dateStr,days){
     const wd=d.getDay();
     if(wd!==0&&wd!==6)added++;
   }
-  return d.toISOString().slice(0,10);
+  return isoLocal(d);
 }
 function countBusinessDaysBetween(from,to){
   if(!from||!to)return 0;
@@ -25201,7 +25201,6 @@ function countBusinessDaysBetween(from,to){
   }
   return count;
 }
-function todayISO(){return new Date().toISOString().slice(0,10);}
 function getBrigadierDeadlineInfo(c,uid){
   const dl=c&&c.deadlines&&c.deadlines[uid]||{};
   const startDate=dl.startDate||"";
@@ -25376,7 +25375,7 @@ function crmAutoLinkAvito(){
     if(x.avitoKey){ linked[x.avitoKey]=true; }
     else { var np=normPhone(x.phone); if(np && !byPhone[np]) byPhone[np]=x.id; }   // кандидаты для матча — без привязки
   });
-  var changed=false; var today=new Date().toISOString().slice(0,10);
+  var changed=false; var today=todayISO();
   Object.keys(crmChats).forEach(function(k){
     var ch=crmChats[k]; if(!ch||ch.source!=="avito"||linked[k]) return;
     var phone=extractPhoneFromChat(ch);
@@ -26911,7 +26910,7 @@ function bind(){
       const soft=new Date(); soft.setDate(soft.getDate()+7);
       const patch=next
         ? {enabled:true,amount:cfg.amount||DAY_FINE_DEFAULT,uids:cfg.uids,
-           from:cfg.from||today,softUntil:cfg.softUntil||soft.toISOString().slice(0,10)}
+           from:cfg.from||today,softUntil:cfg.softUntil||isoLocal(soft)}
         : Object.assign({},settings.dayFine||{},{enabled:false});
       settings=Object.assign({},settings,{dayFine:patch});
       fl();
@@ -29517,7 +29516,7 @@ function bind(){
       render();
     };}
     else if(a==="fin-back"){el.onclick=()=>{finOpenObjId=null;finOpenContractId=null;finAddForm=false;render();};}
-    else if(a==="fin-add"){el.onclick=()=>{finAddForm=!finAddForm;finNewTxn={type:"income",category:FIN_INCOME_CATS[0],amount:"",date:new Date().toISOString().slice(0,10),note:"",method:"transfer"};render();};}
+    else if(a==="fin-add"){el.onclick=()=>{finAddForm=!finAddForm;finNewTxn={type:"income",category:FIN_INCOME_CATS[0],amount:"",date:todayISO(),note:"",method:"transfer"};render();};}
     else if(a==="fin-ct-section"){el.onclick=()=>{finCtSection=el.dataset.k;finAddForm=false;render();};}
     else if(a==="fin-add-typed"){el.onclick=()=>{
       const type=el.dataset.type||"income";
@@ -29530,7 +29529,7 @@ function bind(){
         return;
       }
       finAddForm=true;
-      finNewTxn={type,category:cat,amount:"",date:new Date().toISOString().slice(0,10),note:"",sectionGroup,method:"transfer"};
+      finNewTxn={type,category:cat,amount:"",date:todayISO(),note:"",sectionGroup,method:"transfer"};
       render();
       setTimeout(function(){
         const anchor=document.getElementById("fin-form-anchor");
@@ -29588,13 +29587,13 @@ function bind(){
       finTxns.push({id:gid(),objId:oid,type:finNewTxn.type,category:cat,amount:amt,date,note,method:finNewTxn.type==="income"?(finNewTxn.method||"transfer"):undefined});
       finAddForm=false;fl();
     };}
-    else if(a==="ct-add"){el.onclick=()=>{contractAddForm=!contractAddForm;contractNew={objId:"",type:"main",name:"",amount:"",signDate:new Date().toISOString().slice(0,10),client:"",status:"draft",note:"",deadlineDate:"",extraWorks:[],files:[]};render();};}
+    else if(a==="ct-add"){el.onclick=()=>{contractAddForm=!contractAddForm;contractNew={objId:"",type:"main",name:"",amount:"",signDate:todayISO(),client:"",status:"draft",note:"",deadlineDate:"",extraWorks:[],files:[]};render();};}
     else if(a==="ct-cancel"){el.onclick=()=>{contractAddForm=false;render();};}
     // ─── Чеки рабочих (подотчёт) ───
     else if(a==="rc-add-open"){el.onclick=()=>{
       const cid=el.dataset.cid;
       receiptAddFor=(receiptAddFor===cid)?null:cid;
-      receiptNew={amount:"",note:"",date:new Date().toISOString().slice(0,10),files:[]};
+      receiptNew={amount:"",note:"",date:todayISO(),files:[]};
       render();
     };}
     else if(a==="rc-cancel"){el.onclick=()=>{receiptAddFor=null;render();};}
@@ -29629,11 +29628,11 @@ function bind(){
       const c=contractDocs.find(function(x){return x.id===cid;});
       receipts=receipts.concat([{
         id:gid(), userId:currentUser?currentUser.id:"", objId:c?c.objId:"", contractId:cid,
-        amount:amount, note:receiptNew.note||"Материалы", date:receiptNew.date||new Date().toISOString().slice(0,10),
+        amount:amount, note:receiptNew.note||"Материалы", date:receiptNew.date||todayISO(),
         files:receiptNew.files||[], status:"pending", createdAt:new Date().toISOString()
       }]);
       receiptAddFor=null;
-      receiptNew={amount:"",note:"",date:new Date().toISOString().slice(0,10),files:[]};
+      receiptNew={amount:"",note:"",date:todayISO(),files:[]};
       fl();
     };}
     else if(a==="rc-del"){el.onclick=()=>{
@@ -29643,7 +29642,7 @@ function bind(){
     };}
     else if(a==="rc-pay"){el.onclick=()=>{
       const rid=el.dataset.rid;
-      receipts=receipts.map(function(r){return r.id===rid?Object.assign({},r,{status:"paid",paidDate:new Date().toISOString().slice(0,10)}):r;});
+      receipts=receipts.map(function(r){return r.id===rid?Object.assign({},r,{status:"paid",paidDate:todayISO()}):r;});
       fl();
     };}
     else if(a==="rc-reject"){el.onclick=()=>{
@@ -29728,7 +29727,7 @@ function bind(){
       const client=contractNew.client||(document.getElementById("ct-client")||{}).value||"";
       const amtVal=(document.getElementById("ct-amount")||{}).value||"";
       const amount=unfmtMoney(amtVal)||contractNew.amount||0;
-      const date=(document.getElementById("ct-date")||{}).value||contractNew.signDate||new Date().toISOString().slice(0,10);
+      const date=(document.getElementById("ct-date")||{}).value||contractNew.signDate||todayISO();
       const note=(document.getElementById("ct-note")||{}).value||"";
       const deadlineDate=(document.getElementById("ct-deadline")||{}).value||contractNew.deadlineDate||"";
       let objId=(document.getElementById("ct-obj")||{}).value||contractNew.objId||"";
@@ -29746,7 +29745,7 @@ function bind(){
       const _defResp=ctDefaultResponsible();
       contractDocs.push({id:gid(),objId,type:contractNew.type,name:name.trim(),amount,signDate:date,deadlineDate,client,status:"draft",note,crmClientId,responsible:_defResp,salaries:{},extraWorks:contractNew.extraWorks||[],files:contractNew.files||[]});
       contractAddForm=false;
-      contractNew={objId:"",type:"main",name:"",amount:"",signDate:new Date().toISOString().slice(0,10),client:"",status:"draft",note:"",deadlineDate:"",extraWorks:[],files:[]};
+      contractNew={objId:"",type:"main",name:"",amount:"",signDate:todayISO(),client:"",status:"draft",note:"",deadlineDate:"",extraWorks:[],files:[]};
       fl();
     };}
     else if(a==="ct-open"){el.onclick=()=>{contractView=el.dataset.cid;ctSec=Object.assign({},ctSec,{[el.dataset.cid]:"main"});render();};}
@@ -30273,7 +30272,7 @@ function bind(){
       if(!name)return;
       const amt=parseInt(prompt("Сумма ₽:"))||0;
       if(!amt)return;
-      const date=prompt("Дата (ГГГГ-ММ-ДД):",new Date().toISOString().slice(0,10))||new Date().toISOString().slice(0,10);
+      const date=prompt("Дата (ГГГГ-ММ-ДД):",todayISO())||todayISO();
       const note=prompt("Примечание (необязательно):")||"";
       if(!finExtraWorks[oid])finExtraWorks[oid]=[];
       finExtraWorks[oid].push({id:gid(),name,amount:amt,date,note});
@@ -30313,7 +30312,7 @@ function bind(){
       const cid=el.dataset.cid||finOpenContractId||"";
       const cat=(document.getElementById("fin-cat")||{}).value||finNewTxn.category;
       const amt=unfmtMoney((document.getElementById("fin-amt")||{}).value);
-      const date=(document.getElementById("fin-date")||{}).value||new Date().toISOString().slice(0,10);
+      const date=(document.getElementById("fin-date")||{}).value||todayISO();
       const note=(document.getElementById("fin-note")||{}).value||"";
       if(!amt){alert("Введите сумму");return;}
       const objId=cid?(contractDocs.find(function(x){return x.id===cid;})||{}).objId:finOpenObjId;
@@ -30349,7 +30348,7 @@ function bind(){
       const phone=(document.getElementById("crm-p")||{}).value||"";
       const msg=(document.getElementById("crm-m")||{}).value||"";
       if(!name.trim())return;
-      crmClients.push({id:gid(),name:name.trim(),phone,source:"Авито",stage:"new",msg,date:new Date().toISOString().slice(0,10),notes:""});
+      crmClients.push({id:gid(),name:name.trim(),phone,source:"Авито",stage:"new",msg,date:todayISO(),notes:""});
       crmAddForm=false;fl();
     };}
     else if(a==="analysis-obj"){el.onclick=()=>{analysisObjId=el.dataset.oid;render();};}
@@ -31215,7 +31214,7 @@ function bind(){
           type:"expense",
           category:"⚠️ Штраф просрочка",
           amount:amt,
-          date:new Date().toISOString().slice(0,10),
+          date:todayISO(),
           contractId:cid,
           userId:uid,
           note:"Просрочка "+info.overdueDays+" р.дн · "+(u?u.name:"")
@@ -31375,7 +31374,7 @@ function bind(){
         const isAdminOrFin=currentUser&&(currentUser.roles.includes("admin")||currentUser.roles.includes("financier"));
         let defaultUid=eligible[0]?eligible[0].id:null;
         if(!isAdminOrFin&&currentUser&&eligible.find(u=>u.id===currentUser.id)){defaultUid=currentUser.id;}
-        newTimeLog={hours:1,date:new Date().toISOString().slice(0,10),userId:defaultUid};
+        newTimeLog={hours:1,date:todayISO(),userId:defaultUid};
         render();
       }
     };}
@@ -31492,7 +31491,7 @@ function bind(){
         if(!isAdminOrFin&&currentUser&&eligible.find(u=>u.id===currentUser.id)){
           defaultUid=currentUser.id;
         }
-        newTimeLog={hours:1,date:new Date().toISOString().slice(0,10),userId:defaultUid};
+        newTimeLog={hours:1,date:todayISO(),userId:defaultUid};
       }
       render();
     };}
