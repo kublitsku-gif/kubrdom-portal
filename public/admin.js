@@ -71,7 +71,7 @@ import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, flatNormalize, flatToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
 // Готовность работы в процентах (гибрид: авто из часов + ручной тап) — см. src/progress.js.
-import { workPct, isAutoPct, objPct, PCT_PRESETS } from "../src/progress.js";
+import { workPct, workPctAsOf, isAutoPct, objPct, PCT_PRESETS, dayPctShifts } from "../src/progress.js";
 import { plinthOptions, plinthPieceLen, isPlinthMat } from "../src/plinth.js";
 import { installInPageCamera } from "../src/camera.js";
 // Закрытие дня и штраф за незакрытый — общий модуль с напоминаниями (src/dayclose.js):
@@ -4361,6 +4361,18 @@ function tMyDay(){
       html+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:9px 11px;margin-bottom:6px">';
       html+='<div style="display:flex;align-items:center;gap:7px"><span style="width:8px;height:8px;border-radius:50%;background:'+f.s.c+';flex-shrink:0"></span><div data-a="work-sheet-open" data-oid="'+obj.id+'" data-sid="'+f.s.id+'" data-wid="'+f.w.id+'" style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer">'+esc(f.w.n)+'</div>'+
         '<label data-a="myday-photo-label" data-oid="'+obj.id+'" data-sid="'+f.s.id+'" data-wid="'+f.w.id+'" style="display:inline-flex;align-items:center;gap:4px;padding:6px 10px;background:'+(f.ph?"#3498db18":"#3498db")+';border:1px solid #3498db55;border-radius:9px;cursor:pointer;font-size:11.5px;color:'+(f.ph?"#3498db":"#fff")+';font-weight:700;flex-shrink:0">📷 '+(f.ph||"+")+'<input id="md-photo-inp-'+f.w.id+'" type="file" accept="image/*" multiple style="display:none"></label></div>';
+      // Насколько работа сдвинулась именно в этот день: ради этого и заводили процент.
+      {
+        const _to=workPctAsOf(f.w,date), _from=workPctAsOf(f.w,_mdShiftISO(date,-1));
+        if(_to!==_from){
+          const up=_to>_from;
+          html+='<div style="display:flex;align-items:center;gap:6px;margin-top:5px;font-size:11px">'+
+            '<span style="color:#9aabbf">📈 готовность</span>'+
+            '<span style="color:#5a7a9a;font-weight:600">'+_from+' → '+_to+'%</span>'+
+            '<span style="font-weight:800;color:'+(up?'#16a085':'#e67e22')+'">'+(up?'+':'')+(_to-_from)+'</span>'+
+          '</div>';
+        }
+      }
       f.logs.forEach(function(l){
         const u=users.find(function(x){return x.id===l.userId;});
         const canDel=isAdmFin||(currentUser&&l.userId===currentUser.id);
@@ -6855,6 +6867,30 @@ ${(()=>{
       out+='</div>';
     }
     
+    // Сдвиг готовности: «7 часов» не отвечает, что за день сделано — часы могли уйти
+    // в одну работу или в восемь по чуть-чуть. Молчание при отмеченных часах тоже
+    // новость: значит, день отработан, а ни одна работа не тронулась.
+    if(!isOff){
+      const shifts=dayPctShifts([obj],todayISOd,u.id);
+      if(shifts.length){
+        out+='<div style="background:#fff;border:1px solid #e5ebf2;border-radius:6px;padding:8px 9px;margin-bottom:9px">';
+        out+='<div style="font-size:9px;color:#9aabbf;font-weight:700;margin-bottom:6px">📈 СДВИГ ЗА ДЕНЬ · '+shifts.length+'</div>';
+        shifts.slice(0,6).forEach(function(sh){
+          const up=sh.delta>0;
+          out+='<div style="display:flex;align-items:center;gap:7px;padding:3px 0;font-size:11px">'+
+            '<span style="flex:1;min-width:0;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(sh.done?'✅ ':'')+esc(sh.wname)+'</span>'+
+            '<span style="color:#9aabbf;font-size:10px;white-space:nowrap">'+sh.from+' → '+sh.to+'%</span>'+
+            '<span style="font-weight:800;white-space:nowrap;color:'+(up?'#16a085':'#e67e22')+'">'+(up?'+':'')+sh.delta+'</span>'+
+          '</div>';
+        });
+        if(shifts.length>6)out+='<div style="font-size:10px;color:#9aabbf;margin-top:3px">и ещё '+(shifts.length-6)+'</div>';
+        out+='</div>';
+      } else if(hoursToday>0){
+        out+='<div style="background:#fff;border:1px dashed #e67e2255;border-radius:6px;padding:7px 9px;margin-bottom:9px;font-size:10.5px;color:#b9762a">'+
+          '📈 Часы есть, а готовность работ не сдвинулась — отметьте процент в учёте времени.</div>';
+      }
+    }
+
     if(canEdit&&!isOff){
       out+='<button data-a="dr-day-off" data-oid="'+obj.id+'" data-uid="'+u.id+'" data-date="'+todayISOd+'" style="width:100%;padding:8px;background:#fff;border:1.5px solid #9b59b655;border-radius:7px;cursor:pointer;color:#9b59b6;font-size:11px;font-weight:700">🏖 Отметить выходной</button>';
     } else if(canEdit&&isOff){
@@ -6902,8 +6938,9 @@ ${(()=>{
     // Поэтому незакрытый день у того, кто под штрафом, пишем прямо в подпись с ценой:
     // «записей нет» чип считает пустой подписью и заменяет названием раздела.
     const fineHere=underDayFine(settings,viewUsers[0].id)&&!dayFilled(viewUsers[0]);
+    const shN=dayPctShifts([obj],todayISOd,viewUsers[0].id).length;
     summary=rep&&rep.dayOff?'<span style="color:#9b59b6">🏖 выходной</span>':
-      (dayFilled(viewUsers[0])?'<span style="color:#27ae60">✓ есть записи</span>':
+      (dayFilled(viewUsers[0])?'<span style="color:#27ae60">✓ есть записи'+(shN?' · 📈 '+shN:'')+'</span>':
       (fineHere?'<span style="color:#e74c3c">⚠️ не закрыт · '+dayFineCfg(settings).amount+' ₽</span>'
               :'<span style="color:#e67e22">записей нет</span>'));
   } else {

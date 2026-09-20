@@ -9,6 +9,7 @@ import { ensureNotifyTables, sendTg, defaultPrefs, escapeHtml, portalButton, por
 import { stagesNeedingAttention } from "./stages.js";
 import { pendingSelections } from "./supply.js";
 import { dayCloseState, dayFineCfg, softDay, fineStarted, hasDayFine, dayFineTxn, underDayFine, DAY_FINE_CAT } from "./dayclose.js";
+import { dayPctShifts, shiftsDigest } from "./progress.js";
 import { logEvent } from "./audit.js";
 import { isoLocal } from "./dates.js";
 
@@ -402,8 +403,14 @@ async function runDaily(env, st, today) {
     if (a > issOldest) issOldest = a;
   });
 
+  // Сдвиг готовности: часы говорят, сколько работали, а этот список — что сдвинулось.
+  // Семь часов могли уйти в одну работу или в восемь по чуть-чуть, и по часам это
+  // неразличимо. Считает тот же src/progress.js, что и панель.
+  const shiftLine = shiftsDigest(dayPctShifts(st.objects, today), hours, escapeHtml);
+
   const text = "🌙 <b>Итоги дня " + today + "</b>\n"
     + "Часы за сегодня: <b>" + (Math.round(hours * 10) / 10) + " ч</b>\n"
+    + shiftLine
     + "Правок в портале: <b>" + acts.length + "</b>" + (doneToday ? " (по объектам: " + doneToday + ")" : "") + "\n"
     + (top.length ? "Активнее всех: " + top.map(function (n) { return escapeHtml(n) + " (" + byUser[n] + ")"; }).join(", ") + "\n" : "")
     + "Открытых работ всего: <b>" + openTotal + "</b>\n"
