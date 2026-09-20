@@ -585,13 +585,16 @@ function _videoToast(msg){
   t.textContent=msg;
 }
 
-// Единый путь загрузки видео: сжать (best-effort) → отправить в Telegram-тему объекта → ссылка в obj.videos.
+// Единый путь загрузки видео: сжать (best-effort) → отправить в Telegram-тему объекта → ссылка в стейт.
 // tagName (имя работы) добавляется к названию видео, чтобы было видно, к чему оно.
-async function handleObjVideoFile(file, oid, tagName){
+// at={sid,wid} — ролик снят по конкретной работе и ложится в w.videos; без at это видео
+// объекта целиком (o.videos). Тема в Telegram одна на объект в обоих случаях.
+async function handleObjVideoFile(file, oid, tagName, at){
   if(!file) return;
   const o=objects.find(function(x){return x.id===oid;});
   if(!o) return;
-  objVideoUploading=oid; render();
+  const wid=at&&at.wid?at.wid:"", sid=at&&at.sid?at.sid:"";
+  videoUploading=wid||oid; render();
   try{
     _videoToast("🎬 Обрабатываю видео…");
     let up=file;
@@ -607,7 +610,7 @@ async function handleObjVideoFile(file, oid, tagName){
     if(up.size>50*1024*1024){
       _videoToast(null);
       alert("Даже после сжатия видео больше 50 МБ ("+(up.size/1048576).toFixed(1)+" МБ). Сними ролик короче.");
-      objVideoUploading=null; render(); return;
+      videoUploading=null; render(); return;
     }
     _videoToast("☁️ Загружаю видео…");
     const nm=(tagName? (tagName+" — "):"")+(file.name||"video");
@@ -617,15 +620,24 @@ async function handleObjVideoFile(file, oid, tagName){
     });
     const j=await r.json();
     if(j&&j.success){
-      objects=objects.map(function(x){return x.id!==oid?x:Object.assign({},x,{
-        tgTopicId:j.topicId,
-        videos:(x.videos||[]).concat([{id:gid(),topicId:j.topicId,messageId:j.messageId,fileId:j.fileId,name:nm,size:up.size,date:new Date().toISOString().slice(0,16).replace("T"," "),uploader:(currentUser&&currentUser.name)||""}])
-      });});
+      const vid={id:gid(),topicId:j.topicId,messageId:j.messageId,fileId:j.fileId,name:nm,size:up.size,date:new Date().toISOString().slice(0,16).replace("T"," "),uploader:(currentUser&&currentUser.name)||"",uploaderId:currentUser?currentUser.id:""};
+      objects=objects.map(function(x){
+        if(x.id!==oid)return x;
+        const base=Object.assign({},x,{tgTopicId:j.topicId});
+        if(!wid)return Object.assign(base,{videos:(x.videos||[]).concat([vid])});
+        return Object.assign(base,{stages:x.stages.map(function(st){
+          if(sid&&st.id!==sid)return st;
+          return Object.assign({},st,{works:st.works.map(function(w){
+            if(w.id!==wid)return w;
+            return Object.assign({},w,{videos:(w.videos||[]).concat([vid])});
+          })});
+        })});
+      });
       _videoToast("✅ Видео загружено ("+(up.size/1048576).toFixed(1)+" МБ)");
       setTimeout(function(){_videoToast(null);},2200);
     } else { _videoToast(null); alert("Ошибка загрузки видео: "+((j&&j.error)||("HTTP "+r.status))); }
   }catch(e){ _videoToast(null); alert("Ошибка загрузки видео: "+((e&&e.message)||e)); }
-  objVideoUploading=null; fl();
+  videoUploading=null; fl();
 }
 
 // Загрузка файла в R2 через Worker → публичная ссылка (для фото работ и планировок).
@@ -2574,7 +2586,7 @@ let showNObjStageTid="",newObjStage={n:"",c:"#e67e22"};
 let showNObjWorkSid="",objMatModal=null;
 // id материала, для которого раскрыт выбор замены из базы (null = никакой)
 let objMatReplaceId=null;
-let objVideoUploading=null;   // id объекта, для которого сейчас грузится видео в Telegram
+let videoUploading=null;   // id работы (или объекта — для видео объекта целиком), чьё видео сейчас грузится в Telegram
 const TG_CHAT_LINK="3606281018"; // chat_id -1003606281018 без префикса -100 (для ссылок t.me/c/)
 let nu={name:"",av:"👷",c:"#e67e22",roles:[],objs:[]};
 let nr={n:"",c:"#9b59b6",group:"other"};
@@ -7009,31 +7021,38 @@ ${buildIssuesSection(obj)}
 <!-- Сводка: сделанные работы + затраченное время (видна всем) -->
 ${buildWorkSummary(obj)}
 
-<!-- Видео объекта (Telegram) -->
-${objSection(obj.id,"video","🎬 ВИДЕО ОБЪЕКТА","#0088cc",
-  (objVideoUploading===obj.id?'<span style="color:#0088cc">⏳ обработка…</span>':((obj.videos||[]).length?String(obj.videos.length):'<span style="color:#9aabbf">нет</span>')),
+<!-- Видео объекта (Telegram): свои + снятые по работам -->
+${(()=>{
+const _allVids=(obj.videos||[]).map(v=>({v:v,wn:"",sid:"",wid:""})).concat(
+  (obj.stages||[]).flatMap(st=>(st.works||[]).flatMap(w=>(w.videos||[]).map(v=>({v:v,wn:w.n||"",sid:st.id,wid:w.id})))));
+const _vidBusy=videoUploading===obj.id||(obj.stages||[]).some(st=>(st.works||[]).some(w=>w.id===videoUploading));
+return objSection(obj.id,"video","🎬 ВИДЕО ОБЪЕКТА","#0088cc",
+  (_vidBusy?'<span style="color:#0088cc">⏳ обработка…</span>':(_allVids.length?String(_allVids.length):'<span style="color:#9aabbf">нет</span>')),
 `
   <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:10px">
-    ${objVideoUploading===obj.id
+    ${_vidBusy
       ? `<span style="font-size:11px;font-weight:700;color:#0088cc">⏳ Обработка…</span>`
       : `<div style="display:flex;gap:6px">
         <label data-a="video-cap-label" data-oid="${obj.id}" data-inp="obj-video-cam-${obj.id}" style="padding:5px 11px;background:#0088cc;border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700;white-space:nowrap">🎥 Снять<input id="obj-video-cam-${obj.id}" type="file" accept="video/*" capture="environment" style="display:none"></label>
         <label data-a="video-cap-label" data-oid="${obj.id}" data-inp="obj-video-file-${obj.id}" style="padding:5px 11px;background:#eaf5fb;border:1px solid #0088cc55;border-radius:7px;cursor:pointer;color:#0077b3;font-size:11px;font-weight:700;white-space:nowrap">📁 Файл<input id="obj-video-file-${obj.id}" type="file" accept="video/*" style="display:none"></label>
       </div>`}
   </div>
-  ${(obj.videos||[]).length?(obj.videos||[]).slice().reverse().map(v=>{
+  ${_allVids.length?_allVids.slice().reverse().map(r=>{
+    const v=r.v;
     const link="https://t.me/c/"+TG_CHAT_LINK+"/"+(v.topicId||obj.tgTopicId||"")+"/"+v.messageId;
     return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;margin-bottom:5px;background:#f8fafc;border:1px solid #dde6f0">
       <span style="font-size:18px">🎬</span>
       <div style="flex:1;min-width:0">
         <div style="font-size:12px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(v.name||"Видео")}</div>
-        <div style="font-size:10px;color:#9aabbf">${v.date||""}${v.uploader?" · "+esc(v.uploader):""}${v.size?" · "+(v.size/1048576).toFixed(1)+" МБ":""}</div>
+        <div style="font-size:10px;color:#9aabbf">${r.wn?"🔨 "+esc(r.wn)+" · ":""}${v.date||""}${v.uploader?" · "+esc(v.uploader):""}${v.size?" · "+(v.size/1048576).toFixed(1)+" МБ":""}</div>
       </div>
       <a href="${link}" target="_blank" rel="noopener" style="font-size:10px;font-weight:700;color:#fff;background:#0088cc;border-radius:6px;padding:4px 9px;text-decoration:none;flex-shrink:0">▶ Telegram</a>
-      <button data-a="obj-del-video" data-oid="${obj.id}" data-vid="${v.id}" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>
+      ${r.wid
+        ? `<button data-a="obj-del-work-video" data-oid="${obj.id}" data-sid="${r.sid}" data-wid="${r.wid}" data-vid="${v.id}" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>`
+        : `<button data-a="obj-del-video" data-oid="${obj.id}" data-vid="${v.id}" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px;flex-shrink:0">✕</button>`}
     </div>`;
   }).join(""):`<div style="text-align:center;color:#9aabbf;font-size:11px;padding:10px">Видео по объекту попадают в отдельную тему в Telegram (до 50 МБ)</div>`}
-`,false)}
+`,false);})()}
 
 ${objChipsHtml(obj.id,_objSecBuf||[])}
 
@@ -7221,6 +7240,7 @@ ${obj.stages.map(s=>{
       const isMatsOpen=openMatsWid===w.id&&(objWorkView==="receive"||objWorkView==="works");
       const isDone=!!w.done;
       const photos=w.photos||[];
+      const vids=w.videos||[];
       // Can mark complete: production roles + admin
       const canComplete=currentUser&&(currentUser.roles.includes("admin")||currentUser.roles.includes("brigadier")||currentUser.roles.includes("worker")||currentUser.roles.includes("prod_head"));
       const hasTimeLog=logs.length>0;
@@ -7283,11 +7303,12 @@ ${obj.stages.map(s=>{
             })()}
             ${(()=>{
               if(objWorkView!=="receive")return "";
-              const showPhoto=canComplete||photos.length>0;
+              const showPhoto=canComplete||photos.length>0||vids.length>0;
               if(!showPhoto)return "";
-              const bg=isPhotoOpen?'#3498db33':photos.length>0?'#3498db18':'transparent';
+              const anyMedia=photos.length>0||vids.length>0;
+              const bg=isPhotoOpen?'#3498db33':anyMedia?'#3498db18':'transparent';
               const bd=isPhotoOpen?'#3498db':'#3498db44';
-              return `<button data-a="obj-toggle-photo" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="padding:6px 12px;font-size:12px !important;background:${bg};border:1px solid ${bd};border-radius:5px;cursor:pointer;font-size:10px;color:#3498db;font-weight:600">📷 ${photos.length>0?photos.length:'+'}</button>`;
+              return `<button data-a="obj-toggle-photo" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="padding:6px 12px;font-size:12px !important;background:${bg};border:1px solid ${bd};border-radius:5px;cursor:pointer;font-size:10px;color:#3498db;font-weight:600">📷 ${photos.length>0?photos.length:'+'}${vids.length>0?' 🎬 '+vids.length:''}</button>`;
             })()}
           </div>
           ${objWorkView!=="works"||!_rd||_rd.ok||!isMatsOpen?"":(()=>{
@@ -7396,14 +7417,23 @@ ${obj.stages.map(s=>{
               <div style="position:absolute;bottom:0;left:0;right:0;padding:3px 6px;background:linear-gradient(0deg,rgba(0,0,0,0.7),transparent);color:#fff;font-size:8px">${(p.uploader||"—")}<br>${p.date||""}</div>
             </div>`).join("")}
           </div>`:`<div style="text-align:center;padding:14px 8px;background:#fff;border:1px dashed #3498db44;border-radius:8px;font-size:11px;color:#9aabbf">Нет фото. Прикрепите фото-отчёт о выполнении работы.</div>`}
-          ${canComplete?`<div style="margin-top:8px;padding-top:8px;border-top:1px solid #3498db22">
-            <div style="font-size:10px;color:#0088cc;font-weight:700;letter-spacing:0.5px;margin-bottom:6px">🎬 ВИДЕО ВЫПОЛНЕНИЯ</div>
-            ${objVideoUploading===obj.id?`<div style="font-size:11px;font-weight:700;color:#0088cc;padding:6px 0">⏳ Обработка…</div>`:`<div style="display:flex;gap:6px">
-              <label data-a="video-cap-label" data-oid="${obj.id}" data-wn="${esc(w.n)}" data-inp="work-video-cam-${w.id}" style="flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:8px;background:#0088cc;border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700;white-space:nowrap">🎥 Снять видео<input id="work-video-cam-${w.id}" type="file" accept="video/*" capture="environment" style="display:none"></label>
-              <label data-a="video-cap-label" data-oid="${obj.id}" data-wn="${esc(w.n)}" data-inp="work-video-file-${w.id}" style="flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:8px;background:#eaf5fb;border:1px solid #0088cc55;border-radius:7px;cursor:pointer;color:#0077b3;font-size:11px;font-weight:700;white-space:nowrap">📁 Из памяти<input id="work-video-file-${w.id}" type="file" accept="video/*" style="display:none"></label>
+          ${(vids.length||canComplete)?`<div style="margin-top:8px;padding-top:8px;border-top:1px solid #3498db22">
+            <div style="font-size:10px;color:#0088cc;font-weight:700;letter-spacing:0.5px;margin-bottom:6px">🎬 ВИДЕО ВЫПОЛНЕНИЯ${vids.length?' · '+vids.length+' шт':''}</div>
+            ${vids.slice().reverse().map(v=>`<div style="display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:7px;margin-bottom:5px;background:#fff;border:1px solid #dde6f0">
+              <span style="font-size:15px">🎬</span>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:11px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(v.name||"Видео")}</div>
+                <div style="font-size:9px;color:#9aabbf">${v.date||""}${v.uploader?" · "+esc(v.uploader):""}${v.size?" · "+(v.size/1048576).toFixed(1)+" МБ":""}</div>
+              </div>
+              <a href="https://t.me/c/${TG_CHAT_LINK}/${v.topicId||obj.tgTopicId||""}/${v.messageId}" target="_blank" rel="noopener" style="font-size:9px;font-weight:700;color:#fff;background:#0088cc;border-radius:5px;padding:4px 8px;text-decoration:none;flex-shrink:0">▶ Telegram</a>
+              ${canComplete?`<button data-a="obj-del-work-video" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" data-vid="${v.id}" style="width:22px;height:22px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:10px;flex-shrink:0">✕</button>`:""}
+            </div>`).join("")}
+            ${!canComplete?"":videoUploading===w.id?`<div style="font-size:11px;font-weight:700;color:#0088cc;padding:6px 0">⏳ Обработка…</div>`:`<div style="display:flex;gap:6px">
+              <label data-a="video-cap-label" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" data-wn="${esc(w.n)}" data-inp="work-video-cam-${w.id}" style="flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:8px;background:#0088cc;border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700;white-space:nowrap">🎥 Снять видео<input id="work-video-cam-${w.id}" type="file" accept="video/*" capture="environment" style="display:none"></label>
+              <label data-a="video-cap-label" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" data-wn="${esc(w.n)}" data-inp="work-video-file-${w.id}" style="flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:8px;background:#eaf5fb;border:1px solid #0088cc55;border-radius:7px;cursor:pointer;color:#0077b3;font-size:11px;font-weight:700;white-space:nowrap">📁 Из памяти<input id="work-video-file-${w.id}" type="file" accept="video/*" style="display:none"></label>
             </div>`}
           </div>`:""}
-          <div style="font-size:9px;color:#9aabbf;margin-top:6px;font-style:italic">💡 Фото хранятся в портале и дублируются в тему объекта в Telegram. Видео уходит в ту же тему (до 50 МБ).</div>
+          <div style="font-size:9px;color:#9aabbf;margin-top:6px;font-style:italic">💡 Фото хранятся в портале и дублируются в тему объекта в Telegram. Видео привязано к этой работе и лежит в той же теме (до 50 МБ).</div>
         </div>`;
       }
       h+=`</div>`;
@@ -23507,8 +23537,8 @@ function tlWizardModal(){
       '</div>';
       // Видео: камера напрямую ИЛИ из памяти. Грузится в Telegram-тему объекта (до 50 МБ).
       body+='<div style="display:flex;gap:8px;margin-top:10px">'+
-        '<label data-a="video-cap-label" data-oid="'+esc(tlWizard.oid||"")+'" data-wn="'+esc(tlWizard.wname||"")+'" data-inp="tlwiz-video-cam-inp" style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;background:#0088cc;border-radius:16px;padding:18px 8px;cursor:pointer;color:#fff;font-size:15px;font-weight:800;box-shadow:0 6px 18px rgba(0,136,204,0.3)">🎥 Снять видео<input id="tlwiz-video-cam-inp" type="file" accept="video/*" capture="environment" style="display:none"></label>'+
-        '<label data-a="video-cap-label" data-oid="'+esc(tlWizard.oid||"")+'" data-wn="'+esc(tlWizard.wname||"")+'" data-inp="tlwiz-video-file-inp" style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;background:#eaf5fb;border:1.5px solid #0088cc55;border-radius:16px;padding:18px 8px;cursor:pointer;color:#0077b3;font-size:15px;font-weight:800">📁 Из памяти<input id="tlwiz-video-file-inp" type="file" accept="video/*" style="display:none"></label>'+
+        '<label data-a="video-cap-label" data-oid="'+esc(tlWizard.oid||"")+'" data-sid="'+esc(tlWizard.sid||"")+'" data-wid="'+esc(tlWizard.wid||"")+'" data-wn="'+esc(tlWizard.wname||"")+'" data-inp="tlwiz-video-cam-inp" style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;background:#0088cc;border-radius:16px;padding:18px 8px;cursor:pointer;color:#fff;font-size:15px;font-weight:800;box-shadow:0 6px 18px rgba(0,136,204,0.3)">🎥 Снять видео<input id="tlwiz-video-cam-inp" type="file" accept="video/*" capture="environment" style="display:none"></label>'+
+        '<label data-a="video-cap-label" data-oid="'+esc(tlWizard.oid||"")+'" data-sid="'+esc(tlWizard.sid||"")+'" data-wid="'+esc(tlWizard.wid||"")+'" data-wn="'+esc(tlWizard.wname||"")+'" data-inp="tlwiz-video-file-inp" style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;background:#eaf5fb;border:1.5px solid #0088cc55;border-radius:16px;padding:18px 8px;cursor:pointer;color:#0077b3;font-size:15px;font-weight:800">📁 Из памяти<input id="tlwiz-video-file-inp" type="file" accept="video/*" style="display:none"></label>'+
       '</div>';
       body+='<button data-a="tl-wiz-skip" style="display:block;width:100%;margin-top:10px;background:#fff;border:1.5px solid #d0dae8;border-radius:14px;padding:15px;cursor:pointer;font-size:15px;font-weight:700;color:#5a7a9a">Пропустить →</button>';
     }
@@ -23627,8 +23657,8 @@ function workSheetModal(){
   // Видео выполнения: камера напрямую ИЛИ из памяти (запасной путь, если камера в браузере капризит).
   // Ролик жмётся на клиенте (звук не пишется — «максимально ужато»).
   m+='<div style="display:flex;gap:8px;margin-top:8px">';
-  m+='<label data-a="video-cap-label" data-oid="'+o.id+'" data-wn="'+esc(w.n)+'" data-inp="ws-video-cam-inp" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:#0088cc;border:none;border-radius:13px;padding:12px 8px;cursor:pointer;color:#fff;font-size:13px;font-weight:800">🎥 Снять видео<input id="ws-video-cam-inp" type="file" accept="video/*" capture="environment" style="display:none"></label>';
-  m+='<label data-a="video-cap-label" data-oid="'+o.id+'" data-wn="'+esc(w.n)+'" data-inp="ws-video-file-inp" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:#eaf5fb;border:1.5px solid #0088cc55;border-radius:13px;padding:12px 8px;cursor:pointer;color:#0077b3;font-size:13px;font-weight:800">📁 Из памяти<input id="ws-video-file-inp" type="file" accept="video/*" style="display:none"></label>';
+  m+='<label data-a="video-cap-label" data-oid="'+o.id+'" data-sid="'+st.id+'" data-wid="'+w.id+'" data-wn="'+esc(w.n)+'" data-inp="ws-video-cam-inp" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:#0088cc;border:none;border-radius:13px;padding:12px 8px;cursor:pointer;color:#fff;font-size:13px;font-weight:800">🎥 Снять видео<input id="ws-video-cam-inp" type="file" accept="video/*" capture="environment" style="display:none"></label>';
+  m+='<label data-a="video-cap-label" data-oid="'+o.id+'" data-sid="'+st.id+'" data-wid="'+w.id+'" data-wn="'+esc(w.n)+'" data-inp="ws-video-file-inp" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:#eaf5fb;border:1.5px solid #0088cc55;border-radius:13px;padding:12px 8px;cursor:pointer;color:#0077b3;font-size:13px;font-weight:800">📁 Из памяти<input id="ws-video-file-inp" type="file" accept="video/*" style="display:none"></label>';
   m+='</div>';
   if(canMark){
     m+='<div style="display:flex;gap:8px;margin-top:8px">';
@@ -31963,14 +31993,31 @@ function bind(){
       if(inp&&!inp._bound){
         inp._bound=true;
         const oid=el.dataset.oid, wn=el.dataset.wn||"";
+        // sid/wid есть у кнопок, снятых по конкретной работе — ролик ляжет в неё, а не в объект.
+        const at=el.dataset.wid?{sid:el.dataset.sid||"",wid:el.dataset.wid}:null;
         inp.addEventListener("change",async function(){
           const f=(inp.files||[])[0]; inp._bound=false;
           if(!f) return;
           if(workSheet){ workSheet=null; render(); }   // закрыть шторку работы, если открыта — видео жмётся/грузится в фоне
-          await handleObjVideoFile(f, oid, wn);
+          await handleObjVideoFile(f, oid, wn, at);
         });
       }
     }
+    else if(a==="obj-del-work-video"){el.onclick=(ev)=>{
+      if(ev){ev.stopPropagation();ev.preventDefault();}
+      const {oid,sid,wid,vid}=el.dataset;
+      objects=objects.map(function(o){
+        if(o.id!==oid)return o;
+        return Object.assign({},o,{stages:o.stages.map(function(st){
+          if(st.id!==sid)return st;
+          return Object.assign({},st,{works:st.works.map(function(w){
+            if(w.id!==wid)return w;
+            return Object.assign({},w,{videos:(w.videos||[]).filter(function(v){return v.id!==vid;})});
+          })});
+        })});
+      });
+      fl();
+    };}
     else if(a==="obj-del-video"){el.onclick=()=>{const oid=el.dataset.oid,vid=el.dataset.vid;objects=objects.map(x=>x.id!==oid?x:Object.assign({},x,{videos:(x.videos||[]).filter(v=>v.id!==vid)}));fl();};}
     else if(a==="objmat-view"){el.onclick=(ev)=>{ev&&ev.stopPropagation();expView[el.dataset.mid]=el.dataset.v;render();};}
     else if(a==="obj-del-mat"){el.onclick=()=>{
