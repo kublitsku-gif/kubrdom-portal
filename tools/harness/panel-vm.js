@@ -87,7 +87,12 @@ function makeDoc(base) {
       dataset: {}, style: {},
     }),
     node: (dataset, id) => {
+      // Часть кнопок вешается через addEventListener('click', h, true), а не через
+      // onclick (так делают обработчики, которым нужна фаза перехвата). Тест всё равно
+      // «нажимает» через el.onclick, поэтому слушателя клика кладём туда же.
       const el = { id, dataset, style: {}, onclick: null, onchange: null, oninput: null,
+        addEventListener: (type, fn) => { if (type === 'click') el.onclick = fn },
+        removeEventListener: () => {},
         querySelectorAll: (sel) => nodes.filter((x) => match(sel, x)),
         querySelector: (sel) => nodes.find((x) => match(sel, x)) || null }
       nodes.push(el)

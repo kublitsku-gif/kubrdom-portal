@@ -70,6 +70,8 @@ import { isoLocal, todayISO } from "../src/dates.js";
 import { isoScene } from "../src/iso.js";
 import { planNormalize, planToModel, flatNormalize, flatToModel, PLAN_MAX_FILES } from "../src/plan-read.js";
 import { stageFact as _stageFact, stageSchedule as _stageSchedule, objWorstStage as _objWorstStage } from "../src/stages.js";
+// Готовность работы в процентах (гибрид: авто из часов + ручной тап) — см. src/progress.js.
+import { workPct, isAutoPct, objPct, PCT_PRESETS } from "../src/progress.js";
 import { plinthOptions, plinthPieceLen, isPlinthMat } from "../src/plinth.js";
 import { installInPageCamera } from "../src/camera.js";
 // Закрытие дня и штраф за незакрытый — общий модуль с напоминаниями (src/dayclose.js):
@@ -4103,7 +4105,7 @@ function clientProjectContent(c, activeTab){
     if(obj&&obj.stages){
       const allW=obj.stages.flatMap(function(s){return s.works||[];});
       const doneW=allW.filter(function(w){return w.done;}).length;
-      const pct=allW.length?Math.round(doneW/allW.length*100):0;
+      const pct=objPct(obj);
       progressHtml='<div style="margin-top:10px">'+
         '<div style="display:flex;justify-content:space-between;font-size:11px;color:#7a9aaa;margin-bottom:4px"><span>Готовность работ</span><span style="font-weight:700;color:#1a2a3a">'+pct+'%</span></div>'+
         '<div style="height:8px;background:#eef2f7;border-radius:4px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+(pct>=100?"#27ae60":"#2980b9")+';border-radius:4px"></div></div>'+
@@ -6632,7 +6634,7 @@ ${(()=>{
   const _dc=_aw.filter(w=>w.done).length;
   const _tc=_aw.reduce((a,w)=>a+(w.cost||0),0);
   const _dcost=_aw.filter(w=>w.done).reduce((a,w)=>a+(w.cost||0),0);
-  const _pct=isAdmin?(_tc>0?Math.round(_dcost/_tc*100):0):(_aw.length?Math.round(_dc/_aw.length*100):0);
+  const _pct=objPct(obj);
   const _bar=_pct>=100?"#27ae60":(_pct>0?"#2980b9":"#dfe6ee");
   const _team=(()=>{
     const ids=new Set();
@@ -7241,6 +7243,8 @@ ${obj.stages.map(s=>{
       const isDone=!!w.done;
       const photos=w.photos||[];
       const vids=w.videos||[];
+      const _curPct=workPct(w);
+      const _autoPct=isAutoPct(w);
       // Can mark complete: production roles + admin
       const canComplete=currentUser&&(currentUser.roles.includes("admin")||currentUser.roles.includes("brigadier")||currentUser.roles.includes("worker")||currentUser.roles.includes("prod_head"));
       const hasTimeLog=logs.length>0;
@@ -7287,6 +7291,13 @@ ${obj.stages.map(s=>{
               const wait=ms.length-got;
               const c=wait?"#e67e22":"#27ae60";
               return `<button data-a="obj-toggle-mats" data-wid="${w.id}" style="padding:6px 12px;background:${isMatsOpen?c+"22":c+"12"};border:1px solid ${c}55;border-radius:5px;cursor:pointer;font-size:12px;color:${c};font-weight:700">📦 ${got}/${ms.length}${wait?" · ждём "+wait:" ✓"}</button>`;
+            })()}
+            ${(()=>{
+              if(objWorkView!=="receive"||isDone||_curPct<=0)return "";
+              // Оценку по часам показываем приглушённо и с «~»: её никто не называл.
+              const c=_autoPct?"#7a9aaa":"#16a085";
+              return `<span title="${_autoPct?"Оценка по часам: факт от плана":"Готовность, отмеченная бригадиром"}" style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px;background:${c}12;border:1px solid ${c}40;border-radius:5px;font-size:10px;font-weight:700;color:${c}">
+                <span style="display:inline-block;width:32px;height:4px;border-radius:2px;background:${c}26;overflow:hidden"><span style="display:block;width:${_curPct}%;height:100%;background:${c}"></span></span>${_autoPct?"~":""}${_curPct}%</span>`;
             })()}
             ${(()=>{
               if(objWorkView!=="receive")return "";
@@ -7378,6 +7389,7 @@ ${obj.stages.map(s=>{
                 <span style="font-size:13px">${u?u.av:'👤'}</span>
                 <div style="flex:1;min-width:0"><div style="font-weight:600;color:#1a2a3a">${esc(u?u.name:'—')}</div><div style="font-size:9px;color:#9aabbf">${l.date}</div></div>
                 <span style="font-weight:700;color:#16a085;font-size:12px">${l.hours} ч</span>
+                ${l.pct!=null?`<span title="Готовность после этой записи" style="font-weight:700;color:#5a7a9a;font-size:10px;background:#f0f4f8;border-radius:5px;padding:2px 6px">${l.pct}%</span>`:""}
                 <button data-a="obj-del-time" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" data-lid="${l.id}" style="width:24px;height:24px;background:transparent;border:1px solid #e74c3c33;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:11px">✕</button>
               </div>`;
             }).join("")}
@@ -7394,6 +7406,15 @@ ${obj.stages.map(s=>{
             <div style="display:flex;gap:4px;margin-bottom:6px;align-items:center;flex-wrap:wrap">
               <span style="font-size:10px;color:#9aabbf;font-weight:600;width:36px">ЧАСОВ:</span>
               ${HOURS.map(hh=>`<button data-a="obj-tl-hours" data-h="${hh}" data-wid="${w.id}" style="padding:4px 9px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:700;background:${newTimeLog.hours===hh?'#16a085':'#f0f4f8'};color:${newTimeLog.hours===hh?'#fff':'#5a7a9a'};border:1.5px solid ${newTimeLog.hours===hh?'#16a085':'#d0dae8'};min-width:36px">${hh}</button>`).join("")}
+            </div>
+            <div style="display:flex;gap:4px;margin-bottom:6px;align-items:center;flex-wrap:wrap">
+              <span style="font-size:10px;color:#9aabbf;font-weight:600;width:36px;line-height:1.1">ГОТОВ-<br>НОСТЬ:</span>
+              <span style="font-size:10px;font-weight:700;color:${_curPct>0?'#16a085':'#c4cdd8'}">сейчас ${_autoPct?'~':''}${_curPct}%</span>
+              ${newTimeLog.pct!=null?`<button data-a="obj-tl-pct" data-p="" data-wid="${w.id}" style="padding:3px 7px;border-radius:6px;cursor:pointer;font-size:10px;font-weight:700;background:#fff;color:#9aabbf;border:1px solid #d0dae8">✕ не менять</button>`:""}
+            </div>
+            <div style="display:flex;gap:4px;margin-bottom:8px;align-items:center;flex-wrap:wrap">
+              <span style="width:36px;flex-shrink:0"></span>
+              ${PCT_PRESETS.map(pp=>`<button data-a="obj-tl-pct" data-p="${pp}" data-wid="${w.id}" style="padding:4px 8px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:700;background:${newTimeLog.pct===pp?'#16a085':'#f0f4f8'};color:${newTimeLog.pct===pp?'#fff':'#5a7a9a'};border:1.5px solid ${newTimeLog.pct===pp?'#16a085':'#d0dae8'};min-width:34px">${pp}</button>`).join("")}
             </div>
             <button data-a="obj-tl-save" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="width:100%;padding:7px;background:#16a085;border:none;border-radius:7px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">💾 Сохранить запись</button>
           </div>
@@ -23217,7 +23238,7 @@ let timeHistoryExpanded={}; // {wid: true} which work histories are expanded
 let openTimeWid=null; // {wid} of work with open time-log form
 let openTimeOid=null;
 let openTimeSid=null;
-let newTimeLog={hours:1,date:""}; // staged values for new time entry
+let newTimeLog={hours:1,date:"",pct:null}; // staged values for new time entry (pct=null — готовность не трогаем)
 // Мастер «+ Запись» (время+фото за 3 шага): null | {step:"obj"|"work"|"who"|"hours"|"photo"|"done", oid,sid,wid,wname, uid, hours, savedLid, photoCount, uploading, _hadObjStep}
 let tlWizard=null;
 // Шторка быстрой записи по работе (тап по названию в списке): null | {oid,sid,wid, date:"today"|"yest"|"other", otherDate, uid}
@@ -23528,6 +23549,22 @@ function tlWizardModal(){
   else if(step==="photo"){
     body+='<div style="display:inline-flex;align-items:center;gap:6px;background:#16a08518;border:1px solid #16a08544;color:#16a085;font-size:12px;font-weight:700;border-radius:8px;padding:6px 10px;margin:2px 0 12px">⏱ '+fmtH(tlWizard.hours||0)+' ч записано ✓</div>';
     body+='<div style="font-size:20px;font-weight:800;color:#0d1b2e;margin:0 2px 14px">Добавить фото или видео?</div>';
+    if(tlWizard.savedLid&&!tlWizard.uploading){
+      const wz=(objects.find(function(o){return o.id===tlWizard.oid;})||{stages:[]}).stages
+        .flatMap(function(st){return st.works||[];}).find(function(x){return x.id===tlWizard.wid;});
+      const curP=wz?workPct(wz):0, autoP=wz?isAutoPct(wz):true;
+      body+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:16px;padding:12px;margin-bottom:12px">'+
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
+          '<span style="font-size:9.5px;letter-spacing:0.1em;color:#9aabbf;font-weight:700">ГОТОВНОСТЬ РАБОТЫ</span>'+
+          '<span style="font-size:12px;font-weight:800;color:'+(curP>0?"#16a085":"#c4cdd8")+'">'+(autoP?"~":"")+curP+'%</span>'+
+        '</div>'+
+        '<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px">'+
+        PCT_PRESETS.map(function(pp){
+          const on=tlWizard.pct===pp;
+          return '<button data-a="tl-wiz-pct" data-p="'+pp+'" style="height:38px;border-radius:10px;border:1.5px solid '+(on?"#16a085":"#d0dae8")+';background:'+(on?"#e7f6f1":"#fff")+';font-size:13px;font-weight:800;color:'+(on?"#16a085":"#5a7a9a")+';cursor:pointer">'+pp+'</button>';
+        }).join("")+
+        '</div></div>';
+    }
     if(tlWizard.uploading){
       body+='<div style="background:#fff;border:1.5px dashed #3498db66;border-radius:16px;padding:26px;text-align:center;font-size:14px;color:#3498db;font-weight:700">⏳ Загружаю фото ('+tlWizard.uploading+')…</div>';
     } else {
@@ -23550,7 +23587,7 @@ function tlWizardModal(){
     body+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:16px;padding:14px 18px;margin-top:16px;font-size:14.5px;line-height:1.8;color:#1a2a3a;width:100%;box-sizing:border-box">'+
       (who2?who2.av+' '+esc(who2.name)+'<br>':'')+
       '<b>'+esc(tlWizard.wname||"")+'</b><br>'+
-      '⏱ '+fmtH(tlWizard.hours||0)+' ч'+(tlWizard.photoCount?' · 📷 '+tlWizard.photoCount+' фото':'')+' · сегодня</div>';
+      '⏱ '+fmtH(tlWizard.hours||0)+' ч'+(tlWizard.pct!=null?' · '+tlWizard.pct+'%':'')+(tlWizard.photoCount?' · 📷 '+tlWizard.photoCount+' фото':'')+' · сегодня</div>';
     body+='<button data-a="tl-wiz-done" style="width:100%;margin-top:16px;background:#16a085;border:none;border-radius:14px;padding:16px;cursor:pointer;color:#fff;font-size:16px;font-weight:800">✓ Готово</button>';
     body+='<button data-a="tl-wiz-more" style="width:100%;margin-top:8px;background:#fff;border:1.5px solid #16a08555;border-radius:14px;padding:14px;cursor:pointer;color:#16a085;font-size:15px;font-weight:700">＋ Ещё запись</button>';
     body+='<button data-a="tl-wiz-undo" style="background:transparent;border:none;margin-top:12px;cursor:pointer;color:#e74c3c;font-size:12px;font-weight:600;text-decoration:underline">↩ Отменить эту запись времени</button>';
@@ -23648,6 +23685,21 @@ function workSheetModal(){
     m+='<button data-a="ws-hours" data-h="'+h+'" data-uid="'+uid+'" data-wn="'+esc(w.n)+'" style="height:54px;border-radius:13px;border:1.5px solid '+(isLast?"#16a085":"#d0dae8")+';background:'+(isLast?"#e7f6f1":"#fff")+';font-size:19px;font-weight:800;color:'+(isLast?"#16a085":"#1a2a3a")+';cursor:pointer;font-variant-numeric:tabular-nums">'+_mdH(h)+'</button>';
   });
   m+='</div>';
+  // Готовность: выбирается ДО часов — тап по часам записывает и закрывает шторку.
+  // Ничего не выбрано — готовность не трогаем, продолжает считаться оценка по часам.
+  {
+    const curP=workPct(w), autoP=isAutoPct(w);
+    m+='<div style="display:flex;align-items:center;gap:8px;margin:14px 0 6px"><span style="font-size:9.5px;letter-spacing:0.1em;color:#9aabbf;font-weight:700">ГОТОВНОСТЬ ПОСЛЕ ЭТОГО</span>'+
+       '<span style="font-size:11px;font-weight:700;color:'+(curP>0?"#16a085":"#c4cdd8")+'">сейчас '+(autoP?"~":"")+curP+'%</span>'+
+       (workSheet.pct!=null?'<button data-a="ws-pct" data-p="" style="margin-left:auto;padding:3px 8px;border-radius:8px;border:1px solid #d0dae8;background:#fff;color:#9aabbf;font-size:10.5px;font-weight:700;cursor:pointer">✕ не менять</button>':'')+
+       '</div>';
+    m+='<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px">';
+    PCT_PRESETS.forEach(function(pp){
+      const on=workSheet.pct===pp;
+      m+='<button data-a="ws-pct" data-p="'+pp+'" style="height:38px;border-radius:10px;border:1.5px solid '+(on?"#16a085":"#d0dae8")+';background:'+(on?"#e7f6f1":"#fff")+';font-size:13px;font-weight:800;color:'+(on?"#16a085":"#5a7a9a")+';cursor:pointer">'+pp+'</button>';
+    });
+    m+='</div>';
+  }
   // Фото выполнения: отдельные кнопки «Снять фото» (камера напрямую) и «Из памяти» (галерея) —
   // на части телефонов один инпут открывает только галерею, поэтому камеру выносим явной кнопкой.
   m+='<div style="display:flex;gap:8px;margin-top:12px">';
@@ -31454,7 +31506,7 @@ function bind(){
         const isAdminOrFin=currentUser&&(currentUser.roles.includes("admin")||currentUser.roles.includes("financier"));
         let defaultUid=eligible[0]?eligible[0].id:null;
         if(!isAdminOrFin&&currentUser&&eligible.find(u=>u.id===currentUser.id)){defaultUid=currentUser.id;}
-        newTimeLog={hours:1,date:todayISO(),userId:defaultUid};
+        newTimeLog={hours:1,date:todayISO(),userId:defaultUid,pct:null};
         render();
       }
     };}
@@ -31571,12 +31623,15 @@ function bind(){
         if(!isAdminOrFin&&currentUser&&eligible.find(u=>u.id===currentUser.id)){
           defaultUid=currentUser.id;
         }
-        newTimeLog={hours:1,date:todayISO(),userId:defaultUid};
+        newTimeLog={hours:1,date:todayISO(),userId:defaultUid,pct:null};
       }
       render();
     };}
     else if(a==="obj-tl-user"){el.onclick=()=>{newTimeLog.userId=el.dataset.uid;render();};}
     else if(a==="obj-tl-hours"){el.onclick=()=>{newTimeLog.hours=parseFloat(el.dataset.h);render();};}
+    // Пустой data-p = «не менять готовность»: запись часов уйдёт без процента,
+    // и оценка по часам продолжит работать сама.
+    else if(a==="obj-tl-pct"){el.onclick=()=>{const raw=el.dataset.p;newTimeLog.pct=raw===""?null:parseInt(raw,10);render();};}
     // ── Мастер «+ Запись» (время + фото за 3 шага) ──
     else if(a==="tl-wiz-open"){el.onclick=()=>{tlWizardOpen(el.dataset.oid||"");};}
     else if(a==="tl-wiz-close"){el.onclick=()=>{tlWizard=null;render();};}
@@ -31591,6 +31646,25 @@ function bind(){
     };}
     else if(a==="tl-wiz-who"){el.onclick=()=>{if(!tlWizard)return;tlWizard.uid=el.dataset.uid;tlWizard.step="hours";render();};}
     else if(a==="tl-wiz-hours"){el.onclick=()=>{tlWizSaveLog(parseFloat(el.dataset.h));};}
+    else if(a==="tl-wiz-pct"){el.onclick=()=>{
+      if(!tlWizard||!tlWizard.savedLid)return;
+      const pct=Math.max(0,Math.min(100,parseInt(el.dataset.p,10)||0));
+      const oid=tlWizard.oid,sid=tlWizard.sid,wid=tlWizard.wid,lid=tlWizard.savedLid;
+      objects=objects.map(function(o){
+        if(o.id!==oid)return o;
+        return Object.assign({},o,{stages:o.stages.map(function(st){
+          if(st.id!==sid)return st;
+          return Object.assign({},st,{works:st.works.map(function(w){
+            if(w.id!==wid)return w;
+            return Object.assign({},w,{timeLogs:(w.timeLogs||[]).map(function(l){
+              return l.id!==lid?l:Object.assign({},l,{pct:pct});
+            })});
+          })});
+        })});
+      });
+      tlWizard.pct=pct;
+      fl();
+    };}
     else if(a==="tl-wiz-skip"){el.onclick=()=>{if(!tlWizard)return;tlWizard.step="done";render();};}
     else if(a==="tl-wiz-more"){el.onclick=()=>{if(!tlWizard)return;tlWizard={step:"work",oid:tlWizard.oid,photoCount:0,_hadObjStep:tlWizard._hadObjStep};render();};}
     else if(a==="tl-wiz-done"){el.onclick=()=>{tlWizard=null;render();};}
@@ -31829,20 +31903,23 @@ function bind(){
       const oid=workSheet.oid,sid=workSheet.sid,wid=workSheet.wid;
       const wname=el.dataset.wn||"";
       const lid=gid();
+      const pct=(workSheet.pct!=null&&isFinite(workSheet.pct))?Math.max(0,Math.min(100,workSheet.pct)):null;
+      const rec={id:lid,userId:uid,date:date,hours:h};
+      if(pct!=null)rec.pct=pct;
       objects=objects.map(function(o){
         if(o.id!==oid)return o;
         return Object.assign({},o,{stages:o.stages.map(function(st){
           if(st.id!==sid)return st;
           return Object.assign({},st,{works:st.works.map(function(w){
             if(w.id!==wid)return w;
-            return Object.assign({},w,{timeLogs:(w.timeLogs||[]).concat([{id:lid,userId:uid,date:date,hours:h}])});
+            return Object.assign({},w,{timeLogs:(w.timeLogs||[]).concat([rec])});
           })});
         })});
       });
       try{localStorage.setItem("kubr_lastH",String(h));}catch(e){}
       workSheet=null;
       scheduleSave();render();
-      _undoToast("⏱ "+_mdH(h)+" ч · "+wname+" — записано",function(){
+      _undoToast("⏱ "+_mdH(h)+" ч · "+wname+" — записано"+(pct!=null?" · "+pct+"%":""),function(){
         objects=objects.map(function(o){
           if(o.id!==oid)return o;
           return Object.assign({},o,{stages:o.stages.map(function(st){
@@ -31855,6 +31932,12 @@ function bind(){
         });
         scheduleSave();render();
       });
+    };}
+    else if(a==="ws-pct"){el.onclick=()=>{
+      if(!workSheet)return;
+      const raw=el.dataset.p;
+      workSheet.pct=raw===""?null:parseInt(raw,10);
+      render();   // как ws-date/ws-who: шторка живёт вне #tab-content, paintTab её не перерисует
     };}
     else if(a==="ws-photo-label"){
       const inp=document.getElementById(el.dataset.inp||"ws-photo-inp");
@@ -31912,6 +31995,7 @@ function bind(){
         const date=dateInp?dateInp.value:newTimeLog.date;
         const uid=newTimeLog.userId;
         const hours=newTimeLog.hours||1;
+        const pct=(newTimeLog.pct!=null&&isFinite(newTimeLog.pct))?Math.max(0,Math.min(100,newTimeLog.pct)):null;
         if(!uid){alert("Выберите исполнителя");return false;}
         if(!date){alert("Укажите дату");return false;}
         objects=objects.map(function(o){
@@ -31920,16 +32004,18 @@ function bind(){
             if(st.id!==sid)return st;
             return Object.assign({},st,{works:st.works.map(function(w){
               if(w.id!==wid)return w;
-              const logs=(w.timeLogs||[]).concat([{id:gid(),userId:uid,date:date,hours:hours}]);
+              const rec={id:gid(),userId:uid,date:date,hours:hours};
+              if(pct!=null)rec.pct=pct;
+              const logs=(w.timeLogs||[]).concat([rec]);
               return Object.assign({},w,{timeLogs:logs});
             })});
           })});
         });
         // Reset form but keep block open
-        newTimeLog={hours:1,date:date,userId:uid};
+        newTimeLog={hours:1,date:date,userId:uid,pct:null};
         try{
           const toast=document.createElement("div");
-          toast.textContent="⏱ Запись сохранена";
+          toast.textContent=pct===100?"⏱ Записано · 100% — не забудь отметить «Готово»":(pct!=null?"⏱ Записано · готовность "+pct+"%":"⏱ Запись сохранена");
           toast.style.cssText="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#16a085;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:600;z-index:9999";
           document.body.appendChild(toast);
           setTimeout(function(){try{document.body.removeChild(toast);}catch(e){}},2000);
