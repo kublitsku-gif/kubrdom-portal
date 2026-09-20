@@ -1731,7 +1731,7 @@ const TAB_DEFS=[
   {k:"marketing", n:"📣 Маркетинг"},
   {k:"kp",        n:"📋 КП"},
   {k:"spec",      n:"🏠 Спецификация"},
-  {k:"projects",  n:"🏗 Проекты"},
+  {k:"projects",  n:"📐 Проекты"},
   {k:"labels",    n:"🏷 Таблички"},
   {k:"voiceai",   n:"🎙 Голосовой ИИ"},
   {k:"issues",    n:"❓ Вопросы"},
@@ -6143,7 +6143,7 @@ function projMarkHtml(obj, w){
   }
   const face=(mk.kind==="added"?"добавлена из проекта ":"изменено в проекте ")+ruDate(mk.at)+(parts.length?" · "+parts.join(" · "):"");
   return `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:3px">
-    <span style="font-size:10px;font-weight:800;color:${PROJ_COL};background:${PROJ_COL}14;border:1px solid ${PROJ_COL}44;border-radius:5px;padding:2px 7px">🏗 ${esc(face)}</span>
+    <span style="font-size:10px;font-weight:800;color:${PROJ_COL};background:${PROJ_COL}14;border:1px solid ${PROJ_COL}44;border-radius:5px;padding:2px 7px">📐 ${esc(face)}</span>
     <button data-a="obj-proj-seen" data-oid="${obj.id}" data-wid="${w.id}" style="padding:2px 9px;background:#fff;border:1px solid ${PROJ_COL}66;border-radius:5px;cursor:pointer;font-size:10px;font-weight:700;color:${PROJ_COL}">Видел</button>
   </div>`;
 }
@@ -6156,7 +6156,7 @@ function projMarksBannerHtml(obj){
   const money=canSeeClientMoney();
   return `<div style="background:#fff;border:1.5px solid ${PROJ_COL}55;border-radius:12px;padding:10px 12px;margin-bottom:10px">
     <div style="display:flex;align-items:center;gap:8px">
-      <div style="flex:1;min-width:0;font-size:11px;font-weight:800;color:${PROJ_COL};letter-spacing:0.4px">🏗 ПРОЕКТ ОБНОВИЛ ОБЪЕКТ${marked?" · подсвечено "+marked:""}</div>
+      <div style="flex:1;min-width:0;font-size:11px;font-weight:800;color:${PROJ_COL};letter-spacing:0.4px">📐 ПРОЕКТ ОБНОВИЛ ОБЪЕКТ${marked?" · подсвечено "+marked:""}</div>
       <button data-a="obj-proj-seen-all" data-oid="${obj.id}" style="padding:4px 11px;background:${PROJ_COL};border:none;border-radius:7px;cursor:pointer;font-size:11px;font-weight:700;color:#fff;white-space:nowrap">Видел всё</button>
     </div>
     ${gone.length?`<div style="font-size:10px;font-weight:700;color:#c0392b;letter-spacing:0.4px;margin:8px 0 3px">УБРАНО В ПРОЕКТЕ · ${gone.length}</div>`+gone.map(function(g){
@@ -6223,7 +6223,7 @@ function projPendingChipHtml(obj){
   const pd=objProjPending(obj);
   if(!pd.total)return "";
   return '<div style="margin-top:5px"><button data-a="obj-proj-goto" data-oid="'+obj.id+'" style="display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:800;color:#fff;background:'+PROJ_COL+';border:none;border-radius:6px;padding:3px 9px;cursor:pointer;animation:pulse 1.4s ease-in-out infinite">'+
-    '🏗 Изменения в проекте: '+pd.total+' — принять</button></div>';
+    '📐 Изменения в проекте: '+pd.total+' — принять</button></div>';
 }
 function buildProjDiffSection(obj){
   if(!canSeeProjDiff())return "";
@@ -6232,14 +6232,14 @@ function buildProjDiffSection(obj){
   if(d.noBase){
     // Объекты, собранные до появления слепка, сравнивать не с чем. Не молчим:
     // иначе человек ждёт уведомлений, которых механизм физически не может дать.
-    return objSection(obj.id,"projdiff","🏗 СВЯЗЬ С ПРОЕКТОМ","#16a085",'<span style="color:#9aabbf">не настроена</span>',
+    return objSection(obj.id,"projdiff","📐 СВЯЗЬ С ПРОЕКТОМ","#16a085",'<span style="color:#9aabbf">не настроена</span>',
       '<div style="font-size:11.5px;color:#7a9aaa;line-height:1.5;margin-bottom:9px">Объект собран до того, как портал начал запоминать состав проекта, поэтому сравнивать не с чем. Отметьте нынешний проект как принятый — дальше портал будет показывать, что в нём изменилось.</div>'+
       '<button data-a="obj-proj-accept" data-oid="'+obj.id+'" style="width:100%;padding:9px;background:'+PROJ_COL+';border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Считать нынешний проект принятым</button>', false);
   }
   if(!d.items.length)return "";
   const body='<div style="font-size:11.5px;color:#7a9aaa;line-height:1.5;margin-bottom:9px">Проект «'+esc(d.proj.name||"")+'» поменялся с тех пор, как из него собрали этот объект: подвинули перегородку, поправили правило или цену. Принять — значит перенести план в стройку; часы, фото и отметки «выполнено» при этом сохраняются.</div>'+
     projDiffRows(obj, d, obj.id)+projDiffButtons(d, obj.id);
-  return objSection(obj.id,"projdiff","🏗 ПРОЕКТ ОБНОВИЛСЯ",PROJ_COL,
+  return objSection(obj.id,"projdiff","📐 ПРОЕКТ ОБНОВИЛСЯ",PROJ_COL,
     '<span style="color:'+PROJ_COL+'">'+d.items.length+' поз.'+(d.safe<d.items.length?' · '+(d.items.length-d.safe)+' спорных':'')+'</span>', body, true);
 }
 
@@ -17561,7 +17561,7 @@ function projNewFormHtml(){
 function projListHtml(){
   let h='<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:10px">'+
     '<div style="flex:1;min-width:0">'+
-      '<div style="font-size:11px;color:'+PROJ_COL+';font-weight:700;letter-spacing:1px">🏗 ПРОЕКТЫ</div>'+
+      '<div style="font-size:11px;color:'+PROJ_COL+';font-weight:700;letter-spacing:1px">📐 ПРОЕКТЫ</div>'+
       '<div style="font-size:12px;color:#5a7a9a;margin-top:2px;line-height:1.45">Дом от чертежа до договора: чертёж, состав, деньги и стройка в одной карточке.</div>'+
     '</div>'+
     (projNew?'':'<button data-a="proj-new" style="padding:9px 15px;background:'+PROJ_COL+';border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:12.5px;font-weight:700;flex-shrink:0">+ Проект</button>')+
@@ -17863,7 +17863,7 @@ function tLabels(){
   // не того дома выясняется уже на ламинаторе.
   if(!projects.length){
     return h+'<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:16px;font-size:12.5px;color:#7a9aaa;line-height:1.55">'+
-      'Проектов пока нет — печатать нечего. Дом заводится во вкладке «🏗 Проекты», а сюда приезжает готовым.'+
+      'Проектов пока нет — печатать нечего. Дом заводится во вкладке «📐 Проекты», а сюда приезжает готовым.'+
     '</div></div>';
   }
   h+='<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:11px 12px;margin-bottom:9px">'+
