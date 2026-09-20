@@ -7396,7 +7396,14 @@ ${obj.stages.map(s=>{
               <div style="position:absolute;bottom:0;left:0;right:0;padding:3px 6px;background:linear-gradient(0deg,rgba(0,0,0,0.7),transparent);color:#fff;font-size:8px">${(p.uploader||"—")}<br>${p.date||""}</div>
             </div>`).join("")}
           </div>`:`<div style="text-align:center;padding:14px 8px;background:#fff;border:1px dashed #3498db44;border-radius:8px;font-size:11px;color:#9aabbf">Нет фото. Прикрепите фото-отчёт о выполнении работы.</div>`}
-          <div style="font-size:9px;color:#9aabbf;margin-top:6px;font-style:italic">💡 Фото пока хранятся локально. При подключении Google Drive — автозагрузка туда.</div>
+          ${canComplete?`<div style="margin-top:8px;padding-top:8px;border-top:1px solid #3498db22">
+            <div style="font-size:10px;color:#0088cc;font-weight:700;letter-spacing:0.5px;margin-bottom:6px">🎬 ВИДЕО ВЫПОЛНЕНИЯ</div>
+            ${objVideoUploading===obj.id?`<div style="font-size:11px;font-weight:700;color:#0088cc;padding:6px 0">⏳ Обработка…</div>`:`<div style="display:flex;gap:6px">
+              <label data-a="video-cap-label" data-oid="${obj.id}" data-wn="${esc(w.n)}" data-inp="work-video-cam-${w.id}" style="flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:8px;background:#0088cc;border-radius:7px;cursor:pointer;color:#fff;font-size:11px;font-weight:700;white-space:nowrap">🎥 Снять видео<input id="work-video-cam-${w.id}" type="file" accept="video/*" capture="environment" style="display:none"></label>
+              <label data-a="video-cap-label" data-oid="${obj.id}" data-wn="${esc(w.n)}" data-inp="work-video-file-${w.id}" style="flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:8px;background:#eaf5fb;border:1px solid #0088cc55;border-radius:7px;cursor:pointer;color:#0077b3;font-size:11px;font-weight:700;white-space:nowrap">📁 Из памяти<input id="work-video-file-${w.id}" type="file" accept="video/*" style="display:none"></label>
+            </div>`}
+          </div>`:""}
+          <div style="font-size:9px;color:#9aabbf;margin-top:6px;font-style:italic">💡 Фото хранятся в портале и дублируются в тему объекта в Telegram. Видео уходит в ту же тему (до 50 МБ).</div>
         </div>`;
       }
       h+=`</div>`;
