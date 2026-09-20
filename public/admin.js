@@ -3890,7 +3890,9 @@ function tBuildAnalysis(){
         const logDates=Object.keys(byDate).sort();
         doneDate=logDates.length?logDates[logDates.length-1]:((w.doneAt||"").slice(0,10)||null);
       }
-      rows.push({type:"work",name:(w.n||w.name||"Работа"),color:(s.c||"#7f8c8d"),byDate:byDate,total:total,done:!!w.done,doneDate:doneDate});
+      rows.push({type:"work",name:(w.n||w.name||"Работа"),color:(s.c||"#7f8c8d"),byDate:byDate,total:total,done:!!w.done,doneDate:doneDate,
+        pct:workPct(w),auto:isAutoPct(w),ph:(w.photos||[]).length,vid:(w.videos||[]).length,
+        oid:obj.id,sid:s.id,wid:w.id});
     });
   });
   const works=rows.filter(function(r){return r.type==="work";}); // для сумм
@@ -3932,7 +3934,7 @@ function tBuildAnalysis(){
   '</div>';
 
   // Диаграмма Ганта (горизонтальный + вертикальный скролл, фиксированная шапка)
-  const COL=40, LABEL=130;
+  const COL=40, LABEL=150;   // +20 px: в подпись добавились процент готовности и медиа
   const monShort=["янв","фев","мар","апр","май","июн","июл","авг","сен","окт","ноя","дек"];
   const monFull=["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
   const wdShort=["вс","пн","вт","ср","чт","пт","сб"];
@@ -3987,14 +3989,28 @@ function tBuildAnalysis(){
       return;
     }
     // работа
-    html+='<div style="display:flex;border-bottom:1px solid #f4f6f9">';
-    html+='<div style="width:'+LABEL+'px;flex-shrink:0;padding:7px 8px 7px 16px;background:#fff;border-right:1px solid #eef2f7;position:sticky;left:0;z-index:3">'+
-      '<div style="font-size:11px;font-weight:600;color:#1a2a3a;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+esc(r.name)+'</div>'+
-      '<div style="font-size:9px;font-weight:700;margin-top:2px;color:'+(r.total>0?"#16a085":(r.done?"#27ae60":"#c8d8e8"))+'">'+(r.total>0?r.total+" ч":(r.done?"✓ выполнено":"—"))+'</div>'+
+    // Подпись — кнопка: тап уводит в карточку объекта прямо к этой работе с раскрытым
+    // блоком фото. Иначе «вижу, что есть фото» и «могу их посмотреть» живут на разных
+    // экранах, и человек ищет работу в списке из сорока руками.
+    const full=r.pct>=100;
+    const rowBg=full?"#27ae6010":"#fff";
+    const pctCol=full?"#27ae60":(r.auto?"#9aabbf":"#16a085");
+    const media=(r.ph?'<span style="color:#3498db;font-weight:700">📷'+r.ph+'</span>':"")+
+                (r.ph&&r.vid?' ':"")+
+                (r.vid?'<span style="color:#0088cc;font-weight:700">🎬'+r.vid+'</span>':"");
+    html+='<div style="display:flex;border-bottom:1px solid #f4f6f9;background:'+(full?"#27ae6008":"transparent")+'">';
+    html+='<div data-a="gantt-work-open" data-oid="'+r.oid+'" data-sid="'+r.sid+'" data-wid="'+r.wid+'" title="Открыть работу и её фото" style="width:'+LABEL+'px;flex-shrink:0;padding:7px 8px 6px 16px;background:'+rowBg+';border-right:1px solid #eef2f7;border-left:3px solid '+(full?"#27ae60":"transparent")+';box-sizing:border-box;position:sticky;left:0;z-index:3;cursor:pointer">'+
+      '<div style="font-size:11px;font-weight:600;color:'+(full?"#1e8449":"#1a2a3a")+';line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+esc(r.name)+'</div>'+
+      '<div style="display:flex;align-items:center;gap:5px;margin-top:2px;font-size:9px;font-weight:700">'+
+        '<span style="color:'+(r.total>0?"#16a085":(r.done?"#27ae60":"#c8d8e8"))+'">'+(r.total>0?r.total+" ч":(r.done?"✓":"—"))+'</span>'+
+        '<span style="color:'+pctCol+'">'+(full?"✓ 100%":(r.pct>0?(r.auto?"~":"")+r.pct+"%":""))+'</span>'+
+        (media?'<span style="margin-left:auto;font-size:9px;white-space:nowrap">'+media+'</span>':"")+
+      '</div>'+
+      (r.pct>0?'<div style="height:3px;border-radius:2px;background:#eef2f7;margin-top:4px;overflow:hidden"><div style="width:'+r.pct+'%;height:100%;background:'+pctCol+'"></div></div>':"")+
     '</div>';
     days.forEach(function(d){
       const h=r.byDate[d]; const off=dayOff[d]; const doneHere=r.doneDate===d; const isToday=d===todayISOg;
-      const cellBg=isToday?"#2980b90a":(off?"#9b59b608":"#fff");
+      const cellBg=isToday?"#2980b90a":(off?"#9b59b608":"transparent");
       if(h){
         html+='<div style="width:'+COL+'px;flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:5px 3px;background:'+cellBg+';border-right:1px solid '+(isToday?"#2980b933":"#f4f6f9")+'">'+
           '<div style="background:'+r.color+';color:#fff;border-radius:6px;font-size:10px;font-weight:700;padding:4px 0;width:100%;text-align:center;position:relative">'+h+(doneHere?'<span style="position:absolute;top:-4px;right:-2px;font-size:9px">✓</span>':'')+'</div>'+
@@ -4004,7 +4020,7 @@ function tBuildAnalysis(){
           '<div style="background:#27ae60;color:#fff;border-radius:6px;font-size:11px;font-weight:700;padding:4px 0;width:100%;text-align:center">✓</div>'+
         '</div>';
       } else {
-        html+='<div style="width:'+COL+'px;flex-shrink:0;background:'+(isToday?"#2980b90a":(off?"#9b59b610":"#fff"))+';border-right:1px solid '+(isToday?"#2980b933":"#f4f6f9")+'"></div>';
+        html+='<div style="width:'+COL+'px;flex-shrink:0;background:'+(isToday?"#2980b90a":(off?"#9b59b610":"transparent"))+';border-right:1px solid '+(isToday?"#2980b933":"#f4f6f9")+'"></div>';
       }
     });
     html+='</div>';
@@ -4019,7 +4035,9 @@ function tBuildAnalysis(){
   });
   html+='</div>';
   html+='</div></div>';
-  html+='<div style="font-size:10px;color:#9aabbf;margin-top:8px">↔️ Прокрутите график вправо, чтобы увидеть все дни. Цвет блока = этап, число = часы за день, ✓ = день отметки «выполнено».</div>';
+  html+='<div style="font-size:10px;color:#9aabbf;margin-top:8px;line-height:1.5">↔️ Прокрутите график вправо, чтобы увидеть все дни. Цвет блока = этап, число = часы за день, ✓ = день отметки «выполнено».<br>'+
+    'Полоска под названием — готовность работы; «~» значит, что процент никто не называл и он посчитан по часам. Зелёная строка — сделано на 100%.<br>'+
+    '📷 и 🎬 — сколько к работе приложено фото и видео. <b>Тап по названию работы</b> открывает её в объекте вместе с этими фото.</div>';
   html+='</div>';
   return html;
 }
@@ -7330,7 +7348,7 @@ ${obj.stages.map(s=>{
       const _rail=(!_rd||!_rd.total)?null
         :_rd.ok?"#27ae60"
         :_rd.missing.some(m=>matStatus(m).bought<=0)?"#c0392b":"#e67e22";
-      let h=`<div style="background:${isDone?'#27ae6008':isSupplyWork?'#e67e220f':'#f8fafc'};border:1px solid ${isDone?'#27ae6055':isSupplyWork?'#e67e2255':'#dde6f0'};${_rail?`border-left:4px solid ${_rail};`:""}border-radius:8px;margin-bottom:4px;overflow:hidden;${w.projMark?`box-shadow:0 0 0 2px ${PROJ_COL}66;background:${PROJ_COL}0f;`:""}">
+      let h=`<div id="work-${w.id}" style="background:${isDone?'#27ae6008':isSupplyWork?'#e67e220f':'#f8fafc'};border:1px solid ${isDone?'#27ae6055':isSupplyWork?'#e67e2255':'#dde6f0'};${_rail?`border-left:4px solid ${_rail};`:""}border-radius:8px;margin-bottom:4px;overflow:hidden;${w.projMark?`box-shadow:0 0 0 2px ${PROJ_COL}66;background:${PROJ_COL}0f;`:""}">
       <div style="display:flex;align-items:center;gap:8px;padding:7px 10px">
         ${canComplete?(canCheck?`<button data-a="obj-toggle-done" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" style="width:24px;height:24px;flex-shrink:0;background:${isDone?'#27ae60':'#fff'};border:2px solid ${isDone?'#27ae60':'#c0d0e0'};border-radius:6px;cursor:pointer;color:#fff;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0;line-height:1">${isDone?'✓':''}</button>`:`<button data-a="obj-need-time" data-wid="${w.id}" style="width:24px;height:24px;flex-shrink:0;background:#f8fafc;border:2px dashed #d0dae8;border-radius:6px;cursor:pointer;color:#9aabbf;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0;line-height:1" title="Сначала отметьте часы">🔒</button>`):`<div style="width:24px;height:24px;flex-shrink:0;background:${isDone?'#27ae60':'#f0f4f8'};border:2px solid ${isDone?'#27ae60':'#dde6f0'};border-radius:6px;color:#fff;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1">${isDone?'✓':''}</div>`}
         <div style="flex:1;min-width:0">
@@ -26313,6 +26331,19 @@ function bind(){
     const a=el.dataset.a;
     if(a==="login-as"){/* handled by bindLogin */}
     else if(a==="logout"){el.onclick=()=>{try{localStorage.removeItem("kubr_remember");}catch(e){}clearToken();currentUser=null;loginMode=null;loginPinFor=null;loginPinError="";showPinChange=false;tab="assign";render();};}
+    // Гант → карточка объекта к этой работе с раскрытыми фото. Раскрываем и этап,
+    // и «сделанные»: работа на 100% лежит под свёрткой, и без этого переход вёл в никуда.
+    else if(a==="gantt-work-open"){el.onclick=()=>{
+      const oid=el.dataset.oid,sid=el.dataset.sid,wid=el.dataset.wid;
+      tab="assign"; openObject=oid; objWorkView="receive";
+      objStageOpen=Object.assign({},objStageOpen,{[sid]:true});
+      objDoneOpen=Object.assign({},objDoneOpen,{[sid]:true});
+      openPhotoWid=wid; openTimeWid=null; openMatsWid=null;
+      render();
+      setTimeout(function(){
+        try{ const e=document.getElementById("work-"+wid); if(e&&e.scrollIntoView)e.scrollIntoView({block:"center"}); }catch(e){}
+      },80);
+    };}
     else if(a==="viewas-enter"){el.onclick=()=>{enterViewAs(el.dataset.uid||"");};}
     else if(a==="viewas-exit"){el.onclick=()=>{exitViewAs();};}
     else if(a==="notify-open"){el.onclick=()=>{ showNotify=true; showPinChange=false; notifyMsg=""; render(); notifyLoad(); };}
