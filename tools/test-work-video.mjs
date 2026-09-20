@@ -9,7 +9,7 @@
 import { boot, reporter } from './harness/panel-vm.js'
 
 const t = reporter()
-const VID = (id) => ({ id, topicId: 5, messageId: 77, name: 'Монтаж перегородок — VID_1.mp4', size: 2 * 1048576, date: '2026-09-20 18:12', uploader: 'Валера' })
+const VID = (id) => ({ id, topicId: 5, messageId: 77, fileId: 'AgAC-file', name: 'Монтаж перегородок — VID_1.mp4', size: 2 * 1048576, date: '2026-09-20 18:12', uploader: 'Валера' })
 
 function panel (net) {
   const p = boot(net ? { net } : {})
@@ -53,9 +53,15 @@ t.section('Кнопки съёмки знают свою работу')
 
 t.section('Снятое видно у самой работы')
 {
-  const m = openWork(panel(), 'w2')
+  const p = panel()
+  const m = openWork(p, 'w2')
   t.ok('ролик в блоке работы', m.indexOf('ВИДЕО ВЫПОЛНЕНИЯ · 1 шт') >= 0)
-  t.ok('ссылка в тему объекта', m.indexOf('https://t.me/c/') >= 0 && m.indexOf('/5/77') >= 0)
+  // Ролик теперь смотрится прямо в портале; ссылка в Telegram осталась внутри просмотрщика.
+  t.ok('ролик открывается из списка', /data-a="media-open"[^>]*data-wid="w2"/.test(m), m.slice(m.indexOf('ВИДЕО ВЫПОЛНЕНИЯ'), m.indexOf('ВИДЕО ВЫПОЛНЕНИЯ') + 900))
+  p.run('mediaOpen("o1","s1","w2",0);')
+  const view = p.run('mediaViewModal()')
+  t.ok('в просмотрщике — само видео', view.indexOf('/api/tg-video/') >= 0, view.slice(0, 300))
+  t.ok('и ссылка в тему объекта', view.indexOf('https://t.me/c/') >= 0 && view.indexOf('/5/77') >= 0)
   t.ok('удаление адресное', /data-a="obj-del-work-video"[^>]*data-wid="w2"[^>]*data-vid="v1"/.test(m))
   t.ok('чип работы считает видео', /data-a="obj-toggle-photo"[^>]*data-wid="w2"[\s\S]{0,400}?🎬 1/.test(m))
 }

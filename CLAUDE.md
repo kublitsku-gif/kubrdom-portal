@@ -97,3 +97,4 @@
 | ежедневный отчёт, выходной, штраф за незакрытый день | `docs/domain/day-close.md` | `src/dayclose.js`, `src/botday.js`, `runDayClose` |
 | «Снять фото/видео» открывал галерею в Telegram на Android, своя камера | `docs/domain/camera.md` | `src/camera.js` |
 | процент готовности работы, взвешенный прогресс объекта | `docs/domain/work-progress.md` | `src/progress.js`, `workPct`, `objPct` |
+| просмотр фото/видео работы, прокси видео из Telegram | `docs/domain/media-view.md` | `mediaViewModal`, `/api/tg-video` |

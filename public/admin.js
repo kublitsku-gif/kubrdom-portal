@@ -3995,9 +3995,13 @@ function tBuildAnalysis(){
     const full=r.pct>=100;
     const rowBg=full?"#27ae6010":"#fff";
     const pctCol=full?"#27ae60":(r.auto?"#9aabbf":"#16a085");
-    const media=(r.ph?'<span style="color:#3498db;font-weight:700">📷'+r.ph+'</span>':"")+
+    const _mBtn=function(icon,cnt,col,startAt){
+      return '<button data-a="media-open" data-oid="'+r.oid+'" data-sid="'+r.sid+'" data-wid="'+r.wid+'" data-i="'+startAt+'" title="Открыть '+(startAt?"видео":"фото")+'" '+
+        'style="padding:2px 5px;border-radius:5px;border:1px solid '+col+'44;background:'+col+'14;color:'+col+';font-size:9px;font-weight:700;cursor:pointer;line-height:1.3">'+icon+cnt+'</button>';
+    };
+    const media=(r.ph?_mBtn("📷",r.ph,"#3498db",0):"")+
                 (r.ph&&r.vid?' ':"")+
-                (r.vid?'<span style="color:#0088cc;font-weight:700">🎬'+r.vid+'</span>':"");
+                (r.vid?_mBtn("🎬",r.vid,"#0088cc",r.ph):"");
     html+='<div style="display:flex;border-bottom:1px solid #f4f6f9;background:'+(full?"#27ae6008":"transparent")+'">';
     html+='<div data-a="gantt-work-open" data-oid="'+r.oid+'" data-sid="'+r.sid+'" data-wid="'+r.wid+'" title="Открыть работу и её фото" style="width:'+LABEL+'px;flex-shrink:0;padding:7px 8px 6px 16px;background:'+rowBg+';border-right:1px solid #eef2f7;border-left:3px solid '+(full?"#27ae60":"transparent")+';box-sizing:border-box;position:sticky;left:0;z-index:3;cursor:pointer">'+
       '<div style="font-size:11px;font-weight:600;color:'+(full?"#1e8449":"#1a2a3a")+';line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+esc(r.name)+'</div>'+
@@ -5088,6 +5092,19 @@ function render(){
   // Шторка быстрой записи по работе
   if(workSheet){
     a.insertAdjacentHTML("beforeend", workSheetModal());
+  }
+  // Просмотр фото/видео работы — поверх всего, из любой вкладки
+  if(mediaView){
+    a.insertAdjacentHTML("beforeend", mediaViewModal());
+    if(!window._mediaKeys){
+      window._mediaKeys=true;
+      document.addEventListener("keydown",function(e){
+        if(!mediaView)return;
+        if(e.key==="Escape"){ mediaView=null; render(); }
+        else if(e.key==="ArrowLeft"){ mediaStep(-1); }
+        else if(e.key==="ArrowRight"){ mediaStep(1); }
+      });
+    }
   }
   bind();
   // Material picker search input
@@ -7517,21 +7534,21 @@ ${obj.stages.map(s=>{
             <button data-a="obj-toggle-photo" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" title="Свернуть" style="margin-left:6px;width:24px;height:24px;flex-shrink:0;background:#fff;border:1px solid #3498db55;border-radius:6px;cursor:pointer;color:#3498db;font-size:12px">✕</button>
           </div>
           ${photos.length?`<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px">
-            ${photos.map(p=>`<div style="position:relative;aspect-ratio:1;border-radius:8px;overflow:hidden;background:#dde6f0;border:1px solid #c0d0e0">
-              <img src="${p.data}" style="width:100%;height:100%;object-fit:cover;display:block" alt="">
+            ${photos.map((p,pi)=>`<div style="position:relative;aspect-ratio:1;border-radius:8px;overflow:hidden;background:#dde6f0;border:1px solid #c0d0e0">
+              <img data-a="media-open" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" data-i="${pi}" src="${p.data}" style="width:100%;height:100%;object-fit:cover;display:block;cursor:pointer" alt="">
               ${canComplete?`<button data-a="obj-del-photo" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" data-pid="${p.id}" style="position:absolute;top:3px;right:3px;width:22px;height:22px;background:rgba(231,76,60,0.9);border:none;border-radius:5px;cursor:pointer;color:#fff;font-size:11px;font-weight:700">✕</button>`:""}
               <div style="position:absolute;bottom:0;left:0;right:0;padding:3px 6px;background:linear-gradient(0deg,rgba(0,0,0,0.7),transparent);color:#fff;font-size:8px">${(p.uploader||"—")}<br>${p.date||""}</div>
             </div>`).join("")}
           </div>`:`<div style="text-align:center;padding:14px 8px;background:#fff;border:1px dashed #3498db44;border-radius:8px;font-size:11px;color:#9aabbf">Нет фото. Прикрепите фото-отчёт о выполнении работы.</div>`}
           ${(vids.length||canComplete)?`<div style="margin-top:8px;padding-top:8px;border-top:1px solid #3498db22">
             <div style="font-size:10px;color:#0088cc;font-weight:700;letter-spacing:0.5px;margin-bottom:6px">🎬 ВИДЕО ВЫПОЛНЕНИЯ${vids.length?' · '+vids.length+' шт':''}</div>
-            ${vids.slice().reverse().map(v=>`<div style="display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:7px;margin-bottom:5px;background:#fff;border:1px solid #dde6f0">
+            ${vids.slice().reverse().map((v,vi)=>`<div style="display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:7px;margin-bottom:5px;background:#fff;border:1px solid #dde6f0">
               <span style="font-size:15px">🎬</span>
               <div style="flex:1;min-width:0">
                 <div style="font-size:11px;font-weight:600;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(v.name||"Видео")}</div>
                 <div style="font-size:9px;color:#9aabbf">${v.date||""}${v.uploader?" · "+esc(v.uploader):""}${v.size?" · "+(v.size/1048576).toFixed(1)+" МБ":""}</div>
               </div>
-              <a href="https://t.me/c/${TG_CHAT_LINK}/${v.topicId||obj.tgTopicId||""}/${v.messageId}" target="_blank" rel="noopener" style="font-size:9px;font-weight:700;color:#fff;background:#0088cc;border-radius:5px;padding:4px 8px;text-decoration:none;flex-shrink:0">▶ Telegram</a>
+              <button data-a="media-open" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" data-i="${photos.length+(vids.length-1-vi)}" style="font-size:9px;font-weight:700;color:#fff;background:#0088cc;border:none;border-radius:5px;padding:4px 8px;cursor:pointer;flex-shrink:0">▶ Смотреть</button>
               ${canComplete?`<button data-a="obj-del-work-video" data-oid="${obj.id}" data-sid="${s.id}" data-wid="${w.id}" data-vid="${v.id}" style="width:22px;height:22px;background:transparent;border:1px solid #e74c3c44;border-radius:5px;cursor:pointer;color:#e74c3c;font-size:10px;flex-shrink:0">✕</button>`:""}
             </div>`).join("")}
             ${!canComplete?"":videoUploading===w.id?`<div style="font-size:11px;font-weight:700;color:#0088cc;padding:6px 0">⏳ Обработка…</div>`:`<div style="display:flex;gap:6px">
@@ -23328,6 +23345,35 @@ let newTimeLog={hours:1,date:"",pct:null}; // staged values for new time entry (
 // Мастер «+ Запись» (время+фото за 3 шага): null | {step:"obj"|"work"|"who"|"hours"|"photo"|"done", oid,sid,wid,wname, uid, hours, savedLid, photoCount, uploading, _hadObjStep}
 let tlWizard=null;
 // Шторка быстрой записи по работе (тап по названию в списке): null | {oid,sid,wid, date:"today"|"yest"|"other", otherDate, uid}
+// Просмотр фото и видео работы. Открывается откуда угодно (Гант, карточка работы),
+// поэтому держит АДРЕС работы, а не копию файлов: снимок живой, список обновится сам.
+let mediaView=null;   // {oid,sid,wid,i}
+// Фото и видео одной работы одним списком — просмотрщик листает их подряд.
+function workMedia(oid,sid,wid){
+  const o=objects.find(function(x){return x.id===oid;});
+  if(!o)return {w:null,items:[]};
+  const st=(o.stages||[]).find(function(x){return x.id===sid;});
+  const w=st&&(st.works||[]).find(function(x){return x.id===wid;});
+  if(!w)return {w:null,items:[]};
+  const items=(w.photos||[]).map(function(p){return {kind:"photo",src:p.data,name:p.name||"",date:p.date||"",uploader:p.uploader||"",size:p.size||0};})
+    .concat((w.videos||[]).map(function(v){return {kind:"video",fileId:v.fileId||"",topicId:v.topicId||o.tgTopicId||"",messageId:v.messageId||"",name:v.name||"",date:v.date||"",uploader:v.uploader||"",size:v.size||0};}));
+  return {o:o,w:w,items:items};
+}
+function mediaOpen(oid,sid,wid,i){
+  const m=workMedia(oid,sid,wid);
+  if(!m.items.length)return;
+  const n=m.items.length;
+  mediaView={oid:oid,sid:sid,wid:wid,i:Math.max(0,Math.min(n-1,Number(i)||0))};
+  render();
+}
+function mediaStep(d){
+  if(!mediaView)return;
+  const m=workMedia(mediaView.oid,mediaView.sid,mediaView.wid);
+  if(!m.items.length){ mediaView=null; render(); return; }
+  const n=m.items.length;
+  mediaView=Object.assign({},mediaView,{i:(mediaView.i+d+n)%n});   // по кругу: на телефоне так меньше тупиков
+  render();
+}
 let workSheet=null;
 let finMode="pnl"; // "bdds" | "pnl" | "experiment"
 let bddsView="month"; // "month" or "contract"
@@ -23718,6 +23764,72 @@ function _undoToast(msg,undoFn,opts){
 }
 
 // ── ШТОРКА БЫСТРОЙ ЗАПИСИ (вариант «шторка»: тап по работе → часы одним тапом) ──
+// ── ПРОСМОТР ФОТО И ВИДЕО РАБОТЫ ────────────────────────────────────────────
+// Видео лежит в Telegram, но Worker его проксирует (/api/tg-video/<fileId>), поэтому
+// смотрится прямо тут. Bot API отдаёт только файлы до 20 МБ — на этот случай рядом
+// всегда есть ссылка в Telegram, а не пустой чёрный прямоугольник.
+function mediaViewModal(){
+  if(!mediaView)return "";
+  const m=workMedia(mediaView.oid,mediaView.sid,mediaView.wid);
+  if(!m.items.length)return "";
+  const n=m.items.length;
+  const i=Math.max(0,Math.min(n-1,mediaView.i||0));
+  const it=m.items[i];
+  const nPh=m.items.filter(function(x){return x.kind==="photo";}).length;
+  const nVid=n-nPh;
+  const meta=[it.uploader,it.date,it.size?(it.size/1048576).toFixed(1)+" МБ":""].filter(Boolean).join(" · ");
+  const tgLink=it.kind==="video"&&it.messageId?("https://t.me/c/"+TG_CHAT_LINK+"/"+(it.topicId||"")+"/"+it.messageId):"";
+
+  let h='<div id="media-view" style="position:fixed;inset:0;z-index:1200;background:#0d1b2e;display:flex;flex-direction:column">';
+  // Шапка: чья работа и сколько всего
+  h+='<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;flex-shrink:0;border-bottom:1px solid rgba(255,255,255,.12)">'+
+    '<div style="flex:1;min-width:0">'+
+      '<div style="font-size:13px;font-weight:700;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc((m.w&&m.w.n)||"Работа")+'</div>'+
+      '<div style="font-size:10px;color:rgba(255,255,255,.55)">'+esc((m.o&&m.o.name)||"")+' · '+(nPh?"📷 "+nPh:"")+(nPh&&nVid?" · ":"")+(nVid?"🎬 "+nVid:"")+'</div>'+
+    '</div>'+
+    '<span style="font-size:12px;font-weight:700;color:rgba(255,255,255,.7);flex-shrink:0">'+(i+1)+' / '+n+'</span>'+
+    '<button data-a="media-close" style="width:34px;height:34px;flex-shrink:0;border-radius:10px;border:none;background:rgba(255,255,255,.12);color:#fff;font-size:14px;cursor:pointer">✕</button>'+
+  '</div>';
+
+  // Сам кадр
+  h+='<div style="flex:1;min-height:0;position:relative;display:flex;align-items:center;justify-content:center;padding:8px">';
+  if(it.kind==="photo"){
+    h+='<img src="'+esc(it.src||"")+'" alt="" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:8px">';
+  } else {
+    h+='<div style="width:100%;max-width:100%;display:flex;flex-direction:column;align-items:center;gap:10px">'+
+      (it.fileId
+        ? '<video src="'+API_BASE+'/api/tg-video/'+encodeURIComponent(it.fileId)+'" controls playsinline preload="metadata" style="max-width:100%;max-height:60vh;border-radius:8px;background:#000"></video>'
+        : '<div style="color:rgba(255,255,255,.6);font-size:12px;text-align:center;padding:20px">Ролик доступен только в Telegram.</div>')+
+      (tgLink?'<a href="'+esc(tgLink)+'" target="_blank" rel="noopener" style="font-size:12px;font-weight:700;color:#fff;background:#0088cc;border-radius:9px;padding:9px 14px;text-decoration:none">▶ Открыть в Telegram</a>':"")+
+      '<div style="font-size:10px;color:rgba(255,255,255,.45);text-align:center;max-width:320px;line-height:1.4">Если ролик не проигрывается — он больше 20 МБ, такие смотрятся только в Telegram.</div>'+
+    '</div>';
+  }
+  if(n>1){
+    h+='<button data-a="media-prev" style="position:absolute;left:6px;top:50%;transform:translateY(-50%);width:42px;height:60px;border-radius:12px;border:none;background:rgba(0,0,0,.35);color:#fff;font-size:20px;cursor:pointer">‹</button>'+
+       '<button data-a="media-next" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);width:42px;height:60px;border-radius:12px;border:none;background:rgba(0,0,0,.35);color:#fff;font-size:20px;cursor:pointer">›</button>';
+  }
+  h+='</div>';
+
+  // Подпись и лента миниатюр
+  h+='<div style="flex-shrink:0;padding:8px 14px 12px">';
+  if(meta)h+='<div style="font-size:11px;color:rgba(255,255,255,.6);margin-bottom:8px;text-align:center">'+esc(meta)+'</div>';
+  if(n>1){
+    h+='<div style="display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px">';
+    m.items.forEach(function(x,xi){
+      const on=xi===i;
+      h+='<button data-a="media-go" data-i="'+xi+'" style="width:48px;height:48px;flex-shrink:0;border-radius:8px;cursor:pointer;padding:0;overflow:hidden;background:#1a2a3a;border:2px solid '+(on?"#3498db":"rgba(255,255,255,.15)")+'">'+
+        (x.kind==="photo"
+          ? '<img src="'+esc(x.src||"")+'" alt="" style="width:100%;height:100%;object-fit:cover;display:block">'
+          : '<span style="display:flex;width:100%;height:100%;align-items:center;justify-content:center;font-size:18px">🎬</span>')+
+      '</button>';
+    });
+    h+='</div>';
+  }
+  h+='</div>';
+  h+='</div>';
+  return h;
+}
+
 function workSheetModal(){
   if(!workSheet)return"";
   const o=objects.find(function(x){return x.id===workSheet.oid;});
@@ -26333,6 +26445,16 @@ function bind(){
     else if(a==="logout"){el.onclick=()=>{try{localStorage.removeItem("kubr_remember");}catch(e){}clearToken();currentUser=null;loginMode=null;loginPinFor=null;loginPinError="";showPinChange=false;tab="assign";render();};}
     // Гант → карточка объекта к этой работе с раскрытыми фото. Раскрываем и этап,
     // и «сделанные»: работа на 100% лежит под свёрткой, и без этого переход вёл в никуда.
+    // Значки 📷/🎬 живут внутри кликабельной подписи работы — гасим всплытие,
+    // иначе тап по ним уводил бы в карточку объекта вместо открытия галереи.
+    else if(a==="media-open"){el.onclick=(ev)=>{
+      if(ev){ev.stopPropagation();ev.preventDefault();}
+      mediaOpen(el.dataset.oid,el.dataset.sid,el.dataset.wid,el.dataset.i||0);
+    };}
+    else if(a==="media-close"){el.onclick=()=>{ mediaView=null; render(); };}
+    else if(a==="media-prev"){el.onclick=()=>{ mediaStep(-1); };}
+    else if(a==="media-next"){el.onclick=()=>{ mediaStep(1); };}
+    else if(a==="media-go"){el.onclick=()=>{ if(mediaView){ mediaView=Object.assign({},mediaView,{i:parseInt(el.dataset.i,10)||0}); render(); } };}
     else if(a==="gantt-work-open"){el.onclick=()=>{
       const oid=el.dataset.oid,sid=el.dataset.sid,wid=el.dataset.wid;
       tab="assign"; openObject=oid; objWorkView="receive";
