@@ -92,4 +92,32 @@ t.section('Тап по работе уводит к её фото')
   t.ok('есть куда прокрутить', p.run('tObjects()').indexOf('id="work-w3"') >= 0)
 }
 
+t.section('Выбор объекта свёрнут')
+{
+  const p = panel()
+  p.run('objects.push({id:"o2",icon:"\u{1F3E0}",name:"Дом СВО",stages:[]});')
+  const h = gantt(p)
+  t.ok('вместо ряда чипов — одна строка', h.indexOf('analysis-objs-toggle') >= 0)
+  t.ok('в ней виден выбранный объект', h.indexOf('Баня Буханка') >= 0)
+  t.ok('и сколько всего объектов', h.indexOf('сменить · 2') >= 0)
+  t.ok('чипов пока нет', h.indexOf('data-a="analysis-obj"') < 0)
+  const n = p.dom.node({ a: 'analysis-objs-toggle' })
+  p.run('bind();')
+  n.onclick({ stopPropagation () {}, preventDefault () {} })
+  t.ok('раскрылось', p.q('analysisObjsOpen') === true)
+  const open = gantt(p)
+  t.ok('появились все объекты', (open.match(/data-a="analysis-obj"/g) || []).length === 2)
+  t.ok('и кнопка предлагает свернуть', open.indexOf('свернуть') >= 0)
+  const pick = p.dom.node({ a: 'analysis-obj', oid: 'o2' })
+  p.run('bind();')
+  pick.onclick({ stopPropagation () {}, preventDefault () {} })
+  t.ok('выбор объекта сам сворачивает список', p.q('analysisObjsOpen') === false && p.q('analysisObjId') === 'o2')
+}
+
+t.section('Один объект — никакого переключателя')
+{
+  const h = gantt(panel())
+  t.ok('лишней строки нет', h.indexOf('analysis-objs-toggle') < 0)
+}
+
 t.done()

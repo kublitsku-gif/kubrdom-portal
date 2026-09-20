@@ -3862,8 +3862,17 @@ function tBuildAnalysis(){
 
   let html='<div>';
   html+='<div style="margin-bottom:12px"><div style="font-size:15px;font-weight:800;color:#0d1b2e">📊 Анализ стройки</div><div style="font-size:12px;color:#7a9aaa;margin-top:2px">Сколько часов и когда выполнялись работы. 🏖 — отмеченные выходные.</div></div>';
-  // Выбор объекта (если их несколько у пользователя)
+  // Выбор объекта (если их несколько у пользователя). Свёрнут по умолчанию: объектов
+  // дюжина, и шесть рядов чипов съедали весь первый экран до графика.
   if(objs.length>1){
+    html+='<button data-a="analysis-objs-toggle" style="display:flex;align-items:center;gap:8px;width:100%;margin-bottom:'+(analysisObjsOpen?"8px":"12px")+';padding:9px 12px;border-radius:10px;cursor:pointer;border:1.5px solid '+(analysisObjsOpen?"#2980b9":"#dde6f0")+';background:#fff;text-align:left">'+
+      '<span style="font-size:14px;flex-shrink:0">'+(obj.icon||"🏗")+'</span>'+
+      '<span style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(obj.name)+'</span>'+
+      '<span style="font-size:10.5px;color:#7a9aaa;font-weight:600;flex-shrink:0">'+(analysisObjsOpen?"свернуть":"сменить · "+objs.length)+'</span>'+
+      '<span style="font-size:10px;color:#c4cdd8;flex-shrink:0;display:inline-block;transform:rotate('+(analysisObjsOpen?"90":"0")+'deg)">▶</span>'+
+    '</button>';
+  }
+  if(objs.length>1&&analysisObjsOpen){
     html+='<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">';
     objs.forEach(function(o){
       const on=o.id===obj.id;
@@ -5401,6 +5410,7 @@ let objWorkView="works";   // works | money | receive
 // Свёртки экрана объекта: раскрытый вопрос {iid:true}, правка шапки {oid:true},
 // показ сделанных работ {sid:true}, свёрнутая комната {"sid:room":true}.
 let objIssueOpen={}, objHeadEdit={}, objDoneOpen={}, objRoomOpen={}, objMenuOpen=null, objSearchOpen=false, objStageOpen={};
+let analysisObjsOpen=false;   // список объектов на «Анализе стройки»: экранный переключатель, в снимок не идёт
 // «＋ Запись» ужимается до круглой кнопки, пока экран листают вниз, — иначе широкая
 // плашка закрывает правый край строк работ. Состояние общее, чтобы перерисовка его не сбрасывала.
 let _fabMini=false;
@@ -30706,7 +30716,10 @@ function bind(){
       crmClients.push({id:gid(),name:name.trim(),phone,source:"Авито",stage:"new",msg,date:todayISO(),notes:""});
       crmAddForm=false;fl();
     };}
-    else if(a==="analysis-obj"){el.onclick=()=>{analysisObjId=el.dataset.oid;render();};}
+    else if(a==="analysis-obj"){el.onclick=()=>{analysisObjId=el.dataset.oid;analysisObjsOpen=false;ui();};}
+    // Свернуть/развернуть список — ЭКРАН, а не данные: через ui(), иначе каждый тап
+    // сериализовал бы весь снимок и зажигал отметку сохранения (см. CLAUDE.md).
+    else if(a==="analysis-objs-toggle"){el.onclick=()=>{analysisObjsOpen=!analysisObjsOpen;ui();};}
     else if(a==="mgr-client-open"){el.onclick=()=>{mgrClientView=el.dataset.cid;mgrClientTab="objects";render();};}
     else if(a==="mgr-client-back"){el.onclick=()=>{mgrClientView=null;render();};}
     else if(a==="mgr-client-tab"){el.onclick=()=>{mgrClientTab=el.dataset.t;render();};}
