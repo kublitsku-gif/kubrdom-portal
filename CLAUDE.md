@@ -88,6 +88,7 @@
 | «в проекте изменилось», слепок `o.projBase` | `docs/domain/project-revisions.md` | `src/projrev.js` |
 | распознавание планировки Claude/Kimi, `/api/plan-read` | `docs/domain/plan-read.md` | `src/plan-read.js` |
 | PIN, `login_guard`, блокировки входа | `docs/domain/login-guard.md` | `/api/login`, `test-login-guard` |
+| «работать как сотрудник», чужой экран у админа | `docs/domain/view-as.md` | `enterViewAs`, `test-view-as` |
 | MCP-эндпоинт для ИИ-клиентов (только чтение) | `docs/domain/mcp.md` | `src/mcp.js`, `POST /api/mcp` |
 | внешняя ручка добавления товара в каталог | `docs/domain/catalog-add-api.md` | `src/catalog.js`, `POST /api/catalog/add` |
 | какой набор `tools/test-*.mjs` что сторожит, панель в `node:vm` | `docs/domain/tests.md` | `tools/run-tests.mjs`, `tools/harness/` |

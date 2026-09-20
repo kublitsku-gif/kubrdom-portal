@@ -1921,6 +1921,32 @@ let myDayObjId=null;
 let myDayWho="";
 let myDayHours={};
 let currentUser=null; // null = show login page
+// Админ смотрит портал глазами сотрудника. currentUser подменяется на него — от него
+// зависят роли, список объектов и вкладки, поэтому экран получается настоящий, а не
+// «похожий». Здесь лежит САМ админ, чтобы было куда вернуться. В памяти и только:
+// перезагрузка страницы — выход из роли, и это правильно.
+// Токен при этом НЕ меняется, поэтому «Историю» сервер пишет на админа (uid берётся
+// из подписанного токена, а не из currentUser) — данные ложатся на сотрудника, а в
+// журнале видно, кто это на самом деле сделал.
+let viewAsReal=null;
+const isViewingAs=()=>!!viewAsReal;
+function enterViewAs(uid){
+  if(viewAsReal)return;                       // вложенность запрещена: возвращаться будет некуда
+  if(!currentUser||!currentUser.roles.includes("admin"))return;
+  const u=users.find(function(x){return x.id===uid;});
+  if(!u||u.id===currentUser.id)return;
+  if(!confirm("Работать как "+(u.name||"сотрудник")+"?\n\nЭкран станет таким, каким его видит он. Всё, что вы сделаете, запишется НА НЕГО: часы, отметки работ, фото.\n\nВ «Истории» останется, что это сделали вы."))return;
+  viewAsReal=currentUser;
+  currentUser=u;
+  openObject=null; _setInitialTab();
+  render();
+}
+function exitViewAs(){
+  if(!viewAsReal)return;
+  currentUser=viewAsReal; viewAsReal=null;
+  openObject=null; _setInitialTab();
+  render();
+}
 let loginMode=null;   // null = выбор Сотрудник/Клиент; "employee" = список профилей; "client" = заглушка
 let loginPinFor=null; // id сотрудника, у которого запрашиваем PIN при входе
 let loginPinError=""; // текст ошибки ввода PIN
@@ -4943,7 +4969,7 @@ function render(){
   }
   if(!currentUser){ a.innerHTML=loginPage(); bindLogin(); return; }
   // Первый вход: пока не сменил PIN — блокируем портал экраном смены PIN.
-  if(currentUser.mustChangePin){ a.innerHTML=forcedPinPage(); bind(); return; }
+  if(currentUser.mustChangePin&&!isViewingAs()){ a.innerHTML=forcedPinPage(); bind(); return; }
   // Запоминаем позицию прокрутки ленты вкладок до перерисовки,
   // иначе при клике по крайним вкладкам («Команда»/«Маркетинг») лента прыгает влево.
   const _tabsScrollPrev=(function(){const e=document.getElementById("tabs-scroll");return e?e.scrollLeft:null;})();
@@ -5240,17 +5266,21 @@ function page(){
 </div>`:"";
   const SC={"Озон":"#005bff","Белка":"#d68910","pechki.su":"#c0392b","Егорьевск":"#8e44ad","Лемана":"#e30613","Авито":"#00aaff","Нижний Новгород":"#27ae60"};
   return`<div style="max-width:480px;margin:0 auto;min-height:100vh;background:#f6f8fa;padding-bottom:calc(76px + env(safe-area-inset-bottom,0px));box-sizing:border-box">
-<div id="hdr-user" style="background:#fff;border-bottom:1px solid #eef2f7;padding:10px 14px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:50">
+<div id="hdr-user" style="background:${isViewingAs()?"#fff3e0":"#fff"};border-bottom:${isViewingAs()?"2px solid #e67e22":"1px solid #eef2f7"};padding:10px 14px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:50">
   <div style="width:32px;height:32px;border-radius:8px;background:${currentUser.c};display:flex;align-items:center;justify-content:center;font-size:16px">${currentUser.av}</div>
   <div style="flex:1;min-width:0">
     <div style="font-size:13px;font-weight:700;color:#0d1b2e">${esc(currentUser.name)}</div>
-    <div style="font-size:10px;color:#7a9aaa">${userRolesShort(currentUser)}</div>
+    ${isViewingAs()
+      ? `<div style="font-size:10px;color:#b9762a;font-weight:700">👁 вы — ${esc(viewAsReal.name)} · всё пишется на него</div>`
+      : `<div style="font-size:10px;color:#7a9aaa">${userRolesShort(currentUser)}</div>`}
   </div>
   ${saveMarkHtml()}
   ${_installBtnHtml()}
-  <button data-a="notify-open" title="Напоминания в Telegram" style="width:30px;height:30px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:13px;color:#7a9aaa;flex-shrink:0">🔔</button>
-  <button data-a="pin-change-open" title="Сменить PIN" style="width:30px;height:30px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:13px;color:#7a9aaa;flex-shrink:0">🔑</button>
-  <button data-a="logout" style="padding:5px 10px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:11px;color:#7a9aaa">Выйти</button>
+  ${isViewingAs()?"":`<button data-a="notify-open" title="Напоминания в Telegram" style="width:30px;height:30px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:13px;color:#7a9aaa;flex-shrink:0">🔔</button>
+  <button data-a="pin-change-open" title="Сменить PIN" style="width:30px;height:30px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:13px;color:#7a9aaa;flex-shrink:0">🔑</button>`}
+  ${isViewingAs()
+    ? `<button data-a="viewas-exit" style="padding:5px 10px;background:#e67e22;border:none;border-radius:7px;cursor:pointer;font-size:11px;color:#fff;font-weight:700;white-space:nowrap">✕ Вернуться</button>`
+    : `<button data-a="logout" style="padding:5px 10px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:11px;color:#7a9aaa">Выйти</button>`}
 </div>
 ${showNotify?notifyPanel():""}
 ${showPinChange?`<div style="background:#fff;border-bottom:1px solid #eef2f7;padding:14px;box-shadow:0 4px 10px rgba(0,0,0,0.05)">
@@ -22955,6 +22985,7 @@ ${tDayFine()}
           ${u.objs.length>0?`<span style="font-size:10px;color:#5a7a9a;background:#e8f0fa;border-radius:10px;padding:1px 6px">${u.objs.map(id=>objects.find(o=>o.id===id)?.icon||"").join("")}</span>`:""}
         </div>
       </div>
+      ${currentUser&&currentUser.roles.includes("admin")&&u.id!==currentUser.id&&!isViewingAs()?`<button data-a="viewas-enter" data-uid="${u.id}" title="Работать как ${esc(u.name)}: экран станет таким, каким его видит он" style="padding:4px 9px;background:#fff3e0;border:1px solid #e67e2255;border-radius:7px;cursor:pointer;font-size:11px;color:#b9762a">👁</button>`:""}
       <button data-a="edit-u" data-uid="${u.id}" style="padding:4px 9px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:7px;cursor:pointer;font-size:11px;color:#5a7a9a">✏️</button>
       <button data-a="del-u" data-uid="${u.id}" style="width:26px;height:26px;background:transparent;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;color:#e74c3c;font-size:12px">✕</button>
     </div>`}
@@ -26282,6 +26313,8 @@ function bind(){
     const a=el.dataset.a;
     if(a==="login-as"){/* handled by bindLogin */}
     else if(a==="logout"){el.onclick=()=>{try{localStorage.removeItem("kubr_remember");}catch(e){}clearToken();currentUser=null;loginMode=null;loginPinFor=null;loginPinError="";showPinChange=false;tab="assign";render();};}
+    else if(a==="viewas-enter"){el.onclick=()=>{enterViewAs(el.dataset.uid||"");};}
+    else if(a==="viewas-exit"){el.onclick=()=>{exitViewAs();};}
     else if(a==="notify-open"){el.onclick=()=>{ showNotify=true; showPinChange=false; notifyMsg=""; render(); notifyLoad(); };}
     else if(a==="notify-close"){el.onclick=()=>{ showNotify=false; notifyLink=null; notifyMsg=""; render(); };}
     else if(a==="notify-link"){el.onclick=()=>{ notifyMakeLink(); };}
