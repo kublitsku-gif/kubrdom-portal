@@ -617,7 +617,7 @@ async function handleObjVideoFile(file, oid, tagName, at){
     _videoToast("☁️ Загружаю видео…");
     const nm=(tagName? (tagName+" — "):"")+(file.name||"video");
     const meta=await videoMeta(up);
-    const r=await fetch(API_BASE+"/api/video?objName="+encodeURIComponent(o.name)+"&topicId="+(o.tgTopicId||0)+"&name="+encodeURIComponent(nm)+"&w="+meta.w+"&h="+meta.h+"&dur="+meta.dur,{
+    const r=await fetch(API_BASE+"/api/video?objName="+encodeURIComponent(o.name)+"&topicId="+(o.tgTopicId||0)+"&name="+encodeURIComponent(nm)+"&caption="+encodeURIComponent(tgMediaCaption(o,"",tagName))+"&w="+meta.w+"&h="+meta.h+"&dur="+meta.dur,{
       method:"POST", headers:authHeaders({ "Content-Type": up.type||"video/mp4" }), body:up
     });
     const j=await r.json();
@@ -931,13 +931,22 @@ async function uploadContractFiles(files, kind){
 // Дублируем фото объекта в его Telegram-тему (бэкап, чтобы всё по клиенту лежало в одном месте).
 // Best-effort: ошибки не мешают основной загрузке в R2. Файлы уже сжаты (≤1 МБ).
 // Шлём по очереди, пронося topicId, — чтобы пачка фото не наплодила лишних тем.
-async function mirrorPhotosToTelegram(objId, files){
+// Подпись в Telegram — «объект · работа · кто», как у бота (src/botwork.js): по одному
+// имени объекта в теме не понять, к какой работе фото.
+function tgMediaCaption(o, wid, workName){
+  let wn=workName||"";
+  if(!wn&&wid)(o.stages||[]).some(function(s){ const w=(s.works||[]).find(function(x){return x.id===wid;}); if(w)wn=w.n||w.name||""; return !!w; });
+  const me=currentUser&&((users.find(function(u){return u.id===currentUser.id;})||currentUser).name||"");
+  return [o.name||"",wn,me].filter(Boolean).join(" · ");
+}
+async function mirrorPhotosToTelegram(objId, files, wid){
   const o=objects.find(function(x){return x.id===objId;});
   if(!o || !files || !files.length) return;
   let topicId=o.tgTopicId||0;
+  const caption=tgMediaCaption(o, wid);
   for(const f of files){
     try{
-      const r=await fetch(API_BASE+"/api/photo?objName="+encodeURIComponent(o.name)+"&topicId="+topicId+"&name="+encodeURIComponent(f.name)+"&caption="+encodeURIComponent(o.name),{
+      const r=await fetch(API_BASE+"/api/photo?objName="+encodeURIComponent(o.name)+"&topicId="+topicId+"&name="+encodeURIComponent(f.name)+"&caption="+encodeURIComponent(caption),{
         method:"POST", headers:authHeaders({ "Content-Type": f.type||"image/jpeg" }), body:f
       });
       const j=await r.json();
@@ -6314,7 +6323,9 @@ function projDiffRows(obj, d, oid){
         '<div style="font-size:10px;color:'+k.c+';margin-top:2px">'+k.n+
           (it.kind==="changed"&&oldCost!==newCost?' · '+oldCost.toLocaleString("ru-RU")+' → '+newCost.toLocaleString("ru-RU")+' ₽':'')+
           (stuck?(twin
-            ?' · <b>в объекте уже есть новая такая строка — слейте: часы и фото останутся, план возьмём из новой</b>'
+            ?(twin.similar
+              ?' · <b>похоже, в проекте её заменили строкой «'+esc(twin.w.n||"")+'» — слейте: часы и фото останутся, план возьмём из новой</b>'
+              :' · <b>в объекте уже есть новая такая строка — слейте: часы и фото останутся, план возьмём из новой</b>')
             :' · <b>по ней есть часы или фото — удалять не будем, оставьте её в объекте</b>')
             :(it.safe?'':' · <b>в объекте её тоже правили</b>'))+'</div>'+
       '</div>'+
@@ -31821,7 +31832,7 @@ function bind(){
             }
           }
           inp._bound=false;
-          mirrorPhotosToTelegram(oid, tgFiles);
+          mirrorPhotosToTelegram(oid,tgFiles,wid);
           if(queuedN){
             alert("📷 "+queuedN+" фото сохранено на устройстве: связи сейчас нет.\n\nОни уйдут в портал сами, как только появится интернет — приложение можно закрыть.");
           }
@@ -31949,7 +31960,7 @@ function bind(){
               newPhotos.push({id:gid(),data:url,date:new Date().toISOString().slice(0,16).replace("T"," "),uploader:(users.find(u=>u.id===(currentUser?currentUser.id:""))||{}).name||"—",uploaderId:currentUser?currentUser.id:"",size:f.size,name:f.name});
             }catch(err){alert("Ошибка загрузки фото: "+((err&&err.message)||err));}
           }
-          mirrorPhotosToTelegram(oid,tgFiles);
+          mirrorPhotosToTelegram(oid,tgFiles,wid);
           if(newPhotos.length){
             objects=objects.map(function(o){
               if(o.id!==oid)return o;
@@ -32033,7 +32044,7 @@ function bind(){
             }catch(err){alert("Ошибка загрузки фото: "+((err&&err.message)||err));}
           }
           inp._bound=false;
-          mirrorPhotosToTelegram(oid,tgFiles);
+          mirrorPhotosToTelegram(oid,tgFiles,wid);
           if(!newPhotos.length){render();return;}
           objects=objects.map(function(o){
             if(o.id!==oid)return o;
@@ -32218,7 +32229,7 @@ function bind(){
               newPhotos.push({id:gid(),data:url,date:new Date().toISOString().slice(0,16).replace("T"," "),uploader:(users.find(u=>u.id===(currentUser?currentUser.id:""))||{}).name||"—",uploaderId:currentUser?currentUser.id:"",size:f.size,name:f.name});
             }catch(err){alert("Ошибка загрузки фото: "+((err&&err.message)||err));}
           }
-          mirrorPhotosToTelegram(oid,tgFiles);
+          mirrorPhotosToTelegram(oid,tgFiles,wid);
           if(!newPhotos.length){render();return;}
           objects=objects.map(function(o){
             if(o.id!==oid)return o;

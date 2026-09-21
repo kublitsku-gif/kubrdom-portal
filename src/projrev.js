@@ -141,16 +141,38 @@ export function projDiff(positions, obj) {
 // из базы смет). Это одна работа, и в объекте она двоится: у старой часы и фото, у
 // новой план. Живой случай 17.09.2026, «Баня Буханка»: «Разводка электрики кабелем»
 // и «Монтаж подвесов». Возвращает новую строку объекта, с которой старую можно слить.
+//
+// Точного тёзки может не быть: 20.09.2026 там же контейнер заменили позицией с
+// уточнённым именем («30 м²» → «от 15 до 30 м² … резка»), осталась одна кнопка
+// «Оставить», и работа задвоилась. Тогда ищем в ТОМ ЖЕ этапе нетронутую строку
+// с похожим именем (общих слов ≥ TWIN_SIMILAR от короткого имени) и помечаем её
+// similar — кнопка назовёт строку, и решение останется за человеком.
+const TWIN_SIMILAR = 0.6;
+function nameWords(s) {
+  return nameKey(s).split(/[^0-9a-zа-яё,.]+/i).filter(function (x) { return x.length > 1 || /\d/.test(x); });
+}
+function nameLikeness(a, b) {
+  const wa = nameWords(a), wb = nameWords(b);
+  if (!wa.length || !wb.length) return 0;
+  const set = new Set(wb);
+  const common = wa.filter(function (x) { return set.has(x); }).length;
+  return common / Math.min(wa.length, wb.length);
+}
 export function projTwin(obj, item) {
   if (!item || item.kind !== "removed" || !item.obj || !workTouched(item.obj.w)) return null;
   const k = nameKey(item.obj.w.n);
   if (!k) return null;
   const map = objWorkMap(obj);
-  const twinKey = Object.keys(map).find(function (key) {
-    const w = map[key].w;
-    return key !== item.key && nameKey(w.n) === k && !workTouched(w);
-  });
-  return twinKey ? { key: twinKey, w: map[twinKey].w, s: map[twinKey].s } : null;
+  const free = Object.keys(map).filter(function (key) { return key !== item.key && !workTouched(map[key].w); });
+  const twinKey = free.find(function (key) { return nameKey(map[key].w.n) === k; });
+  if (twinKey) return { key: twinKey, w: map[twinKey].w, s: map[twinKey].s };
+  const stage = item.obj.s;
+  const best = free
+    .filter(function (key) { return stage && map[key].s && map[key].s.id === stage.id; })
+    .map(function (key) { return { key: key, score: nameLikeness(item.obj.w.n, map[key].w.n) }; })
+    .filter(function (x) { return x.score >= TWIN_SIMILAR; })
+    .sort(function (a, b) { return b.score - a.score; })[0];
+  return best ? { key: best.key, w: map[best.key].w, s: map[best.key].s, similar: true } : null;
 }
 
 // Слитая работа: id, часы, фото и «выполнено» — старой (на них ссылаются вопросы,

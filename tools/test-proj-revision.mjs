@@ -357,6 +357,23 @@ const objOf = (positions, base) => ({
   t.ok('новая строка с тем же именем найдена', tw && tw.key === 'add:x1')
   t.ok('без тёзки — сливать не с чем', projTwin(obj, item(lone)) === null)
   t.ok('нетронутую убранную не трогаем (её и так можно принять)', projTwin(obj, item(Object.assign({}, oldW, { timeLogs: [], done: false, doneAt: '' }))) === null)
+  // Живой случай 20.09.2026, «Баня Буханка»: контейнер в проекте заменили позицией
+  // с уточнённым именем — точного тёзки нет, была только «Оставить», и работа двоилась.
+  {
+    const cOld = { id: 'cOld', n: 'Контейнер 40 фут новый · 30 м² · высота 2,6 м+ доставка+разгрузка краном', posKey: 'base:c1', done: true, timeLogs: [{ h: 1 }], mats: [] }
+    const cNew = { id: 'cNew', n: 'Контейнер 40 фут новый · от 15 до 30 м² · высота 2,6 м+ резка +доставка+разгрузка краном', posKey: 'add:c2', timeLogs: [], mats: [] }
+    const far = { id: 'far', n: 'Монтаж перегородок', posKey: 'add:c3', timeLogs: [], mats: [] }
+    const o2 = { id: 'o2', stages: [{ id: 's', n: 'ЭТАП 1', works: [cOld, far, cNew] }] }
+    const it2 = { kind: 'removed', key: 'base:c1', obj: { w: cOld, s: o2.stages[0] }, safe: false }
+    const tw2 = projTwin(o2, it2)
+    t.ok('похожее имя — тоже двойник', tw2 && tw2.key === 'add:c2', JSON.stringify(tw2 && tw2.key))
+    t.ok('и помечен как «похожий», чтобы кнопка назвала строку', tw2 && tw2.similar === true)
+    t.ok('точный тёзка не помечен похожим', !tw.similar)
+    const o3 = { id: 'o3', stages: [{ id: 's', n: 'ЭТАП 1', works: [cOld, far] }] }
+    t.ok('непохожие работы не сливаем', projTwin(o3, Object.assign({}, it2, { obj: { w: cOld, s: o3.stages[0] } })) === null)
+    const o4 = { id: 'o4', stages: [{ id: 's', n: 'ЭТАП 1', works: [cOld] }, { id: 's2', n: 'ЭТАП 2', works: [cNew] }] }
+    t.ok('похожая в другом этапе — не двойник', projTwin(o4, Object.assign({}, it2, { obj: { w: cOld, s: o4.stages[0] } })) === null)
+  }
   const m = projMergeWork(oldW, newW)
   t.ok('id, часы и «выполнено» — старой', m.id === 'wOld' && m.timeLogs.length === 1 && m.doneAt === '2026-09-10')
   t.ok('план — новой', m.cost === 26308 && m.labor === 8000 && m.planHours === 6 && m.posKey === 'add:x1' && m.mats[0].id === 'mNew')

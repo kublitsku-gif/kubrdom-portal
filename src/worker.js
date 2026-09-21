@@ -842,7 +842,8 @@ async function postVideo(env, request, url) {
     chatId: env.TG_CHAT_ID, topicId,
     blob: new Blob([body], { type: request.headers.get("Content-Type") || "video/mp4" }),
     fileName: url.searchParams.get("name") || "video.mp4",
-    caption: objName,
+    // Подпись «объект · работа · кто» приходит от панели; старый клиент её не шлёт.
+    caption: (url.searchParams.get("caption") || objName).slice(0, 1024),
     meta: videoMetaFromQuery(url.searchParams),
   });
   const r2 = await fetch(tg + "/sendVideo", { method: "POST", body: fd });
