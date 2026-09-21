@@ -1304,7 +1304,7 @@ const SHEET = {
   t.ok('тревоги больше нет', !/💱 цены •/.test(html))
 
   // Зелёная отметка приходит только после похода в магазины — по карточкам.
-  p.run('expProducts.forEach(function(x){ x.priceOkAt="2026-09-06"; });')
+  p.run('expProducts.forEach(function(x){ x.priceOkAt=todayISO(); });')
   t.ok('после обхода магазинов галочка есть',
     /✓ цены сверены/.test(estHtml(p).replace(/[  ]/g, ' ')), 'нет отметки после сверки')
 

@@ -114,6 +114,27 @@ t.section('Выбор объекта свёрнут')
   t.ok('выбор объекта сам сворачивает список', p.q('analysisObjsOpen') === false && p.q('analysisObjId') === 'o2')
 }
 
+t.section('Работа закрыта позже последних часов — ✓ и фото в день закрытия')
+{
+  // Живой случай (21.09): час на «Разводку электрики» записали 14-го, а закрыли
+  // её с семью фото 21-го без часов. Гант ставил ✓ на 14-е, фото — только
+  // счётчиком в подписи, и в колонке «сегодня» работы не было вовсе.
+  const p = panel()
+  p.run('objects[0].stages[0].works.push({id:"w5",n:"Разводка электрики",cost:1000,mats:[],done:true,doneBy:"u1",doneAt:"2026-09-21 13:30",' +
+    'timeLogs:[{id:"l5",userId:"u1",date:"2026-09-14",hours:1}],' +
+    'photos:[{id:"p5",data:"/api/file/a",date:"2026-09-21 13:26"},{id:"p6",data:"/api/file/b",date:"2026-09-21 13:27"}],' +
+    'videos:[{id:"v5",messageId:9,topicId:5,date:"2026-09-18 12:00"}]});')
+  const h = gantt(p)
+  const row = h.slice(h.indexOf('data-wid="w5"'), h.indexOf('data-wid="w5"') + 20000)
+  const day = (d) => { const i = row.indexOf('data-day="' + d + '"'); return i < 0 ? '' : row.slice(i, row.indexOf('data-day=', i + 10)) }
+  t.ok('✓ стоит в день закрытия', day('2026-09-21').indexOf('✓') >= 0, day('2026-09-21'))
+  t.ok('а не в день часов', day('2026-09-14').indexOf('✓') < 0, day('2026-09-14'))
+  t.ok('часы остались в своём дне', day('2026-09-14').indexOf('>1<') >= 0, day('2026-09-14'))
+  t.ok('фото видны в день съёмки', day('2026-09-21').indexOf('📷2') >= 0, day('2026-09-21'))
+  t.ok('кнопка фото открывает галерею с первого фото дня', /data-a="media-open"[^>]*data-wid="w5"[^>]*data-i="0"/.test(day('2026-09-21')))
+  t.ok('видео — в свой день, индекс после фото', day('2026-09-18').indexOf('🎬1') >= 0 && day('2026-09-18').indexOf('data-i="2"') >= 0, day('2026-09-18'))
+}
+
 t.section('Один объект — никакого переключателя')
 {
   const h = gantt(panel())

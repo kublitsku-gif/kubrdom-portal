@@ -3893,13 +3893,28 @@ function tBuildAnalysis(){
       logs.forEach(function(l){ byDate[l.date]=(byDate[l.date]||0)+(l.hours||0); });
       const total=logs.reduce(function(a,l){return a+(l.hours||0);},0);
       if(logs.length) hasAnyLog=true;
-      // День отметки «выполнено»: последний день с часами, иначе дата doneAt
+      // День отметки «выполнено»: самый поздний из последнего дня с часами и даты doneAt.
+      // Только по часам нельзя: час записали 14-го, а закрыли с фото 21-го без часов —
+      // и ✓ стоял неделей раньше, а в колонке «сегодня» работы не было.
       let doneDate=null;
       if(w.done){
         const logDates=Object.keys(byDate).sort();
-        doneDate=logDates.length?logDates[logDates.length-1]:((w.doneAt||"").slice(0,10)||null);
+        const lastLog=logDates.length?logDates[logDates.length-1]:"";
+        const doneAtD=(w.doneAt||"").slice(0,10);
+        doneDate=(doneAtD>lastLog?doneAtD:lastLog)||null;
       }
-      rows.push({type:"work",name:(w.n||w.name||"Работа"),color:(s.c||"#7f8c8d"),byDate:byDate,total:total,done:!!w.done,doneDate:doneDate,
+      // Фото и видео по дням съёмки: {дата: {ph, vid, i}}, i — индекс первого файла дня
+      // в общем списке просмотрщика (сначала фото, потом видео).
+      const phList=w.photos||[], vidList=w.videos||[];
+      const mediaByDate={};
+      const _addMedia=function(m,kind,idx){
+        const d=(m&&m.date||"").slice(0,10); if(!d) return;
+        const cur=mediaByDate[d]||{ph:0,vid:0,i:idx};
+        mediaByDate[d]=Object.assign({},cur,{[kind]:cur[kind]+1,i:Math.min(cur.i,idx)});
+      };
+      phList.forEach(function(m,i){ _addMedia(m,"ph",i); });
+      vidList.forEach(function(m,i){ _addMedia(m,"vid",phList.length+i); });
+      rows.push({type:"work",name:(w.n||w.name||"Работа"),color:(s.c||"#7f8c8d"),byDate:byDate,total:total,done:!!w.done,doneDate:doneDate,mediaByDate:mediaByDate,
         pct:workPct(w),auto:isAutoPct(w),ph:(w.photos||[]).length,vid:(w.videos||[]).length,
         oid:obj.id,sid:s.id,wid:w.id});
     });
@@ -3911,7 +3926,7 @@ function tBuildAnalysis(){
 
   // Диапазон дат: из отметок часов + выходных + дат выполнения
   const dset={};
-  works.forEach(function(w){ Object.keys(w.byDate).forEach(function(d){dset[d]=true;}); if(w.doneDate)dset[w.doneDate]=true; });
+  works.forEach(function(w){ Object.keys(w.byDate).forEach(function(d){dset[d]=true;}); Object.keys(w.mediaByDate).forEach(function(d){dset[d]=true;}); if(w.doneDate)dset[w.doneDate]=true; });
   Object.keys(dayOff).forEach(function(d){dset[d]=true;});
   let allDates=Object.keys(dset).sort();
   // Всегда включаем сегодняшний день, чтобы маркер «сегодня» был виден
@@ -4023,17 +4038,27 @@ function tBuildAnalysis(){
     '</div>';
     days.forEach(function(d){
       const h=r.byDate[d]; const off=dayOff[d]; const doneHere=r.doneDate===d; const isToday=d===todayISOg;
+      const md=r.mediaByDate[d];
       const cellBg=isToday?"#2980b90a":(off?"#9b59b608":"transparent");
+      const cellOpen='<div data-day="'+d+'" style="width:'+COL+'px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:5px 3px;background:'+cellBg+';border-right:1px solid '+(isToday?"#2980b933":"#f4f6f9")+'">';
+      // Медиа дня — кнопка под блоком: фото видно в тот день, когда их сняли, а не только счётчиком в подписи
+      const dayMedia=md?'<button data-a="media-open" data-oid="'+r.oid+'" data-sid="'+r.sid+'" data-wid="'+r.wid+'" data-i="'+md.i+'" title="Фото и видео за этот день" '+
+        'style="padding:1px 2px;border-radius:5px;border:1px solid #3498db44;background:#3498db14;color:#3498db;font-size:9px;font-weight:700;cursor:pointer;line-height:1.3;white-space:nowrap;max-width:100%;overflow:hidden">'+
+        (md.ph?"📷"+md.ph:"")+(md.vid?"🎬"+md.vid:"")+'</button>':"";
       if(h){
-        html+='<div style="width:'+COL+'px;flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:5px 3px;background:'+cellBg+';border-right:1px solid '+(isToday?"#2980b933":"#f4f6f9")+'">'+
+        html+=cellOpen+
           '<div style="background:'+r.color+';color:#fff;border-radius:6px;font-size:10px;font-weight:700;padding:4px 0;width:100%;text-align:center;position:relative">'+h+(doneHere?'<span style="position:absolute;top:-4px;right:-2px;font-size:9px">✓</span>':'')+'</div>'+
+          dayMedia+
         '</div>';
       } else if(doneHere){
-        html+='<div style="width:'+COL+'px;flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:5px 3px;background:'+cellBg+';border-right:1px solid '+(isToday?"#2980b933":"#f4f6f9")+'">'+
+        html+=cellOpen+
           '<div style="background:#27ae60;color:#fff;border-radius:6px;font-size:11px;font-weight:700;padding:4px 0;width:100%;text-align:center">✓</div>'+
+          dayMedia+
         '</div>';
+      } else if(dayMedia){
+        html+=cellOpen+dayMedia+'</div>';
       } else {
-        html+='<div style="width:'+COL+'px;flex-shrink:0;background:'+(isToday?"#2980b90a":(off?"#9b59b610":"transparent"))+';border-right:1px solid '+(isToday?"#2980b933":"#f4f6f9")+'"></div>';
+        html+='<div data-day="'+d+'" style="width:'+COL+'px;flex-shrink:0;background:'+(isToday?"#2980b90a":(off?"#9b59b610":"transparent"))+';border-right:1px solid '+(isToday?"#2980b933":"#f4f6f9")+'"></div>';
       }
     });
     html+='</div>';
@@ -4050,7 +4075,7 @@ function tBuildAnalysis(){
   html+='</div></div>';
   html+='<div style="font-size:10px;color:#9aabbf;margin-top:8px;line-height:1.5">↔️ Прокрутите график вправо, чтобы увидеть все дни. Цвет блока = этап, число = часы за день, ✓ = день отметки «выполнено».<br>'+
     'Полоска под названием — готовность работы; «~» значит, что процент никто не называл и он посчитан по часам. Зелёная строка — сделано на 100%.<br>'+
-    '📷 и 🎬 — сколько к работе приложено фото и видео. <b>Тап по названию работы</b> открывает её в объекте вместе с этими фото.</div>';
+    '📷 и 🎬 в подписи — сколько к работе приложено фото и видео, в клетке дня — сколько их снято в этот день (тап открывает). <b>Тап по названию работы</b> открывает её в объекте вместе с этими фото.</div>';
   html+='</div>';
   return html;
 }

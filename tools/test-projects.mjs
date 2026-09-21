@@ -1763,7 +1763,7 @@ function create(p, name) {
 
   // Обошли магазины по всем товарам — загорелась галочка.
   p.run('var sh=projects[0]; sh.matAdd[' + JSON.stringify(key) + '][0].cost=300;'
-    + 'expProducts.forEach(function(x){ x.priceOkAt="2026-09-06"; });')
+    + 'expProducts.forEach(function(x){ x.priceOkAt=todayISO(); });')
   t.ok('после сверки — галочка', /цены сверены/.test(p.run('tProjects()')), 'нет галочки актуальности')
 }
 
