@@ -1,0 +1,35 @@
+#!/usr/bin/env node
+import assert from 'node:assert/strict';
+import worker from '../src/worker.js';
+import {sqliteDB} from './harness/sqlite-db.js';
+const s=sqliteDB({users:[{id:'admin',roles:['admin'],pin:'864219'},{id:'u',name:'Test',roles:['brigadier'],objs:['own'],phone:'+79991112233',pin:'472819'}],rolePermissions:{brigadier:['assign','finance']},objects:[{id:'own',name:'Own',stages:[]},{id:'foreign',name:'Hidden',stages:[]}],contractDocs:[],finTxns:[{id:'my-pay',userId:'u',amount:20},{id:'other-pay',userId:'admin',amount:100}]});
+const jobs=[];const env={DB:s.db,ADMIN_TOKEN:'test-secret'};
+async function call(path,body,token){const r=await worker.fetch(new Request('https://test.invalid/api/'+path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json',...(token?{'X-Admin-Token':token}:{})},body:body?JSON.stringify(body):undefined}),env,{waitUntil(p){jobs.push(p);}});return {status:r.status,...await r.json()};}
+let r=await call('login',{userId:'u',pin:'472819'});assert.equal(r.status,200,JSON.stringify(r));const token=r.token;
+assert.ok(s.get('users').data.find(x=>x.id==='u').pinHash);assert.equal(s.get('users').data.find(x=>x.id==='u').pin,undefined,'legacy PIN migrated on login');
+r=await call('state/admin_panel',null,token);
+assert.deepEqual(r.items.find(x=>x.work_id==='objects').data.map(x=>x.id),['own']);
+assert.deepEqual(r.items.find(x=>x.work_id==='finTxns').data.map(x=>x.id),['my-pay']);
+const obj=r.items.find(x=>x.work_id==='objects');obj.data[0].name='Updated';
+r=await call('state/admin_panel',{items:[{work_id:'objects',data:obj.data}],baseVersions:{objects:obj.updated_at}},token);
+assert.equal(r.status,200,JSON.stringify(r));assert.equal(s.get('objects').data.find(x=>x.id==='foreign').name,'Hidden');
+r=await call('state/admin_panel',{items:[{work_id:'objects',data:[{id:'foreign',name:'Attack'}]}],baseVersions:{objects:s.get('objects').at}},token);assert.equal(r.status,403);
+r=await call('state/admin_panel',{items:[{work_id:'finTxns',data:[]}],baseVersions:{finTxns:1000}},token);assert.equal(r.status,403);
+r=await call('state/admin_panel',{items:[{work_id:'objects',data:[]}],force:true},token);assert.equal(r.status,403);
+r=await call('voice-call',{phone:'000'},token);assert.equal(r.status,403,'no external call attempted');
+r=await call('change-pin',{oldPin:'472819',newPin:'539127'},token);assert.equal(r.status,200,JSON.stringify(r));const nextToken=r.token;
+assert.equal((await call('state/admin_panel',null,token)).status,401,'old session revoked on PIN change');
+assert.equal((await call('state/admin_panel',null,nextToken)).status,200);
+s.set('rolePermissions',{brigadier:[]});
+r=await call('state/admin_panel',{items:[{work_id:'objects',data:obj.data}],baseVersions:{objects:s.get('objects').at}},nextToken);
+assert.equal(r.status,403,'permission removal applies to already-issued token');
+s.set('rolePermissions',{brigadier:['assign','finance']});
+r=await call('reset-pin',{kind:'user',id:'u'},nextToken);assert.equal(r.status,403,'employee cannot reset credentials');
+r=await call('reset-pin',{kind:'user',id:'u'},env.ADMIN_TOKEN);assert.equal(r.status,200);assert.match(r.pin,/^[0-9]{6}$/);
+assert.equal((await call('state/admin_panel',null,nextToken)).status,401,'reset revokes previous session');
+const resetLogin=await call('login',{userId:'u',pin:r.pin});assert.equal(resetLogin.status,200);
+s.set('users',s.get('users').data.filter(x=>x.id!=='u'));
+assert.equal((await call('state/admin_panel',null,resetLogin.token)).status,401,'deleted employee revoked');
+s.set('users',[{id:'admin',roles:['admin'],pin:'864219'},{id:'no-pin',roles:['worker'],phone:'+79990001111'}]);
+assert.equal((await call('login',{userId:'no-pin',pin:'1111'})).status,401,'no default PIN');
+await Promise.all(jobs);s.close();console.log('✓ Access: scoped data, protected operations, PIN hashing, revoked sessions');

@@ -6,6 +6,7 @@
 // в node не исполняется, поэтому отдельно сторожим то, от чего зависит атомарность:
 // неудача должна писаться ОДНИМ upsert'ом на ключ, без чтения-затем-записи.
 import worker from "../src/worker.js";
+import { sqliteDB } from "./harness/sqlite-db.js";
 
 // Пауза на неудачный вход (400 мс) в проде тормозит перебор, а в тесте только тянет
 // прогон: два десятка неудач — это девять секунд ожидания. Ускоряем таймер, поведение
@@ -29,61 +30,33 @@ const CRM = [{ id: "cl1", name: "Любовь", phone: "+7 916 555-77-88" }];
 
 // ── Мок D1: только те запросы, которые делает вход ───────────────────────────
 function makeDB(opts = {}) {
-  const guard = new Map();            // k → {fails, first_ts, until}
-  const stats = { upserts: 0, selects: 0, deletes: 0 };
-  const run = (sql, args) => {
-    // Ломаем ТОЛЬКО таблицу сторожа: остальная база жива, иначе тест проверял бы
-    // не fail-open сторожа, а недоступность портала целиком.
-    if (opts.brokenGuard && /login_guard/.test(sql)) throw new Error("D1 unavailable");
-    if (/CREATE TABLE IF NOT EXISTS login_guard/.test(sql)) return { results: [] };
-    if (/CREATE TABLE IF NOT EXISTS audit_log|CREATE INDEX/.test(sql)) return { results: [] };
-    if (/INSERT INTO audit_log/.test(sql)) return { results: [] };
-
-    if (/SELECT k, until FROM login_guard/.test(sql)) {
-      stats.selects++;
-      const now = Date.now();
-      return { results: args.map((k) => guard.get(k)).filter(Boolean)
-        .map((r) => ({ k: r.k, until: r.until })).filter((r) => r.until > now) };
-    }
-    if (/INSERT INTO login_guard/.test(sql)) {
-      stats.upserts++;
-      // Порядок аргументов повторяет bind(): k, from, now, max, until, now
-      const [k, from, now, max, until] = args;
-      const cur = guard.get(k);
-      if (!cur) { guard.set(k, { k, fails: 1, first_ts: now, until: 0 }); return { results: [] }; }
-      const fresh = cur.first_ts < from;               // окно истекло → счёт с нуля
-      const fails = fresh ? 1 : cur.fails + 1;
-      guard.set(k, { k, fails, first_ts: fresh ? now : cur.first_ts, until: fails >= max ? until : cur.until });
-      return { results: [] };
-    }
-    if (/DELETE FROM login_guard/.test(sql)) {
-      stats.deletes++;
-      args.forEach((k) => guard.delete(k));
-      return { results: [] };
-    }
-    if (/FROM work_states/.test(sql)) {
-      const rows = [
-        { work_id: "users", data: JSON.stringify(USERS) },
-        { work_id: "rolePermissions", data: JSON.stringify({ brigadier: ["assign"] }) },
-        { work_id: "contractDocs", data: JSON.stringify(CONTRACTS) },
-        { work_id: "crmClients", data: JSON.stringify(CRM) },
-      ];
-      return { results: rows.filter((r) => sql.indexOf("'" + r.work_id + "'") >= 0 || (args || []).indexOf(r.work_id) >= 0) };
-    }
-    return { results: [] };
+  const real=sqliteDB({users:USERS,rolePermissions:{brigadier:["assign"]},contractDocs:CONTRACTS,crmClients:CRM});
+  const stats={upserts:0,selects:0,deletes:0};
+  const wrap=(sql,stmt)=>({
+    sql,args:stmt.args,
+    bind(...args){return wrap(sql,stmt.bind(...args));},
+    async all(){return stmt.all();},async first(){return stmt.first();},async run(){return stmt.run();}
+  });
+  const db={prepare(sql){
+    if(opts.brokenGuard&&/login_guard/.test(sql))throw new Error("D1 unavailable");
+    if(/INSERT INTO login_guard/.test(sql))stats.upserts+=2;
+    return wrap(sql,real.db.prepare(sql));
+  },batch(list){return real.db.batch(list);}};
+  const rows=()=>{const result=real.db.prepare("SELECT * FROM login_guard");return result;};
+  const guardRows=new Map();
+  // Read guard state synchronously from the same database using actual SELECTs.
+  const guard={has(k){return guardRows.has(k);},get(k){return guardRows.get(k);},keys(){return guardRows.keys();}};
+  const originalBatch=db.batch;db.batch=async list=>{
+    const result=await originalBatch(list);
+    try{const state=await rows().all();guardRows.clear();state.results.forEach(r=>guardRows.set(r.k,r));}catch{}
+    return result;
   };
-  // bind() возвращает НОВЫЙ объект, как настоящий D1: worker переиспользует один
-  // prepare для нескольких bind'ов в batch, и общий буфер аргументов склеил бы их в один.
-  const prepare = (sql) => {
-    const make = (args) => ({
-      bind: (...a) => make(a),
-      async all() { return run(sql, args); },
-      async run() { return run(sql, args); },
-      async first() { return (run(sql, args).results || [])[0] || null; },
-    });
-    return make([]);
+  const originalPrepare=db.prepare;db.prepare=sql=>{
+    const stmt=originalPrepare(sql);
+    if(!/DELETE FROM login_guard/.test(sql))return stmt;
+    const originalBind=stmt.bind;stmt.bind=(...args)=>{const bound=originalBind(...args),run=bound.run;bound.run=async()=>{const result=await run();args.forEach(k=>guardRows.delete(k));return result;};return bound;};return stmt;
   };
-  return { db: { prepare, async batch(list) { return Promise.all(list.map((s) => s.run())); } }, guard, stats };
+  return {db,guard,stats};
 }
 
 const ENV = (db) => ({ DB: db, ADMIN_TOKEN: "master-secret", R2: null });

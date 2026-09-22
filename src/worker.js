@@ -22,6 +22,11 @@ import { planRequest, planFromResponse, planNormalize, PLAN_MODEL, PLAN_MAX_FILE
 import { mcpFetch } from "./mcp.js";
 import { catalogFetch } from "./catalog.js";
 
+import { accessFor, permissionsFor, routeAllowed } from "./access.js";
+import { STATE_SECTIONS, emptySection, validateStateItems, MAX_STATE_BYTES } from "./state-schema.js";
+import { hashPin, checkPin, protectCredentials, credentialVersion } from "./credentials.js";
+import { commitState } from "./state-store.js";
+
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -52,10 +57,7 @@ function safeEqual(a, b) {
 // Модель: сотрудник логинится (userId+PIN) → сервер выдаёт ПОДПИСАННЫЙ токен с его
 // правами (adm/fin), зашитыми на момент входа. HMAC-ключ = ADMIN_TOKEN (отдельный
 // секрет не нужен; ротация ADMIN_TOKEN разом инвалидирует все токены — это и есть отсечка).
-// Разделы, которые нельзя переписывать/читать без прав — ниже. Запись чужого раздела не
-// отклоняется (иначе полноснимковый сейв ломается), а МОЛЧА пропускается сервером.
-const ADMIN_KEYS = ["users", "roles", "rolePermissions", "settings"];   // писать — только admin
-const FIN_KEYS   = ["finSalaries", "finTxns", "finContracts", "finExtraWorks"]; // писать/читать — только роль с правом finance
+// Права перечитываются на каждом запросе; PIN хранится отдельно от токена в виде хеша.
 
 function b64urlEncode(bytes) {
   let s = "";
@@ -95,8 +97,20 @@ async function resolveAuth(env, request) {
   if (!token) return null;
   if (env.ADMIN_TOKEN && safeEqual(token, env.ADMIN_TOKEN)) return { kind: "master", uid: "__master__", adm: true, fin: true };
   const p = await verifyUserToken(env, token);
-  if (p && p.typ === "client") return { kind: "client", cid: p.cid, adm: false, fin: false, client: true };
-  if (p) return { kind: "user", uid: p.u, adm: !!p.adm, fin: !!p.fin };
+  if (p && p.typ === "client") {
+    const state=await readSnapshot(env,["contractDocs"]);
+    const c=(state.contractDocs||[]).find(x=>x.id===p.cid);
+    if(!c || !p.sv || !safeEqual(p.sv,await hmacRaw(env,credentialVersion(c,true)))) return null;
+    return {kind:"client",cid:p.cid,adm:false,fin:false,client:true};
+  }
+  if (p) {
+    const {users,rolePerms}=await loadUsersPerms(env);
+    const user=users.find(x=>x.id===p.u);
+    if(!user || user.disabled || !p.sv || !safeEqual(p.sv,await hmacRaw(env,credentialVersion(user)))) return null;
+    const permissions=permissionsFor(user,rolePerms);
+    const adm=(user.roles||[]).includes("admin");
+    return {kind:"user",uid:user.id,adm,fin:adm||permissions.includes("finance"),user,permissions};
+  }
   return null;
 }
 // POST /api/login { userId?|phone?, pin } → персональный токен с зашитыми правами. Без токена (сотрудник его и получает).
@@ -153,14 +167,14 @@ async function loginNoteFail(env, keys) {
     await ensureLoginGuard(env);
     const now = Date.now(), from = now - LOGIN_WINDOW_MS, until = now + LOGIN_BLOCK_MS;
     const stmt = env.DB.prepare(
-      "INSERT INTO login_guard (k, fails, first_ts, until) VALUES (?, 1, ?, 0)"
+      "INSERT INTO login_guard (k, fails, first_ts, until) VALUES (?1, 1, ?3, 0)"
       + " ON CONFLICT(k) DO UPDATE SET"
       + "   fails = CASE WHEN login_guard.first_ts < ?2 THEN 1 ELSE login_guard.fails + 1 END,"
       + "   first_ts = CASE WHEN login_guard.first_ts < ?2 THEN ?3 ELSE login_guard.first_ts END,"
       + "   until = CASE WHEN (CASE WHEN login_guard.first_ts < ?2 THEN 1 ELSE login_guard.fails + 1 END) >= ?4"
       + "           THEN ?5 ELSE login_guard.until END"
     );
-    await env.DB.batch(keys.map(function (x) { return stmt.bind(x.k, from, now, x.max, until, now); }));
+    await env.DB.batch(keys.map(function (x) { return stmt.bind(x.k, from, now, x.max, until); }));
   } catch (e) { /* см. loginBlockedFor: сбой базы не запирает вход */ }
 }
 // Успешный вход обнуляет счётчики: человек вспомнил PIN, и следующая опечатка не должна
@@ -211,10 +225,10 @@ async function loginUser(env, request) {
     return json({ success: false, error: "Неверный телефон или PIN" }, 401);
   };
   if (!u) return await bad();
-  const realPin = String(u.pin || "1111");
-  if (!safeEqual(pin, realPin)) return await bad();
+  if (u.disabled || !await checkPin(pin,u,env.PIN_PEPPER||env.ADMIN_TOKEN)) return await bad();
+  const secured=await migrateLoginPin(env,"users",u,pin);
   await loginNoteOk(env, keys);
-  return await userSession(env, u, rolePerms, "вошёл в портал");
+  return await userSession(env, secured, rolePerms, "вошёл в портал");
 }
 
 // Личный токен + профиль. Один путь для входа по PIN и через Telegram: права в токене
@@ -222,8 +236,8 @@ async function loginUser(env, request) {
 async function userSession(env, u, rolePerms, note) {
   const roles = u.roles || [];
   const adm = roles.indexOf("admin") >= 0;
-  const fin = adm || roles.some(function (r) { return (rolePerms[r] || []).indexOf("finance") >= 0; });
-  const token = await makeUserToken(env, { u: u.id, adm: adm, fin: fin, exp: Date.now() + 30 * 24 * 3600 * 1000 });
+  const fin = adm || permissionsFor(u,rolePerms).includes("finance");
+  const token = await makeUserToken(env, { u: u.id, adm: adm, fin: fin, sv:await hmacRaw(env,credentialVersion(u)), exp: Date.now() + 30 * 24 * 3600 * 1000 });
   await logEvent(env, { uid: u.id }, "auth", "login", note, null);
   return json({ success: true, token: token, user: { id: u.id, name: u.name, roles: roles, av: u.av, c: u.c, mustChangePin: !!u.mustChangePin } });
 }
@@ -248,7 +262,7 @@ async function tgLogin(env, request) {
   if (!link || !link.uid) return notLinked();
   const { users, rolePerms } = await loadUsersPerms(env);
   const u = users.find(function (x) { return x && x.id === link.uid; });
-  if (!u) return notLinked();                        // привязка осталась, а сотрудника удалили
+  if (!u || u.disabled) return notLinked();                        // привязка осталась, а сотрудника удалили
   return await userSession(env, u, rolePerms, "вошёл через Telegram");
 }
 
@@ -259,17 +273,48 @@ async function changePin(env, request, auth) {
   let body; try { body = await request.json(); } catch { return json({ success: false, error: "bad json" }, 400); }
   const oldPin = String((body && body.oldPin) || ""), newPin = String((body && body.newPin) || "");
   if (!/^[0-9]{4,6}$/.test(newPin)) return json({ success: false, error: "Новый PIN — 4–6 цифр" }, 400);
-  const s = await readSnapshot(env, ["users"]);
-  const users = s.users || [];
-  const idx = users.findIndex(function (u) { return u && u.id === auth.uid; });
-  if (idx < 0) return json({ success: false, error: "Сотрудник не найден" }, 404);
-  const u = users[idx];
-  if (!safeEqual(oldPin, String(u.pin || "1111"))) return json({ success: false, error: "Текущий PIN неверный" }, 401);
-  if (safeEqual(newPin, String(u.pin || "1111"))) return json({ success: false, error: "Новый PIN совпадает со старым" }, 400);
-  users[idx] = Object.assign({}, u, { pin: newPin, mustChangePin: false });
-  await env.DB.prepare("INSERT INTO work_states (storage_key, work_id, data, updated_at) VALUES ('admin_panel','users',?,?) ON CONFLICT(storage_key,work_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at")
-    .bind(JSON.stringify(users), Date.now()).run();
-  return json({ success: true });
+  const keys=loginKeys(request,"pin:"+auth.uid);
+  const blocked=await loginBlockedFor(env,keys); if(blocked) return loginBlockedJson(blocked);
+  const {users,rolePerms}=await loadUsersPerms(env);
+  const u=users.find(x=>x.id===auth.uid);
+  if(!u || !await checkPin(oldPin,u,env.PIN_PEPPER||env.ADMIN_TOKEN)) {
+    await loginNoteFail(env,keys); await loginPause();
+    return json({success:false,error:"Текущий PIN неверный"},401);
+  }
+  if(newPin===oldPin) return json({success:false,error:"Новый PIN совпадает со старым"},400);
+  const hashed=await hashPin(newPin,env.PIN_PEPPER||env.ADMIN_TOKEN), version=crypto.randomUUID();
+  const saved=await writeSection(env,"users",list=>{
+    const index=list.findIndex(x=>x.id===auth.uid);
+    if(index<0 || credentialVersion(list[index])!==credentialVersion(u)) return {error:"Доступ изменился. Войдите снова"};
+    list[index]={...list[index],pinHash:hashed,authVersion:version,mustChangePin:false}; delete list[index].pin;
+    return {value:list[index]};
+  });
+  if(!saved.ok) return json({success:false,error:saved.error},409);
+  await loginNoteOk(env,keys);
+  return userSession(env,saved.value,rolePerms,"изменил PIN");
+}
+
+// A generated code is returned once; neither snapshot nor audit contains it.
+async function resetPin(env,request,auth){
+  let body;try{body=await request.json();}catch{return json({success:false,error:"Неверный JSON"},400);}
+  const client=body.kind==="client",key=client?"contractDocs":"users";
+  if(!auth.adm && !(client&&(auth.user?.roles||[]).includes("client_mgr")))return json({success:false,error:"Нет права менять PIN"},403);
+  const random=crypto.getRandomValues(new Uint32Array(1))[0];
+  const pin=body.pin?String(body.pin):String(100000+(random%900000));
+  if(!/^[0-9]{4,6}$/.test(pin))return json({success:false,error:"PIN — 4–6 цифр"},400);
+  const hashed=await hashPin(pin,env.PIN_PEPPER||env.ADMIN_TOKEN);
+  const saved=await writeSection(env,key,list=>{
+    const i=list.findIndex(x=>x.id===body.id);if(i<0)return {error:"Запись не найдена"};
+    list[i]={...list[i],[client?"clientPinHash":"pinHash"]:hashed,authVersion:crypto.randomUUID()};
+    delete list[i][client?"clientPin":"pin"];
+    if(!client)list[i].mustChangePin=true;
+    return {value:list[i]};
+  });
+  if(!saved.ok)return json({success:false,error:saved.error},409);
+  await logEvent(env,auth,key,"edit","Выдан новый код доступа",null);
+  let token;
+  if(!client&&body.id===auth.uid)token=await makeUserToken(env,{u:auth.uid,adm:auth.adm,fin:auth.fin,sv:await hmacRaw(env,credentialVersion(saved.value)),exp:Date.now()+30*24*3600*1000});
+  return json({success:true,pin,token});
 }
 
 // Роли и имя сотрудника из снимка — нужны серверу для дефолтных настроек напоминаний
@@ -311,14 +356,30 @@ async function writeSection(env, workId, mutate, tries = 3) {
     const row = await env.DB.prepare("SELECT data, updated_at FROM work_states WHERE storage_key='admin_panel' AND work_id=?").bind(workId).first();
     if (!row) return { ok: false, error: "Раздел «" + workId + "» ещё не создан" };
     let data; try { data = JSON.parse(row.data); } catch { return { ok: false, error: "Раздел «" + workId + "» повреждён" }; }
-    const res = mutate(data);
+    const res = await mutate(data);
     if (!res || res.error) return { ok: false, error: (res && res.error) || "Нечего менять" };
     const upd = await env.DB
       .prepare("UPDATE work_states SET data=?, updated_at=? WHERE storage_key='admin_panel' AND work_id=? AND updated_at=?")
-      .bind(JSON.stringify(data), Date.now(), workId, row.updated_at).run();
+      .bind(JSON.stringify(data), Math.max(Date.now(),Number(row.updated_at||0)+1), workId, row.updated_at).run();
     if (upd && upd.meta && upd.meta.changes > 0) return { ok: true, value: res.value };
   }
   return { ok: false, error: "Данные изменились, повторите" };
+}
+
+// Convert a legacy credential in the same section transaction before issuing
+// its session. A simultaneous reset must not be overwritten by migration.
+async function migrateLoginPin(env,key,record,pin) {
+  const client=key==="contractDocs", hash=client?"clientPinHash":"pinHash", raw=client?"clientPin":"pin";
+  if(record[hash]) return record;
+  const hashed=await hashPin(pin,env.PIN_PEPPER||env.ADMIN_TOKEN);
+  const saved=await writeSection(env,key,list=>{
+    const index=list.findIndex(x=>x.id===record.id);
+    if(index<0 || credentialVersion(list[index],client)!==credentialVersion(record,client)) return {error:"Доступ изменился. Повторите вход"};
+    list[index]={...list[index],[hash]:hashed,authVersion:crypto.randomUUID()}; delete list[index][raw];
+    return {value:list[index]};
+  });
+  if(!saved.ok) throw new Error(saved.error);
+  return saved.value;
 }
 
 // POST /api/client/accept-stage { objId, stageId }
@@ -386,7 +447,7 @@ async function buildClientSlice(env, cid) {
   const now = Date.now();
   const item = function (k, d) { return { work_id: k, data: d, updated_at: now }; };
   return [
-    item("contractDocs", [c]),
+    item("contractDocs", [{...c,clientPin:undefined,clientPinHash:undefined,authVersion:undefined}]),
     item("objects", obj ? [obj] : []),
     item("crmClients", crmCl ? [crmCl] : []),
     item("dbPlans", plans),
@@ -420,15 +481,10 @@ async function clientLogin(env, request) {
     return nm.indexOf(query) >= 0 || cl.indexOf(query) >= 0 || (qd.length >= 4 && ph.indexOf(qd) >= 0);
   });
   if (!c) return await bad();
-  const cm = crm.find(function (y) { return y.id === c.crmClientId; });
-  const phoneLast4 = ((cm && cm.phone) ? cm.phone : "").replace(/\D/g, "").slice(-4);
-  const realPin = (c.clientPin && c.clientPin.trim()) ? c.clientPin.trim() : phoneLast4;
-  // «PIN не задан» — не перебор, а незаконченная настройка: человеку нужно сказать, к кому
-  // идти, и в счётчик попыток это не пишем.
-  if (!realPin) return json({ success: false, error: "PIN не задан. Обратитесь к менеджеру по сопровождению." }, 401);
-  if (!safeEqual(pin, realPin)) return await bad();
+  if(!await checkPin(pin,c,env.PIN_PEPPER||env.ADMIN_TOKEN,true)) return await bad();
+  const secured=await migrateLoginPin(env,"contractDocs",c,pin);
   await loginNoteOk(env, keys);
-  const token = await makeUserToken(env, { typ: "client", cid: c.id, exp: Date.now() + 30 * 24 * 3600 * 1000 });
+  const token = await makeUserToken(env, { typ:"client",cid:c.id,sv:await hmacRaw(env,credentialVersion(secured,true)),exp:Date.now()+30*24*3600*1000 });
   const slice = await buildClientSlice(env, c.id);
   return json({ success: true, token: token, cid: c.id, items: slice });
 }
@@ -442,15 +498,13 @@ async function readStateItems(env, storageKey, auth) {
     .bind(storageKey)
     .all();
 
-  const adm = !!(auth && auth.adm), fin = !!(auth && auth.fin);
+  const state=Object.fromEntries(result.results.map(row=>[row.work_id,JSON.parse(row.data)]));
+  const policy=accessFor(auth,state);
   const items = [];
-  for (const row of result.results) {
-    if (!fin && FIN_KEYS.indexOf(row.work_id) >= 0) continue;   // финансы скрыты от не-finance
-    let data = JSON.parse(row.data);
-    if (!adm && row.work_id === "users" && Array.isArray(data)) {
-      data = data.map(function (u) { const c = Object.assign({}, u); delete c.pin; return c; });  // PIN-ы — только admin
-    }
-    items.push({ work_id: row.work_id, data: data, updated_at: row.updated_at });
+  for (const key of STATE_SECTIONS) {
+    const row=result.results.find(x=>x.work_id===key);
+    const data=policy.project(key,state[key]||emptySection(key));
+    items.push({work_id:key,data,updated_at:row?row.updated_at:0});
   }
   return items;
 }
@@ -462,7 +516,9 @@ async function getState(env, storageKey, auth) {
     const slice = await buildClientSlice(env, auth.cid);
     return json({ success: true, storage_key: storageKey, items: slice || [] });
   }
-  return json({ success: true, storage_key: storageKey, items: await readStateItems(env, storageKey, auth) });
+  const items=await readStateItems(env,storageKey,auth);
+  const state=Object.fromEntries(items.map(x=>[x.work_id,x.data]));
+  return json({success:true,storage_key:storageKey,items,writable:accessFor(auth,state).writable});
 }
 
 // GET /api/state/:storageKey/version — только версия снимка, без данных.
@@ -480,143 +536,70 @@ async function getStateVersion(env, storageKey) {
   return json({ success: true, storage_key: storageKey, version: Number((row && row.v) || 0) });
 }
 
-// POST /api/state/:storageKey
-//
-// ─── РЕШЕНИЕ, КОТОРОЕ ТЕБЕ НУЖНО СДЕЛАТЬ ─────────────────────────────────────
-// Тело запроса будет иметь формат:
-//   { items: [ { work_id: "rough_in", data: {...} }, ... ] }
-//
-// Есть три семантики записи — выбери одну и реализуй в TODO ниже:
-//
-//   (A) UPSERT batch (рекомендую):
-//       Для каждого item делаем INSERT ... ON CONFLICT(storage_key, work_id)
-//       DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at.
-//       Существующие work_id обновляются, новые добавляются, остальные не трогаются.
-//       Плюс: безопасно для partial updates с фронта, не теряет данные.
-//       Минус: чтобы удалить work_id, нужен отдельный DELETE-эндпоинт.
-//
-//   (B) REPLACE-ALL:
-//       Сначала DELETE FROM work_states WHERE storage_key = ?, потом INSERT всех items.
-//       Состояние объекта = ровно то, что прислал фронт.
-//       Плюс: простая ментальная модель ("сохранить снимок").
-//       Минус: если два клиента шлют одновременно — последний выигрывает целиком,
-//              и если фронт прислал неполные данные — потеряем работы.
-//
-//   (C) UPSERT single (без batching):
-//       Тело — один объект { work_id, data }, без массива.
-//       Плюс: проще API, проще валидация.
-//       Минус: чтобы сохранить 5 работ, нужно 5 запросов.
-//
-// Я выставил TODO там, где нужна твоя имплементация. Это 5-10 строк кода в зависимости
-// от выбранного варианта. Если сомневаешься — бери (A): это самый гибкий и безопасный.
 async function postState(env, storageKey, request, auth, ctx) {
+  if(storageKey!=="admin_panel") return json({success:false,error:"Неизвестный раздел хранения"},400);
+  if(auth.client) return json({success:false,error:"Кабинет клиента доступен только для чтения"},403);
+  if(Number(request.headers.get("Content-Length")||0)>MAX_STATE_BYTES) return json({success:false,error:"Запрос слишком большой"},413);
   let body;
   try {
-    body = await request.json();
-  } catch {
-    return json({ success: false, error: "Invalid JSON body" }, 400);
+    const reader=request.body?.getReader(); const parts=[]; let size=0;
+    if(reader) for(;;) { const {done,value}=await reader.read(); if(done)break; size+=value.length;
+      if(size>MAX_STATE_BYTES){await reader.cancel();return json({success:false,error:"Запрос слишком большой"},413);} parts.push(value); }
+    body=JSON.parse(await new Blob(parts).text());
+  } catch { return json({success:false,error:"Неверный JSON"},400); }
+  const invalid=validateStateItems(body?.items);
+  if(invalid) return json({success:false,error:invalid},400);
+  if(!body.items.length) return json({success:true,written:0,accepted:[],versions:{} });
+  const rows=(await env.DB.prepare("SELECT work_id, data, updated_at FROM work_states WHERE storage_key = ?").bind(storageKey).all()).results;
+  const state=Object.fromEntries(rows.map(r=>[r.work_id,JSON.parse(r.data)]));
+  const versions=Object.fromEntries(rows.map(r=>[r.work_id,Number(r.updated_at)||0]));
+  // Recheck the identity against the same snapshot used by the transaction.
+  // A role/PIN change between initial authentication and this read must also apply.
+  if(auth.kind==="user") {
+    const current=(state.users||[]).find(u=>u.id===auth.uid);
+    if(!current||current.disabled||credentialVersion(current)!==credentialVersion(auth.user))
+      return json({success:false,error:"Войдите в портал заново"},401);
+    const permissions=permissionsFor(current,state.rolePermissions);
+    auth={...auth,user:current,permissions,adm:(current.roles||[]).includes("admin")};
   }
-
-  if (!body || !Array.isArray(body.items)) {
-    return json({ success: false, error: "Body must be { items: [...] }" }, 400);
+  const policy=accessFor(auth,state);
+  const conflict=async()=>json({success:false,conflict:true,error:"Данные изменились",items:await readStateItems(env,storageKey,auth)},409);
+  const bases={};
+  const force=body.force===true;
+  if(force && !auth.adm) return json({success:false,error:"Перезапись доступна только администратору"},403);
+  if(!force && (!body.baseVersions || typeof body.baseVersions!=="object" || Array.isArray(body.baseVersions)))
+    return json({success:false,error:"Обновите портал: требуется версия каждого изменённого раздела",code:"UPGRADE_REQUIRED"},428);
+  for(const item of body.items) {
+    if(!policy.write(item.work_id)) return json({success:false,error:"Нет права изменять раздел «"+item.work_id+"»",rejected:[item.work_id]},403);
+    const expected=body.baseVersions?.[item.work_id];
+    if(!force && (!Number.isSafeInteger(expected) || expected<0)) return json({success:false,error:"Не указана версия раздела «"+item.work_id+"»"},400);
+    if(!force && expected!==(versions[item.work_id]||0)) return conflict();
+    bases[item.work_id]=versions[item.work_id]||0;
   }
-
-  const now = Date.now();
-
-  for (const item of body.items) {
-    if (typeof item?.work_id !== "string" || item.work_id.length === 0) {
-      return json({ success: false, error: "Each item needs a non-empty work_id" }, 400);
+  // Projection depends on assignments and current roles. Concurrent reassignment
+  // invalidates the entire save, including records not present in the user's slice.
+  if(auth.kind==="user") for(const key of ["users","rolePermissions"]) bases[key]=versions[key]||0;
+  if(!auth.adm) for(const key of ["contractDocs","objects"]) bases[key]=versions[key]||0;
+  const allowed=[];
+  try {
+    for(const item of body.items) {
+      let data=policy.mergeWrite(item.work_id,item.data);
+      data=await protectCredentials(item.work_id,data,state[item.work_id],env.PIN_PEPPER||env.ADMIN_TOKEN,auth.adm||(auth.user?.roles||[]).includes("client_mgr"));
+      allowed.push({work_id:item.work_id,data});
     }
-  }
-
-  // Клиент — строго read-only: ничего не пишем (иначе его частичный срез затёр бы всю базу).
-  if (auth && auth.client) {
-    return json({ success: true, written: 0, updated_at: now, skipped: ["*client-readonly*"] });
-  }
-  // Пропускаем запись разделов, на которые у отправителя нет прав. НЕ отклоняем весь запрос
-  // (клиент всегда шлёт полный снимок) — просто не трогаем защищённый раздел. Так рабочий,
-  // сохраняя объект, не может переписать зарплаты/пользователей/роли, а его сейв проходит.
-  const adm = !!(auth && auth.adm), fin = !!(auth && auth.fin);
-  const skipped = [];
-  const allowed = body.items.filter(function (item) {
-    if (!adm && ADMIN_KEYS.indexOf(item.work_id) >= 0) { skipped.push(item.work_id); return false; }
-    if (!fin && FIN_KEYS.indexOf(item.work_id) >= 0)   { skipped.push(item.work_id); return false; }
-    // Страховка от потери управления: снимок без единого админа не принимаем. Такой список
-    // означает, что войти и всё починить будет уже некому — а через панель это делается
-    // одним тапом по «удалить».
-    if (item.work_id === "users" && Array.isArray(item.data)) {
-      const hasAdmin = item.data.some(function (u) { return u && Array.isArray(u.roles) && u.roles.indexOf("admin") >= 0; });
-      if (!hasAdmin) { skipped.push("users:no-admin"); return false; }
-    }
-    return true;
-  });
-
-  if (allowed.length === 0) {
-    return json({ success: true, written: 0, updated_at: now, skipped });
-  }
-
-  // ─── OPTIMISTIC LOCKING (закрывает «last write wins») ──────────────────────
-  // Новый клиент шлёт base = максимальный updated_at, который он видел. Если любая из
-  // ЗАПИСЫВАЕМЫХ строк обновилась позже base (правка с другого устройства, прямая вставка
-  // в D1), весь сейв отклоняется 409-м с актуальным снимком — клиент сливает его со своими
-  // правками и повторяет. Старые клиенты base не шлют — пишем безусловно, как раньше.
-  //
-  // Проверка встроена В КАЖДЫЙ upsert самого batch (batch в D1 — одна сериализованная
-  // транзакция), а не отдельным SELECT перед записью: иначе между проверкой и записью
-  // оставалось бы окно гонки для двух одновременных сейвов. Детали условия:
-  //   • скоуп — только записываемые work_id: строки Worker'а (voiceCalls, aiChats) и
-  //     скрытые правами разделы не дают ложных конфликтов тем, кто их не пишет;
-  //   • updated_at <> now исключает строки, записанные ЭТИМ же batch (первый upsert
-  //     ставит updated_at = now > base и без исключения «состарил» бы остальные).
-  // Условие неизменно внутри транзакции → batch проходит целиком или целиком нет.
-  const base = (typeof body.base === "number" && isFinite(body.base)) ? body.base : null;
-  const ids = allowed.map(function (item) { return item.work_id; });
-  const guard = base === null ? null : " WHERE NOT EXISTS (SELECT 1 FROM work_states"
-    + " WHERE storage_key = ? AND updated_at > ? AND updated_at <> ? AND work_id IN ("
-    + ids.map(function () { return "?"; }).join(",") + "))";
-  const upsert = env.DB.prepare(
-    "INSERT INTO work_states (storage_key, work_id, data, updated_at) "
-    + (guard === null ? "VALUES (?, ?, ?, ?)" : "SELECT ?, ?, ?, ?" + guard)
-    + " ON CONFLICT(storage_key, work_id)"
-    + " DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at"
-  );
-
-  const batch = allowed.map(item => guard === null
-    ? upsert.bind(storageKey, item.work_id, JSON.stringify(item.data ?? null), now)
-    : upsert.bind(storageKey, item.work_id, JSON.stringify(item.data ?? null), now, storageKey, base, now, ...ids)
-  );
-
-  // Снимок «до» — для истории действий. Читаем ТОЛЬКО записываемые разделы и ТОЛЬКО
-  // сырые строки: сравнение строк отсеет неизменившееся без парсинга (см. src/audit.js).
-  let auditBefore = null;
-  if (storageKey === "admin_panel" && auth && !auth.client) {
-    try {
-      const prevRows = await env.DB
-        .prepare("SELECT work_id, data FROM work_states WHERE storage_key = ? AND work_id IN (" + ids.map(function () { return "?"; }).join(",") + ")")
-        .bind(storageKey, ...ids).all();
-      auditBefore = new Map((prevRows.results || []).map(function (r) { return [r.work_id, r.data]; }));
-    } catch (e) { auditBefore = null; }
-  }
-
-  const results = await env.DB.batch(batch);
-
-  // changes = 0 — guard не пропустил запись (base устарел). Неизвестная форма meta →
-  // считаем записанным (поведение как раньше), а не выдумываем ложный конфликт.
-  const rejected = base !== null && results.some(function (r) {
-    return r && r.meta && typeof r.meta.changes === "number" && r.meta.changes === 0;
-  });
-  if (rejected) {
-    const items = await readStateItems(env, storageKey, auth);
-    return json({ success: false, error: "stale base", conflict: true, storage_key: storageKey, items }, 409);
-  }
-
-  // История пишется ПОСЛЕ успешной записи и не задерживает ответ панели.
-  if (auditBefore) {
-    const task = recordSnapshotDiff(env, auth, auditBefore, allowed).catch(function () {});
-    if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(task);
-  }
-
-  return json({ success: true, written: batch.length, updated_at: now, skipped });
+  } catch(e) {return json({success:false,error:e.message},403);}
+  const mergedInvalid=validateStateItems(allowed);
+  if(mergedInvalid)return json({success:false,error:mergedInvalid},400);
+  const saved=await commitState(env,storageKey,allowed,bases);
+  if(!saved.ok)return conflict();
+  const before=new Map(rows.map(r=>[r.work_id,r.data]));
+  const task=recordSnapshotDiff(env,auth,before,allowed).catch(e=>console.error("audit",e.message));
+  if(ctx?.waitUntil)ctx.waitUntil(task);
+  const after={...state,...Object.fromEntries(allowed.map(x=>[x.work_id,x.data]))};
+  const nextPolicy=accessFor(auth,after);
+  return json({success:true,written:allowed.length,accepted:allowed.map(x=>x.work_id),versions:saved.versions,
+    updated_at:Math.max(...Object.values(saved.versions)),
+    items:allowed.map(x=>({work_id:x.work_id,data:nextPolicy.project(x.work_id,x.data),updated_at:saved.versions[x.work_id]}))});
 }
 
 // Разрешённые типы (тип задаём САМИ по расширению, не доверяя клиенту — иначе можно
@@ -1773,10 +1756,16 @@ export default {
       return unauthorized();
     }
 
+    if(!routeAllowed(auth,url.pathname)) return json({success:false,error:"Нет доступа к этой операции"},403);
+
     // Приёмка этапа клиентом: пишет сервер, потому что снимок клиенту недоступен на запись.
     if (url.pathname === "/api/client/accept-stage" && request.method === "POST") {
       try { return await clientAcceptStage(env, request, auth); }
       catch (err) { return json({ success: false, error: String((err && err.message) || err) }, 500); }
+    }
+
+    if(url.pathname==="/api/reset-pin"&&request.method==="POST"){
+      try{return await resetPin(env,request,auth);}catch(err){return json({success:false,error:String(err.message||err)},500);}
     }
 
     // Смена своего PIN (с токеном сотрудника).

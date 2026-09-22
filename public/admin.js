@@ -1,7 +1,13 @@
+import { createPanelSync } from "../src/panel-sync.js";
+import { assignedObjects, DEFAULT_PERMISSIONS } from "../src/access.js";
+import { changedSections, mergeSnapshots, mergeValue, equalJSON, isIdArray } from "../src/sync-state.js";
+import { createSnapshotCache } from "../src/snapshot-cache.js";
 // Полифиллы для старых Safari (macOS/iOS): Array.flat/flatMap появились только в Safari 12.
 // Объявляем non-enumerable (как нативные), чтобы не влиять на for...in. Синтаксис ES5 — парсится везде.
 if(!Array.prototype.flat){Object.defineProperty(Array.prototype,"flat",{configurable:true,writable:true,value:function(depth){var d=depth===undefined?1:Number(depth)||0;return d<1?Array.prototype.slice.call(this):Array.prototype.reduce.call(this,function(acc,val){return acc.concat(Array.isArray(val)&&d>1?val.flat(d-1):[val]);},[]);}});}
 if(!Array.prototype.flatMap){Object.defineProperty(Array.prototype,"flatMap",{configurable:true,writable:true,value:function(fn,thisArg){return Array.prototype.map.call(this,fn,thisArg).flat();}});}
+
+if(!Object.fromEntries){Object.fromEntries=function(entries){var out={};Array.from(entries).forEach(function(pair){Object.defineProperty(out,pair[0],{value:pair[1],enumerable:true,writable:true,configurable:true});});return out;};}
 
 /* ============================================================
    КубрДом — Портал управления · admin_panel_v3
@@ -79,7 +85,7 @@ import { installInPageCamera } from "../src/camera.js";
 // а утром у него удерживают деньги. См. docs/domain/day-close.md.
 import { dayCloseState, dayFineCfg, underDayFine, fineSum, DAY_FINE_CAT, DAY_FINE_DEFAULT } from "../src/dayclose.js";
 
-const APP_BUILD = "2026-09-15.1";
+const APP_BUILD = "2026-09-22.1";
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -162,43 +168,38 @@ function showAppUpdateBanner(){
   if(btn) btn.onclick = function(){ location.reload(); };
 }
 
-function readCache(){
-  try { const r = localStorage.getItem(CACHE_KEY); return r ? JSON.parse(r) : null; }
-  catch { return null; }
+let _cacheDurable=true;
+let _cacheScope="";
+let _tabRecoveryId="";
+try { _tabRecoveryId=sessionStorage.getItem("kubr_recovery_tab")||crypto.randomUUID(); sessionStorage.setItem("kubr_recovery_tab",_tabRecoveryId); } catch(e){_tabRecoveryId=String(Date.now())+Math.random();}
+function cacheScope(){const d=_decodeToken(getToken());return d?(d.u||("client:"+d.cid)):"guest";}
+const snapshotCache=createSnapshotCache({local:localStorage,indexedDB:window.indexedDB,key:function(){return CACHE_KEY+":"+cacheScope()+":"+_tabRecoveryId;},onStatus:function(ok){_cacheDurable=ok;}});
+function cacheRecord(){
+  const scope=cacheScope();if(scope!==_cacheScope){snapshotCache.reset();_cacheScope=scope;}
+  return snapshotCache.readSync();
 }
+function readCache(){const r=cacheRecord();return r?r.items:null;}
 function writeCache(items){
-  try { localStorage.setItem(CACHE_KEY, JSON.stringify(items)); } catch {}
+  cacheRecord();
+  return snapshotCache.write({items:items,baseJson:_lastSavedJson,versions:_baseVersions,pending:!!_readPendingSave()}).sync;
 }
-
-// ─── ДОЖИМ СОХРАНЕНИЯ: маркер несохранённых правок ─────────────────────────
-// Дебаунс scheduleSave + автосейв не успевают, если вкладку перезагрузили/закрыли сразу
-// после правки: отложенный/in-flight POST обрывается, сервер остаётся со старым снимком,
-// а на следующей загрузке «тихая подмена» сервером воскрешает удалённое (реальный случай:
-// удаление записи времени + мгновенный reload). Дожим двухуровневый:
-//   • при уходе со страницы снимок синхронно пишется в кэш + ставится этот маркер, а если
-//     снимок влезает в квоту — уходит keepalive-запросом (см. flushSaveOnLeave);
-//   • на следующем старте boot видит маркер и, если облако с тех пор никто другой не менял,
-//     дожимает кэш в облако вместо тихого принятия устаревшего серверного снимка.
-// base = максимальный updated_at сервера, который вкладка видела на момент правок: по нему
-// boot отличает «облако не двигалось — можно дожимать» от «правки с другого устройства —
-// спросить» (иначе дожим стал бы новым способом затереть облако стейл-вкладкой).
-// Маркер ставится при КАЖДОЙ записи неподтверждённого снимка в кэш (optimistic-запись
-// apiSave, блокировки стража, уход со страницы) и снимается, только когда сервер подтвердил
-// сохранение или его содержимое совпало с локальным.
-const PENDING_SAVE_KEY = "kubr_pending_save";
+const PENDING_SAVE_KEY="kubr_pending_save";
+function pendingKey(){return PENDING_SAVE_KEY+":"+cacheScope()+":"+_tabRecoveryId;}
+let _pendingMemory=null;
 function _setPendingSave(){
-  try{
-    if (localStorage.getItem(PENDING_SAVE_KEY)) return;   // база уже зафиксирована первой правкой
-    localStorage.setItem(PENDING_SAVE_KEY, JSON.stringify({ base: _lastSeen || 0, ts: Date.now() }));
-  }catch(e){}
+  _pendingMemory={base:_lastSeen||0,versions:Object.assign({},_baseVersions),baseJson:_lastSavedJson,ts:Date.now()};
+  try{localStorage.setItem(pendingKey(),JSON.stringify(_pendingMemory));}catch(e){}
+  writeCache(serializeState());
 }
 function _readPendingSave(){
-  try{
-    const p = JSON.parse(localStorage.getItem(PENDING_SAVE_KEY) || "null");
-    return (p && typeof p.base === "number") ? p : null;
-  }catch(e){ return null; }
+  if(_pendingMemory)return _pendingMemory;
+  try{return JSON.parse(localStorage.getItem(pendingKey())||"null");}catch(e){return null;}
 }
-function _clearPendingSave(){ try{ localStorage.removeItem(PENDING_SAVE_KEY); }catch(e){} }
+function _clearPendingSave(){_pendingMemory=null;try{localStorage.removeItem(pendingKey());}catch(e){} }
+function _acceptServerBase(items){
+  (items||[]).forEach(function(it){_baseVersions[it.work_id]=Number(it.updated_at)||0;});
+  _lastSeen=maxUpdatedAt(items);
+}
 
 // Каноническая подпись СОДЕРЖИМОГО снимка (без updated_at и порядка строк): отличаем
 // «в облаке то же самое» от настоящего расхождения данных.
@@ -213,7 +214,7 @@ function _stateSig(items){
 const TOKEN_KEY = "admin_token";
 function getToken(){ try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; } }
 function setToken(t){ try { localStorage.setItem(TOKEN_KEY, t); } catch {} }
-function clearToken(){ try { localStorage.removeItem(TOKEN_KEY); } catch {} }
+function clearToken(){ try { localStorage.removeItem(TOKEN_KEY); } catch {} snapshotCache.reset();_pendingMemory=null;_baseVersions={};_writableSections=null;}
 
 // ─── ПОРТАЛ ВНУТРИ TELEGRAM (мини-приложение) ───────────────────────────────
 // Кнопка «Портал» в боте и кнопки под напоминаниями открывают панель в Telegram, а тот
@@ -298,7 +299,7 @@ let _serverIds=null;         // Set id-шников гардируемых ко�
 // подтвердил лишь присланные; по остальным наш локальный счёт может быть устаревшим,
 // и записать его эталоном значит обезоружить стража ровно там, где он и нужен.
 function updateServerCounts(items, onlyKeys){
-  if(!onlyKeys){ _serverCounts={}; _serverIds={}; }
+  if(!onlyKeys){ _serverCounts={}; _serverIds={}; _latestServerItems=items; }
   const byId={};
   (items||[]).forEach(function(it){ byId[it.work_id]=it.data; });
   const keys=onlyKeys?GUARDED_KEYS.filter(function(k){return onlyKeys.indexOf(k)>=0;}):GUARDED_KEYS;
@@ -429,7 +430,7 @@ async function apiLoad(){
   if (r.status === 401) { const e = new Error("unauthorized"); e.unauthorized = true; throw e; }
   if (!r.ok) throw new Error("HTTP " + r.status);
   const data = await r.json();
-  if (data && Array.isArray(data.items)) { updateServerCounts(data.items); writeCache(data.items); return data.items; }
+  if (data && Array.isArray(data.items)) { updateServerCounts(data.items); _writableSections=Array.isArray(data.writable)?data.writable:null; return data.items; }
   return null;
 }
 
@@ -988,6 +989,9 @@ function deletePlanFromTelegram(msgId){
   fetch(API_BASE+"/api/photo-delete?msgId="+encodeURIComponent(msgId),{ method:"POST", headers:authHeaders() }).catch(function(){});
 }
 
+let _baseVersions = {};
+let _writableSections = null;
+let _latestServerItems = null;
 let _lastSavedJson = null;                 // снимок последнего успешного сохранения
 let _saving = false;                       // защита от параллельных сохранений
 // ─── ШЛЁМ ТОЛЬКО ИЗМЕНИВШИЕСЯ РАЗДЕЛЫ ───────────────────────────────────────
@@ -998,177 +1002,24 @@ let _saving = false;                       // защита от параллел
 // Базы сравнения нет (первый сейв, ретрай после слияния) → изменившимся считаем всё:
 // лишний полный сейв безопасен, пропущенный раздел — потеря правки.
 function dirtySections(items){
-  const prev = {};
-  let parsed = null;
-  try { parsed = _lastSavedJson ? JSON.parse(_lastSavedJson) : null; } catch (e) { parsed = null; }
-  if (!Array.isArray(parsed)) return items.slice();
-  parsed.forEach(function(it){ prev[it.work_id] = JSON.stringify(it.data); });
-  return items.filter(function(it){ return prev[it.work_id] !== JSON.stringify(it.data); });
+  let base=null;try{base=_lastSavedJson?JSON.parse(_lastSavedJson):null;}catch(e){}
+  return changedSections(items,base,_writableSections);
 }
 
-async function apiSave(opts){
-  if (_saving) return { success: true, busy: true };
-  // Сохраняет только залогиненный СОТРУДНИК. На экране входа (нет currentUser) или в кабинете
-  // клиента (read-only) — ничего не шлём и не показываем баннер сверки.
-  if (!currentUser) { clearSaveError(); return { success: true, skipped: true }; }
-  if (!getToken())  { clearSaveError(); return { success: true, skipped: true }; }
-  const items = serializeState();
-  const snap  = JSON.stringify(items);
-  // Нечего сохранять — и статус трогать нечего: экранный тумблер не правка, а
-  // зелёная вспышка на каждый тап и была тем, из-за чего отметку перестали читать.
-  if (snap === _lastSavedJson) { return { success: true, skipped: true }; }
-  // СТРАЖ v2. Правило: «не пиши туда, чего не видел».
-  // (1) Пока не было успешного GET с НАСТОЯЩЕГО сервера — в облако не пишем вообще:
-  //     вкладка, поднятая из localStorage-кэша, не знает актуального состояния и
-  //     может затереть его старьём (так 15–28.06.2026 пропали договора и объекты).
-  if (!_serverVerified && !window._forceSaveOnce) {
-    writeCache(items);   // правки целы локально; уйдут сами после первой сверки с сервером
-    _setPendingSave();
-    showSaveError("Ждём ответа сервера для сверки данных. Правки сохранены на устройстве и уйдут в облако автоматически после проверки связи.");
-    saveMarkSet("wait");
-    return { success: false, blocked: "unverified" };
-  }
-  if (_serverVerified && !window._forceSaveOnce) {
-    const itemsById = {};
-    items.forEach(function(it){ itemsById[it.work_id] = it.data; });
-    const allow = window._allowEmptyOnce || {};
-    // (2) Полное обнуление разделов (страж v1): пусто локально, не пусто в облаке.
-    const emptied = GUARDED_KEYS.filter(function(k){
-      const la = itemsById[k];
-      return _serverCounts[k] > 0 && Array.isArray(la) && la.length === 0 && !allow[k];
-    });
-    const mass = emptied.length >= 2 || emptied.some(function(k){ return _serverCounts[k] >= 3; });
-    // (3) УСУШКА: раздел стал заметно меньше серверного. Потеря 06.2026 была «4 реальных → 2 демо» —
-    //     v1 ловил только «до нуля». Одиночное удаление (−1) и парное в мелком разделе пропускаем.
-    const shrunk = GUARDED_KEYS.filter(function(k){
-      const la = itemsById[k];
-      if (!Array.isArray(la) || !(_serverCounts[k] > 0) || allow[k]) return false;
-      const d = _serverCounts[k] - la.length;
-      return d >= 3 || (d >= 2 && d / _serverCounts[k] >= 0.3);
-    });
-    // (4) РЕГРЕССИЯ К ДЕМО: шлём демо-запись, которой на сервере уже нет, — верный признак стейл-вкладки.
-    const seedy = Object.keys(SEED_STALE_IDS).filter(function(k){
-      const la = itemsById[k];
-      if (!Array.isArray(la) || !(_serverCounts[k] > 0) || !_serverIds || !_serverIds[k]) return false;
-      return SEED_STALE_IDS[k].some(function(id){
-        return !_serverIds[k].has(id) && la.some(function(x){ return x && x.id === id; });
-      });
-    });
-    if (mass || shrunk.length > 0 || seedy.length > 0) {
-      writeCache(items);   // локально ничего не теряем
-      _setPendingSave();
-      const what = [].concat(emptied, shrunk, seedy).filter(function(v, i, a){ return a.indexOf(v) === i; });
-      showSaveError("Защита данных: разделы «" + what.join(", ") + "» локально беднее или старее, чем в облаке. Похоже, вкладка устарела. Сохранение остановлено, чтобы не затереть данные.", 0, true);
-      saveMarkSet("wait");
-      return { success: false, blocked: what.join(",") };
-    }
-    window._allowEmptyOnce = {};   // одноразовые разрешения израсходованы
-  }
-  const forced = !!window._forceSaveOnce;  // «Сохранить как есть» — осознанная перезапись облака
-  window._forceSaveOnce = false;           // форс-сохранение одноразовое
-  // Форс шлём целиком: кнопка обещает перезаписать облако, а не его часть.
-  const sendItems = forced ? items : dirtySections(items);
-  if (!sendItems.length) { _lastSavedJson = snap; return { success: true, skipped: true }; }
-  const sentKeys = sendItems.map(function(it){ return it.work_id; });
-  _saving = true;
-  saveMarkSet("saving");
-  writeCache(items);                       // optimistic: локально всегда свежо
-  _setPendingSave();                       // …но сервером ещё не подтверждено — маркер до успеха
-  try {
-    const url  = API_BASE + "/api/state/" + encodeURIComponent(STORAGE_KEY);
-    // base = optimistic locking: сервер откажет (409 + свежий снимок), если облако менялось
-    // после base, — вместо тихого затирания чужих правок полным снимком этой вкладки.
-    // Форс шлём БЕЗ base (безусловная запись — ровно то, что пообещала кнопка).
-    const init = {
-      method:  "POST",
-      headers: authHeaders({ "Content-Type": "application/json" }),
-      body:    JSON.stringify(forced ? { items: sendItems } : { items: sendItems, base: _lastSeen || 0 }),
-    };
-    // keepalive-режим (дожим при уходе со страницы): такой запрос браузер доотправляет даже
-    // после закрытия вкладки. Без fetchT: abort-таймер после смерти страницы бессмыслен.
-    const r = (opts && opts.keepalive)
-      ? await fetch(url, Object.assign({ keepalive: true }, init))
-      : await fetchT(url, init, 30000);   // 30с: на медленном/троттленом канале POST снимка (~1 МБ) может идти долго
-    if (r.status === 401) { clearToken(); location.reload(); return { success: false, error: "unauthorized" }; }
-    // 409 — optimistic locking: наш base устарел (облако менял кто-то другой). Сервер НИЧЕГО
-    // не записал и прислал актуальный снимок — сливаем его с локальными правками и повторяем.
-    if (r.status === 409) {
-      let conf = null; try { conf = await r.json(); } catch (_) {}
-      if (conf && conf.conflict && Array.isArray(conf.items)) return _handleSaveConflict(conf.items);
-      throw new Error((conf && conf.error) || "HTTP 409");   // чужой 409: body уже прочитан — вниз не проваливаемся
-    }
-    if (!r.ok) {
-      let detail = "HTTP " + r.status;
-      try { const e = await r.json(); if (e && e.error) detail = e.error; } catch (_) {}
-      throw new Error(detail);
-    }
-    const j = await r.json();
-    // Math.max: версия не должна откатываться (например, часы другого дата-центра чуть позади)
-    if (j && j.updated_at) _lastSeen = Math.max(_lastSeen, j.updated_at);   // свой save — не чужая правка
-    _lastSavedJson = snap;                             // запомнили, что отправили
-    _clearPendingSave();                               // облако подтвердило снимок — дожим не нужен
-    // Эталон стража двигаем только по подтверждённым разделам (при форсе — по всем).
-    updateServerCounts(items, forced ? null : sentKeys);
-    clearSaveError();                                  // успех — убираем баннер ошибки, если был
-    saveMarkSet("ok");
-    return j;
-  } catch (err) {
-    showSaveError(String((err && err.message) || err), JSON.stringify(sendItems).length);  // НЕ глотаем: показываем пользователю
-    saveMarkSet("wait");                               // статус называет то же, что баннер объясняет
-    return { success: false, error: String((err && err.message) || err), fallback: "localStorage" };
-  } finally {
-    _saving = false;
-  }
-}
+function apiSave(...args){return panelSync.apiSave(...args); }
 
 // Заметный баннер: данные не уходят в облако. Не глотаем ошибки сохранения молча.
 // withActions=true — блокировка стража: даём кнопки «Обновить страницу» (правильный выход
 // для стейл-вкладки) и «Сохранить как есть» (осознанная перезапись облака, одноразовая).
-function showSaveError(detail, snapLen, withActions){
-  let b = document.getElementById("save-error-banner");
-  if (!b){
-    b = document.createElement("div");
-    b.id = "save-error-banner";
-    b.style.cssText = "position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:10000;max-width:92%;background:#c0392b;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.3);font-size:13px;font-weight:600;text-align:center;line-height:1.4";
-    document.body.appendChild(b);
-  }
-  const tooBig = /large|big|413|exceed|too\s|D1_|SQLITE|размер|велик/i.test(detail) || (snapLen && snapLen > 1500000);
-  // Технические тексты → человеческие. Таймаут/обрыв сети — самый частый случай (медленный
-  // канал или блокировка без VPN): данные целы локально, автосейв ретраит каждые 2.5с сам.
-  let human = String(detail || "");
-  if (/abort/i.test(human)) human = "Сервер не отвечает (таймаут сети). Проверьте интернет или включите VPN.";
-  else if (/Failed to fetch|NetworkError|Load failed/i.test(human)) human = "Нет связи с сервером. Проверьте интернет или включите VPN.";
-  b.innerHTML = "⚠️ Изменения НЕ сохраняются в облако!<br><span style='font-weight:400;font-size:12px'>" + esc(human)
-    + (tooBig ? "<br>Снимок слишком большой (тяжёлые фото в base64). Обновите страницу (Cmd+Shift+R) — новая версия хранит фото отдельно в облаке." : "")
-    + "<br>Правки сохранены на устройстве и уйдут в облако сами, когда появится связь.</span>";
-  if (withActions){
-    const row = document.createElement("div");
-    row.style.cssText = "margin-top:8px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap";
-    row.innerHTML = '<button id="seb-reload" style="border:0;border-radius:8px;padding:7px 14px;background:#fff;color:#c0392b;font-weight:700;font-size:12px;cursor:pointer">🔄 Обновить страницу</button>'
-      + '<button id="seb-force" style="border:1px solid rgba(255,255,255,.5);border-radius:8px;padding:7px 14px;background:transparent;color:#fff;font-weight:600;font-size:12px;cursor:pointer">Сохранить как есть (перезапишет облако)</button>';
-    b.appendChild(row);
-    document.getElementById("seb-reload").onclick = function(){ location.reload(); };
-    document.getElementById("seb-force").onclick = function(){
-      if (!confirm("Точно перезаписать облако данными этой вкладки? Если вкладка устарела, более свежие данные с других устройств будут потеряны.")) return;
-      window._forceSaveOnce = true; clearSaveError(); apiSave().catch(function(){});
-    };
-  }
-}
-function clearSaveError(){
-  const b = document.getElementById("save-error-banner");
-  if (b){ try { b.parentNode.removeChild(b); } catch (e) {} }
-}
+function showSaveError(...args){return panelSync.showSaveError(...args); }
+function clearSaveError(...args){return panelSync.clearSaveError(...args); }
 
 // fl() зовётся часто → шлём на сервер не чаще раза в ~800мс.
 let _hydrated = false;
 // Статус здесь НЕ ставим: `scheduleSave` зовёт каждая перерисовка, в том числе та,
 // где ничего не менялось, и «не сохранено» загоралось бы на свёрнутый блок. Про
 // несохранённое честно знает только apiSave — он и красит.
-function scheduleSave(){
-  if (!_hydrated) return;                   // не сохраняем до завершения загрузки
-  clearTimeout(scheduleSave._t);
-  scheduleSave._t = setTimeout(apiSave, 800);
-}
+function scheduleSave(...args){return panelSync.scheduleSave(...args); }
 
 // ─── ДОЖИМ ПРИ УХОДЕ СО СТРАНИЦЫ ────────────────────────────────────────────
 // pagehide (reload/закрытие) и visibilitychange→hidden (свернули/переключили вкладку):
@@ -1180,26 +1031,7 @@ function scheduleSave(){
 // sendBeacon НЕ используем: он не умеет кастомные заголовки (X-Admin-Token), пришлось бы
 // менять авторизацию Worker'а; keepalive-fetch — тот же beacon, но с заголовками.
 const FLUSH_KEEPALIVE_MAX = 60 * 1024;   // байт; с запасом ниже квоты 64 КиБ
-function flushSaveOnLeave(){
-  try{
-    if (!_hydrated) return;
-    if (!currentUser || !getToken()) return;      // экран входа / кабинет клиента: нечего дожимать
-    const items = serializeState();
-    const snap  = JSON.stringify(items);
-    if (snap === _lastSavedJson) return;          // изменений нет — не дублируем штатный автосейв
-    clearTimeout(scheduleSave._t);                // дебаунс уже не успеет сработать
-    writeCache(items);                            // (1) синхронная страховка
-    _setPendingSave();
-    if (_saving) return;                          // штатный POST уже в полёте; умрёт со страницей — дожмёт boot
-    if (flushSaveOnLeave._sent === snap) return;  // pagehide сразу после visibilitychange — не шлём дважды
-    // Меряем ОТПРАВЛЯЕМОЕ, а не весь снимок: с сейвом по разделам правка обычно уходит
-    // парой килобайт и в квоту keepalive влезает, тогда как целый снимок не влезал никогда
-    // — и дожим при закрытии вкладки фактически не работал, всё ждало следующей загрузки.
-    if (new Blob([JSON.stringify(dirtySections(items))]).size > FLUSH_KEEPALIVE_MAX) return;   // не влезет — остаётся (1)
-    flushSaveOnLeave._sent = snap;
-    apiSave({ keepalive: true }).catch(function(){});   // стражи и учёт _lastSavedJson — внутри apiSave
-  }catch(e){}
-}
+function flushSaveOnLeave(...args){return panelSync.flushSaveOnLeave(...args); }
 document.addEventListener("visibilitychange", function(){ if (document.hidden) flushSaveOnLeave(); });
 window.addEventListener("pagehide", flushSaveOnLeave);
 
@@ -1209,67 +1041,16 @@ window.addEventListener("pagehide", flushSaveOnLeave);
 // стейт и стёр бы несохранённые правки, поэтому решение за пользователем.
 const POLL_MS = 15000;
 let _lastSeen   = 0;       // макс. updated_at, который мы уже знаем/применили
+let _dismissedVersion=0;
 let _pollPaused = false;   // true пока висит баннер — не плодим уведомления
 
 function maxUpdatedAt(items){
   return (items || []).reduce(function(m, it){ return Math.max(m, it.updated_at || 0); }, 0);
 }
 
-async function pollOnce(){
-  if (!_hydrated || _pollPaused || document.hidden) return;
-  const base = API_BASE + "/api/state/" + encodeURIComponent(STORAGE_KEY);
-  // Сначала спрашиваем ТОЛЬКО версию. Снимок весит около мегабайта, а меняется редко:
-  // тянуть его четыре раза в минуту ради сравнения одного числа — это трафик и батарея
-  // телефона бригадира в поле. Версия не даёт ни одной цифры из данных.
-  try {
-    const rv = await fetchT(base + "/version", { headers: authHeaders() }, 9000);
-    if (rv.status === 401) { clearToken(); location.reload(); return; }
-    if (rv.ok) {
-      const jv = await rv.json();
-      // Ничего не менялось — выходим, полный снимок не нужен. Если версия непонятна
-      // (старый Worker в окне деплоя отдаст 404), проваливаемся на полный опрос, как раньше.
-      if (jv && jv.success && typeof jv.version === "number" && jv.version <= _lastSeen) return;
-    }
-  } catch { return; }                                 // сеть/таймаут — тихо, попробуем позже
-  let r;
-  try { r = await fetchT(base, { headers: authHeaders() }, 9000); }
-  catch { return; }                                   // сеть/таймаут — тихо, попробуем позже
-  if (r.status === 401) { clearToken(); location.reload(); return; }
-  if (!r.ok) return;
-  const data = await r.json();
-  if (!data || !Array.isArray(data.items)) return;
-  updateServerCounts(data.items);   // страж всегда знает СВЕЖИЕ серверные счётчики (даже без применения стейта)
-  const serverV = maxUpdatedAt(data.items);
-  if (serverV > _lastSeen) showUpdateBanner(data.items, serverV);
-}
+function pollOnce(...args){return panelSync.pollOnce(...args); }
 
-function showUpdateBanner(items, version){
-  _pollPaused = true;
-  let b = document.getElementById("live-banner");
-  if (!b){
-    b = document.createElement("div");
-    b.id = "live-banner";
-    b.style.cssText = "position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:9999;"
-      + "background:#243b55;color:#fff;padding:12px 16px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.25);"
-      + "display:flex;align-items:center;gap:12px;font-family:-apple-system,sans-serif;font-size:14px";
-    document.body.appendChild(b);
-  }
-  b.innerHTML = '<span>🔄 Данные изменены на другом устройстве</span>'
-    + '<button id="live-apply" style="border:0;border-radius:8px;padding:6px 12px;background:#4a90d9;color:#fff;font-weight:600;cursor:pointer">Обновить</button>'
-    + '<button id="live-dismiss" style="border:0;background:transparent;color:#9fb3c8;cursor:pointer;font-size:18px;line-height:1">×</button>';
-  document.getElementById("live-apply").onclick = function(){
-    applyState(items); _lastSeen = version;
-    writeCache(items); _clearPendingSave();   // кэш = принятый сервер; локальный дожим больше не актуален
-    // База сравнения — принятый снимок: без этого сейв по разделам считал бы изменившимся
-    // всё, что только что пришло с сервера, и переписывал бы его теми же значениями,
-    // отбивая 409 остальным вкладкам на ровном месте.
-    _lastSavedJson = JSON.stringify(serializeState());
-    b.remove(); _pollPaused = false; render();
-  };
-  document.getElementById("live-dismiss").onclick = function(){
-    _lastSeen = version; b.remove(); _pollPaused = false;   // версию подтвердили — больше не напоминаем
-  };
-}
+function showUpdateBanner(...args){return panelSync.showUpdateBanner(...args); }
 
 // ─── OPTIMISTIC LOCKING: слияние при 409 от POST /api/state ─────────────────
 // Сервер отклонил сейв: облако менялось после нашего base (вторая вкладка, другое
@@ -1279,57 +1060,10 @@ function showUpdateBanner(items, version){
 // «оба добавили по товару в expProducts») сливаются автоматически и пересохраняются
 // с новым base; настоящий конфликт (одна и та же запись правлена с двух сторон) молча
 // не решаем — показываем штатный баннер выбора, как и раньше.
-function _jeq(a,b){ return JSON.stringify(a)===JSON.stringify(b); }
-function _isIdArray(v){ return Array.isArray(v) && v.every(function(x){ return x && typeof x==="object" && x.id!=null; }); }
-
-// Слияние массивов записей по id (три стороны). Порядок: серверный, локально
-// добавленные записи — в конец. Возвращает {ok:true,value} либо {ok:false},
-// если одна и та же запись изменена и там и там (решать пользователю).
-function _mergeIdArrays(b,l,s){
-  const bi={},li={},si={};
-  b.forEach(function(x){bi[x.id]=x;}); l.forEach(function(x){li[x.id]=x;}); s.forEach(function(x){si[x.id]=x;});
-  const out=[], seen={};
-  const ids=s.map(function(x){return x.id;}).concat(l.map(function(x){return x.id;}));
-  for (const id of ids){
-    if (seen[id]) continue; seen[id]=1;
-    const bR=bi[id], lR=li[id], sR=si[id];
-    let keep;
-    if (_jeq(lR,sR)) keep=sR;            // стороны согласны (правка идентична или обеих нет)
-    else if (_jeq(lR,bR)) keep=sR;       // менял только сервер (правка или удаление)
-    else if (_jeq(sR,bR)) keep=lR;       // менял только локальный клиент
-    else return {ok:false};              // запись правлена с двух сторон — конфликт
-    if (keep!==undefined) out.push(keep);
-  }
-  return {ok:true, value:out};
-}
-
-// Трёхстороннее слияние снимков по work_id (ключи base∪local; серверные ключи вне
-// панели — voiceCalls и т.п. — в слияние не входят, они проходят насквозь в applyState).
-// merged БЕЗ ключа = «оставить как есть» (например, финансы, скрытые правами).
-function _merge3(baseItems, localItems, serverItems){
-  const bm={},lm={},sm={};
-  (baseItems||[]).forEach(function(it){bm[it.work_id]=it.data;});
-  (localItems||[]).forEach(function(it){lm[it.work_id]=it.data;});
-  (serverItems||[]).forEach(function(it){sm[it.work_id]=it.data;});
-  const keys={};
-  Object.keys(bm).forEach(function(k){keys[k]=1;});
-  Object.keys(lm).forEach(function(k){keys[k]=1;});
-  const merged={}, conflicts=[];
-  Object.keys(keys).forEach(function(k){
-    const b=bm[k], l=lm[k], s=sm[k];
-    let v, ok=true;
-    if (_jeq(l,s)) v=l;
-    else if (_jeq(l,b)) v=s;             // раздел менял только сервер
-    else if (_jeq(s,b)) v=l;             // раздел менял только локальный клиент
-    else if (_isIdArray(b)&&_isIdArray(l)&&_isIdArray(s)){
-      const m=_mergeIdArrays(b,l,s);
-      if (m.ok) v=m.value; else ok=false;
-    } else ok=false;                     // оба меняли не-массив (settings и т.п.) — конфликт
-    if (!ok){ conflicts.push(k); return; }
-    if (v!==undefined) merged[k]=v;
-  });
-  return {merged:merged, conflicts:conflicts};
-}
+function _jeq(a,b){return equalJSON(a,b);}
+function _isIdArray(v){return isIdArray(v);}
+function _mergeIdArrays(b,l,s){return mergeValue(b,l,s);}
+function _merge3(b,l,s,choices){return mergeSnapshots(b,l,s,choices);}
 
 // true, если досылать нечего: каждый локальный раздел совпадает с серверным либо
 // отсутствует на сервере и пуст локально (финансы у роли без права finance).
@@ -1347,52 +1081,8 @@ function _mergeIsNoop(localItems, serverItems){
   });
 }
 
-function _handleSaveConflict(serverItems){
-  updateServerCounts(serverItems);                 // страж сверяется со свежим сервером
-  const serverV = maxUpdatedAt(serverItems);
-  const local   = serializeState();                // свежее снимка до POST: могли успеть печатать
-  let base = null;
-  try { base = _lastSavedJson ? JSON.parse(_lastSavedJson) : null; } catch (e) {}
-  const res = base ? _merge3(base, local, serverItems) : null;
-  if (!res || res.conflicts.length > 0) {
-    // Базы для слияния нет или запись правлена с двух сторон — решает пользователь.
-    // Кэш и маркер дожима уже записаны в apiSave, локальные правки целы.
-    if (!document.getElementById("live-banner")) showUpdateBanner(serverItems, serverV);
-    return { success: false, blocked: "conflict" };
-  }
-  const inServer = {};
-  const mergedFull = serverItems.map(function(it){
-    inServer[it.work_id] = 1;
-    return (it.work_id in res.merged) ? { work_id: it.work_id, data: res.merged[it.work_id], updated_at: it.updated_at } : it;
-  });
-  Object.keys(res.merged).forEach(function(k){ if (!inServer[k]) mergedFull.push({ work_id: k, data: res.merged[k] }); });
-  // Применяем и перерисовываем, только если слияние реально меняет локальные данные —
-  // иначе (чужой сейв с тем же содержимым) зря дёргали бы DOM и сбивали фокус ввода.
-  const lm = {}; local.forEach(function(it){ lm[it.work_id] = it.data; });
-  const changed = Object.keys(res.merged).some(function(k){ return !_jeq(res.merged[k], lm[k]); });
-  if (changed) { applyState(mergedFull); render(); }
-  _lastSeen = serverV;
-  writeCache(mergedFull);
-  _clearPendingSave(); _setPendingSave();          // маркер дожима — уже от свежей базы
-  // Слияние разрешило расхождение — висящий live-баннер (от поллинга) больше не актуален,
-  // а его кнопка «Обновить» держит УСТАРЕВШИЙ снимок и откатила бы слитое. Закрываем.
-  const lb = document.getElementById("live-banner");
-  if (lb) { try { lb.remove(); } catch (e) {} _pollPaused = false; }
-  const localAfter = changed ? serializeState() : local;
-  if (_mergeIsNoop(localAfter, serverItems)) {
-    // Всё «наше» уже в облаке — пересохранять нечего (и не дёргаем чужие вкладки).
-    _lastSavedJson = JSON.stringify(localAfter);
-    _clearPendingSave();
-    clearSaveError();
-    return { success: true, merged: true };
-  }
-  // null — не только «есть что сохранять»: без базы сравнения apiSave отправит ВСЕ разделы.
-  // После слияния это и нужно — слитыми могли оказаться несколько разделов сразу.
-  _lastSavedJson = null;
-  clearSaveError();
-  scheduleSave();                                  // ретрай уйдёт уже с новым base
-  return { success: false, retry: true, merged: true };
-}
+function _handleSaveConflict(...args){return panelSync._handleSaveConflict(...args); }
+function showConflictDetails(...args){return panelSync.showConflictDetails(...args); }
 const COLS=["#e67e22","#c0392b","#2980b9","#27ae60","#9b59b6","#7f8c8d","#16a085","#d35400","#8e44ad","#2c3e50"];
 // Единицы измерения работ (готовый список; можно ввести свою)
 const WORK_UNITS=["шт","м²","м.пог.","м³","компл.","л","кг","т","меш.","рул.","упак."];
@@ -1763,18 +1453,7 @@ const TAB_DEFS=[
 // rolePermissions[roleId] = массив ключей вкладок, которые открывает роль.
 // Админ НЕ входит сюда — он всегда видит все вкладки (зафиксировано).
 // Значения по умолчанию повторяют прежнюю жёстко зашитую логику доступа.
-let rolePermissions={
-  brigadier:   ["assign","finance"],
-  worker:      ["assign","finance"],
-  prod_head:   ["contracts"],
-  supply:      ["supply","finance"],
-  contract_mgr:[],
-  client_mgr:  ["assign","contracts","crm","clients"],
-  sales_head:  ["assign","finance","contracts","crm","marketing","works","kp","spec"],
-  sales_mgr:   ["marketing","crm","works","kp","spec"],
-  marketer:    ["marketing"],
-  financier:   ["finance","crm"],
-};
+let rolePermissions=JSON.parse(JSON.stringify(DEFAULT_PERMISSIONS));
 // Роли, которым во вкладке «База данных» доступен ТОЛЬКО раздел «Планировки»
 const DB_PLANS_ONLY_ROLES=["sales_head","sales_mgr"];
 // Уровень доступа к Базе данных: "full" | "plans" | "none"
@@ -1789,11 +1468,11 @@ function dbAccessLevel(){
 }
 
 let users=[
-  {id:"yuriy",name:"Юрий",av:"👨‍💼",c:"#c0392b",roles:["admin","supply","prod_head","financier","marketer"],objs:[],pin:"1111"},
-  {id:"valera",name:"Валера",av:"👷",c:"#e67e22",roles:["brigadier"],objs:[],pin:"1111"},
-  {id:"inna",name:"Инна",av:"👩‍💼",c:"#9b59b6",roles:["brigadier"],objs:[],pin:"1111"},
-  {id:"azis",name:"Азис",av:"🧑‍🔧",c:"#2980b9",roles:["worker"],objs:[],pin:"1111"},
-  {id:"alexandr",name:"Александр",av:"👨‍🔧",c:"#7f8c8d",roles:["contract_mgr","client_mgr","sales_head","sales_mgr","marketer"],objs:[],pin:"1111"},
+  {id:"yuriy",name:"Юрий",av:"👨‍💼",c:"#c0392b",roles:["admin","supply","prod_head","financier","marketer"],objs:[],hasPin:false},
+  {id:"valera",name:"Валера",av:"👷",c:"#e67e22",roles:["brigadier"],objs:[],hasPin:false},
+  {id:"inna",name:"Инна",av:"👩‍💼",c:"#9b59b6",roles:["brigadier"],objs:[],hasPin:false},
+  {id:"azis",name:"Азис",av:"🧑‍🔧",c:"#2980b9",roles:["worker"],objs:[],hasPin:false},
+  {id:"alexandr",name:"Александр",av:"👨‍🔧",c:"#7f8c8d",roles:["contract_mgr","client_mgr","sales_head","sales_mgr","marketer"],objs:[],hasPin:false},
 ];
 
 // Шаблоны
@@ -3511,10 +3190,20 @@ function clientPhoneLast4(c){
   const digits=((cl&&cl.phone)?cl.phone:"").replace(/\D/g,"");
   return digits.slice(-4);
 }
-// Действующий PIN клиента: ручной clientPin, иначе последние 4 цифры телефона
+// Состояние доступа клиента: сам PIN сервер никогда не возвращает.
+async function issueAccessCode(kind,id,pin){
+  try{
+    const r=await fetchT(API_BASE+"/api/reset-pin",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({kind:kind,id:id,pin:pin})},30000);
+    const j=await r.json();if(!r.ok||!j.success)throw new Error(j.error||"Не удалось выдать код");
+    if(j.token)setToken(j.token);
+    alert("Новый код: "+j.pin+"\nПередайте его получателю. Код показывается только сейчас.");
+    const fresh=await apiLoad();if(fresh)_handleSaveConflict(fresh);
+    render();return true;
+  }catch(e){alert(e.message||"Нет связи с сервером");return false;}
+}
 function effectiveClientPin(c){
   if(!c) return "";
-  return (c.clientPin&&c.clientPin.trim())?c.clientPin.trim():clientPhoneLast4(c);
+  return c.hasPin?"Настроен":"Не настроен";
 }
 // Поиск договора по номеру/названию или фамилии клиента
 function findClientContract(query){
@@ -3679,14 +3368,14 @@ function loginPage(){
     return wrap(inner);
   }
 
-  // Экран входа сотрудника — ТОЛЬКО телефон + PIN (последние 4 цифры номера).
+  // Экран входа сотрудника — телефон и явно выданный PIN.
   // Без пикера: у кого админ не задал телефон — тот войти не может (доступ = наличие телефона).
   const inner='<div style="background:#fff;border-radius:20px;padding:24px;box-shadow:0 4px 24px rgba(0,0,0,0.08);border:1px solid #e8eef5">'+
       '<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">'+
         '<button data-a="login-back" style="width:28px;height:28px;background:#f0f4f8;border:1px solid #dde6f0;border-radius:8px;cursor:pointer;font-size:13px;color:#7a9aaa;flex-shrink:0">←</button>'+
         '<div style="font-size:14px;font-weight:700;color:#1a2a3a">Вход для сотрудников</div>'+
       '</div>'+
-      '<div style="font-size:12px;color:#7a9aaa;margin:4px 0 14px 36px">Телефон и PIN (последние 4 цифры номера)</div>'+
+      '<div style="font-size:12px;color:#7a9aaa;margin:4px 0 14px 36px">Телефон и ваш PIN</div>'+
       '<input id="emp-phone" data-phone-mask="1" type="tel" inputmode="tel" autocomplete="off" placeholder="+7 (___) ___-__-__" style="width:100%;padding:12px;border-radius:12px;border:1.5px solid '+(empPhoneError?"#e74c3c":"#d0dae8")+';font-size:16px;outline:none;box-sizing:border-box;margin-bottom:10px">'+
       '<input id="login-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="PIN" style="width:100%;padding:12px;border-radius:12px;border:1.5px solid '+(empPhoneError?"#e74c3c":"#d0dae8")+';font-size:18px;text-align:center;letter-spacing:6px;outline:none;box-sizing:border-box">'+
       (empPhoneError?'<div style="font-size:12px;color:#e74c3c;font-weight:600;margin-top:8px">'+esc(empPhoneError)+'</div>':'')+
@@ -3704,8 +3393,8 @@ function forcedPinPage(){
     '<div style="width:100%;max-width:340px;background:#fff;border-radius:18px;padding:26px;box-shadow:0 8px 30px rgba(0,0,0,.1)">'+
       '<div style="text-align:center;margin-bottom:6px;font-size:34px">🔑</div>'+
       '<div style="text-align:center;font-size:17px;font-weight:800;color:#0d1b2e">Смените PIN</div>'+
-      '<div style="text-align:center;font-size:12px;color:#7a9aaa;margin:4px 0 16px">Первый вход: задайте свой PIN вместо стандартного (последние 4 цифры телефона).</div>'+
-      '<input id="pin-cur" type="password" inputmode="numeric" maxlength="6" placeholder="Текущий PIN (последние 4 цифры)" style="width:100%;padding:11px 12px;border-radius:10px;border:1px solid #d0dae8;font-size:14px;outline:none;box-sizing:border-box;margin-bottom:8px">'+
+      '<div style="text-align:center;font-size:12px;color:#7a9aaa;margin:4px 0 16px">Первый вход: замените выданный временный код своим PIN.</div>'+
+      '<input id="pin-cur" type="password" inputmode="numeric" maxlength="6" placeholder="Текущий PIN" style="width:100%;padding:11px 12px;border-radius:10px;border:1px solid #d0dae8;font-size:14px;outline:none;box-sizing:border-box;margin-bottom:8px">'+
       '<input id="pin-new" type="password" inputmode="numeric" maxlength="6" placeholder="Новый PIN (4–6 цифр)" style="width:100%;padding:11px 12px;border-radius:10px;border:1px solid #d0dae8;font-size:14px;outline:none;box-sizing:border-box;margin-bottom:8px">'+
       '<input id="pin-new2" type="password" inputmode="numeric" maxlength="6" placeholder="Повторите новый PIN" style="width:100%;padding:11px 12px;border-radius:10px;border:1px solid #d0dae8;font-size:14px;outline:none;box-sizing:border-box;margin-bottom:14px">'+
       '<button data-a="pin-change-save" style="width:100%;padding:12px;background:#27ae60;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:14px;font-weight:700">Сохранить и войти</button>'+
@@ -3800,7 +3489,7 @@ function bindLogin(){
         setToken(j.token);
         try{ if(remember) localStorage.setItem("kubr_remember",j.user.id); else localStorage.removeItem("kubr_remember"); }catch(e){}
         const items=await apiLoad();                       // полное состояние уже под личным токеном
-        if(items){ applyState(items); _lastSeen=maxUpdatedAt(items); }
+        if(items){ applyState(items); _acceptServerBase(items); }
         currentUser=users.find(function(x){return x.id===j.user.id;})||j.user;
         _lastSavedJson=JSON.stringify(serializeState());
         _hydrated=true; empPhoneError=""; loginPinFor=null;
@@ -3842,7 +3531,7 @@ function bindLogin(){
         setToken(j.token);
         try{ if(remember) localStorage.setItem("kubr_remember",j.user.id); else localStorage.removeItem("kubr_remember"); }catch(e){}
         const items=await apiLoad();
-        if(items){ applyState(items); _lastSeen=maxUpdatedAt(items); }
+        if(items){ applyState(items); _acceptServerBase(items); }
         currentUser=users.find(function(x){return x.id===j.user.id;})||j.user;
         _lastSavedJson=JSON.stringify(serializeState());
         _hydrated=true; loginPinFor=null; loginPinError="";
@@ -5367,7 +5056,7 @@ ${showPinChange?`<div style="background:#fff;border-bottom:1px solid #eef2f7;pad
       <div style="font-size:13px;font-weight:700;color:#0d1b2e">🔑 Пароль входа (PIN)</div>
       <button data-a="pin-change-close" style="width:26px;height:26px;background:#f0f4f8;border:1px solid #dde6f0;border-radius:7px;cursor:pointer;font-size:12px;color:#7a9aaa">✕</button>
     </div>
-    <div style="font-size:11px;color:#7a9aaa;margin-bottom:10px">Меняется только ваш PIN для входа. По умолчанию 1111.</div>
+    <div style="font-size:11px;color:#7a9aaa;margin-bottom:10px">Новый PIN завершит ваши старые сессии на других устройствах.</div>
     <input id="pin-cur" type="password" inputmode="numeric" maxlength="6" placeholder="Текущий PIN" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:7px">
     <input id="pin-new" type="password" inputmode="numeric" maxlength="6" placeholder="Новый PIN (мин. 4 цифры)" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:7px">
     <input id="pin-new2" type="password" inputmode="numeric" maxlength="6" placeholder="Повторите новый PIN" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:10px">
@@ -10976,18 +10665,18 @@ function ctClientLineHtml(c, cl, stageLabel){
       (cl?'<button data-a="ct-goto-crm" data-crmid="'+cl.id+'" style="padding:5px 9px;background:#27ae60;border:none;border-radius:7px;cursor:pointer;font-size:10.5px;color:#fff;font-weight:700;flex-shrink:0">→ CRM</button>':'')+
     '</div>';
   if(canPin){
-    const eff=effectiveClientPin(c), isCustom=!!(c.clientPin&&c.clientPin.trim()), open=!!ctPinOpen[c.id];
+    const eff=effectiveClientPin(c), isCustom=!!c.hasPin, open=!!ctPinOpen[c.id];
     h+='<button data-a="ct-pin-open" data-cid="'+c.id+'" style="display:flex;align-items:center;gap:6px;width:100%;margin-top:8px;padding:7px 0 0;border:none;border-top:1px solid #f4f6f9;background:transparent;cursor:pointer;text-align:left">'+
       '<span style="font-size:10px;color:#d68910;font-weight:700;letter-spacing:0.5px">🔑 PIN ДЛЯ ВХОДА</span>'+
-      '<span style="flex:1;font-size:12.5px;font-weight:700;color:#1a2a3a;letter-spacing:2px">'+esc((isCustom?c.clientPin:eff)||"—")+'</span>'+
+      '<span style="flex:1;font-size:12.5px;font-weight:700;color:#1a2a3a;letter-spacing:2px">'+esc(eff)+'</span>'+
       '<span style="color:#9aabbf;font-size:11px">'+(open?'свернуть':'изменить ›')+'</span>'+
     '</button>';
     if(open){
-      h+='<div style="font-size:11px;color:#7a9aaa;margin:6px 0">Клиент входит по номеру договора или фамилии + этот PIN. По умолчанию — последние 4 цифры его телефона'+(eff?' ('+eff+')':' (телефон не указан)')+'.</div>'+
+      h+='<div style="font-size:11px;color:#7a9aaa;margin:6px 0">Существующий PIN скрыт. Новый код заменит прежний и завершит старые сессии клиента.</div>'+
         '<div style="display:flex;gap:6px">'+
-          '<input id="ct-clientpin-'+c.id+'" type="text" inputmode="numeric" maxlength="6" value="'+(isCustom?c.clientPin:"")+'" placeholder="'+(eff||"PIN")+'" style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:14px;outline:none;letter-spacing:3px;box-sizing:border-box">'+
+          '<input id="ct-clientpin-'+c.id+'" type="text" inputmode="numeric" maxlength="6" value="" placeholder="Новый PIN" style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:14px;outline:none;letter-spacing:3px;box-sizing:border-box">'+
           '<button data-a="ct-clientpin-save" data-cid="'+c.id+'" style="padding:8px 14px;background:#d68910;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Задать</button>'+
-          (isCustom?'<button data-a="ct-clientpin-reset" data-cid="'+c.id+'" style="padding:8px 12px;background:transparent;border:1px solid #dde6f0;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:12px">Сброс</button>':'')+
+          (isCustom?'<button data-a="ct-clientpin-reset" data-cid="'+c.id+'" style="padding:8px 12px;background:transparent;border:1px solid #dde6f0;border-radius:8px;cursor:pointer;color:#7a9aaa;font-size:12px">Выдать код</button>':'')+
         '</div>';
     }
   }
@@ -23049,7 +22738,7 @@ ${tDayFine()}
       <input id="eu-n-${u.id}" value="${esc(u.name)}" style="flex:1;padding:6px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;font-weight:600;outline:none">
     </div>
     <input id="eu-phone-${u.id}" value="${u.phone||''}" data-phone-mask="1" type="tel" inputmode="tel" placeholder="+7 (___) ___-__-__" style="width:100%;padding:6px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:8px">
-    <input id="eu-pin-${u.id}" value="${esc(u.pin||'')}" inputmode="numeric" maxlength="6" placeholder="PIN (по умолчанию — последние 4 цифры телефона)" style="width:100%;padding:6px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:6px">
+    <input id="eu-pin-${u.id}" value="" inputmode="numeric" maxlength="6" placeholder="Новый PIN (пусто — выдать временный код)" style="width:100%;padding:6px 10px;border-radius:7px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:6px">
     <label style="display:flex;align-items:center;gap:7px;font-size:11px;color:#5a7a9a;margin-bottom:8px;cursor:pointer"><input type="checkbox" id="eu-forcepin-${u.id}" ${u.mustChangePin?"checked":""} style="width:15px;height:15px;cursor:pointer">Потребовать смену PIN при входе</label>
     <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">${COLS.map(c=>`<div data-a="eu-c" data-uid="${u.id}" data-c="${c}" style="width:20px;height:20px;border-radius:50%;background:${c};cursor:pointer;border:${u.c===c?"3px solid #0d1b2e":"2px solid transparent"}"></div>`).join("")}</div>
     <div style="font-size:10px;color:#7a9aaa;font-weight:600;margin-bottom:5px">РОЛИ</div>
@@ -25532,16 +25221,7 @@ const FIN_EXPENSE_CATS=["📦 Закупка материалов","📦 Дос�
 // (2) implicitly assigned via being responsible in any NOT archived contract for that object.
 // Архивный договор доступа не даёт: черновик, собранный по спецификации и убранный в архив,
 // открывал объект бригадиру, которого подставили ответственным по умолчанию.
-function getUserObjects(user){
-  if(!user)return [];
-  const explicit=user.objs||[];
-  const fromContracts=contractDocs
-    .filter(function(c){return !c.archived&&(c.responsible||[]).includes(user.id);})
-    .map(function(c){return c.objId;});
-  // Union (dedup)
-  const all=explicit.concat(fromContracts);
-  return all.filter(function(id,i){return id&&all.indexOf(id)===i;});
-}
+function getUserObjects(user){return user?assignedObjects(user,contractDocs):[];}
 
 function getDefaultSalary(user){
   if(!user||!user.roles)return 0;
@@ -26572,10 +26252,11 @@ function bind(){
         const r=await fetch(API_BASE+"/api/change-pin",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({oldPin:cur,newPin:n1})});
         const j=await r.json();
         if(!j||!j.success){ toast("⚠️ "+((j&&j.error)||"Ошибка смены PIN"),"#e67e22"); return; }
+        if(j.token)setToken(j.token);
       }catch(e){ toast("⚠️ Нет связи с сервером","#e67e22"); return; }
       const _id=currentUser&&currentUser.id;
-      users=users.map(function(u){return u.id===_id?Object.assign({},u,{pin:n1,mustChangePin:false}):u;});
-      if(currentUser) currentUser=Object.assign({},currentUser,{pin:n1,mustChangePin:false});
+      users=users.map(function(u){return u.id===_id?Object.assign({},u,{hasPin:true,mustChangePin:false}):u;});
+      if(currentUser) currentUser=Object.assign({},currentUser,{hasPin:true,mustChangePin:false});
       showPinChange=false;
       toast("✅ PIN изменён","#27ae60");
       render();
@@ -27429,23 +27110,26 @@ function bind(){
     else if(a==="cancel-nu"){el.onclick=()=>{showNU=false;render();};}
     else if(a==="nu-c"){el.onclick=()=>{nu.c=el.dataset.c;render();};}
     else if(a==="nu-role"){el.onclick=()=>{const rid=el.dataset.rid;nu.roles=nu.roles.includes(rid)?nu.roles.filter(x=>x!==rid):[...nu.roles,rid];render();};}
-    else if(a==="add-u"){el.onclick=()=>{const n=document.getElementById("nu-name")?.value?.trim();const av=document.getElementById("nu-av")?.value||"👷";const phone=(document.getElementById("nu-phone")?.value||"").trim();if(!n)return;const pin=(phone.match(/\d/g)||[]).join("").slice(-4);users.push({id:gid(),name:n,av,c:nu.c,roles:[...nu.roles],objs:[],phone:phone,pin:pin||"1111",mustChangePin:true});showNU=false;fl();};}
+    else if(a==="add-u"){el.onclick=async()=>{
+      const n=document.getElementById("nu-name")?.value?.trim();if(!n)return;
+      const id=gid();users.push({id:id,name:n,av:document.getElementById("nu-av")?.value||"👷",c:nu.c,roles:[...nu.roles],objs:[],phone:(document.getElementById("nu-phone")?.value||"").trim(),mustChangePin:true});
+      showNU=false;render();const saved=await apiSave();if(saved.success)await issueAccessCode("user",id,"");
+    };}
     else if(a==="edit-u"){el.onclick=()=>{editU=el.dataset.uid;render();};}
     else if(a==="cancel-eu"){el.onclick=()=>{editU=null;render();};}
     else if(a==="eu-c"){el.onclick=()=>{users=users.map(u=>u.id===el.dataset.uid?{...u,c:el.dataset.c}:u);render();};}
     else if(a==="eu-role"){el.onclick=()=>{const uid=el.dataset.uid,rid=el.dataset.rid;users=users.map(u=>{if(u.id!==uid)return u;const r=u.roles.includes(rid)?u.roles.filter(x=>x!==rid):[...u.roles,rid];return{...u,roles:r};});render();};}
-    else if(a==="save-u"){el.onclick=()=>{
+    else if(a==="save-u"){el.onclick=async()=>{
       const uid=el.dataset.uid;
       const n=document.getElementById("eu-n-"+uid)?.value?.trim();
       const av=document.getElementById("eu-av-"+uid)?.value;
       const phone=(document.getElementById("eu-phone-"+uid)?.value||"").trim();
-      const last4=(phone.match(/\d/g)||[]).join("").slice(-4);
       const customPin=(document.getElementById("eu-pin-"+uid)?.value||"").trim();
+      if(customPin&&!/^[0-9]{4,6}$/.test(customPin)){alert("PIN — 4–6 цифр");return;}
       const force=!!document.getElementById("eu-forcepin-"+uid)?.checked;
-      // PIN: явно введённый (4–6 цифр) → он; иначе последние 4 цифры телефона; иначе прежний/1111.
-      const pin=/^[0-9]{4,6}$/.test(customPin)?customPin:(last4||undefined);
-      if(n)users=users.map(u=>u.id===uid?{...u,name:n,av:av||u.av,phone:phone,pin:(pin||u.pin||"1111"),mustChangePin:force}:u);
-      editU=null;fl();
+      if(n)users=users.map(u=>u.id===uid?{...u,name:n,av:av||u.av,phone:phone,mustChangePin:force}:u);
+      editU=null;render();const saved=await apiSave();
+      if(saved.success&&(customPin||!users.find(u=>u.id===uid)?.hasPin))await issueAccessCode("user",uid,customPin);
     };}
     // Удаление сотрудника — необратимо и в один тап уносило доступ к порталу целиком
     // (админ удалил сам себя и перестал существовать для сервера). Три преграды:
@@ -30570,21 +30254,12 @@ function bind(){
       });
       fl();
     };}
-    else if(a==="ct-clientpin-save"){el.onclick=()=>{
-      const cid=el.dataset.cid;
-      const v=((document.getElementById("ct-clientpin-"+cid)||{}).value||"").trim();
-      if(v&&!/^[0-9]{4,6}$/.test(v)){
-        try{const t=document.createElement("div");t.textContent="⚠️ PIN — 4–6 цифр";t.style.cssText="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#e67e22;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:600;z-index:9999";document.body.appendChild(t);setTimeout(function(){try{document.body.removeChild(t);}catch(e){}},2200);}catch(e){}
-        return;
-      }
-      contractDocs=contractDocs.map(function(c){return c.id===cid?Object.assign({},c,{clientPin:v}):c;});
-      fl();
+    else if(a==="ct-clientpin-save"){el.onclick=async()=>{
+      const cid=el.dataset.cid,v=((document.getElementById("ct-clientpin-"+cid)||{}).value||"").trim();
+      if(v&&!/^[0-9]{4,6}$/.test(v)){alert("PIN — 4–6 цифр");return;}
+      await issueAccessCode("client",cid,v);
     };}
-    else if(a==="ct-clientpin-reset"){el.onclick=()=>{
-      const cid=el.dataset.cid;
-      contractDocs=contractDocs.map(function(c){return c.id===cid?Object.assign({},c,{clientPin:""}):c;});
-      fl();
-    };}
+    else if(a==="ct-clientpin-reset"){el.onclick=async()=>{await issueAccessCode("client",el.dataset.cid,"");};}
     else if(a==="ct-delete"){el.onclick=()=>{
       if(!confirm("Удалить договор?"))return;
       contractDocs=contractDocs.filter(function(c){return c.id!==el.dataset.cid;});
@@ -32505,6 +32180,46 @@ function applyDeepLink(){
   }catch(e){}
 }
 
+const panelSync=createPanelSync({
+  get API_BASE(){return API_BASE;},
+  get FLUSH_KEEPALIVE_MAX(){return FLUSH_KEEPALIVE_MAX;},
+  get GUARDED_KEYS(){return GUARDED_KEYS;},
+  get SEED_STALE_IDS(){return SEED_STALE_IDS;},
+  get STORAGE_KEY(){return STORAGE_KEY;},
+  get _acceptServerBase(){return _acceptServerBase;},
+  get _baseVersions(){return _baseVersions;},
+  get _cacheDurable(){return _cacheDurable;},
+  get _clearPendingSave(){return _clearPendingSave;},
+  get _dismissedVersion(){return _dismissedVersion;},set _dismissedVersion(v){_dismissedVersion=v;},
+  get _hydrated(){return _hydrated;},
+  get _jeq(){return _jeq;},
+  get _lastSavedJson(){return _lastSavedJson;},set _lastSavedJson(v){_lastSavedJson=v;},
+  get _lastSeen(){return _lastSeen;},
+  get _latestServerItems(){return _latestServerItems;},
+  get _merge3(){return _merge3;},
+  get _mergeIsNoop(){return _mergeIsNoop;},
+  get _pollPaused(){return _pollPaused;},set _pollPaused(v){_pollPaused=v;},
+  get _saving(){return _saving;},set _saving(v){_saving=v;},
+  get _serverCounts(){return _serverCounts;},
+  get _serverIds(){return _serverIds;},
+  get _serverVerified(){return _serverVerified;},
+  get _setPendingSave(){return _setPendingSave;},
+  get applyState(){return applyState;},
+  get authHeaders(){return authHeaders;},
+  get clearToken(){return clearToken;},
+  get currentUser(){return currentUser;},
+  get dirtySections(){return dirtySections;},
+  get esc(){return esc;},
+  get fetchT(){return fetchT;},
+  get getToken(){return getToken;},
+  get maxUpdatedAt(){return maxUpdatedAt;},
+  get render(){return render;},
+  get saveMarkSet(){return saveMarkSet;},
+  get serializeState(){return serializeState;},
+  get updateServerCounts(){return updateServerCounts;},
+  get writeCache(){return writeCache;}
+});
+
 (async function boot(){
   // «Снять фото/видео» во встроенном браузере Android открывал галерею — снимаем сами (src/camera.js).
   try{ installInPageCamera(window); }catch(e){ console.error("camera", e); }
@@ -32532,44 +32247,25 @@ function applyDeepLink(){
   }
 
   // (2) Сотрудник, cache-first — мгновенный интерфейс из кэша, сервер опрашиваем в фоне.
-  const cached = readCache();
+  cacheRecord();
+  const recovered=decoded&&decoded.u?await snapshotCache.read():null;
+  if(recovered&&recovered.pending){_pendingMemory={base:0,versions:recovered.versions||{},baseJson:recovered.baseJson,ts:recovered.ts};}
+  const cached = recovered?recovered.items:readCache();
   if (cached && decoded && decoded.u){
     try{ applyState(cached); _lastSeen = maxUpdatedAt(cached); }catch(e){}
     _autoLogin();
     _restoreUserFromToken(decoded);   // токен знает, кто вошёл — не зависим от «Запомнить меня»
     if (!currentUser){ clearToken(); _hydrated = true; render(); return; }  // юзер не восстановлен → экран входа (без циклов)
-    _lastSavedJson = JSON.stringify(serializeState());
+    _baseVersions=(recovered&&recovered.versions)||{};
+    _lastSavedJson=(recovered&&recovered.pending)?recovered.baseJson:JSON.stringify(serializeState());
     _hydrated = true;
     applyDeepLink();
     render();
     apiLoad().then(function(items){
-      if (!items) return;
-      if (JSON.stringify(serializeState()) === _lastSavedJson){
-        // Локально после старта ничего не меняли. Но прежде чем тихо принять сервер, смотрим
-        // маркер дожима: в кэше могут быть правки, не доехавшие до облака (перезагрузка сразу
-        // после правки обрывала отложенный сейв — «удалённая» запись воскресала).
-        const pend    = _readPendingSave();
-        const differs = !!pend && _stateSig(serializeState()) !== _stateSig(items);
-        if (pend && !differs) _clearPendingSave();   // всё уже в облаке (напр., keepalive-дожим долетел)
-        if (pend && differs && maxUpdatedAt(items) <= pend.base){
-          // Наши несохранённые правки новее, и облако с тех пор никто не менял —
-          // дожимаем их в облако вместо принятия его устаревшего снимка.
-          // _lastSeen поднимаем до серверной версии: облако не двигалось, значит это и есть
-          // наш base (кэш из serializeState без updated_at дал бы base=0 → ложный 409).
-          _lastSeen = Math.max(_lastSeen, maxUpdatedAt(items));
-          _lastSavedJson = null;                     // иначе apiSave решит «нечего сохранять»
-          apiSave().catch(function(){});
-        } else if (pend && differs){
-          // Расхождение, но облако менялось ПОСЛЕ наших правок (другое устройство) —
-          // не затираем молча ни одну из сторон: штатный баннер выбора.
-          showUpdateBanner(items, maxUpdatedAt(items));
-        } else {
-          applyState(items); _lastSeen = maxUpdatedAt(items); _lastSavedJson = JSON.stringify(serializeState()); render();
-        }
-      } else {
-        const v = maxUpdatedAt(items); if (v > _lastSeen) showUpdateBanner(items, v);
-      }
-    }).catch(function(){});
+      if(!items)return;
+      if(_readPendingSave() || dirtySections(serializeState()).length){_handleSaveConflict(items);}
+      else {applyState(items);_acceptServerBase(items);_lastSavedJson=JSON.stringify(serializeState());_clearPendingSave();writeCache(serializeState());render();}
+    }).catch(function(e){showSaveError(String(e.message||e));});
     _startLoops();
     return;
   }
@@ -32578,12 +32274,13 @@ function applyDeepLink(){
   if (decoded && decoded.u){
     try{
       const items = await apiLoad();
-      if (items){ applyState(items); _lastSeen = maxUpdatedAt(items); }
+      if (items){ applyState(items); _acceptServerBase(items); }
       _autoLogin();
       _restoreUserFromToken(decoded);
       if (!currentUser){ clearToken(); _hydrated = true; render(); return; }  // юзер не восстановлен → экран входа
       _lastSavedJson = JSON.stringify(serializeState());
       _clearPendingSave();   // кэша не было — состояние целиком с сервера, дожимать нечего
+      writeCache(serializeState());
       _hydrated = true;
       applyDeepLink();
       render();

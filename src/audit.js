@@ -48,7 +48,7 @@ const SKIP_FIELDS = new Set(["updatedAt", "updated_at", "ts", "_v", "seen", "las
 
 // Поля-секреты: факт изменения в истории нужен, ЗНАЧЕНИЯ — нет. Иначе админ,
 // поменявший сотруднику PIN, оставил бы этот PIN в логе открытым текстом.
-const REDACT_FIELDS = new Set(["pin", "password", "pass", "token", "secret", "apiKey", "api_key", "key"]);
+const REDACT_FIELDS = new Set(["pinHash", "clientPin", "clientPinHash", "authVersion", "pin", "password", "pass", "token", "secret", "apiKey", "api_key", "key"]);
 
 const FIELD_LABELS = {
   name: "название", n: "название", title: "название", note: "примечание", comment: "комментарий",

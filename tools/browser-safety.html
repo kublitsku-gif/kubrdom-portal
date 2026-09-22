@@ -1,0 +1,30 @@
+<!doctype html><html lang="ru"><meta charset="utf-8"><title>Проверка восстановления КубрДом</title><style>body{font:17px system-ui;max-width:760px;margin:50px auto;padding:20px;background:#f4f7fb}button{padding:12px 20px;font:inherit}li{margin:12px 0}</style><h1>Проверка локального восстановления</h1><p>Только искусственные данные. Проверка настоящего IndexedDB в этом браузере.</p><button id="run">Запустить проверки</button> <button id="reload">Перезагрузить и проверить</button><ul id="results"></ul><script type="module">
+import {createSnapshotCache} from '/src/snapshot-cache.js';
+const list=document.querySelector('#results');
+function result(name,ok){const li=document.createElement('li');li.textContent=(ok?'✓ ':'✗ ')+name;li.style.color=ok?'#176640':'#b42318';list.append(li);if(!ok)throw new Error(name);}
+const key='browser-review-'+(sessionStorage.getItem('review-key')||crypto.randomUUID());
+sessionStorage.setItem('review-key',key.replace(/^browser-review-/,''));
+const quota={getItem:()=>null,setItem(){throw new DOMException('Full','QuotaExceededError');}};
+async function reopen(){const cache=createSnapshotCache({local:quota,indexedDB,key:()=>key});return cache.read();}
+document.querySelector('#run').onclick=async()=>{
+ list.replaceChildren();let durable=false;
+ const cache=createSnapshotCache({local:quota,indexedDB,key:()=>key,onStatus:v=>durable=v});
+ const saved=await cache.write({items:[{id:'draft',note:'Несохранённая правка',pin:'1234'}],baseJson:'[]',versions:{objects:1000},pending:true}).done;
+ result('Переполнение localStorage: черновик сохранён в IndexedDB',saved&&durable);
+ const read=await reopen();result('Повторное открытие возвращает черновик и исходную версию',read.pending&&read.versions.objects===1000&&read.items[0].note==='Несохранённая правка');
+ result('PIN не попадает в локальный снимок',!('pin' in read.items[0]));
+ const other=createSnapshotCache({local:quota,indexedDB,key:()=>key+'-other'});await other.write({items:[{id:'other'}],pending:true}).done;
+ result('Другая вкладка не перезаписывает черновик первой',(await reopen()).items[0].id==='draft');
+ const family=key+':owner:',closed=createSnapshotCache({local:quota,indexedDB,key:()=>family+'closed'});
+ await closed.write({items:[{id:'closed-draft'}],pending:true,versions:{objects:2000},baseJson:'[]'}).done;
+ const reopened=createSnapshotCache({local:quota,indexedDB,key:()=>family+'new'}),recovered=await reopened.read();
+ result('Новая вкладка восстанавливает черновик закрытой вкладки',recovered?.items[0]?.id==='closed-draft'&&recovered.versions.objects===2000);
+ const stranger=createSnapshotCache({local:quota,indexedDB,key:()=>key+':another-owner:new'});result('Черновик другого сотрудника не восстанавливается',!await stranger.read());
+ await reopened.write({...recovered,pending:false}).done;
+ const cleared=createSnapshotCache({local:quota,indexedDB,key:()=>family+'closed'});result('После подтверждения старый черновик удалён',!await cleared.read());
+ const failed=createSnapshotCache({local:quota,indexedDB:null,key:()=>key});result('Отказ обоих хранилищ возвращается как ошибка',!await failed.write({items:[]}).done);
+ sessionStorage.setItem('review-ready','1');
+};
+document.querySelector('#reload').onclick=()=>location.reload();
+if(sessionStorage.getItem('review-ready')){const record=await reopen();result('После перезагрузки: черновик восстановлен',record?.items[0]?.id==='draft'&&record.pending);}
+</script></html>

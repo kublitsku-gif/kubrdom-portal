@@ -1,0 +1,35 @@
+#!/usr/bin/env node
+import assert from 'node:assert/strict';
+import {boot} from './harness/panel-vm.js';
+import {mergeSnapshots} from '../src/sync-state.js';
+import {createSnapshotCache} from '../src/snapshot-cache.js';
+import worker from '../src/worker.js';
+import {sqliteDB} from './harness/sqlite-db.js';
+const db=sqliteDB({objects:[{id:'o1',name:'Base',note:'Base note',stages:[]}],users:[{id:'admin',name:'Test',roles:['admin'],objs:[]}],contractDocs:[]});
+const jobs=[],token='test-master',env={DB:db.db,ADMIN_TOKEN:token};
+const net=async(url,init={})=>worker.fetch(new Request('https://test.invalid'+url,init),env,{waitUntil(p){jobs.push(p);}});
+const remote=async()=> (await (await net('/api/state/admin_panel',{headers:{'X-Admin-Token':token}})).json()).items;
+function panel(items,fetcher=net){const p=boot({net:fetcher});p.ctx.__items=items;p.run('applyState(__items);currentUser=users[0];setToken("test-master");_hydrated=true;updateServerCounts(__items);_acceptServerBase(__items);_lastSavedJson=JSON.stringify(serializeState());');return p;}
+let items=await remote();const a=panel(items),b=panel(items);
+a.run('objects[0].note="Remote note";');assert.equal((await a.ctx.apiSave()).success,true);
+b.run('objects[0].name="Local name";');b.ctx.__remote=await remote();b.run('panelSync.showUpdateBanner(__remote,maxUpdatedAt(__remote))');
+b.ctx.document.getElementById('live-dismiss').onclick();assert.equal(b.q('_baseVersions.objects'),1000,'dismiss cannot acknowledge unseen revision');
+assert.equal((await b.ctx.apiSave()).merged,true);assert.equal((await b.ctx.apiSave()).success,true);
+assert.equal(db.get('objects').data[0].note,'Remote note');assert.equal(db.get('objects').data[0].name,'Local name');
+items=await remote();const c=panel(items),d=panel(items);
+c.run('objects[0].name="Name on server";');await c.ctx.apiSave();d.run('objects[0].note="Unsaved note";_setPendingSave();');d.ctx.__remote=await remote();d.run('panelSync.showUpdateBanner(__remote,maxUpdatedAt(__remote))');d.ctx.document.getElementById('live-apply').onclick();
+assert.equal(d.q('objects[0].note'),'Unsaved note','refresh preserves local fields');await d.ctx.apiSave();
+const base=[{work_id:'objects',data:[{id:'x',name:'Base'}]}];
+const conflict=mergeSnapshots(base,[{work_id:'objects',data:[{id:'x',name:'Mine'}]}],[{work_id:'objects',data:[{id:'x',name:'Theirs'}]}]);assert.deepEqual(conflict.conflicts,['objects']);
+const chosen=mergeSnapshots(base,[{work_id:'objects',data:[{id:'x',name:'Mine'}]}],[{work_id:'objects',data:[{id:'x',name:'Theirs'}]}],{'objects/x/name':'local'});assert.equal(chosen.merged.objects[0].name,'Mine');
+const denied=panel(await remote(),async()=>new Response(JSON.stringify({success:true,written:0,accepted:[],versions:{},skipped:['objects']}),{status:200}));denied.run('objects[0].name="Rejected";');assert.equal((await denied.ctx.apiSave()).success,false);assert.equal(denied.q('saveMark'),'wait');assert.equal(denied.q('dirtySections(serializeState()).length'),1);
+let release;const pending=new Promise(r=>release=r);const flight=panel(await remote(),async(url,init)=>{await pending;const body=JSON.parse(init.body);return new Response(JSON.stringify({success:true,accepted:body.items.map(x=>x.work_id),versions:{objects:9000},items:body.items}),{status:200});});
+flight.run('objects[0].name="First";');const save=flight.ctx.apiSave();flight.run('objects[0].note="Typed while saving";');release();await save;assert.equal(flight.q('saveMark'),'wait');assert.equal(flight.q('dirtySections(serializeState()).length'),1,'typing during request remains pending');
+let durable=true;const store=new Map();const cache=createSnapshotCache({local:{getItem:k=>store.get(k),setItem(){throw new Error('QuotaExceededError');}},indexedDB:null,key:()=> 'u:tab',onStatus:ok=>durable=ok});
+assert.equal(await cache.write({items:[{pin:'1234'}],pending:true}).done,false);assert.equal(durable,false);assert.equal(cache.readSync().items[0].pin,undefined);
+const good={getItem:k=>store.get(k),setItem:(k,v)=>store.set(k,v)};
+const first=createSnapshotCache({local:good,key:()=> 'u:tab1'}),second=createSnapshotCache({local:good,key:()=> 'u:tab2'});
+await first.write({items:[{id:'one'}],baseJson:'[]',versions:{objects:1},pending:true}).done;
+await second.write({items:[{id:'two'}],pending:true}).done;
+assert.equal(first.readSync().items[0].id,'one');const reopened=createSnapshotCache({local:good,key:()=> 'u:tab1'});assert.equal((await reopened.read()).pending,true);assert.equal(reopened.readSync().baseJson,'[]');
+await Promise.all(jobs);db.close();console.log('✓ Two panels + actual SQL: merge, refresh, rejected save, in-flight edits, cache failure and reopen');

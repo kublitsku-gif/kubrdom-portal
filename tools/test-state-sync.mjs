@@ -16,7 +16,7 @@ function server({ reply = null } = {}) {
     const body = init.body ? JSON.parse(init.body) : null
     calls.push({ url: String(url), method: init.method || 'GET', body })
     const r = reply && reply(String(url), body)
-    const out = r || { status: 200, json: { success: true, updated_at: Date.now() } }
+    const out = r || { status: 200, json: { success: true, updated_at: Date.now(), accepted:(body?.items||[]).map(x=>x.work_id),versions:Object.fromEntries((body?.items||[]).map(x=>[x.work_id,Date.now()])) } }
     return { status: out.status, ok: out.status >= 200 && out.status < 300, headers: { get: () => null }, async json() { return out.json } }
   }
   return { fetch, calls, saves: () => calls.filter((c) => c.method === 'POST') }

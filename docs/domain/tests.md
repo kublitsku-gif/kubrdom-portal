@@ -1,5 +1,7 @@
 # Тесты
 
+Наборы `test-state-api`, `test-login-guard`, `test-access-security`, `test-sync-safety` используют `tools/harness/sqlite-db.js`: реальный SQLite через Python 3, без мокирования SQL. Проверяют атомарный откат, версии разделов, отзыв доступа и две одновременно редактирующие панели. `tools/serve-safety.mjs` и `/checks` проверяют настоящий IndexedDB в браузере на искусственных данных; порядок запуска — в `data-safety.md`.
+
 `npm test` (`tools/run-tests.mjs`) прогоняет ВСЕ наборы `tools/test-*.mjs` — каждый отдельным процессом, потому что панельные наборы держат общий стейт в `node:vm`. Новый файл `tools/test-*.mjs` подхватывается сам, правок в package.json и CI не нужно.
 
 - Общие модули: `test-stage-schedule` — сроки этапов (`src/stages.js`), `test-model` — модель контейнера (`src/model.js`), `test-recipe` — правила сборки (`src/recipe.js`), `test-proj-revision` — версии проекта (`src/projrev.js`), `test-prices` — история цен товара (`src/prices.js`).

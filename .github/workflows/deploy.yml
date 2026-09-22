@@ -20,6 +20,11 @@ jobs:
 
       - run: npm install
       - run: npm test
+      - name: Check existing portal data before deployment
+        run: node tools/check-state-schema.mjs
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
   # Фронтенд: Vite-сборка → Cloudflare Pages (проект kubrdom-portal)
   deploy-pages:
@@ -66,6 +71,7 @@ jobs:
           command: deploy
           secrets: |
             ADMIN_TOKEN
+            PIN_PEPPER
             AVITO_CLIENT_ID
             AVITO_CLIENT_SECRET
             AI_API_KEY
@@ -77,6 +83,7 @@ jobs:
             WEBHOOK_SECRET
         env:
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          PIN_PEPPER: ${{ secrets.PIN_PEPPER }}
           AVITO_CLIENT_ID: ${{ secrets.AVITO_CLIENT_ID }}
           AVITO_CLIENT_SECRET: ${{ secrets.AVITO_CLIENT_SECRET }}
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
