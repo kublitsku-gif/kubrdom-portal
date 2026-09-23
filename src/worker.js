@@ -1624,7 +1624,9 @@ export default {
     // незакрытый день), 0 16 — 19:00 («закройте день» + часы), 0 17 — 20:00 (сводка дня),
     // 0 18 — 21:00 (последнее предупреждение по незакрытому дню). Расписание — в wrangler.toml.
     if (event.cron === "0 6 * * *") ctx.waitUntil(aiNudge(env));
-    ctx.waitUntil(runReminders(env, event.cron).catch(function () {}));
+    const reminderCron = event.cron === "0 16,17,18 * * *"
+      ? "0 " + new Date(event.scheduledTime).getUTCHours() + " * * *" : event.cron;
+    ctx.waitUntil(runReminders(env, reminderCron).catch(function () {}));
   },
   async fetch(request, env, ctx) {
     if (request.method === "OPTIONS") {

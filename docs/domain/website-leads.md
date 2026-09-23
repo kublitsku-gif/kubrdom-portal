@@ -9,3 +9,5 @@ POST `/api/website-lead` — узкий серверный вход с отде�
 Сайт показывает успех только после подтверждённого сохранения в CRM; Telegram доставляется независимо. Названия целей сайта: `lead_received` и совместимая `lead_form` — подтверждённый приём, `lead_error` — ошибка, `sketch_received` — приём с эскизом. Эскиз остаётся в закрытом R2 сайта по ссылке 7 дней.
 
 Тесты: `tools/test-website-leads.mjs` проверяет реальный SQLite: идемпотентность, откат CRM при сбое очереди, гонку с редактором, аутентификацию и повторы Telegram.
+
+Cloudflare Free limits cron triggers per account. The three pre-existing evening triggers are consolidated as `0 16,17,18 * * *`; worker.scheduled reconstructs the original hourly cron string from scheduledTime before runReminders. Existing hours and reminder behavior are preserved. Morning remains separate. Total for this Worker: three triggers including website retry.
