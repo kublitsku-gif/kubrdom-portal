@@ -27,6 +27,7 @@ const env = {
   TG_SALES_CHAT_ID: "-100123",
 };
 const calls = [];
+const topicNames = new Map();
 let seq = 10,
   admin = true,
   failContact = false;
@@ -34,6 +35,15 @@ globalThis.fetch = async (url, opt) => {
   const method = url.split("/").at(-1),
     body = JSON.parse(opt.body);
   calls.push({ method, ...body });
+  if (method === "editForumTopic") {
+    const key = body.chat_id + ":" + body.message_thread_id;
+    if (topicNames.get(key) === body.name)
+      return Response.json(
+        { ok: false, description: "Bad Request: TOPIC_NOT_MODIFIED" },
+        { status: 400 },
+      );
+    topicNames.set(key, body.name);
+  }
   if (method === "sendContact" && failContact)
     return Response.json({ ok: false, description: "temporary" });
   return Response.json({

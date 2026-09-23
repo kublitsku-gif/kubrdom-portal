@@ -99,7 +99,9 @@ export async function tg(env, method, payload) {
     throw new Error(method + ": " + (j.description || r.status));
   return j.result;
 }
+const initializedDatabases = new WeakSet();
 export async function ensureSales(env) {
+  if (initializedDatabases.has(env.DB)) return;
   await env.DB.batch([
     env.DB.prepare(
       "CREATE TABLE IF NOT EXISTS sales_cards (id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, topic_id INTEGER, data TEXT NOT NULL, updated_at INTEGER NOT NULL)",
@@ -114,6 +116,7 @@ export async function ensureSales(env) {
       "CREATE TABLE IF NOT EXISTS state_write_guard (id TEXT PRIMARY KEY, ok INTEGER NOT NULL CHECK(ok = 1))",
     ),
   ]);
+  initializedDatabases.add(env.DB);
 }
 async function save(env, c) {
   await env.DB.prepare(
@@ -272,7 +275,7 @@ async function refresh(env, c) {
     message_thread_id: c.topicId,
     name: topicName(c),
   }).catch((e) => {
-    if (!/not modified/.test(String(e))) throw e;
+    if (!/not[ _]modified/i.test(String(e))) throw e;
   });
   if (!c.pinned) {
     await tg(env, "pinChatMessage", {
@@ -726,7 +729,7 @@ export async function refreshToday(env) {
       ...body,
       message_id: cfg.messageId,
     }).catch((e) => {
-      if (!/not modified/.test(String(e))) throw e;
+      if (!/not[ _]modified/i.test(String(e))) throw e;
     });
   } else {
     const m = await tg(env, "sendMessage", {
