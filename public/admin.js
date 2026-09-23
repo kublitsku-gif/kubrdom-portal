@@ -25478,7 +25478,7 @@ function crmPollBadge(){
 let crmNewClient={name:"",phone:"",msg:"",notes:""};
 
 const CRM_STAGES=[
-  {id:"new",      label:"📥 Входящие",               color:"#7f8c8d", desc:"Новый лид из Авито"},
+  {id:"new",      label:"📥 Входящие",               color:"#7f8c8d", desc:"Новая заявка с сайта или Авито"},
   {id:"qualified",label:"✅ Квалифицированный",       color:"#2980b9", desc:"Подтверждён интерес и бюджет"},
   {id:"kp",       label:"📄 Отправлено КП",           color:"#16a085", desc:"Коммерческое предложение отправлено"},
   {id:"meeting",  label:"🏭 Встреча на производстве", color:"#e67e22", desc:"Ключевой этап воронки"},
@@ -25506,7 +25506,7 @@ function tCRMFunnel(){
   // Header
   html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">'+
     '<div>'+
-      '<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">CRM — ВОРОНКА АВИТО</div>'+
+      '<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">CRM — ЗАЯВКИ И ПРОДАЖИ</div>'+
       '<div style="font-size:12px;color:#5a7a9a;margin-top:2px">'+total+' клиентов в работе</div>'+
     '</div>'+
     '<div style="display:flex;gap:6px">'+

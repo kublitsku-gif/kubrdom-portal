@@ -1,3 +1,4 @@
+import { websiteLeadFetch, deliverWebsiteLeads } from "./website-leads.js";
 // Cloudflare Worker: API для KUBRDOM-portal.
 //   GET  /api/state/:storageKey  → текущее состояние объекта (массив работ)
 //   POST /api/state/:storageKey  → сохранить состояние объекта
@@ -1618,6 +1619,7 @@ async function getPrice(url){
 
 export default {
   async scheduled(event, env, ctx) {
+    if (event.cron === "*/5 * * * *") { ctx.waitUntil(deliverWebsiteLeads(env).catch(()=>{})); return; }
     // 0 6 — 09:00 МСК (дожим клиентов, утренние напоминания, удержание за вчерашний
     // незакрытый день), 0 16 — 19:00 («закройте день» + часы), 0 17 — 20:00 (сводка дня),
     // 0 18 — 21:00 (последнее предупреждение по незакрытому дню). Расписание — в wrangler.toml.
@@ -1630,6 +1632,7 @@ export default {
     }
 
     const url = new URL(request.url);
+    if (url.pathname === "/api/website-lead") return websiteLeadFetch(request, env, ctx);
 
     // Публичная отдача файлов из R2 (для <img src>) — ДО авторизации, т.к. <img> не шлёт заголовки.
     const fileMatch = url.pathname.match(/^\/api\/file\/(.+)$/);
