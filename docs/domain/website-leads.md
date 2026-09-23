@@ -11,3 +11,5 @@ POST `/api/website-lead` — узкий серверный вход с отде�
 Тесты: `tools/test-website-leads.mjs` проверяет реальный SQLite: идемпотентность, откат CRM при сбое очереди, гонку с редактором, аутентификацию и повторы Telegram.
 
 Cloudflare Free limits cron triggers per account. The three pre-existing evening triggers are consolidated as `0 16,17,18 * * *`; worker.scheduled reconstructs the original hourly cron string from scheduledTime before runReminders. Existing hours and reminder behavior are preserved. Morning remains separate. Total for this Worker: three triggers including website retry.
+
+Telegram layout now uses `sales-workspace.js`: a pinned topic/card per real lead plus a contact; explicitly marked tests go to the service topic. The five-minute trigger also updates Today, migrates historical Avito cards and delivers callback reminders. See `sales-workspace.md`.

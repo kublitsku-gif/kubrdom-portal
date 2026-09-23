@@ -1,3 +1,4 @@
+import { upsertSalesCard, extractPhone, readableText, salesWebhook, salesTick, salesService, salesDestination, salesClosed, salesSetup } from "./sales-workspace.js";
 import { websiteLeadFetch, deliverWebsiteLeads } from "./website-leads.js";
 // Cloudflare Worker: API для KUBRDOM-portal.
 //   GET  /api/state/:storageKey  → текущее состояние объекта (массив работ)
@@ -1197,8 +1198,8 @@ async function aiSellerReply(env, history, sel) {
   let p = null;
   try { p = JSON.parse(out.text); }
   catch (e) { try { const mm = out.text.match(/\{[\s\S]*\}/); if (mm) p = JSON.parse(mm[0]); } catch (_) {} }
-  if (!p) p = { reply: out.text, needsApproval: true, reason: "json parse fail" };
-  let reply = (p.reply || out.text || "").trim();
+  if (!p) p = { reply: out.text, needsApproval: true, reason: "Ответ требует проверки" };
+  let reply = readableText(p.reply || out.text || "").trim();
   if (!reply) reply = "Здравствуйте! Уточните, пожалуйста, детали — подскажу по размерам, комплектации и расчёту.";
   return { reply: reply, needsApproval: p.needsApproval !== false, reason: p.reason || "", usage: out.usage };
 }
@@ -1299,15 +1300,16 @@ async function aiSaveChats(env, chats) {
 async function ensureClientTopic(env, chats, clientKey, name) {
   let c = chats[clientKey];
   if (c && c.topicId) return c;
-  const j = await salesTg(env, "createForumTopic", { chat_id: env.TG_SALES_CHAT_ID, name: (name || clientKey).slice(0, 128) });
+  const chatId = await salesDestination(env, clientKey.startsWith("avito:") ? "avito" : "service");
+  const j = await salesTg(env, "createForumTopic", { chat_id: chatId, name: (name || clientKey).slice(0, 128) });
   if (!j.ok) throw new Error("createForumTopic: " + j.description);
   c = c || { name: name || clientKey, source: "manual", messages: [] };
-  c.topicId = j.result.message_thread_id; c.name = name || c.name;
+  c.chatId = chatId; c.topicId = j.result.message_thread_id; c.name = name || c.name;
   chats[clientKey] = c;
   return c;
 }
-function findClientByTopic(chats, topicId) {
-  for (const k in chats) { if (chats[k] && chats[k].topicId === topicId) return k; }
+function findClientByTopic(chats, topicId, chatId, defaultChatId) {
+  for (const k in chats) { if (chats[k] && chats[k].topicId === topicId && String(chats[k].chatId || defaultChatId) === String(chatId)) return k; }
   return null;
 }
 
@@ -1326,10 +1328,14 @@ async function aiProcessIncoming(env, opt) {
   if (opt.avitoChatId) c.avitoChatId = opt.avitoChatId;
   if (opt.itemId) c.itemId = opt.itemId;
   c.messages.push({ role: "user", text: text, status: "in", ts: Date.now() });
-  await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "👤 Клиент:\n" + text });
+  await aiSaveChats(env, chats);
+  if (source === "avito") {
+    try { await upsertSalesCard(env, {id:clientKey,crmId:"avito-"+clientKey.slice(6),source:"avito",chatId:c.chatId||env.TG_SALES_CHAT_ID,topicId:c.topicId,name:c.name,phone:extractPhone(text),summary:text}); } catch(e) { console.error("sales card pending retry",String(e)); }
+  }
+  await salesTg(env, "sendMessage", { chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "👤 Клиент:\n" + text });
   // Мастер-выключатель: нейропродавец на паузе — лид сохранён, но ИИ не отвечает (ответ вручную).
   if (!(await aiEnabled(env))) {
-    await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "🔕 Нейропродавец выключен — ответьте клиенту вручную." });
+    await salesTg(env, "sendMessage", { chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "🔕 Нейропродавец выключен — ответьте клиенту вручную." });
     c.updatedAt = Date.now(); await aiSaveChats(env, chats);
     return { success: true, paused: true };
   }
@@ -1338,7 +1344,7 @@ async function aiProcessIncoming(env, opt) {
   let ai;
   try { ai = await aiSellerReply(env, history, { itemId: c.itemId }); }
   catch (e) {
-    await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "⚠️ Ошибка ИИ: " + (e.message || e) });
+    await salesService(env, "⚠️ Не удалось подготовить ответ ИИ. Диалог: " + clientKey);
     await aiSaveChats(env, chats);
     return { success: false, error: String(e) };
   }
@@ -1350,13 +1356,13 @@ async function aiProcessIncoming(env, opt) {
   }
   if (autoOk) {
     c.messages.push({ role: "assistant", text: ai.reply, status: "sent", auto: true, needsApproval: false, ts: Date.now() });
-    await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "🟢 Автоответ отправлен клиенту:\n\n" + ai.reply + (ai.reason ? ("\n\n— " + ai.reason) : "") });
+    await salesTg(env, "sendMessage", { chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "🟢 Автоответ отправлен клиенту:\n\n" + (ai.reply.length>350?ai.reply.slice(0,350)+"…\nПолный текст — в CRM → Диалоги.":ai.reply) });
   } else {
     c.messages.push({ role: "assistant", text: ai.reply, status: "draft", needsApproval: ai.needsApproval, ts: Date.now() });
     const tag = ai.needsApproval ? "🟠 нужно одобрение" : "🟢 можно авто";
     const sent = await salesTg(env, "sendMessage", {
-      chat_id: env.TG_SALES_CHAT_ID, message_thread_id: c.topicId,
-      text: "🤖 Черновик (" + tag + "):\n\n" + ai.reply + (ai.reason ? ("\n\n— " + ai.reason) : ""),
+      chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId,
+      text: "🤖 Черновик (" + tag + "):\n\n" + ai.reply,
       reply_markup: { inline_keyboard: [[{ text: "✅ Отправить", callback_data: "send:" + idx }, { text: "✏️ Изменить", callback_data: "edit:" + idx }]] }
     });
     if (sent && sent.ok && sent.result) c.messages[idx].tgMsgId = sent.result.message_id;
@@ -1375,12 +1381,13 @@ async function aiIncoming(env, request) {
 // POST /api/ai/webhook — вебхук sales-бота (кнопки + ручные ответы в ветке). Публичный, проверка по секрет-токену.
 async function aiWebhook(env, request) {
   const upd = await request.json().catch(function () { return {}; });
+  if (await salesWebhook(env, upd)) return json({ok:true});
   // нажатие кнопки
   if (upd.callback_query) {
     const cq = upd.callback_query;
     const topicId = (cq.message && cq.message.message_thread_id) || 0;
     const chats = await aiLoadChats(env);
-    const key = findClientByTopic(chats, topicId);
+    const key = findClientByTopic(chats, topicId, cq.message.chat.id, env.TG_SALES_CHAT_ID);
     const parts = (cq.data || "").split(":"); const act = parts[0]; const idx = parseInt(parts[1] || "-1", 10);
     if (key && chats[key].messages[idx]) {
       const c = chats[key], m = c.messages[idx];
@@ -1392,11 +1399,11 @@ async function aiWebhook(env, request) {
         }
         m.status = "sent"; c.updatedAt = Date.now(); await aiSaveChats(env, chats);
         await salesTg(env, "editMessageReplyMarkup", { chat_id: cq.message.chat.id, message_id: cq.message.message_id, reply_markup: { inline_keyboard: [] } });
-        await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: topicId, text: "✅ Ответ отправлен" + note });
+        await salesTg(env, "sendMessage", { chat_id: cq.message.chat.id, message_thread_id: topicId, text: "✅ Ответ отправлен" + note });
         await salesTg(env, "answerCallbackQuery", { callback_query_id: cq.id, text: "Отправлено" });
       } else if (act === "edit") {
         await salesTg(env, "answerCallbackQuery", { callback_query_id: cq.id, text: "Напишите свой вариант ответом в этой ветке" });
-        await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: topicId, text: "✏️ Напишите свой вариант ответа сообщением в этой ветке — он заменит черновик." });
+        await salesTg(env, "sendMessage", { chat_id: cq.message.chat.id, message_thread_id: topicId, text: "✏️ Напишите свой вариант ответа сообщением в этой ветке — он заменит черновик." });
       }
     } else {
       await salesTg(env, "answerCallbackQuery", { callback_query_id: cq.id, text: "Диалог не найден" });
@@ -1407,7 +1414,7 @@ async function aiWebhook(env, request) {
   const msg = upd.message;
   if (msg && msg.message_thread_id && msg.text && !(msg.from && msg.from.is_bot)) {
     const chats = await aiLoadChats(env);
-    const key = findClientByTopic(chats, msg.message_thread_id);
+    const key = findClientByTopic(chats, msg.message_thread_id, msg.chat.id, env.TG_SALES_CHAT_ID);
     if (key) {
       let note = " (записан; это не Avito-чат)";
       if (chats[key].avitoChatId) {
@@ -1417,7 +1424,7 @@ async function aiWebhook(env, request) {
       chats[key].messages.push({ role: "assistant", text: msg.text, status: "sent", manual: true, ts: Date.now() });
       chats[key].updatedAt = Date.now();
       await aiSaveChats(env, chats);
-      await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: msg.message_thread_id, text: "✅ Ваш ответ отправлен" + note });
+      await salesTg(env, "sendMessage", { chat_id: msg.chat.id, message_thread_id: msg.message_thread_id, text: "✅ Ваш ответ отправлен" + note });
     }
   }
   return json({ ok: true });
@@ -1440,7 +1447,7 @@ async function aiSend(env, request) {
   c.messages.push({ role: "assistant", text: text, status: ok ? "sent" : "draft", manual: true, ts: Date.now() });
   c.updatedAt = Date.now();
   await aiSaveChats(env, chats);
-  if (c.topicId) { try { await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: (ok ? "✅ Ответ из CRM отправлен клиенту:\n\n" : "⚠️ Ответ из CRM НЕ ушёл (" + note + "):\n\n") + text }); } catch (e) {} }
+  if (c.topicId) { try { await salesTg(env, "sendMessage", { chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: (ok ? "✅ Ответ из CRM отправлен клиенту:\n\n" : "⚠️ Ответ из CRM НЕ ушёл (" + note + "):\n\n") + text }); } catch (e) {} }
   return json({ success: ok || !c.avitoChatId, sent: ok, note: ok ? "" : note });
 }
 
@@ -1519,7 +1526,7 @@ async function aiNudge(env) {
   let changed = false, autoOn = false;
   try { autoOn = await aiAutoSendEnabled(env); } catch (e) {}
   for (const k in chats) {
-    const c = chats[k]; if (!c || !c.avitoChatId) continue;
+    const c = chats[k]; if (!c || !c.avitoChatId || await salesClosed(env,k)) continue;
     const msgs = c.messages || []; const last = msgs[msgs.length - 1];
     if (!last || last.role !== "assistant") continue;          // ждём ответа клиента
     if ((now - (c.updatedAt || 0)) < SILENCE) continue;        // ещё рано
@@ -1535,10 +1542,10 @@ async function aiNudge(env) {
     if (!ai.needsApproval && autoOn) { try { const sr = await avitoSend(env, c.avitoChatId, ai.reply); autoOk = !!(sr && sr.id); } catch (e) {} }
     if (autoOk) {
       c.messages.push({ role: "assistant", text: ai.reply, status: "sent", auto: true, nudge: true, ts: now });
-      await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "⏰🟢 Авто-дожим отправлен (молчал " + silentDays + " дн.):\n\n" + ai.reply });
+      await salesTg(env, "sendMessage", { chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "⏰🟢 Авто-дожим отправлен (молчал " + silentDays + " дн.):\n\n" + ai.reply });
     } else {
       c.messages.push({ role: "assistant", text: ai.reply, status: "draft", nudge: true, needsApproval: ai.needsApproval, ts: now });
-      const sent = await salesTg(env, "sendMessage", { chat_id: env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "⏰ Клиент молчит " + silentDays + " дн. — напоминание (черновик):\n\n" + ai.reply, reply_markup: { inline_keyboard: [[{ text: "✅ Отправить", callback_data: "send:" + idx }, { text: "✏️ Изменить", callback_data: "edit:" + idx }]] } });
+      const sent = await salesTg(env, "sendMessage", { chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "⏰ Клиент молчит " + silentDays + " дн. — напоминание (черновик):\n\n" + ai.reply, reply_markup: { inline_keyboard: [[{ text: "✅ Отправить", callback_data: "send:" + idx }, { text: "✏️ Изменить", callback_data: "edit:" + idx }]] } });
       if (sent && sent.ok && sent.result) c.messages[idx].tgMsgId = sent.result.message_id;
     }
     changed = true;
@@ -1619,7 +1626,7 @@ async function getPrice(url){
 
 export default {
   async scheduled(event, env, ctx) {
-    if (event.cron === "*/5 * * * *") { ctx.waitUntil(deliverWebsiteLeads(env).catch(()=>{})); return; }
+    if (event.cron === "*/5 * * * *") { ctx.waitUntil((async()=>{await deliverWebsiteLeads(env);await salesTick(env);})().catch(e=>console.error("sales tick",String(e)))); return; }
     // 0 6 — 09:00 МСК (дожим клиентов, утренние напоминания, удержание за вчерашний
     // незакрытый день), 0 16 — 19:00 («закройте день» + часы), 0 17 — 20:00 (сводка дня),
     // 0 18 — 21:00 (последнее предупреждение по незакрытому дню). Расписание — в wrangler.toml.
@@ -1803,6 +1810,11 @@ export default {
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
 
+    if (url.pathname === "/api/ai/workspace/setup" && request.method === "POST") {
+      if (!auth.adm) return json({success:false,error:"Forbidden"},403);
+      try { return json(await salesSetup(env)); }
+      catch (e) { return json({success:false,error:String(e)},500); }
+    }
     // AI: тест-диалог (песочница, с токеном).
     if (url.pathname === "/api/ai/test-chat" && request.method === "POST") {
       try { return await aiTestChat(env, request); }

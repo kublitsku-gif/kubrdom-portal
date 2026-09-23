@@ -33,8 +33,8 @@ globalThis.fetch=async()=>{sends++;return Response.json({ok:false},{status:503})
 await deliverWebsiteLeads(env);assert.equal(sends,2);
 assert.equal((await env.DB.prepare('SELECT state FROM website_lead_outbox LIMIT 1').first()).state,'pending');
 await env.DB.prepare('UPDATE website_lead_outbox SET next_at=0').run();
-globalThis.fetch=async()=>{sends++;return Response.json({ok:true});};
-await deliverWebsiteLeads(env);assert.equal(sends,4);await deliverWebsiteLeads(env);assert.equal(sends,4);
+let messageId=100;globalThis.fetch=async()=>{sends++;return Response.json({ok:true,result:{message_id:++messageId,message_thread_id:messageId}});};
+await deliverWebsiteLeads(env);assert.ok(sends>4);const deliveredSends=sends;await deliverWebsiteLeads(env);assert.equal(sends,deliveredSends);
 globalThis.fetch=originalFetch;
 const request=(data,token='test-secret')=>new Request('https://test.invalid/api/website-lead',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(data)});
 assert.equal((await websiteLeadFetch(request(body,'bad'),env,{waitUntil(){}})).status,401);

@@ -1,3 +1,4 @@
+import { deliverSiteCard } from './sales-workspace.js';
 // Narrow server-to-server endpoint: append a website lead, never read or edit CRM.
 // The CRM append and Telegram outbox are committed in one guarded D1 transaction.
 const headers = {'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
@@ -71,11 +72,7 @@ export async function deliverWebsiteLeads(env) {
     const lead=clients.find(c=>c.id===row.id);
     if(!lead) {await env.DB.prepare("UPDATE website_lead_outbox SET state='removed' WHERE id=?").bind(row.id).run();continue;}
     try {
-      const response=await fetch(`https://api.telegram.org/bot${env.TG_SALES_BOT_TOKEN}/sendMessage`,{
-        method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(15000),
-        body:JSON.stringify({chat_id:env.TG_SALES_CHAT_ID,text:('🏠 Новая заявка с сайта КубрДом\n'+lead.name+'\n'+lead.phone+'\n\n'+lead.msg+'\n\nCRM → Входящие\nhttps://portal.kubrdom.ru/admin\nНомер: '+lead.websiteRequestId).slice(0,4000),link_preview_options:{is_disabled:true}})
-      });
-      if(!response.ok || !(await response.json()).ok) throw new Error('delivery');
+      await deliverSiteCard(env,lead);
       await env.DB.prepare("UPDATE website_lead_outbox SET state='sent',attempts=attempts+1 WHERE id=?").bind(row.id).run();
     } catch {
       const delay=Math.min(3600000,300000*2**Math.min(row.attempts,4));

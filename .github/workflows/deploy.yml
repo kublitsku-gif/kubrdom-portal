@@ -93,3 +93,8 @@ jobs:
           YANDEX_API_KEY: ${{ secrets.YANDEX_API_KEY }}
           TG_SALES_BOT_TOKEN: ${{ secrets.TG_SALES_BOT_TOKEN }}
           WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+
+      - name: Verify Telegram sales workspace
+        run: node tools/check-sales-workspace.mjs
+        env:
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}

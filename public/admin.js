@@ -25926,6 +25926,13 @@ function tCRMClient(cid){
     '<textarea id="crm-edit-msg-'+c.id+'" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;height:80px;resize:none;border-left:3px solid '+stage.color+'">'+esc(c.msg)+'</textarea>'+
     '<button data-a="crm-save-msg" data-cid="'+c.id+'" style="width:100%;margin-top:6px;padding:7px;background:#2980b9;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">💾 Сохранить</button>'+
   '</div>';
+  if(c.salesStatus){
+    const salesLabels={new:"🆕 Первый контакт",callback:"📞 Перезвонить",waiting:"⏳ Ждём клиента",contract:"✅ Договор",refused:"⚪ Отказ",closed:"⚪ Неактуально"};
+    html+='<div data-sales-workspace style="background:#f0f7ff;border-radius:12px;padding:12px 14px;margin-bottom:12px"><b>'+esc(salesLabels[c.salesStatus]||c.salesStatus)+'</b>'+
+      (c.salesFollowupAt?'<div>Звонок: '+esc(new Date(c.salesFollowupAt).toLocaleString("ru-RU",{timeZone:"Europe/Moscow"}))+' МСК</div>':'')+
+      (c.salesNote?'<div style="white-space:pre-wrap;margin-top:8px">'+esc(c.salesNote)+'</div>':'')+
+      (/^https:\/\/t\.me\/c\/[-0-9]+\/[0-9]+$/.test(c.salesTopicUrl||'')?'<a href="'+esc(c.salesTopicUrl)+'" target="_blank" rel="noopener">Открыть карточку в Telegram</a>':'')+'</div>';
+  }
   // Notes
   html+='<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:12px">'+
     '<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">ЗАМЕТКИ</div>'+
