@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { sqliteDB } from "./harness/sqlite-db.js";
 import {
+  deliverSiteCard,
   extractPhone,
   parseDue,
   upsertSalesCard,
@@ -145,6 +146,33 @@ await salesWebhook(env, {
 });
 assert.equal(db.get("crmClients").data[0].salesStatus, "contract");
 assert.ok(topicName({ name: "X", status: "new" }).includes("X"));
+const beforeService = calls.filter((x) => x.name?.includes("Служебное")).length;
+await deliverSiteCard(env, {
+  id: "site-real",
+  name: "Иван",
+  phone: "+79991234567",
+  msg: "Хочу протестировать баню",
+});
+assert.equal(
+  calls.filter((x) => x.name?.includes("Служебное")).length,
+  beforeService,
+);
+assert.ok(
+  await env.DB.prepare("SELECT id FROM sales_cards WHERE id=?")
+    .bind("site-real")
+    .first(),
+);
+await deliverSiteCard(env, {
+  id: "site-test",
+  name: "ТЕСТ САЙТА — НЕ ОБРАБАТЫВАТЬ",
+  msg: "Проверка",
+});
+assert.equal(
+  await env.DB.prepare("SELECT id FROM sales_cards WHERE id=?")
+    .bind("site-test")
+    .first(),
+  null,
+);
 db.close();
 console.log(
   "✓ Sales workspace: contact, deduplication, linked CRM, private notes, authorization, dates, reminders, chat isolation",

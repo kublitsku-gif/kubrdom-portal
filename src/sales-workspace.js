@@ -349,6 +349,7 @@ export async function upsertSalesCard(env, input) {
     const size = text.match(/\b\d{1,2}\s*[xх×]\s*\d{1,2}\b/i)?.[0];
     if (kind) c.interest = kind + (size ? " " + size.replace(/\s/g, "") : "");
   }
+  delete c.interestText;
   c.phone = normalizePhone(c.phone);
   if (/^Avito ·/.test(c.name || "")) c.name = "Новый клиент";
   if (!c.name) c.name = "Новый клиент";
@@ -359,7 +360,7 @@ export async function upsertSalesCard(env, input) {
 }
 export async function deliverSiteCard(env, lead) {
   if (
-    /ТЕСТ|НЕ ОБРАБАТЫВАТЬ|техническая проверка/i.test(
+    /^ТЕСТ(?:\s|$|[:—-])|НЕ ОБРАБАТЫВАТЬ|^техническая проверка/i.test(
       lead.name + " " + lead.msg,
     )
   ) {
