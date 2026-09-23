@@ -28,4 +28,7 @@ console.log(
     " pending retries; Today and service topics created.",
 );
 if (result.pending)
-  throw new Error("Some cards still need delivery; inspect Worker logs");
+  throw new Error(
+    "Some cards still need delivery: " +
+      JSON.stringify(result.pendingErrors || []),
+  );

@@ -841,7 +841,16 @@ export async function salesSetup(env) {
   await salesTick(env);
   const rows = await env.DB.prepare("SELECT data FROM sales_cards").all();
   const cards = rows.results.map((r) => JSON.parse(r.data));
+  const pendingErrors = [];
+  for (const c of cards.filter((c) => c.dirty || !c.cardId)) {
+    try {
+      await refresh(env, c);
+    } catch (e) {
+      pendingErrors.push(String(e));
+    }
+  }
   return {
+    pendingErrors,
     success: true,
     cards: cards.length,
     pending: cards.filter((c) => c.dirty || !c.cardId).length,
