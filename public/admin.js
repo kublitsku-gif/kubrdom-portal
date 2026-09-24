@@ -71,6 +71,7 @@ import { allPositions, allPositionsRaw, addedPositions, guessVolume, carryRuleEd
   optGroupOf, optLabelOf, optPrefixOf, matAddOf, matOffOf, costModeOf, ROOM_HOUSE, roomKeyOf, positionSplit,
   importRows, importPatch } from "../src/recipe.js";
 import { projBaseline, projDiff, sigOf, workTouched, projTwin, projMergeWork } from "../src/projrev.js";
+import { projSteps, PROJ_STEP_COUNT, PROJ_FILTERS, projFilterOk, projQueryOk, clientsMatching, projCopy } from "../src/proj-status.js";
 import { SHELVES_DEFAULT, labelWorks, labelUnits, shelfLayout, shelfPages, houseNums, labelSheetCount, matPinKey } from "../src/labels.js";
 import { isoLocal, todayISO } from "../src/dates.js";
 import { isoScene } from "../src/iso.js";
@@ -86,6 +87,10 @@ import { installInPageCamera } from "../src/camera.js";
 import { dayCloseState, dayFineCfg, underDayFine, fineSum, DAY_FINE_CAT, DAY_FINE_DEFAULT } from "../src/dayclose.js";
 
 const APP_BUILD = "2026-09-22.1";
+
+// Память посчитанного о проектах (см. projFacts). Объявлена наверху: applyState
+// сбрасывает её, а зовут его уже при загрузке кэша — раньше строки с проектами.
+let projMemo={}, projMemoHold=false;
 
 // ─── ДИАГНОСТИКА ВВОДА (?diag=1) ────────────────────────────────────────────
 // Открыть портал как /admin?diag=1 — поверх страницы появится лог клавиатурных
@@ -355,6 +360,7 @@ function serializeState(){
 // демо-данные нетронутыми (защита от пустого клоббера на первом запуске).
 function applyState(items){
   if (!Array.isArray(items)) return;
+  projMemo = {};                    // пришёл чужой снимок — посчитанное о проектах устарело
   const byId = {};
   items.forEach(function(it){ byId[it.work_id] = it.data; });
   // Перезаписываем только пришедшие ключи (отсутствующий ключ оставляет
@@ -2179,6 +2185,8 @@ let buildRules=[];
 // поэтому редактор модели, смета, печать и сборка объекта работают без правок.
 let projects=[];
 let projOpenId=null, projBand="parts", projNew=null, projRulesOpen=false;
+// Поиск и фильтр списка проектов — состояние экрана, в снимок не идут.
+let projQ="", projFilter="all";
 // Вкладка «🏷 Таблички». Выбранный проект и галочки документов живут НА ЭКРАНЕ:
 // это вопрос «что печатаю сейчас», а не свойство дома. Настройки самих бирок
 // (номера домов, раскладка полок) — свойство дома и лежат в проекте (`p.labels`).
@@ -4504,7 +4512,13 @@ function rerenderTab(){
 // каждый такой тап сериализовал весь снимок (~1 МБ), гонял по нему стражей и
 // перерисовывал страницу целиком, а сохранять было нечего. Ровно этот холостой
 // круг и зажигал отметку сохранения на каждое нажатие.
-function ui(){ paintTab(); }
+function ui(){
+  // Экранная перерисовка данных не меняет, поэтому посчитанное о проектах (итог,
+  // шаг, расхождение с объектом) берётся из памяти: поиск по списку на каждую
+  // букву иначе заново собирал бы смету каждого дома.
+  projMemoHold=true;
+  try{ paintTab(); } finally { projMemoHold=false; }
+}
 // Один источник HTML активной вкладки — используется и в page(), и в rerenderTab().
 // Короткие подписи для нижней панели. Модульная область видимости, а не внутри
 // render(): её читает bottomTabsOf, который живёт снаружи.
@@ -17403,6 +17417,34 @@ function projAreas(p){ return p&&p.model?modelAreas(p.model, winTypes):null; }
 function projObj(p){ return p&&p.objId?objects.find(function(o){return o.id===p.objId;}):null; }
 function projContract(p){ return p&&p.contractId?contractDocs.find(function(c){return c.id===p.contractId;}):null; }
 
+// ── Факты о проекте для списка и шапки ─────────────────────────────────────
+// Итог, площадь, отставание цен и расхождение с объектом — каждое тянет сборку
+// сметы. Считаем их один раз за перерисовку, а экранная (`ui`: поиск, фильтр)
+// берёт прошлое: данные между ними не менялись. Любая другая перерисовка
+// считает заново — правка, чужой снимок, переход.
+function projFacts(p, withPrice){
+  const hit=projMemoHold?projMemo[p.id]:null;
+  if(hit&&(!withPrice||hit.priceState!==undefined))return hit;
+  const A=projAreas(p), t=projTot(p), o=projObj(p);
+  let diffN=0;
+  if(o){ try{ const d=objProjDiff(o); diffN=(d&&d.items)?d.items.length:0; }catch(e){ diffN=0; } }
+  const f={ floor:A?A.total.floor:0, count:t.count, price:t.price, cost:t.cost,
+    hasObj:!!o, hasContract:!!projContract(p), isFlat:isFlat(p.model), diffN:diffN };
+  // Отставание цен — самое дорогое (смета плюс проход по каждому этапу), и нужно
+  // оно только списку: шапка карточки пересчитывается на каждой правке.
+  if(withPrice)f.priceState=projPriceState(p);
+  projMemo[p.id]=f;
+  return f;
+}
+function projClientName(p){ const c=crmClients.find(function(x){return x.id===p.clientId;}); return (c&&c.name)||""; }
+
+const PROJ_CLIENT_FIND_FROM=8;
+function projClientOptions(q, sel){
+  return '<option value="">— клиент из CRM (необязательно) —</option>'+
+    clientsMatching(crmClients, q, sel).map(function(c){
+      return '<option value="'+esc(c.id)+'"'+(sel===c.id?" selected":"")+'>'+esc(c.name||"")+'</option>';
+    }).join("");
+}
 function projNewFormHtml(){
   const n=projNew||{};
   let h='<div style="background:#fff;border:2px solid '+PROJ_COL+';border-radius:14px;padding:14px;margin-bottom:12px">'+
@@ -17441,10 +17483,13 @@ function projNewFormHtml(){
     '<div style="font-size:10px;font-weight:700;color:#9aabbf;letter-spacing:0.5px;margin-bottom:5px">ПЛАНИРОВКА ЗАКАЗЧИКА (необязательно)</div>'+
     '<input id="proj-n-plan" type="file" accept="image/*,application/pdf" multiple style="width:100%;font-size:12px;margin-bottom:4px">'+
     '<div style="font-size:10px;color:#a0b4c8;margin:0 0 9px;line-height:1.45">Можно несколько листов сразу — план, фасады, разрезы: их прочитают вместе как один дом. Первая картинка ляжет подложкой в редакторе.<br><b style="color:'+PROJ_COL+'">Портал прочитает чертёж сразу после создания</b> и покажет прочитанное для сверки — в дом оно встанет по вашей кнопке.</div>'+
-    '<select id="proj-n-client" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:10px">'+
-      '<option value="">— клиент из CRM (необязательно) —</option>'+
-      crmClients.map(function(c){return '<option value="'+c.id+'"'+(n.clientId===c.id?" selected":"")+'>'+esc(c.name||"")+'</option>';}).join("")+
+    // В CRM клиентов сотни, и листать их select-ом на телефоне долго — поэтому над
+    // списком поиск, он сужает варианты прямо в поле, без перерисовки формы.
+    (crmClients.length>PROJ_CLIENT_FIND_FROM?'<input id="proj-n-client-q" data-a="proj-n-client-q" placeholder="🔍 Найти клиента: имя или телефон" autocomplete="off" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:6px">':'')+
+    '<select id="proj-n-client" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:4px">'+
+      projClientOptions("", n.clientId||"")+
     '</select>'+
+    '<div style="font-size:10px;color:#a0b4c8;margin:0 0 10px;line-height:1.45">Название пустое — проект назовётся по клиенту.</div>'+
     '<div style="display:flex;gap:8px">'+
       '<button data-a="proj-create" style="flex:1;padding:10px;background:'+PROJ_COL+';border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">Создать</button>'+
       '<button data-a="proj-new-cancel" style="padding:10px 16px;background:#fff;border:1px solid #d0dae8;border-radius:9px;cursor:pointer;color:#7a9aaa;font-size:13px">Отмена</button>'+
@@ -17468,29 +17513,95 @@ function projListHtml(){
     '</div>';
     return h;
   }
-  h+=projects.map(function(p){
-    const A=projAreas(p), t=projTot(p);
-    const cl=crmClients.find(function(c){return c.id===p.clientId;});
-    const chip=function(txt,col){ return '<span style="background:'+col+'22;color:'+col+';border-radius:7px;padding:2px 7px;font-size:10.5px;font-weight:700">'+txt+'</span>'; };
-    return '<div data-a="proj-open" data-id="'+p.id+'" style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:12px 13px;margin-bottom:8px;cursor:pointer">'+
-      '<div style="display:flex;align-items:baseline;gap:8px">'+
-        '<span style="flex:1;min-width:0;font-size:14px;font-weight:800;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(p.name||"Проект")+'</span>'+
-        '<span style="font-size:13px;font-weight:800;color:'+PROJ_COL+';white-space:nowrap">'+Math.round(t.price).toLocaleString("ru-RU")+' ₽</span>'+
+  h+=projFindHtml();
+  const rows=projects.map(function(p){ return { p:p, f:projFacts(p, true), cl:projClientName(p) }; })
+    .filter(function(r){ return projFilterOk(r.f, projFilter)&&projQueryOk([r.p.name, r.cl], projQ); });
+  if(!rows.length){
+    return h+'<div style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:14px;font-size:12.5px;color:#7a9aaa;line-height:1.5">'+
+      'Под этот отбор проектов нет. <button data-a="proj-find-reset" style="background:none;border:none;padding:0;color:'+PROJ_COL+';font-size:12.5px;font-weight:700;cursor:pointer">Показать все</button></div>';
+  }
+  return h+rows.map(function(r){ return projRowHtml(r.p, r.f, r.cl); }).join("");
+}
+
+const projChip=function(txt,col){ return '<span style="background:'+col+'22;color:'+col+';border-radius:7px;padding:2px 7px;font-size:10.5px;font-weight:700">'+txt+'</span>'; };
+
+// Поиск и фильтры над списком. Показываем с трёх проектов: на двух они только
+// занимают экран, а дальше список уже не охватить взглядом.
+function projFindHtml(){
+  if(projects.length<3&&!projQ&&projFilter==="all")return "";
+  return '<div style="margin-bottom:9px">'+
+    '<input id="proj-q" data-a="proj-q" value="'+esc(projQ)+'" placeholder="🔍 Название или клиент" autocomplete="off" '+
+      'style="width:100%;padding:9px 11px;border-radius:10px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:7px">'+
+    '<div style="display:flex;gap:5px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:2px">'+
+      PROJ_FILTERS.map(function(x){
+        const on=projFilter===x[0];
+        return '<button data-a="proj-filter" data-v="'+x[0]+'" style="flex:0 0 auto;border:1.5px solid '+(on?PROJ_COL:"#dde6f0")+';background:'+(on?PROJ_COL:"#fff")+';color:'+(on?"#fff":"#5a7a9a")+';border-radius:9px;padding:5px 10px;font-size:11.5px;font-weight:700;cursor:pointer;white-space:nowrap">'+esc(x[1])+'</button>';
+      }).join("")+
+    '</div>'+
+  '</div>';
+}
+
+// Пять точек пути и одна кнопка — следующий шаг. Кнопка ведёт прямо в полосу,
+// где этот шаг делается: из списка видно не только «где застрял», но и «что нажать».
+function projStepsDots(S){
+  return '<span style="display:inline-flex;gap:3px;vertical-align:middle">'+S.steps.map(function(s){
+    return '<span title="'+esc(s.label)+'" style="width:14px;height:5px;border-radius:3px;background:'+(s.done?PROJ_COL:"#dde6f0")+'"></span>';
+  }).join("")+'</span>';
+}
+function projNextHtml(p, f, S){
+  if(S.next){
+    return '<button data-a="proj-step" data-id="'+p.id+'" data-band="'+S.next.band+'" style="border:none;background:'+PROJ_COL+'14;color:'+PROJ_COL+';border-radius:8px;padding:5px 10px;font-size:11.5px;font-weight:800;cursor:pointer;white-space:nowrap">'+
+      'Шаг '+S.next.n+' из '+PROJ_STEP_COUNT+' · '+esc(S.next.label)+' →</button>';
+  }
+  return '<button data-a="proj-step" data-id="'+p.id+'" data-band="build" style="border:none;background:#2980b914;color:#2980b9;border-radius:8px;padding:5px 10px;font-size:11.5px;font-weight:800;cursor:pointer;white-space:nowrap">🏗 Продан — стройка →</button>';
+}
+
+function projDiffWord(n){ return "⚠ "+n+" "+labelPlural(n,"правка","правки","правок")+" не в объекте"; }
+
+// Итог проекта в шапке карточки, липкой полосой. Раньше цену видели только на
+// «Деньгах»: правишь смету — уходишь смотреть, сколько вышло, возвращаешься.
+// Отсюда же — объект и договор одним тапом и следующий шаг, если он есть.
+function projSummaryHtml(p){
+  const f=projFacts(p, false), S=projSteps(f);
+  const o=projObj(p), c=projContract(p);
+  const link=function(a, attr, txt, col){
+    return '<button data-a="'+a+'" '+attr+' style="border:none;background:'+col+'18;color:'+col+';border-radius:7px;padding:3px 8px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">'+txt+'</button>';
+  };
+  return '<div style="position:sticky;top:var(--hdr);z-index:3;background:#f1f4f8;padding:6px 0 8px;margin-bottom:6px">'+
+    '<div style="background:#fff;border:1px solid #dde6f0;border-radius:12px;padding:8px 11px">'+
+      '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">'+
+        '<span style="font-size:15px;font-weight:800;color:'+PROJ_COL+';white-space:nowrap">'+Math.round(f.price).toLocaleString("ru-RU")+' ₽</span>'+
+        '<span style="font-size:11px;color:#7a9aaa;white-space:nowrap">себест. '+Math.round(f.cost).toLocaleString("ru-RU")+' ₽'+(f.floor?' · '+numRu(f.floor)+' м²':'')+'</span>'+
       '</div>'+
-      '<div style="font-size:11.5px;color:#7a9aaa;margin-top:3px">'+
-        (cl?esc(cl.name)+' · ':'')+(A?numRu(A.total.floor)+' м² пола · ':'')+t.count+' позиций'+
+      '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:6px">'+
+        (o?link("proj-open-obj",'data-oid="'+o.id+'"',"🏗 объект","#2980b9"):"")+
+        (c?link("obj-ct-open",'data-cid="'+c.id+'"',"📄 договор","#16a085"):"")+
+        (f.diffN?link("proj-step",'data-id="'+p.id+'" data-band="build"',projDiffWord(f.diffN),"#d35400"):"")+
+        (S.next?link("proj-step",'data-id="'+p.id+'" data-band="'+S.next.band+'"',"Дальше: "+esc(S.next.label)+" →",PROJ_COL):"")+
       '</div>'+
-      '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px">'+
-        (projObj(p)?chip("объект","#2980b9"):chip("объекта нет","#9aabbf"))+
-        (projContract(p)?chip("договор","#16a085"):chip("договора нет","#9aabbf"))+
-        // Цены: в списке проектов видно, где смета считается по вчерашнему
-        // каталогу. Иначе это выясняется на встрече с заказчиком.
-        (function(){ const v=projPriceState(p);
-          return v==="stale"?chip("цены отстали","#8e44ad"):(v==="ok"?chip("цены сверены","#16a085"):""); })()+
-      '</div>'+
-    '</div>';
-  }).join("");
-  return h;
+    '</div>'+
+  '</div>';
+}
+
+function projRowHtml(p, f, clName){
+  const S=projSteps(f);
+  return '<div data-a="proj-open" data-id="'+p.id+'" style="background:#fff;border:1px solid #dde6f0;border-radius:13px;padding:12px 13px;margin-bottom:8px;cursor:pointer">'+
+    '<div style="display:flex;align-items:baseline;gap:8px">'+
+      '<span style="flex:1;min-width:0;font-size:14px;font-weight:800;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(p.name||"Проект")+'</span>'+
+      '<span style="font-size:13px;font-weight:800;color:'+PROJ_COL+';white-space:nowrap">'+Math.round(f.price).toLocaleString("ru-RU")+' ₽</span>'+
+    '</div>'+
+    '<div style="font-size:11.5px;color:#7a9aaa;margin-top:3px">'+
+      (clName?esc(clName)+' · ':'')+(f.floor?numRu(f.floor)+' м² пола · ':'')+f.count+' позиций'+
+    '</div>'+
+    '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:7px">'+
+      projStepsDots(S)+projNextHtml(p, f, S)+
+      // Цены: видно, где смета считается по вчерашнему каталогу — иначе это
+      // выясняется на встрече с заказчиком.
+      (f.priceState==="stale"?projChip("цены отстали","#8e44ad"):(f.priceState==="ok"?projChip("цены сверены","#16a085"):""))+
+      // Стройка идёт по старому составу — это видно, не открывая «Стройку».
+      (f.diffN?projChip(projDiffWord(f.diffN),"#d35400"):"")+
+    '</div>'+
+  '</div>';
 }
 
 function projBandsHtml(hint){
@@ -17676,8 +17787,10 @@ function projMoneyHtml(p){
       '<input data-a="proj-rate" data-id="'+p.id+'" inputmode="numeric" value="'+(Number(p.hourRate)>0?String(Math.round(Number(p.hourRate))):"")+'" placeholder="'+(hourRateBase()>0?String(hourRateBase()):"не задан")+'" title="Ставка на этом доме. Пусто — берётся база портала." style="width:110px;padding:8px 10px;border-radius:9px;border:1px solid '+(Number(p.hourRate)>0?"#8e44ad":"#d0dae8")+';font-size:13px;outline:none;box-sizing:border-box">'+
       '<span style="font-size:11.5px;color:#7a9aaa">на этом доме</span>'+
       '<span style="flex:1"></span>'+
-      '<input data-a="hour-rate-base" inputmode="numeric" value="'+(hourRateBase()>0?String(hourRateBase()):"")+'" placeholder="база" title="Базовая ставка портала — по ней считаются все дома, где своя не задана" style="width:96px;padding:8px 10px;border-radius:9px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box">'+
-      '<span style="font-size:11.5px;color:#7a9aaa">база портала</span>'+
+      // База — ставка ВСЕХ домов портала. Полем в карточке одного дома её меняли
+      // случайно, и пересчитывались чужие сметы; теперь это кнопка с вопросом.
+      '<button data-a="hour-rate-base-edit" title="Базовая ставка портала — по ней считаются все дома без своей ставки" style="border:1px solid #dde6f0;background:#f6f8fa;border-radius:8px;padding:6px 10px;font-size:11.5px;color:#5a7a9a;cursor:pointer;white-space:nowrap">'+
+        'база портала: '+(hourRateBase()>0?hourRateBase().toLocaleString("ru-RU")+' ₽':'не задана')+' ✎</button>'+
     '</div>'+
     '<div style="font-size:10.5px;color:#9aabbf;line-height:1.45;margin-top:6px">Работа бригады = часы × коэффициент сложности × ставка. Часы берутся из нормы работы (справочник смет) или вписываются в строке руками — у своей работы тоже. В строке только часы и коэффициент, цену там не вписывают.</div>'+
   '</div>';
@@ -17702,10 +17815,14 @@ function projCardHtml(p){
       '<input data-a="proj-name" data-id="'+p.id+'" value="'+esc(p.name||"")+'" style="width:100%;border:none;background:transparent;font-size:16px;font-weight:800;color:#0d1b2e;outline:none;padding:0">'+
       '<div style="font-size:11.5px;color:#7a9aaa;margin-top:2px">'+esc(estKindMeta(p.kind).n)+((crmClients.find(function(c){return c.id===p.clientId;})||{}).name?' · '+esc(crmClients.find(function(c){return c.id===p.clientId;}).name):'')+'</div>'+
     '</div>'+
+    // «Такой же» — типовые дома повторяются: копия берёт дом, отделку и наценку,
+    // а клиента, объект и договор оставляет прежнему заказчику.
+    '<button data-a="proj-copy" data-id="'+p.id+'" title="Новый проект с тем же домом, отделкой и наценкой" style="padding:9px 11px;background:#fff;border:1px solid #d0dae8;border-radius:10px;cursor:pointer;color:#5a7a9a;font-size:12px;font-weight:700;flex-shrink:0">⧉ Такой же</button>'+
     (isFlat(p.model)?"":'<button data-a="proj-edit" data-id="'+p.id+'" style="padding:9px 13px;background:#8e44ad;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:12px;font-weight:700;flex-shrink:0">⛶ Чертить</button>')+
   '</div>';
   // Дом СТРОЯТ по чертежу, квартиру ОТДЕЛЫВАЮТ по замеру — и подпись полосы
   // обязана говорить именно это: «что построить» над таблицей площадей врёт.
+  h+=projSummaryHtml(p);
   h+=projBandsHtml((projBand==="plan"&&isFlat(p.model))?"что отделать":"");
   if(projBand==="plan")h+=projPlanHtml(p);
   else if(projBand==="parts"){
@@ -28239,10 +28356,19 @@ function bind(){
       if(isFinite(v)&&v>0)sh.hourRate=Math.round(v); else delete sh.hourRate;
       scheduleSave(); fl();
     };}
-    else if(a==="hour-rate-base"){el.onchange=()=>{
-      const v=parseFloat(String(el.value).replace(/\s/g,"").replace(",","."));
-      settings=Object.assign({}, settings, { hourRate:(isFinite(v)&&v>0)?Math.round(v):0 });
-      scheduleSave(); fl();
+    // База портала меняется вопросом, а не полем: она пересчитывает ВСЕ дома без
+    // своей ставки, и сказать об этом надо до того, как чужие сметы поедут.
+    else if(a==="hour-rate-base-edit"){el.onclick=()=>{
+      const cur=hourRateBase();
+      const raw=prompt("Базовая норма-час портала, ₽ — по ней считаются все дома без своей ставки:", cur>0?String(cur):"");
+      if(raw==null)return;
+      const v=parseFloat(String(raw).replace(/\s/g,"").replace(",","."));
+      const next=(isFinite(v)&&v>0)?Math.round(v):0;
+      if(next===cur)return;
+      const n=(projects||[]).filter(function(x){ return !(Number(x.hourRate)>0); }).length;
+      if(!confirm("Поменять базовую ставку "+(cur||"—")+" → "+(next||"—")+" ₽?\n\nПересчитается работа бригады в "+n+" "+labelPlural(n,"проекте","проектах","проектах")+" без своей ставки."))return;
+      settings=Object.assign({}, settings, { hourRate:next });
+      fl();
     };}
     else if(a==="est-undo"){el.onclick=()=>{ if(!estUndoLast())fl(); };}
     else if(a==="est-pick-mode"){el.onclick=()=>{
@@ -28794,7 +28920,11 @@ function bind(){
       if(!r){ alert("Заготовка не найдена."); return; }
       winTypes=r.winTypes;
       const estKind=flat?(((document.getElementById("proj-n-kind-est")||{}).value)||flatKindDefault()):"house";
-      const p={ id:gid(), name:name||(flat?"Квартира":pr.n), kind:estKind, clientId:clientId,
+      // Без названия проект зовётся по клиенту: «Дом Иванов» в списке понятнее
+      // безымянной «Заготовки 6 м», которых скоро станет пять одинаковых.
+      const clName=clientId?((crmClients.find(function(c){return c.id===clientId;})||{}).name||""):"";
+      const autoName=clName?((flat?"Квартира ":"Дом ")+clName):(flat?"Квартира":pr.n);
+      const p={ id:gid(), name:name||autoName, kind:estKind, clientId:clientId,
         specs:{height:flat?(FLAT_HEIGHT/1000):2.5,rooms:[],openings:[]}, rooms:{}, global:{}, qty:{},
         markup:Number((settings&&settings.specMarkup))||30, status:"draft",
         at:todayISO(), by:(currentUser&&currentUser.id)||"", model:r.model, objId:"", contractId:"" };
@@ -28813,6 +28943,41 @@ function bind(){
       }
     };}
     else if(a==="proj-open"){el.onclick=()=>{ projOpenId=el.dataset.id; projBand="parts"; render(); window.scrollTo(0,0); };}
+    // Следующий шаг: сразу в ту полосу, где он делается. Кнопка лежит внутри
+    // карточки списка, и без stopPropagation карточка следом открыла бы «Состав».
+    else if(a==="proj-step"){el.onclick=(ev)=>{
+      if(ev&&ev.stopPropagation)ev.stopPropagation();
+      if(!proj(el.dataset.id))return;
+      projOpenId=el.dataset.id; projBand=el.dataset.band||"parts"; render(); window.scrollTo(0,0);
+    };}
+    else if(a==="proj-q"){el.oninput=()=>{
+      const v=String(el.value||"");
+      let pos=v.length; try{ pos=el.selectionStart==null?v.length:el.selectionStart; }catch(e){}
+      projQ=v; ui();
+      const n=document.getElementById("proj-q");
+      if(n){ n.focus(); try{ n.setSelectionRange(pos,pos); }catch(e){} }
+    };}
+    else if(a==="proj-filter"){el.onclick=()=>{ projFilter=el.dataset.v||"all"; ui(); };}
+    else if(a==="proj-find-reset"){el.onclick=()=>{ projQ=""; projFilter="all"; ui(); };}
+    // «Такой же»: копия открывается сразу на «Составе» — дальше её правят под нового
+    // заказчика. Оригинал не трогаем.
+    else if(a==="proj-copy"){el.onclick=()=>{
+      const src=proj(el.dataset.id); if(!src)return;
+      const c=projCopy(src, { id:gid(), at:todayISO(), by:(currentUser&&currentUser.id)||"" });
+      projects=projects.concat([c]);
+      projOpenId=c.id; projBand="parts"; fl(); window.scrollTo(0,0);
+    };}
+    // Поиск клиента в форме: меняем только варианты select-а, форму не перерисовываем —
+    // иначе поле теряет фокус на каждой букве. Единственное совпадение выбираем сами.
+    else if(a==="proj-n-client-q"){el.oninput=()=>{
+      const sel=document.getElementById("proj-n-client"); if(!sel)return;
+      const keep=sel.value||"";
+      const q=String(el.value||"");
+      const hit=clientsMatching(crmClients, q, "");
+      const pick=(q.trim()&&hit.length===1)?hit[0].id:keep;
+      sel.innerHTML=projClientOptions(q, pick);
+      sel.value=pick;
+    };}
     else if(a==="proj-back"){el.onclick=()=>{ projOpenId=null; render(); window.scrollTo(0,0); };}
     else if(a==="proj-band"){el.onclick=()=>{ projBand=el.dataset.v||"plan"; render(); window.scrollTo(0,0); };}
     // Чертят проект тем же редактором, что и опытный лист: два редактора одной
