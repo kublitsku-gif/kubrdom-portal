@@ -1165,6 +1165,8 @@ const SELLER_FACTS = "Факты о КубрДом:\n- Строим бани и 
 
 // Редактируемая в портале инструкция. Выбор по типу объявления (баня/дом):
 // sel = { itemId } (определяем kind по settings.listingKind) или { kind } (явно, для теста).
+// Потолок инструкции: скрипт дома ~8,6 тыс. знаков, а прежние 8000 молча срезали хвост с правилами.
+const SELLER_PROMPT_MAX = 16000;
 async function aiSellerPrompt(env, sel) {
   sel = sel || {};
   let prompt = null, site = "";
@@ -1175,7 +1177,7 @@ async function aiSellerPrompt(env, sel) {
       const kind = sel.kind || (sel.itemId && s.listingKind ? s.listingKind[String(sel.itemId)] : null);
       const pick = kind === "banya" ? s.aiSellerPromptBanya : kind === "house" ? s.aiSellerPromptHouse : null;
       const chosen = (pick && String(pick).trim()) ? pick : ((typeof s.aiSellerPrompt === "string" && s.aiSellerPrompt.trim()) ? s.aiSellerPrompt : null);
-      if (chosen) prompt = String(chosen).slice(0, 8000);
+      if (chosen) prompt = String(chosen).slice(0, SELLER_PROMPT_MAX);
       if (typeof s.aiSiteKnowledge === "string") site = s.aiSiteKnowledge;
     }
   } catch (e) {}
