@@ -1,3 +1,4 @@
+import { claudeBody, claudeHeaders, claudeText, CLAUDE_SELLER_MODEL } from "./claude-chat.js";
 import { upsertSalesCard, extractPhone, readableText, salesWebhook, salesTick, salesService, salesDestination, salesClosed, salesSetup } from "./sales-workspace.js";
 import { websiteLeadFetch, deliverWebsiteLeads } from "./website-leads.js";
 // Cloudflare Worker: API для KUBRDOM-portal.
@@ -1087,7 +1088,7 @@ function aiResolve(env, provider) {
   if (provider === "yandexpro" || provider === "yandex") return { key: env.YANDEX_API_KEY, model: "yandexgpt/latest", name: "YandexGPT Pro", kind: "yandex" };
   if (provider === "dsreasoner") return { key: env.AI_API_KEY, base: env.AI_BASE_URL || "https://api.deepseek.com", model: "deepseek-reasoner", name: "DeepSeek-R" };
   if (provider === "kimi") return { key: env.KIMI_API_KEY, base: env.KIMI_BASE_URL || "https://api.moonshot.ai/v1", model: env.KIMI_MODEL || "moonshot-v1-32k", name: "Kimi" };
-  if (provider === "claude") return { key: env.CLAUDE_API_KEY, base: "https://api.anthropic.com", model: env.CLAUDE_MODEL || "claude-sonnet-4-6", name: "Claude", kind: "anthropic" };
+  if (provider === "claude") return { key: env.CLAUDE_API_KEY, base: "https://api.anthropic.com", model: env.CLAUDE_SELLER_MODEL || CLAUDE_SELLER_MODEL, name: "Claude", kind: "anthropic" };
   if (provider === "gpt") return { key: env.OPENAI_API_KEY, base: env.OPENAI_BASE_URL || "https://api.openai.com/v1", model: env.OPENAI_MODEL || "gpt-4o-mini", name: "GPT" };
   return { key: env.AI_API_KEY, base: env.AI_BASE_URL || "https://api.deepseek.com", model: env.AI_MODEL || "deepseek-chat", name: "DeepSeek" };
 }
@@ -1097,17 +1098,15 @@ async function aiChat(env, messages, opts) {
   if (!pr.key) throw new Error(pr.name + ": ключ не настроен");
   // Anthropic (Claude): свой формат — system отдельным полем, x-api-key, без response_format.
   if (pr.kind === "anthropic") {
-    let sys = "", msgs = [];
-    messages.forEach(function (m) { if (m.role === "system") sys += (sys ? "\n\n" : "") + m.content; else msgs.push({ role: m.role, content: m.content }); });
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": pr.key, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: opts.model || pr.model, max_tokens: opts.max_tokens || 700, temperature: opts.temperature != null ? opts.temperature : 0.4, system: sys, messages: msgs })
+      headers: claudeHeaders(pr.key),
+      body: JSON.stringify(claudeBody(messages, { model: opts.model || pr.model, max_tokens: opts.max_tokens })),
+      signal: AbortSignal.timeout(60000)
     });
-    const j = await r.json();
-    if (!r.ok || !j.content) throw new Error(pr.name + ": " + JSON.stringify(j.error || j).slice(0, 200));
-    const text = (j.content || []).filter(function (b) { return b.type === "text"; }).map(function (b) { return b.text; }).join("").trim();
-    return { text: text, usage: j.usage || null };
+    const raw = await r.text(); let j = null; try { j = JSON.parse(raw); } catch (e) {}
+    if (!r.ok) throw new Error(pr.name + " " + r.status + ": " + String(raw || "").replace(/\s+/g, " ").slice(0, 200));
+    return { text: claudeText(j), usage: (j && j.usage) || null };
   }
   // YandexGPT (Yandex Cloud Foundation Models): свой формат — modelUri c folder id, поле text, Api-Key.
   if (pr.kind === "yandex") {

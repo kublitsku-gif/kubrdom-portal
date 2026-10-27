@@ -98,3 +98,4 @@
 | «Снять фото/видео» открывал галерею в Telegram на Android, своя камера | `docs/domain/camera.md` | `src/camera.js` |
 | процент готовности работы, взвешенный прогресс объекта | `docs/domain/work-progress.md` | `src/progress.js`, `workPct`, `objPct` |
 | просмотр фото/видео работы, прокси видео из Telegram | `docs/domain/media-view.md` | `mediaViewModal`, `/api/tg-video` |
+| нейропродавец: Avito → черновик в Telegram, выбор модели (Claude Sonnet) | `docs/domain/ai-seller.md` | `aiProcessIncoming`, `src/claude-chat.js` |
