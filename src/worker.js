@@ -1,4 +1,5 @@
 import { claudeBody, claudeHeaders, claudeText, CLAUDE_SELLER_MODEL, CLAUDE_HAIKU_MODEL } from "./claude-chat.js";
+import { SITE_ORIGIN, sitemapUrls, htmlToText, knowledgeMessages, withSiteKnowledge, MAX_KNOWLEDGE_CHARS } from "./site-knowledge.js";
 import { upsertSalesCard, extractPhone, readableText, salesWebhook, salesTick, salesService, salesDestination, salesClosed, salesSetup } from "./sales-workspace.js";
 import { websiteLeadFetch, deliverWebsiteLeads } from "./website-leads.js";
 // Cloudflare Worker: API для KUBRDOM-portal.
@@ -1103,8 +1104,8 @@ async function aiChat(env, messages, opts) {
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: claudeHeaders(pr.key, opts.model || pr.model),
-      body: JSON.stringify(claudeBody(messages, { model: opts.model || pr.model, max_tokens: opts.max_tokens })),
-      signal: AbortSignal.timeout(60000)
+      body: JSON.stringify(claudeBody(messages, { model: opts.model || pr.model, max_tokens: opts.max_tokens, effort: opts.effort })),
+      signal: AbortSignal.timeout(opts.timeoutMs || 60000)
     });
     const raw = await r.text(); let j = null; try { j = JSON.parse(raw); } catch (e) {}
     if (!r.ok) throw new Error(pr.name + " " + r.status + ": " + String(raw || "").replace(/\s+/g, " ").slice(0, 200));
@@ -1166,6 +1167,7 @@ const SELLER_FACTS = "Факты о КубрДом:\n- Строим бани и 
 // sel = { itemId } (определяем kind по settings.listingKind) или { kind } (явно, для теста).
 async function aiSellerPrompt(env, sel) {
   sel = sel || {};
+  let prompt = null, site = "";
   try {
     const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind("admin_panel", "settings").first();
     if (row && row.data) {
@@ -1173,10 +1175,33 @@ async function aiSellerPrompt(env, sel) {
       const kind = sel.kind || (sel.itemId && s.listingKind ? s.listingKind[String(sel.itemId)] : null);
       const pick = kind === "banya" ? s.aiSellerPromptBanya : kind === "house" ? s.aiSellerPromptHouse : null;
       const chosen = (pick && String(pick).trim()) ? pick : ((typeof s.aiSellerPrompt === "string" && s.aiSellerPrompt.trim()) ? s.aiSellerPrompt : null);
-      if (chosen) return String(chosen).slice(0, 8000);
+      if (chosen) prompt = String(chosen).slice(0, 8000);
+      if (typeof s.aiSiteKnowledge === "string") site = s.aiSiteKnowledge;
     }
   } catch (e) {}
-  return SELLER_SYSTEM + "\n\n" + SELLER_FACTS;
+  return withSiteKnowledge(prompt || (SELLER_SYSTEM + "\n\n" + SELLER_FACTS), site);
+}
+// POST /api/ai/site-knowledge — собрать базу знаний с kubrdom.ru (Claude Sonnet читает страницы из sitemap).
+// Ничего не сохраняет: текст уходит в панель, админ смотрит и жмёт «Сохранить». Только админ — запрос платный.
+async function aiSiteKnowledge(env, auth) {
+  if (!auth.adm) return json({ success: false, error: "Собирать базу с сайта может только администратор" }, 403);
+  const get = async function (u) {
+    const r = await fetch(u, { headers: { "User-Agent": "KubrDom-portal/1.0" }, signal: AbortSignal.timeout(15000) });
+    if (!r.ok) throw new Error(u + " → " + r.status);
+    return r.text();
+  };
+  let urls = [];
+  try { urls = sitemapUrls(await get(SITE_ORIGIN + "/sitemap.xml")); } catch (e) {}
+  if (!urls.length) urls = [SITE_ORIGIN + "/"];
+  const pages = [], failed = [];
+  await Promise.all(urls.map(async function (u, i) {
+    try { const text = htmlToText(await get(u)); if (text) pages[i] = { url: u, text: text }; }
+    catch (e) { failed.push(u); }
+  }));
+  const got = pages.filter(Boolean);
+  if (!got.length) return json({ success: false, error: "Сайт не открылся: " + failed.slice(0, 3).join(", ") }, 502);
+  const out = await aiChat(env, knowledgeMessages(got), { provider: "claude", max_tokens: 12000, effort: "medium", timeoutMs: 90000 });
+  return json({ success: true, knowledge: out.text.slice(0, MAX_KNOWLEDGE_CHARS), pages: got.map(function (p) { return p.url; }), failed: failed });
 }
 // Авто-режим включён? (settings.aiAutoSend) — простые 🟢-ответы уходят клиенту без кнопки.
 async function aiAutoSendEnabled(env) {
@@ -1815,6 +1840,11 @@ export default {
       if (!auth.adm) return json({success:false,error:"Forbidden"},403);
       try { return json(await salesSetup(env)); }
       catch (e) { return json({success:false,error:String(e)},500); }
+    }
+    // AI: база знаний нейропродавца с сайта kubrdom.ru (только админ).
+    if (url.pathname === "/api/ai/site-knowledge" && request.method === "POST") {
+      try { return await aiSiteKnowledge(env, auth); }
+      catch (err) { return json({ success: false, error: String(err && err.message || err) }, 500); }
     }
     // AI: тест-диалог (песочница, с токеном).
     if (url.pathname === "/api/ai/test-chat" && request.method === "POST") {

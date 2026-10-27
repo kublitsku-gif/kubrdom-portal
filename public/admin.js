@@ -23150,22 +23150,25 @@ function tMarketingMain(){
   return html;
 }
 
+// Вкладки экрана инструкций: скрипт бани, скрипт дома и факты с сайта (подкладываются к обоим).
+var MKT_INST={banya:{key:"aiSellerPromptBanya",title:"ИНСТРУКЦИЯ ДЛЯ БАНЬ 🛁",name:"баня"},house:{key:"aiSellerPromptHouse",title:"ИНСТРУКЦИЯ ДЛЯ ДОМОВ 🏠",name:"дом"},site:{key:"aiSiteKnowledge",title:"ФАКТЫ С САЙТА kubrdom.ru 🌐",name:"сайт"}};
 function tMarketingInstruction(){
-  var kind=window._mktInstKind||"banya";
-  var key=kind==="banya"?"aiSellerPromptBanya":"aiSellerPromptHouse";
-  var cur=(settings[key]||settings.aiSellerPrompt||AI_INSTRUCTION);
+  var kind=MKT_INST[window._mktInstKind]?window._mktInstKind:"banya";
+  var key=MKT_INST[kind].key, isSite=kind==="site";
+  var cur=isSite?(window._mktSiteDraft!=null?window._mktSiteDraft:(settings.aiSiteKnowledge||"")):(settings[key]||settings.aiSellerPrompt||AI_INSTRUCTION);
   function kb(k,lbl){ var on=kind===k; return '<button data-a="mkt-inst-kind" data-kind="'+k+'" style="flex:1;padding:9px 6px;border-radius:9px;cursor:pointer;font-size:13px;font-weight:700;border:2px solid '+(on?"#8e44ad":"#dde6f0")+';background:'+(on?"#8e44ad":"#fff")+';color:'+(on?"#fff":"#7a9aaa")+'">'+lbl+'</button>'; }
   let html='<div>';
   html+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">'+
     '<button data-a="mkt-back" style="padding:6px 14px;background:transparent;border:1px solid #d0dae8;border-radius:20px;cursor:pointer;font-size:12px;color:#7a9aaa">← Маркетинг</button>'+
     '<div style="font-size:14px;font-weight:700;color:#0d1b2e;flex:1">📋 Инструкции нейропродавца</div>'+
   '</div>';
-  html+='<div style="display:flex;gap:8px;margin-bottom:10px">'+kb("banya","🛁 Баня")+kb("house","🏠 Дом")+'</div>';
+  html+='<div style="display:flex;gap:8px;margin-bottom:10px">'+kb("banya","🛁 Баня")+kb("house","🏠 Дом")+kb("site","🌐 Сайт")+'</div>';
   html+='<div style="background:#fff;border-radius:14px;border:1px solid #dde6f0;padding:14px;margin-bottom:12px">'+
-    '<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">ИНСТРУКЦИЯ ДЛЯ '+(kind==="banya"?"БАНЬ 🛁":"ДОМОВ 🏠")+'</div>'+
+    '<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">'+MKT_INST[kind].title+'</div>'+
+    (isSite?'<button data-a="mkt-site-build" '+(window._mktSiteBusy?"disabled ":"")+'style="width:100%;margin-bottom:8px;padding:9px;background:'+(window._mktSiteBusy?"#b9a3c9":"#8e44ad")+';border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">'+(window._mktSiteBusy?"⏳ Claude читает сайт… до 1,5 минуты":"🌐 Собрать заново с kubrdom.ru")+'</button>'+(window._mktSiteNote?'<div style="font-size:11px;color:'+(window._mktSiteErr?"#c0392b":"#27ae60")+';margin-bottom:8px;line-height:1.4">'+esc(window._mktSiteNote)+'</div>':""):"")+
     '<textarea id="mkt-inst-text" style="width:100%;padding:10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;line-height:1.7;outline:none;box-sizing:border-box;height:360px;resize:vertical;background:#fafbfc;font-family:inherit">'+cur.replace(/</g,"&lt;").replace(/>/g,"&gt;")+'</textarea>'+
-    '<div style="font-size:10px;color:#9aabbf;margin-top:6px;line-height:1.4">Отдельный скрипт для '+(kind==="banya"?"бань":"домов")+'. Какие объявления к какой инструкции относятся — отмечается в разделе «Объявления» во вкладке Маркетинг. Требование цен через одобрение добавляется автоматически.</div>'+
-    '<button data-a="mkt-save-inst" data-kind="'+kind+'" style="width:100%;margin-top:8px;padding:9px;background:#27ae60;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">💾 Сохранить инструкцию ('+(kind==="banya"?"баня":"дом")+')</button>'+
+    '<div style="font-size:10px;color:#9aabbf;margin-top:6px;line-height:1.4">'+(isSite?'Факты с сайта ИИ получает вместе с обеими инструкциями — бани и дома — как главный источник: цены, комплектации, сроки, адрес, телефоны. Если в инструкции написано иначе, ИИ верит сайту. Сайт поменялся — нажмите «Собрать заново», проверьте текст и сохраните.':'Отдельный скрипт для '+(kind==="banya"?"бань":"домов")+'. Какие объявления к какой инструкции относятся — отмечается в разделе «Объявления» во вкладке Маркетинг. Требование цен через одобрение добавляется автоматически. Факты с сайта (вкладка 🌐 Сайт) ИИ получает вместе с этой инструкцией.')+'</div>'+
+    '<button data-a="mkt-save-inst" data-kind="'+kind+'" style="width:100%;margin-top:8px;padding:9px;background:#27ae60;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">💾 Сохранить '+(isSite?"факты с сайта":"инструкцию ("+MKT_INST[kind].name+")")+'</button>'+
   '</div>';
   html+='</div>';
   return html;
@@ -30808,13 +30811,27 @@ function bind(){
     };}
     else if(a==="mkt-back"){el.onclick=()=>{window._mktInstView=false;render();};}
     else if(a==="mkt-inst-kind"){el.onclick=()=>{ window._mktInstKind=el.dataset.kind; render(); };}
+    else if(a==="mkt-site-build"){el.onclick=async()=>{
+      if(window._mktSiteBusy)return;
+      window._mktSiteBusy=true; window._mktSiteNote=""; window._mktSiteErr=false; ui();
+      try{
+        const r=await fetchT(API_BASE+"/api/ai/site-knowledge",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:"{}"},120000);
+        let j=null; try{ j=await r.json(); }catch(_){}
+        if(j&&j.success&&j.knowledge){
+          window._mktSiteDraft=j.knowledge;
+          window._mktSiteNote="✓ Прочитано страниц: "+j.pages.length+(j.failed&&j.failed.length?" (не открылись: "+j.failed.length+")":"")+". Проверьте текст и нажмите «Сохранить» — до этого ИИ работает по старым фактам.";
+        } else { window._mktSiteErr=true; window._mktSiteNote="⚠️ "+((j&&j.error)||("ошибка сервера "+r.status)); }
+      }catch(e){ window._mktSiteErr=true; window._mktSiteNote="⚠️ "+((e&&e.message)||e); }
+      window._mktSiteBusy=false; ui();
+    };}
     else if(a==="mkt-save-inst"){el.onclick=()=>{
       const v=(document.getElementById("mkt-inst-text")||{}).value;
-      const kind=el.dataset.kind||window._mktInstKind||"banya";
-      const key=kind==="banya"?"aiSellerPromptBanya":"aiSellerPromptHouse";
+      const kind=MKT_INST[el.dataset.kind]?el.dataset.kind:"banya";
+      const key=MKT_INST[kind].key;
       if(v!==undefined){ const patch={}; patch[key]=v; settings=Object.assign({},settings,patch); }
+      if(kind==="site"){ window._mktSiteDraft=null; window._mktSiteNote=""; }
       fl();
-      try{ const t=document.createElement("div"); t.textContent="💾 Инструкция ("+(kind==="banya"?"баня":"дом")+") сохранена"; t.style.cssText="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#27ae60;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:600;z-index:9999"; document.body.appendChild(t); setTimeout(function(){try{document.body.removeChild(t);}catch(e){}},2500); }catch(e){}
+      try{ const t=document.createElement("div"); t.textContent=kind==="site"?"💾 Факты с сайта сохранены":"💾 Инструкция ("+MKT_INST[kind].name+") сохранена"; t.style.cssText="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#27ae60;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:600;z-index:9999"; document.body.appendChild(t); setTimeout(function(){try{document.body.removeChild(t);}catch(e){}},2500); }catch(e){}
     };}
     // ── TAB DRAG (admin) ──────────────────────────────────────────
     else if(a==="tab-drag"){
