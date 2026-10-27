@@ -18,6 +18,6 @@ assert.match(msgs[1].content,/=== СТРАНИЦА https:\/\/www\.kubrdom\.ru\/c
 // Seller prompt: knowledge appended after the script and declared the main source; empty knowledge leaves it as is.
 assert.equal(withSiteKnowledge('Скрипт',''),'Скрипт');assert.equal(withSiteKnowledge('Скрипт','  '),'Скрипт');
 const p=withSiteKnowledge('Скрипт','Комфорт — 1 590 000 ₽');
-assert.ok(p.startsWith('Скрипт\n\n=== ФАКТЫ С САЙТА kubrdom.ru ==='));assert.match(p,/верь фактам с сайта/);assert.ok(p.endsWith('Комфорт — 1 590 000 ₽'));
+assert.ok(p.startsWith('Скрипт\n\n=== ФАКТЫ С САЙТА kubrdom.ru ==='));assert.match(p,/верь фактам с сайта/);assert.match(p,/не пересказывай/);assert.ok(p.endsWith('Комфорт — 1 590 000 ₽'));
 assert.ok(withSiteKnowledge('С','я'.repeat(MAX_KNOWLEDGE_CHARS+500)).length<MAX_KNOWLEDGE_CHARS+600);
 console.log('site-knowledge: ok');

@@ -1214,7 +1214,7 @@ async function aiAutoSendEnabled(env) {
   return false;
 }
 // Структурная часть (НЕ редактируется пользователем — иначе сломается гибрид-логика).
-const JSON_INSTRUCTION = "\n\nВажно: верни СТРОГО JSON {\"reply\":\"текст ответа клиенту\",\"needsApproval\":true|false,\"reason\":\"кратко\"}. needsApproval=true, если ответ касается конкретной цены, скидки, сроков, договора, предоплаты или обязательств; иначе false.";
+const JSON_INSTRUCTION = "\n\nВажно: верни СТРОГО JSON {\"reply\":\"текст ответа клиенту\",\"needsApproval\":true|false,\"reason\":\"кратко\"}. needsApproval=true, если ответ касается конкретной цены, скидки, сроков, договора, предоплаты или обязательств; иначе false. reply — сообщение в мессенджер: соблюдай правило длины ответа из инструкции (если его нет — 1–2 коротких предложения), без списков и пересказа фактов.";
 // Нейроответ продавца с гибрид-классификацией (нужно ли одобрение). sel — выбор инструкции (item/kind).
 async function aiSellerReply(env, history, sel) {
   const sys = await aiSellerPrompt(env, sel);
