@@ -7,4 +7,5 @@
   - `thinking:{type:"disabled"}` — 400; мышление включено всегда и ест `max_tokens` вместе с ответом, поэтому пол 4000 (500, которых хватало DeepSeek, обрезали бы реплику); глубину держит `output_config.effort:"low"`;
   - отказ по политике — `fallbacks:"default"` + `anthropic-beta: server-side-fallback-2026-07-01`; если отказала вся цепочка, `claudeText` бросает ошибку, и в ветку уходит «⚠️ Не удалось подготовить ответ ИИ» — человек отвечает сам;
   - история режется хвостом и может начаться с нашей реплики — первые assistant-сообщения отбрасываются (API ждёт первым user).
+- **Claude Haiku — `aiProvider:"claudehaiku"`, `CLAUDE_HAIKU_MODEL` (`claude-haiku-5-5`)**, тот же ключ и тот же `claudeBody`, но без `fallbacks` и beta-заголовка: серверного fallback у Haiku нет.
 - `CLAUDE_MODEL` (sonnet-4-6) — это распознавание планировок (`/api/plan-read`), не путать с продавцом.

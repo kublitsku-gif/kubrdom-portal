@@ -1,4 +1,4 @@
-import { claudeBody, claudeHeaders, claudeText, CLAUDE_SELLER_MODEL } from "./claude-chat.js";
+import { claudeBody, claudeHeaders, claudeText, CLAUDE_SELLER_MODEL, CLAUDE_HAIKU_MODEL } from "./claude-chat.js";
 import { upsertSalesCard, extractPhone, readableText, salesWebhook, salesTick, salesService, salesDestination, salesClosed, salesSetup } from "./sales-workspace.js";
 import { websiteLeadFetch, deliverWebsiteLeads } from "./website-leads.js";
 // Cloudflare Worker: API для KUBRDOM-portal.
@@ -1072,9 +1072,9 @@ async function avitoChats(env) {
 
 // ─── AI (нейропродавец, OpenAI-совместимый коннектор) ───────────────
 // Один и тот же код для DeepSeek/GigaChat/OpenAI/Qwen — отличается base_url+key+model.
-// Какой провайдер выбран в портале (settings.aiProvider): "deepseek" (по умолчанию) | "kimi" | "claude".
+// Какой провайдер выбран в портале (settings.aiProvider): "deepseek" (по умолчанию) | "kimi" | "claude" | "claudehaiku" | ….
 async function aiProvider(env) {
-  try { const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind("admin_panel", "settings").first(); if (row && row.data) { const s = JSON.parse(row.data); if (s && ["kimi", "claude", "gpt", "dsreasoner", "yandex", "yandexlite", "yandexpro"].indexOf(s.aiProvider) >= 0) return s.aiProvider; } } catch (e) {}
+  try { const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind("admin_panel", "settings").first(); if (row && row.data) { const s = JSON.parse(row.data); if (s && ["kimi", "claude", "claudehaiku", "gpt", "dsreasoner", "yandex", "yandexlite", "yandexpro"].indexOf(s.aiProvider) >= 0) return s.aiProvider; } } catch (e) {}
   return "deepseek";
 }
 // Включён ли нейропродавец (мастер-выключатель settings.aiEnabled, по умолчанию вкл).
@@ -1088,6 +1088,7 @@ function aiResolve(env, provider) {
   if (provider === "yandexpro" || provider === "yandex") return { key: env.YANDEX_API_KEY, model: "yandexgpt/latest", name: "YandexGPT Pro", kind: "yandex" };
   if (provider === "dsreasoner") return { key: env.AI_API_KEY, base: env.AI_BASE_URL || "https://api.deepseek.com", model: "deepseek-reasoner", name: "DeepSeek-R" };
   if (provider === "kimi") return { key: env.KIMI_API_KEY, base: env.KIMI_BASE_URL || "https://api.moonshot.ai/v1", model: env.KIMI_MODEL || "moonshot-v1-32k", name: "Kimi" };
+  if (provider === "claudehaiku") return { key: env.CLAUDE_API_KEY, base: "https://api.anthropic.com", model: env.CLAUDE_HAIKU_MODEL || CLAUDE_HAIKU_MODEL, name: "Claude Haiku", kind: "anthropic" };
   if (provider === "claude") return { key: env.CLAUDE_API_KEY, base: "https://api.anthropic.com", model: env.CLAUDE_SELLER_MODEL || CLAUDE_SELLER_MODEL, name: "Claude", kind: "anthropic" };
   if (provider === "gpt") return { key: env.OPENAI_API_KEY, base: env.OPENAI_BASE_URL || "https://api.openai.com/v1", model: env.OPENAI_MODEL || "gpt-4o-mini", name: "GPT" };
   return { key: env.AI_API_KEY, base: env.AI_BASE_URL || "https://api.deepseek.com", model: env.AI_MODEL || "deepseek-chat", name: "DeepSeek" };
@@ -1100,7 +1101,7 @@ async function aiChat(env, messages, opts) {
   if (pr.kind === "anthropic") {
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: claudeHeaders(pr.key),
+      headers: claudeHeaders(pr.key, opts.model || pr.model),
       body: JSON.stringify(claudeBody(messages, { model: opts.model || pr.model, max_tokens: opts.max_tokens })),
       signal: AbortSignal.timeout(60000)
     });

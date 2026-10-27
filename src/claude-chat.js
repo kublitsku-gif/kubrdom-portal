@@ -2,19 +2,20 @@
 // Чистые функции — fetch делает aiChat в worker.js, тест гоняет их без сети.
 
 export const CLAUDE_SELLER_MODEL = "claude-sonnet-5-5";
+export const CLAUDE_HAIKU_MODEL = "claude-haiku-5-5";
 // Отказ модели по политике сервер сам переигрывает на рекомендованной модели.
 export const CLAUDE_FALLBACK_BETA = "server-side-fallback-2026-07-01";
 // Мышление у Sonnet 5.5 включено всегда и тратит max_tokens наравне с ответом:
 // 500 токенов, которых хватало DeepSeek, обрезали бы реплику на полуслове.
 const MIN_MAX_TOKENS = 4000;
+// У Haiku серверного fallback нет: параметр и заголовок для него — лишние.
+const hasFallback = (model) => !/haiku/i.test(model || CLAUDE_SELLER_MODEL);
 
-export function claudeHeaders(key) {
-  return {
-    "Content-Type": "application/json",
-    "x-api-key": key,
-    "anthropic-version": "2023-06-01",
-    "anthropic-beta": CLAUDE_FALLBACK_BETA,
-  };
+export function claudeHeaders(key, model) {
+  return Object.assign(
+    { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+    hasFallback(model) ? { "anthropic-beta": CLAUDE_FALLBACK_BETA } : {},
+  );
 }
 
 // messages — OpenAI-формат [{role:"system"|"user"|"assistant", content}].
@@ -29,15 +30,16 @@ export function claudeBody(messages, opts) {
   });
   // История режется хвостом (последние 12) и может начаться с нашей реплики, а API ждёт первым user.
   while (msgs.length && msgs[0].role === "assistant") msgs.shift();
+  const model = opts.model || CLAUDE_SELLER_MODEL;
   return Object.assign(
     {
-      model: opts.model || CLAUDE_SELLER_MODEL,
+      model: model,
       max_tokens: Math.max(Number(opts.max_tokens) || 0, MIN_MAX_TOKENS),
       // Реплика в чат — не задача на рассуждение: low быстрее и дешевле.
       output_config: { effort: opts.effort || "low" },
-      fallbacks: "default",
       messages: msgs,
     },
+    hasFallback(model) ? { fallbacks: "default" } : {},
     system ? { system: system } : {},
   );
 }

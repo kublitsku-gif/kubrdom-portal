@@ -37,6 +37,7 @@ KIMI_MODEL = "kimi-k2.6"
 CLAUDE_MODEL = "claude-sonnet-4-6"
 # Нейропродавец (черновики в Telegram) — свой Sonnet; CLAUDE_MODEL остаётся за распознаванием планировок.
 CLAUDE_SELLER_MODEL = "claude-sonnet-5-5"
+CLAUDE_HAIKU_MODEL = "claude-haiku-5-5"
 # GPT (OpenAI, OpenAI-совместимый). Ключ — секрет OPENAI_API_KEY.
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 OPENAI_MODEL = "gpt-4o-mini"
