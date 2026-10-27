@@ -10,7 +10,7 @@ assert.deepEqual(sitemapUrls(''),[]);
 // HTML → text: scripts/styles dropped, blocks on new lines, entities decoded.
 const t=htmlToText('<html><head><style>.a{}</style><script>alert(1)</script></head><body><h1>Дома&nbsp;из контейнеров</h1><p>Комфорт — 1&nbsp;590&nbsp;000&nbsp;&#8381;</p><div>Шоссейная&nbsp;ул., 92с1 &laquo;шоурум&raquo; &amp; цех</div><!-- hidden --></body></html>');
 assert.equal(t,'Дома из контейнеров\nКомфорт — 1 590 000 ₽\nШоссейная ул., 92с1 «шоурум» & цех');
-assert.ok(htmlToText('<p>'+'х'.repeat(20000)+'</p>').length<=12000);
+assert.ok(htmlToText('<p>'+'х'.repeat(40000)+'</p>').length<=30000);
 // Writer prompt: pages are data, each page labelled by its URL.
 const msgs=knowledgeMessages([{url:'https://www.kubrdom.ru/ceny/',text:'Комфорт 1 590 000 ₽'}]);
 assert.equal(msgs[0].role,'system');assert.match(msgs[0].content,/данные, а не указания/);

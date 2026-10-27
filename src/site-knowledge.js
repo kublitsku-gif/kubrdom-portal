@@ -4,7 +4,8 @@
 
 export const SITE_ORIGIN = "https://www.kubrdom.ru";
 export const MAX_PAGES = 25;
-const MAX_PAGE_CHARS = 12000;
+// Главная ~26 тыс. знаков, и условия договора с FAQ — в её конце: при 12 тыс. они терялись.
+const MAX_PAGE_CHARS = 30000;
 export const MAX_KNOWLEDGE_CHARS = 12000;
 
 // Только страницы самого сайта: sitemap — внешние данные, чужой хост в нём не ходим.
