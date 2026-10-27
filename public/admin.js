@@ -23119,7 +23119,9 @@ function tMarketingMain(){
         }
         var st = m.needsApproval ? (m.approved?{t:"✅ отправлено",c:"#27ae60"}:{t:"🟠 ждёт одобрения",c:"#e67e22"}) : {t:"🟢 авто-отправлено",c:"#27ae60"};
         var bubble='<div style="background:#f4f7fb;color:#1a2a3a;border-radius:12px;padding:8px 11px;margin-bottom:6px;max-width:85%;margin-right:auto;white-space:pre-wrap;font-size:12px;line-height:1.45">'+
-          '<div style="font-size:9px;font-weight:700;margin-bottom:2px;color:#7a9aaa">🤖 Нейропродавец <span style="color:'+st.c+'">'+st.t+'</span></div>'+esc(m.text||"")+'</div>';
+          '<div style="font-size:9px;font-weight:700;margin-bottom:2px;color:#7a9aaa">🤖 Нейропродавец <span style="color:'+st.c+'">'+st.t+'</span></div>'+esc(m.text||"")+'</div>'+
+          // Картинка, которую ИИ приложил бы к ответу (в Авито она уходит следом за текстом).
+          ((m.plans&&m.plans.length)?'<div style="max-width:85%;margin:-2px auto 8px 0;display:flex;flex-direction:column;gap:4px">'+m.plans.map(function(pl){return '<a href="'+esc(pl.url)+'" target="_blank" rel="noopener" style="display:block;text-decoration:none"><img src="'+esc(pl.url)+'" alt="" style="display:block;width:100%;border-radius:10px;border:1px solid #dde6f0"><div style="font-size:10px;color:#7a9aaa;margin-top:2px">🖼 '+esc(pl.title)+'</div></a>';}).join("")+'</div>':'');
         var ctrl='';
         if(m.needsApproval&&!m.approved){
           if(m.editing){
@@ -30807,7 +30809,7 @@ function bind(){
         const r=await fetch(API_BASE+"/api/ai/test-chat",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({history:hist,kind:mktTestKind})});
         let j=null; try{ j=await r.json(); }catch(_){}
         if(!j) j={success:false,error:(r.status>=500?"сервер занят ("+r.status+") — мощная модель таймаутит, повторите":"ошибка ответа сервера")};
-        mktTest=mktTest.concat([(j&&j.success)?{role:"assistant",text:j.reply,needsApproval:j.needsApproval}:{role:"assistant",text:"⚠️ "+((j&&j.error)||"ошибка"),needsApproval:false}]);
+        mktTest=mktTest.concat([(j&&j.success)?{role:"assistant",text:j.reply,needsApproval:j.needsApproval,plans:Array.isArray(j.plans)?j.plans:[]}:{role:"assistant",text:"⚠️ "+((j&&j.error)||"ошибка"),needsApproval:false}]);
       }catch(e){ mktTest=mktTest.concat([{role:"assistant",text:"⚠️ "+((e&&e.message)||e),needsApproval:false}]); }
       mktTestBusy=false; render();
       setTimeout(function(){var el2=document.getElementById("mkt-test-text"); if(el2)el2.focus();},0);

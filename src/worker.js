@@ -1,4 +1,5 @@
 import { claudeBody, claudeHeaders, claudeText, CLAUDE_SELLER_MODEL, CLAUDE_HAIKU_MODEL } from "./claude-chat.js";
+import { PLAN_IMAGES, PLAN_INSTRUCTION, normPlans, planUrl, planTitles, avitoUploadForm, avitoImageId } from "./plan-images.js";
 import { SITE_ORIGIN, sitemapUrls, htmlToText, knowledgeMessages, withSiteKnowledge, MAX_KNOWLEDGE_CHARS } from "./site-knowledge.js";
 import { upsertSalesCard, extractPhone, readableText, salesWebhook, salesTick, salesService, salesDestination, salesClosed, salesSetup } from "./sales-workspace.js";
 import { websiteLeadFetch, deliverWebsiteLeads } from "./website-leads.js";
@@ -1214,7 +1215,7 @@ async function aiAutoSendEnabled(env) {
   return false;
 }
 // Структурная часть (НЕ редактируется пользователем — иначе сломается гибрид-логика).
-const JSON_INSTRUCTION = "\n\nВажно: верни СТРОГО JSON {\"reply\":\"текст ответа клиенту\",\"needsApproval\":true|false,\"reason\":\"кратко\"}. needsApproval=true, если ответ касается конкретной цены, скидки, сроков, договора, предоплаты или обязательств; иначе false. reply — сообщение в мессенджер: соблюдай правило длины ответа из инструкции (если его нет — 1–2 коротких предложения), без списков и пересказа фактов.";
+const JSON_INSTRUCTION = "\n\nВажно: верни СТРОГО JSON {\"reply\":\"текст ответа клиенту\",\"needsApproval\":true|false,\"reason\":\"кратко\",\"plans\":[]}. needsApproval=true, если ответ касается конкретной цены, скидки, сроков, договора, предоплаты или обязательств; иначе false. reply — сообщение в мессенджер: соблюдай правило длины ответа из инструкции (если его нет — 1–2 коротких предложения), без списков и пересказа фактов." + PLAN_INSTRUCTION;
 // Нейроответ продавца с гибрид-классификацией (нужно ли одобрение). sel — выбор инструкции (item/kind).
 async function aiSellerReply(env, history, sel) {
   const sys = await aiSellerPrompt(env, sel);
@@ -1229,7 +1230,7 @@ async function aiSellerReply(env, history, sel) {
   if (!p) p = { reply: out.text, needsApproval: true, reason: "Ответ требует проверки" };
   let reply = readableText(p.reply || out.text || "").trim();
   if (!reply) reply = "Здравствуйте! Уточните, пожалуйста, детали — подскажу по размерам, комплектации и расчёту.";
-  return { reply: reply, needsApproval: p.needsApproval !== false, reason: p.reason || "", usage: out.usage };
+  return { reply: reply, needsApproval: p.needsApproval !== false, reason: p.reason || "", plans: normPlans(p.plans), usage: out.usage };
 }
 
 // ── Голосовой обзвон (Voximplant + YandexGPT) ───────────────────────────
@@ -1382,16 +1383,23 @@ async function aiProcessIncoming(env, opt) {
   if (!ai.needsApproval && c.avitoChatId && await aiAutoSendEnabled(env)) {
     try { const sr = await avitoSend(env, c.avitoChatId, ai.reply); autoOk = !!(sr && sr.id); } catch (e) {}
   }
+  let autoPlanNote = "";
+  if (autoOk && ai.plans.length) autoPlanNote = await avitoSendPlans(env, c.avitoChatId, ai.plans);
   if (autoOk) {
-    c.messages.push({ role: "assistant", text: ai.reply, status: "sent", auto: true, needsApproval: false, ts: Date.now() });
-    await salesTg(env, "sendMessage", { chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "🟢 Автоответ отправлен клиенту:\n\n" + (ai.reply.length>350?ai.reply.slice(0,350)+"…\nПолный текст — в CRM → Диалоги.":ai.reply) });
+    c.messages.push({ role: "assistant", text: ai.reply, status: "sent", auto: true, needsApproval: false, plans: ai.plans, ts: Date.now() });
+    await salesTg(env, "sendMessage", { chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "🟢 Автоответ отправлен клиенту:\n\n" + (ai.reply.length>350?ai.reply.slice(0,350)+"…\nПолный текст — в CRM → Диалоги.":ai.reply) + autoPlanNote });
   } else {
-    c.messages.push({ role: "assistant", text: ai.reply, status: "draft", needsApproval: ai.needsApproval, ts: Date.now() });
+    c.messages.push({ role: "assistant", text: ai.reply, status: "draft", needsApproval: ai.needsApproval, plans: ai.plans, ts: Date.now() });
     const tag = ai.needsApproval ? "🟠 нужно одобрение" : "🟢 можно авто";
+    // Превью — best-effort: не открылась картинка, черновик всё равно должен прийти.
+    if (ai.plans.length) { try { await tgPlanPreview(env, c.chatId || env.TG_SALES_CHAT_ID, c.topicId, ai.plans); } catch (e) {} }
+    const kb = ai.plans.length
+      ? [[{ text: "✅ Отправить с планировкой", callback_data: "sendp:" + idx }], [{ text: "✅ Только текст", callback_data: "send:" + idx }, { text: "✏️ Изменить", callback_data: "edit:" + idx }]]
+      : [[{ text: "✅ Отправить", callback_data: "send:" + idx }, { text: "✏️ Изменить", callback_data: "edit:" + idx }]];
     const sent = await salesTg(env, "sendMessage", {
       chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId,
-      text: "🤖 Черновик (" + tag + "):\n\n" + ai.reply,
-      reply_markup: { inline_keyboard: [[{ text: "✅ Отправить", callback_data: "send:" + idx }, { text: "✏️ Изменить", callback_data: "edit:" + idx }]] }
+      text: "🤖 Черновик (" + tag + "):\n\n" + ai.reply + (ai.plans.length ? "\n\n🖼 + " + planTitles(ai.plans) : ""),
+      reply_markup: { inline_keyboard: kb }
     });
     if (sent && sent.ok && sent.result) c.messages[idx].tgMsgId = sent.result.message_id;
   }
@@ -1419,12 +1427,14 @@ async function aiWebhook(env, request) {
     const parts = (cq.data || "").split(":"); const act = parts[0]; const idx = parseInt(parts[1] || "-1", 10);
     if (key && chats[key].messages[idx]) {
       const c = chats[key], m = c.messages[idx];
-      if (act === "send") {
-        let note = " (демо — это не Avito-чат)";
+      if (act === "send" || act === "sendp") {
+        let note = " (демо — это не Avito-чат)", textOk = false;
         if (c.avitoChatId) {
-          try { const sr = await avitoSend(env, c.avitoChatId, m.text); note = (sr && sr.id) ? " клиенту в Avito ✅" : ("\n⚠️ Avito: " + JSON.stringify(sr).slice(0, 140)); }
+          try { const sr = await avitoSend(env, c.avitoChatId, m.text); textOk = !!(sr && sr.id); note = textOk ? " клиенту в Avito ✅" : ("\n⚠️ Avito: " + JSON.stringify(sr).slice(0, 140)); }
           catch (e) { note = "\n⚠️ Avito ошибка: " + (e.message || e); }
         }
+        // Картинку шлём только следом за ушедшим текстом: без него в чате окажется план без слов.
+        if (act === "sendp" && textOk && m.plans && m.plans.length) { note += await avitoSendPlans(env, c.avitoChatId, m.plans); m.plansSent = true; }
         m.status = "sent"; c.updatedAt = Date.now(); await aiSaveChats(env, chats);
         await salesTg(env, "editMessageReplyMarkup", { chat_id: cq.message.chat.id, message_id: cq.message.message_id, reply_markup: { inline_keyboard: [] } });
         await salesTg(env, "sendMessage", { chat_id: cq.message.chat.id, message_thread_id: topicId, text: "✅ Ответ отправлен" + note });
@@ -1495,7 +1505,8 @@ async function aiTestChat(env, request) {
   if (!hist.length) return json({ success: false, error: "empty" }, 400);
   const kind = (body.kind === "banya" || body.kind === "house") ? body.kind : null;
   const out = await aiSellerReply(env, hist, { kind: kind });
-  return json({ success: true, reply: out.reply, needsApproval: out.needsApproval, reason: out.reason });
+  return json({ success: true, reply: out.reply, needsApproval: out.needsApproval, reason: out.reason,
+    plans: out.plans.map(function (k) { return { key: k, title: PLAN_IMAGES[k].title, url: "/plans/" + PLAN_IMAGES[k].file }; }) });
 }
 
 // POST /api/ai/test {q} — проверка мозга. Требует токен.
@@ -1531,6 +1542,46 @@ async function avitoSend(env, chatId, text) {
     body: JSON.stringify({ message: { text: text }, type: "text" })
   });
   return r.json();
+}
+// Картинка планировки в чат Авито: берём JPEG с портала, грузим в uploadImages, шлём messages/image.
+async function avitoSendImage(env, chatId, key) {
+  if (!PLAN_IMAGES[key]) throw new Error("нет картинки " + key);
+  const img = await fetch(planUrl(env.PUBLIC_BASE_URL, key), { signal: AbortSignal.timeout(15000) });
+  if (!img.ok) throw new Error("картинка " + key + " → " + img.status);
+  const t = await avitoToken(env);
+  const base = "https://api.avito.ru/messenger/v1/accounts/" + env.AVITO_USER_ID;
+  const up = await fetch(base + "/uploadImages", { method: "POST", headers: { Authorization: "Bearer " + t }, body: avitoUploadForm(await img.arrayBuffer(), PLAN_IMAGES[key].file) });
+  const upRaw = await up.text(); let upJ = null; try { upJ = JSON.parse(upRaw); } catch (e) {}
+  const imageId = up.ok ? avitoImageId(upJ) : "";
+  if (!imageId) throw new Error("uploadImages " + up.status + ": " + upRaw.slice(0, 140));
+  const r = await fetch(base + "/chats/" + chatId + "/messages/image", { method: "POST", headers: { Authorization: "Bearer " + t, "Content-Type": "application/json" }, body: JSON.stringify({ image_id: imageId }) });
+  const raw = await r.text(); let j = null; try { j = JSON.parse(raw); } catch (e) {}
+  if (!r.ok || !j || !j.id) throw new Error("messages/image " + r.status + ": " + raw.slice(0, 140));
+  return j;
+}
+// GET /api/avito/plan-check — только загрузка одной картинки в Авито (никому не отправляется):
+// проверить, что аккаунт пускает картинки, не трогая клиентов. Только админ.
+async function avitoPlanCheck(env, auth) {
+  if (!auth.adm) return json({ success: false, error: "Только администратор" }, 403);
+  const img = await fetch(planUrl(env.PUBLIC_BASE_URL, "kd29-1"), { signal: AbortSignal.timeout(15000) });
+  if (!img.ok) return json({ success: false, error: "картинка с портала → " + img.status }, 502);
+  const t = await avitoToken(env);
+  const up = await fetch("https://api.avito.ru/messenger/v1/accounts/" + env.AVITO_USER_ID + "/uploadImages", { method: "POST", headers: { Authorization: "Bearer " + t }, body: avitoUploadForm(await img.arrayBuffer(), "kd29-1.jpg") });
+  const raw = await up.text(); let j = null; try { j = JSON.parse(raw); } catch (e) {}
+  const imageId = up.ok ? avitoImageId(j) : "";
+  return json({ success: !!imageId, status: up.status, imageId: imageId, body: imageId ? undefined : raw.slice(0, 300) }, imageId ? 200 : 502);
+}
+// Все картинки по очереди; ошибка одной не роняет остальные — итог словами для ветки Telegram.
+async function avitoSendPlans(env, chatId, keys) {
+  const bad = [];
+  for (const k of normPlans(keys)) { try { await avitoSendImage(env, chatId, k); } catch (e) { bad.push(PLAN_IMAGES[k].title + ": " + (e.message || e)); } }
+  return bad.length ? "\n⚠️ Планировка не ушла — " + bad.join("; ") : " + планировка 🖼";
+}
+// Превью планировок в ветке Telegram перед черновиком: одна — фото, несколько — альбом.
+async function tgPlanPreview(env, chatId, topicId, keys) {
+  const ks = normPlans(keys); if (!ks.length) return;
+  if (ks.length === 1) return salesTg(env, "sendPhoto", { chat_id: chatId, message_thread_id: topicId, photo: planUrl(env.PUBLIC_BASE_URL, ks[0]), caption: "🖼 К черновику: " + PLAN_IMAGES[ks[0]].title });
+  return salesTg(env, "sendMediaGroup", { chat_id: chatId, message_thread_id: topicId, media: ks.map(function (k, i) { return { type: "photo", media: planUrl(env.PUBLIC_BASE_URL, k), caption: i === 0 ? "🖼 К черновику: " + planTitles(ks) : undefined }; }) });
 }
 // Вебхук Avito: новое сообщение клиента → общий конвейер. Фильтруем свои/системные/не-текст.
 async function avitoWebhook(env, request) {
@@ -1842,6 +1893,11 @@ export default {
       if (!auth.adm) return json({success:false,error:"Forbidden"},403);
       try { return json(await salesSetup(env)); }
       catch (e) { return json({success:false,error:String(e)},500); }
+    }
+    // Avito: проверка загрузки картинок планировок (только админ, ничего не отправляет).
+    if (url.pathname === "/api/avito/plan-check" && request.method === "GET") {
+      try { return await avitoPlanCheck(env, auth); }
+      catch (err) { return json({ success: false, error: String(err && err.message || err) }, 500); }
     }
     // AI: база знаний нейропродавца с сайта kubrdom.ru (только админ).
     if (url.pathname === "/api/ai/site-knowledge" && request.method === "POST") {
