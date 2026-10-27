@@ -1,7 +1,7 @@
 # Нейропродавец: Avito → черновик в Telegram
 
 - Конвейер: вебхук Avito (`avitoWebhook`) → `aiProcessIncoming` → ветка клиента в группе sales-бота → `aiSellerReply` → черновик с кнопками «✅ Отправить / ✏️ Изменить» (или автоответ, если `settings.aiAutoSend` и ответ 🟢). Отправка в Avito — `avitoSend`.
-- Мозг выбирается тумблером «Модель ИИ» во вкладке Маркетинг (`settings.aiProvider`), Worker читает его в `aiProvider`, доступы — `aiResolve`.
+- Мозг выбирается тумблером «Модель ИИ» во вкладке Маркетинг (`settings.aiProvider`), Worker читает его в `aiProvider`, доступы — `aiResolve`. **В выборе только Claude Sonnet (по умолчанию), Claude Haiku и Kimi** (`AI_PROVIDERS` в admin.js и тот же список в `aiProvider`). DeepSeek/Yandex/GPT из выбора убраны по решению заказчика 27.10.2026; их ветки в `aiResolve` живы (Yandex нужен голосовому роботу через `voiceProvider`), но старое значение в настройках и панель, и Worker считают Sonnet.
 - **Claude — `aiProvider:"claude"`, модель `CLAUDE_SELLER_MODEL` (wrangler.toml, `claude-sonnet-5-5`).** Запрос собирает `src/claude-chat.js` (`claudeBody`/`claudeText`, сторожит `test-claude-chat`). Гочи Sonnet 5.5:
   - `temperature`/`top_p`/`top_k` не слать — 400 на любое недефолтное значение;
   - `thinking:{type:"disabled"}` — 400; мышление включено всегда и ест `max_tokens` вместе с ответом, поэтому пол 4000 (500, которых хватало DeepSeek, обрезали бы реплику); глубину держит `output_config.effort:"low"`;

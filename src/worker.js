@@ -1072,10 +1072,11 @@ async function avitoChats(env) {
 
 // ─── AI (нейропродавец, OpenAI-совместимый коннектор) ───────────────
 // Один и тот же код для DeepSeek/GigaChat/OpenAI/Qwen — отличается base_url+key+model.
-// Какой провайдер выбран в портале (settings.aiProvider): "deepseek" (по умолчанию) | "kimi" | "claude" | "claudehaiku" | ….
+// Какой провайдер выбран в портале (settings.aiProvider): "claude" (Sonnet, по умолчанию) | "claudehaiku" | "kimi".
+// Прочие (DeepSeek/Yandex/GPT) из выбора убраны: старое значение в настройках считаем Sonnet, как и панель.
 async function aiProvider(env) {
-  try { const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind("admin_panel", "settings").first(); if (row && row.data) { const s = JSON.parse(row.data); if (s && ["kimi", "claude", "claudehaiku", "gpt", "dsreasoner", "yandex", "yandexlite", "yandexpro"].indexOf(s.aiProvider) >= 0) return s.aiProvider; } } catch (e) {}
-  return "deepseek";
+  try { const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind("admin_panel", "settings").first(); if (row && row.data) { const s = JSON.parse(row.data); if (s && ["kimi", "claude", "claudehaiku"].indexOf(s.aiProvider) >= 0) return s.aiProvider; } } catch (e) {}
+  return "claude";   // в выборе портала только Claude (Sonnet/Haiku) и Kimi; без выбора — Sonnet
 }
 // Включён ли нейропродавец (мастер-выключатель settings.aiEnabled, по умолчанию вкл).
 async function aiEnabled(env) {
