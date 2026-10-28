@@ -7,6 +7,7 @@
 // честно (черновик ИИ — не ответ); /crm показывает только CRM со своей нижней панелью,
 // а ссылка из пуша открывает нужный диалог.
 import { webcrypto as crypto } from 'node:crypto'
+import fs from 'node:fs'
 import { boot, reporter } from './harness/panel-vm.js'
 import { b64u, unb64u, cleanSubscription, encryptPayload, vapidHeader, sendPush } from '../src/webpush.js'
 import { isCrmPath, chatDeepLink, chatFeed, feedTime } from '../src/crm-app.js'
@@ -142,6 +143,13 @@ function fakeDB() {
   t.ok('/admin, /crmx, / — нет', !isCrmPath('/admin') && !isCrmPath('/crmx') && !isCrmPath('/'))
   const u = new URL('https://portal.kubrdom.ru' + chatDeepLink('avito:u2i-AbC_1'))
   t.ok('ссылка из пуша несёт ключ диалога целиком', u.pathname === '/crm' && u.searchParams.get('go') === 'chat=avito:u2i-AbC_1')
+  // Область портала не должна накрывать /crm: иначе Android считает CRM «уже установленной»
+  // (это и есть иконка портала) и вторую иконку не ставит — так было со scope "/".
+  const man = (f) => JSON.parse(fs.readFileSync(new URL('../public/' + f, import.meta.url), 'utf8'))
+  const portal = man('manifest.webmanifest'), crm = man('crm.webmanifest')
+  const inScope = (scope, path) => path === scope || path.startsWith(scope.endsWith('/') ? scope : scope + '/') || path.startsWith(scope + '?') || path.startsWith(scope + '.')
+  t.ok('/crm вне области портала, /admin вне области CRM', !inScope(portal.scope, '/crm') && !inScope(crm.scope, '/admin') && portal.id !== crm.id)
+  t.ok('у каждого приложения старт внутри своей области', inScope(portal.scope, portal.start_url) && inScope(crm.scope, crm.start_url))
   t.ok('доступ к /api/push — как к CRM', routeAllowed({ permissions: ['crm'] }, '/api/push/subscribe') && routeAllowed({ permissions: ['marketing'] }, '/api/push/key') && !routeAllowed({ permissions: ['supply'] }, '/api/push/subscribe'))
 }
 
