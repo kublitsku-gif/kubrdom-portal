@@ -31,6 +31,7 @@ import { accessFor, permissionsFor, routeAllowed } from "./access.js";
 import { STATE_SECTIONS, emptySection, validateStateItems, MAX_STATE_BYTES } from "./state-schema.js";
 import { hashPin, checkPin, protectCredentials, credentialVersion } from "./credentials.js";
 import { commitState } from "./state-store.js";
+import { pushReady, pushSubscribe, pushUnsubscribe, pushToAll, avitoPushData } from "./push.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
@@ -1358,6 +1359,10 @@ async function aiProcessIncoming(env, opt) {
   if (opt.itemId) c.itemId = opt.itemId;
   c.messages.push({ role: "user", text: text, status: "in", ts: Date.now() });
   await aiSaveChats(env, chats);
+  // Пуш на телефоны CRM — сразу после записи (диалог уже открывается), не дожидаясь ИИ.
+  if (source === "avito") {
+    try { await notifyAvitoIncoming(env, clientKey, c.name, text); } catch (e) { console.error("push avito", String(e)); }
+  }
   if (source === "avito") {
     try { await upsertSalesCard(env, {id:clientKey,crmId:"avito-"+clientKey.slice(6),source:"avito",chatId:c.chatId||env.TG_SALES_CHAT_ID,topicId:c.topicId,name:c.name,phone:extractPhone(text),summary:text}); } catch(e) { console.error("sales card pending retry",String(e)); }
   }
@@ -1466,6 +1471,24 @@ async function aiWebhook(env, request) {
     }
   }
   return json({ ok: true });
+}
+
+// Кому слать пуши CRM: тем, у кого ЕЩЁ есть доступ к CRM. Подписка переживает
+// увольнение и отзыв прав, а переписка клиентов — не то, что должно приходить бывшим.
+async function pushAllowUid(env) {
+  const { users, rolePerms } = await loadUsersPerms(env);
+  return async function (uid) {
+    if (uid === "__master__") return true;
+    const u = users.find(function (x) { return x.id === uid; });
+    if (!u || u.disabled) return false;
+    const p = permissionsFor(u, rolePerms);
+    return (u.roles || []).includes("admin") || p.includes("crm") || p.includes("marketing");
+  };
+}
+async function notifyAvitoIncoming(env, key, name, text) {
+  if (!pushReady(env)) return;
+  const snap = await readSnapshot(env, ["crmClients"]);
+  await pushToAll(env, avitoPushData(key, name, text, snap.crmClients), await pushAllowUid(env));
 }
 
 // POST /api/ai/send {clientKey,text} — ответ клиенту из карточки CRM. Шлёт в Avito + лог + Telegram. Требует токен.
@@ -1933,6 +1956,26 @@ export default {
     if (url.pathname === "/api/ai/chats" && request.method === "GET") {
       try { return await aiChatsList(env); }
       catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+
+    // Пуш-уведомления CRM (с токеном): ключ VAPID, подписка телефона, проверка.
+    if (url.pathname === "/api/push/key" && request.method === "GET") {
+      return json({ success: pushReady(env), key: env.VAPID_PUBLIC_KEY || "" });
+    }
+    if (url.pathname === "/api/push/subscribe" && request.method === "POST") {
+      try { const out = await pushSubscribe(env, await request.json().catch(function () { return {}; }), auth); return json(out, out.success ? 200 : 400); }
+      catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+    if (url.pathname === "/api/push/unsubscribe" && request.method === "POST") {
+      try { const out = await pushUnsubscribe(env, await request.json().catch(function () { return {}; })); return json(out, out.success ? 200 : 400); }
+      catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+    if (url.pathname === "/api/push/test" && request.method === "POST") {
+      try {
+        const out = await pushToAll(env, { title: "🔔 КубрДом CRM", body: "Уведомления работают — так придёт новое сообщение с Авито.", tag: "push-test", url: "/crm" },
+          async function (uid) { return uid === auth.uid; });
+        return json({ success: out.sent > 0, ...out });
+      } catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
 
     // Голосовой робот: старт исходящего звонка (с токеном).

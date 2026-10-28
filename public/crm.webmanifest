@@ -1,0 +1,17 @@
+{
+  "id": "/crm",
+  "name": "КубрДом CRM",
+  "short_name": "CRM КубрДом",
+  "description": "CRM КубрДом: клиенты, воронка и переписка с Авито.",
+  "start_url": "/crm",
+  "scope": "/crm",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#eef3f8",
+  "theme_color": "#2980b9",
+  "icons": [
+    { "src": "/kubrdom-crm-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/kubrdom-crm-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/kubrdom-crm-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -21,6 +21,9 @@ bucket_name = "kubrdom-files"
 crons = ["*/5 * * * *", "0 6 * * *", "0 16,17,18 * * *"]
 
 [vars]
+# Web Push (пуши CRM, src/push.js): публичный ключ VAPID. Приватный — секрет VAPID_PRIVATE_KEY (GitHub → deploy.yml).
+VAPID_PUBLIC_KEY = "BNrzdcPHM7sRcG_Agy3UmcVT2hvwj-MUwt0m9Glmgheu96Ks57chtOe-ru3w8_Fh-_QI9Ai-3uFugUHXPCPAhX8"
+VAPID_SUBJECT = "https://portal.kubrdom.ru"
 TG_CHAT_ID = "-1003606281018"
 AVITO_USER_ID = "401020763"
 # Telegram-бот клиентских диалогов (Avito) + группа с темами. Токен — секрет TG_SALES_BOT_TOKEN.

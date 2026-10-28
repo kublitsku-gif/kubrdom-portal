@@ -84,6 +84,8 @@ import { installInPageCamera } from "../src/camera.js";
 // Закрытие дня и штраф за незакрытый — общий модуль с напоминаниями (src/dayclose.js):
 // панель и крон ОБЯЗАНЫ считать «день закрыт» одинаково, иначе человек видит галочку,
 // а утром у него удерживают деньги. См. docs/domain/day-close.md.
+import { isCrmPath, chatFeed, feedTime } from "../src/crm-app.js";
+import { unb64u } from "../src/webpush.js";
 import { dayCloseState, dayFineCfg, underDayFine, fineSum, DAY_FINE_CAT, DAY_FINE_DEFAULT } from "../src/dayclose.js";
 
 const APP_BUILD = "2026-09-22.1";
@@ -3411,6 +3413,7 @@ function forcedPinPage(){
 }
 
 function _setInitialTab(){
+  if(isCrmApp()){ tab="crm"; return; }
   const _isAdmin=currentUser.roles.includes("admin");
   if(_isAdmin){ tab="assign"; return; }
   const r=currentUser.roles;
@@ -5010,6 +5013,9 @@ function page(){
   // iOS-style нижний таб-бар — быстрый доступ к 4 главным разделам.
   // Пункты фильтруются по доступным вкладкам (TABS), чтобы не показать недоступный роли раздел.
   const _accessible=new Set(TABS.map(function(t){return t[0];}));
+  // /crm — приложение только с CRM: без ленты вкладок, со своей нижней панелью.
+  const crmApp=isCrmApp(), crmAppOk=crmApp&&_accessible.has("crm");
+  if(crmAppOk) tab="crm";
   // Нижний бар — ВСЕМ, а не только админу: у сотрудника с пятью ролями вкладок восемь,
   // и нужный раздел уезжает за край карусели. Три слота человек выбирает сам, четвёртый —
   // «Ещё» с сеткой всех разделов, чтобы недоступного не осталось вовсе.
@@ -5076,7 +5082,7 @@ ${showPinChange?`<div style="background:#fff;border-bottom:1px solid #eef2f7;pad
     <button data-a="pin-change-save" style="width:100%;padding:10px;background:#27ae60;border:none;border-radius:9px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">Сохранить PIN</button>
   </div>
 </div>`:""}
-${topTabsVisible()?`<div id="hdr-tabs" style="background:linear-gradient(180deg,#fff 0%,#f8fafc 100%);border-bottom:1px solid #dde6f0;padding:8px 0;position:sticky;top:53px;z-index:49;box-shadow:0 2px 4px rgba(0,0,0,0.04)">
+${(!crmApp&&topTabsVisible())?`<div id="hdr-tabs" style="background:linear-gradient(180deg,#fff 0%,#f8fafc 100%);border-bottom:1px solid #dde6f0;padding:8px 0;position:sticky;top:53px;z-index:49;box-shadow:0 2px 4px rgba(0,0,0,0.04)">
   <div style="display:flex;overflow-x:auto;padding:0 10px;scrollbar-width:none;-webkit-overflow-scrolling:touch;gap:6px" id="tabs-scroll">
   ${TABS.filter(function(t){return _bottomPicked.indexOf(t[0])<0;}).map(([k,n],i)=>{
     const active=tab===k;
@@ -5096,11 +5102,11 @@ ${topTabsVisible()?`<div id="hdr-tabs" style="background:linear-gradient(180deg,
   ${TABS.length-_bottomPicked.length>4?`<div style="font-size:9px;color:#9aabbf;text-align:center;margin-top:4px;letter-spacing:0.5px">← смахни для других вкладок →</div>`:""}
 </div>`:""}
 <div id="tab-content" style="padding:14px">
-  ${tabContentHtml()}
+  ${crmApp&&!crmAppOk?crmNoAccessHtml():tabContentHtml()}
 </div>
 <div style="text-align:center;font-size:9px;color:#c0ccd8;padding:10px 0 16px">КубрДом · v${APP_BUILD}</div>
-${bottomBar}
-${moreSheet(ALL_TABS,_accessible,_bottomPicked)}
+${crmApp?(crmAppOk?crmAppBarHtml():""):bottomBar}
+${crmApp?"":moreSheet(ALL_TABS,_accessible,_bottomPicked)}
 </div>`;
 }
 
@@ -25601,13 +25607,19 @@ function crmEnsureChats(){
   crmChatsLoading=true;
   fetch(API_BASE+"/api/ai/chats",{headers:authHeaders()}).then(function(r){return r.json();}).then(function(j){
     crmChats=(j&&j.success)?(j.chats||{}):{}; crmChatsLoading=false;
+    crmAppBadge();
     if(crmAutoLinkAvito()) fl(); else render();
   }).catch(function(){ crmChats={}; crmChatsLoading=false; });
 }
 // Привязанный к клиенту Avito-диалог (по c.avitoKey).
 function crmChatFor(c){ return (c&&c.avitoKey&&crmChats&&crmChats[c.avitoKey])?crmChats[c.avitoKey]:null; }
-// Диалог не отвечён, если последнее сообщение — от клиента.
-function chatUnanswered(ch){ var m=ch&&ch.messages&&ch.messages[ch.messages.length-1]; return !!(m&&m.role==="user"); }
+// Диалог не отвечён, если последним писал клиент. Черновик ИИ клиенту не ушёл —
+// ответом он не считается (та же мера, что в ленте «Чаты», src/crm-app.js).
+function chatUnanswered(ch){
+  var ms=(ch&&ch.messages)||[];
+  for(var i=ms.length-1;i>=0;i--){ if(ms[i].status!=="draft") return ms[i].role==="user"; }
+  return false;
+}
 // Кол-во неотвеченных Avito-диалогов (для бейджа на вкладке CRM).
 function crmUnansweredCount(){ var n=0; if(crmChats)for(var k in crmChats){ var ch=crmChats[k]; if(ch&&ch.source==="avito"&&chatUnanswered(ch))n++; } return n; }
 // Фоновое обновление диалогов (для живого бейджа); не дёргаем render при наборе текста.
@@ -25615,13 +25627,191 @@ function crmPollBadge(){
   if(!_hydrated||!getToken())return;
   fetch(API_BASE+"/api/ai/chats",{headers:authHeaders()}).then(function(r){return r.json();}).then(function(j){
     if(!j||!j.success)return;
-    var before=crmUnansweredCount();
+    var before=crmUnansweredCount(), sigBefore=crmChatsSig();
     crmChats=j.chats||{};
     crmAutoLinkAvito();                  // новые Avito-диалоги → лиды (автосейв сохранит)
+    crmAppBadge();
     var ae=document.activeElement; var typing=ae&&(ae.tagName==="INPUT"||ae.tagName==="TEXTAREA");
-    if(!typing && crmUnansweredCount()!==before) render();
+    var inChats=tab==="crm"&&(crmView==="chats"||crmView==="chat");
+    if(!typing && (crmUnansweredCount()!==before || (inChats&&crmChatsSig()!==sigBefore))) render();
   }).catch(function(){});
 }
+// === CRM КАК ОТДЕЛЬНОЕ ПРИЛОЖЕНИЕ (/crm) ===
+// По адресу /crm панель открывается только с CRM: свой манифест и иконка (dist/crm.html
+// собирает tools/stamp-admin.mjs), снизу «Воронка / Чаты», лента переписки Авито и
+// пуши о новых сообщениях (public/sw.js, src/push.js). Логика ленты — src/crm-app.js.
+let crmChatKey=null;          // открытый диалог в ленте «Чаты»
+let crmBackView=null;         // куда вернуться из карточки клиента, открытой из диалога
+let crmPush={state:"unknown",busy:false};   // unknown | on | off | denied | unsupported
+function isCrmApp(){ try{ return isCrmPath(location.pathname); }catch(e){ return false; } }
+function crmChatsSig(){ var n=0; if(crmChats)for(var k in crmChats){ var ch=crmChats[k]; n+=(ch&&ch.messages?ch.messages.length:0); } return n; }
+// Счётчик на иконке приложения (Android показывает точку/число) — только в самом приложении.
+function crmAppBadge(){
+  if(!isCrmApp()) return;
+  try{ var n=crmUnansweredCount(); if(n&&navigator.setAppBadge)navigator.setAppBadge(n); else if(navigator.clearAppBadge)navigator.clearAppBadge(); }catch(e){}
+}
+function crmRefreshChats(){
+  return fetch(API_BASE+"/api/ai/chats",{headers:authHeaders()}).then(function(r){return r.json();}).then(function(j){
+    if(j&&j.success) crmChats=j.chats||{};
+    crmAppBadge();
+  }).catch(function(){});
+}
+// Реплики диалога пузырями — одни и те же в карточке клиента и в ленте «Чаты».
+function crmMsgsHtml(msgs, unans, withDraftBtn){
+  if(!msgs.length) return '<div style="font-size:11px;color:#9aabbf;text-align:center;padding:8px">Сообщений нет</div>';
+  return msgs.map(function(m,i){
+    var mine=m.role==="assistant", draft=mine&&m.status==="draft";
+    var who=!mine?"👤 Клиент":(draft?"🤖 Черновик ИИ — клиенту не ушёл":(m.auto?"🟢 Авто":(m.manual?"🙋 Вы":"🤖 ИИ")));
+    var hl=(!mine&&i===msgs.length-1&&unans);
+    var bg=draft?"#fffaf0":(mine?"#eef6f4":(hl?"#fff0f0":"#f4f7fb"));
+    var bd=draft?"border:1px dashed #e6a23c;":(hl?"border:1px solid #e74c3c55;":"");
+    var t=m.ts?'<span style="font-weight:500;margin-left:6px">'+feedTime(m.ts)+'</span>':"";
+    return '<div style="background:'+bg+';'+bd+'border-radius:9px;padding:7px 9px;margin-bottom:5px;'+(mine?"margin-left:20px":"margin-right:20px")+'">'+
+      '<div style="font-size:9px;color:#7a9aaa;font-weight:700;margin-bottom:2px">'+who+t+'</div>'+
+      '<div style="font-size:12.5px;color:#1a2a3a;line-height:1.4;white-space:pre-wrap">'+esc(m.text||"")+'</div>'+
+      (draft&&withDraftBtn?'<button data-a="crm-draft-use" data-i="'+i+'" style="margin-top:6px;padding:4px 10px;background:#fff;border:1px solid #e6a23c;border-radius:7px;cursor:pointer;font-size:11px;color:#b9762a;font-weight:700">✏️ Взять в ответ</button>':'')+
+    '</div>';
+  }).join("");
+}
+function crmStageChip(sid){
+  var s=CRM_STAGES.find(function(x){return x.id===sid;}); if(!s) return "";
+  return '<span style="font-size:9.5px;font-weight:700;color:'+s.color+';background:'+s.color+'18;border-radius:6px;padding:1px 6px;white-space:nowrap">'+esc(s.label)+'</span>';
+}
+// Включить/выключить пуши — кнопка в шапке ленты (только в приложении /crm).
+function crmPushBtnHtml(){
+  if(!isCrmApp()) return '<div style="font-size:11px;color:#7a9aaa;background:#f4f7fb;border-radius:9px;padding:8px 10px;margin-bottom:10px">🔔 Уведомления о новых сообщениях — в приложении CRM: откройте <b>portal.kubrdom.ru/crm</b> на телефоне и установите его.</div>';
+  var st=crmPush.state;
+  if(st==="unsupported") return '<div style="font-size:11px;color:#7a9aaa;margin-bottom:10px">🔕 Этот браузер не умеет уведомления. На Android откройте приложение из Chrome.</div>';
+  if(st==="denied") return '<div style="font-size:11px;color:#c0392b;background:#fff0f0;border-radius:9px;padding:8px 10px;margin-bottom:10px">🔕 Уведомления запрещены в настройках телефона: Настройки → Приложения → CRM КубрДом → Уведомления.</div>';
+  if(st==="on") return '<div style="display:flex;gap:6px;margin-bottom:10px">'+
+      '<div style="flex:1;font-size:11.5px;color:#27ae60;font-weight:700;background:#eefaf2;border-radius:9px;padding:8px 10px">🔔 Уведомления включены</div>'+
+      '<button data-a="crm-push-test" style="padding:6px 10px;background:#fff;border:1px solid #d0dae8;border-radius:9px;cursor:pointer;font-size:11px;color:#5a7a9a;font-weight:700">Проверить</button>'+
+      '<button data-a="crm-push-off" style="padding:6px 10px;background:#fff;border:1px solid #d0dae8;border-radius:9px;cursor:pointer;font-size:11px;color:#7a9aaa">Выкл</button>'+
+    '</div>';
+  return '<button data-a="crm-push-on" '+(crmPush.busy?"disabled":"")+' style="width:100%;margin-bottom:10px;padding:11px;background:#2980b9;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">'+(crmPush.busy?"⏳ Включаю…":"🔔 Включить уведомления о сообщениях")+'</button>';
+}
+function tCRMChats(){
+  var feed=chatFeed(crmChats||{}, crmClients);
+  var html='<div>'+
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'+
+      '<div><div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">💬 ПЕРЕПИСКА АВИТО</div>'+
+      '<div style="font-size:12px;color:#5a7a9a;margin-top:2px">'+feed.length+' диалогов · не отвечено: '+feed.filter(function(x){return x.unanswered;}).length+'</div></div>'+
+      '<button data-a="crm-chats-refresh" style="padding:6px 12px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;font-size:12px;color:#5a7a9a;font-weight:700">⟳</button>'+
+    '</div>'+crmPushBtnHtml();
+  if(crmChats===null) return html+'<div style="text-align:center;color:#9aabbf;font-size:12px;padding:30px">Загрузка…</div></div>';
+  if(!feed.length) return html+'<div style="text-align:center;color:#9aabbf;font-size:12px;padding:30px">Диалогов с Авито пока нет</div></div>';
+  feed.forEach(function(f){
+    html+='<div data-a="crm-chat-open" data-key="'+esc(f.key)+'" style="display:flex;gap:10px;align-items:flex-start;background:#fff;border:1px solid '+(f.unanswered?"#e74c3c55":"#e4ebf2")+';border-radius:12px;padding:10px 12px;margin-bottom:7px;cursor:pointer">'+
+      '<div style="width:36px;height:36px;border-radius:50%;background:'+(f.unanswered?"#fde8e8":"#eaf2fa")+';display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">👤</div>'+
+      '<div style="flex:1;min-width:0">'+
+        '<div style="display:flex;align-items:center;gap:6px">'+
+          '<span style="flex:1;min-width:0;font-size:13px;font-weight:'+(f.unanswered?800:600)+';color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name)+'</span>'+
+          '<span style="font-size:10.5px;color:'+(f.unanswered?"#e74c3c":"#9aabbf")+';font-weight:700;flex-shrink:0">'+feedTime(f.ts)+'</span>'+
+        '</div>'+
+        '<div style="font-size:12px;color:'+(f.unanswered?"#1a2a3a":"#7a8a9a")+';margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(f.unanswered?"":"Вы: ")+esc(f.text)+'</div>'+
+        '<div style="display:flex;gap:5px;margin-top:4px;align-items:center">'+crmStageChip(f.stage)+
+          (f.draft?'<span style="font-size:9.5px;font-weight:700;color:#b9762a;background:#fff4e0;border-radius:6px;padding:1px 6px">🤖 черновик</span>':'')+
+          (f.unanswered?'<span style="font-size:9.5px;font-weight:800;color:#e74c3c">● ждёт ответа</span>':'')+
+        '</div>'+
+      '</div>'+
+    '</div>';
+  });
+  return html+'</div>';
+}
+function tCRMChat(key){
+  var ch=crmChats&&crmChats[key];
+  var f=chatFeed(crmChats||{}, crmClients).find(function(x){return x.key===key;});
+  var back='<button data-a="crm-app-nav" data-v="chats" style="padding:6px 12px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;font-size:12px;color:#5a7a9a;font-weight:700">← Чаты</button>';
+  if(!ch||!f) return '<div>'+back+'<div style="text-align:center;color:#9aabbf;font-size:12px;padding:30px">'+(crmChats===null?"Загрузка…":"Диалог не найден")+'</div></div>';
+  return '<div>'+
+    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">'+back+
+      '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:800;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name)+'</div>'+
+      '<div style="margin-top:2px">'+crmStageChip(f.stage)+'</div></div>'+
+      (f.clientId?'<button data-a="crm-chat-card" data-cid="'+esc(f.clientId)+'" style="padding:6px 10px;background:#eaf2fa;border:none;border-radius:8px;cursor:pointer;font-size:11px;color:#2980b9;font-weight:700;white-space:nowrap">Карточка →</button>':'')+
+    '</div>'+
+    '<div id="crm-chat-msgs" style="margin-bottom:8px">'+crmMsgsHtml(ch.messages||[], f.unanswered, true)+'</div>'+
+    '<div style="position:sticky;bottom:calc(64px + env(safe-area-inset-bottom,0px));background:#f6f8fa;padding:6px 0">'+
+      '<textarea id="crm-reply-chat" placeholder="Ответить клиенту в Авито..." style="width:100%;padding:9px 11px;border-radius:10px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;height:64px;resize:vertical;margin-bottom:6px"></textarea>'+
+      '<button data-a="crm-send-avito" data-key="'+esc(key)+'" data-cid="chat" style="width:100%;padding:11px;background:#005bff;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">Отправить в Авито</button>'+
+    '</div>'+
+  '</div>';
+}
+// Нижняя панель приложения: «Воронка» и «Чаты» вместо ленты вкладок портала.
+function crmAppBarHtml(){
+  var onChats=crmView==="chats"||crmView==="chat";
+  var n=crmUnansweredCount();
+  function b(v,icon,label,on,badge){
+    return '<button data-a="crm-app-nav" data-v="'+v+'" style="flex:1;border:none;background:transparent;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 2px">'+
+      '<span style="position:relative;display:inline-flex;font-size:22px;line-height:1;filter:'+(on?"none":"grayscale(45%) opacity(0.7)")+'">'+icon+'</span>'+
+      (badge?'<span style="position:relative;height:0">'+navBadgeHtml(badge,"top:-30px;left:6px")+'</span>':'')+
+      '<span style="font-size:10.5px;font-weight:'+(on?700:500)+';color:'+(on?"#2980b9":"#8a97a6")+'">'+label+'</span></button>';
+  }
+  return '<div id="bottom-bar" style="position:fixed;left:0;right:0;bottom:0;z-index:60">'+
+    '<div style="max-width:480px;margin:0 auto;background:#fff;border-top:1px solid #e2e8f0;display:flex;padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px));box-shadow:0 -1px 10px rgba(13,27,46,0.06)">'+
+      b("funnel","🎯","Воронка",!onChats,0)+b("chats","💬","Чаты",onChats,n)+
+    '</div></div>';
+}
+function crmNoAccessHtml(){
+  return '<div style="text-align:center;padding:40px 16px"><div style="font-size:34px">🔒</div>'+
+    '<div style="font-size:14px;font-weight:700;color:#1a2a3a;margin-top:8px">Нет доступа к CRM</div>'+
+    '<div style="font-size:12px;color:#7a9aaa;margin-top:6px;line-height:1.5">Попросите администратора открыть вам раздел «CRM-клиенты» или работайте в <a href="/admin" style="color:#2980b9">полном портале</a>.</div></div>';
+}
+function crmOpenChat(key){
+  crmChatKey=key; crmView="chat"; tab="crm";
+  render();
+  setTimeout(function(){ try{ window.scrollTo(0,document.body.scrollHeight); }catch(e){} },0);
+}
+// Ссылка из пуша (/crm?go=chat%3D<key>) → открыть диалог в уже открытом окне.
+function crmOpenFromUrl(url){
+  try{
+    var go=new URL(url,location.origin).searchParams.get("go")||"";
+    if(go.indexOf("chat=")===0){ var key=go.slice(5); crmRefreshChats().then(function(){ crmOpenChat(key); }); }
+  }catch(e){}
+}
+function crmPushSupported(){ return typeof navigator!=="undefined"&&"serviceWorker" in navigator&&typeof window!=="undefined"&&"PushManager" in window&&"Notification" in window; }
+// Старт приложения: регистрируем service worker и узнаём, включены ли пуши на этом телефоне.
+function crmAppInit(){
+  if(!isCrmApp()||crmAppInit._on) return; crmAppInit._on=true;
+  if(!crmPushSupported()){ crmPush={state:"unsupported",busy:false}; return; }
+  navigator.serviceWorker.addEventListener("message",function(e){ if(e.data&&e.data.type==="crm-open") crmOpenFromUrl(e.data.url); });
+  document.addEventListener("visibilitychange",function(){ if(!document.hidden) crmPollBadge(); });
+  navigator.serviceWorker.register("/sw.js").then(function(reg){ return reg.pushManager.getSubscription(); }).then(function(sub){
+    if(Notification.permission==="denied") crmPush={state:"denied",busy:false};
+    else crmPush={state:sub?"on":"off",busy:false};
+    // Подписка жива в браузере — освежаем её на сервере (вдруг там удалена или сменился сотрудник).
+    if(sub) fetch(API_BASE+"/api/push/subscribe",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({subscription:sub.toJSON()})}).catch(function(){});
+    ui();
+  }).catch(function(e){ console.error("sw",e); crmPush={state:"unsupported",busy:false}; ui(); });
+}
+async function crmPushEnable(){
+  crmPush={state:crmPush.state,busy:true}; ui();
+  try{
+    var perm=await Notification.requestPermission();
+    if(perm!=="granted"){ crmPush={state:perm==="denied"?"denied":"off",busy:false}; ui(); return; }
+    var kj=await (await fetch(API_BASE+"/api/push/key",{headers:authHeaders()})).json();
+    if(!kj||!kj.success||!kj.key) throw new Error("уведомления ещё не настроены на сервере");
+    var reg=await navigator.serviceWorker.ready;
+    var sub=await reg.pushManager.getSubscription()||await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:unb64u(kj.key)});
+    var sj=await (await fetch(API_BASE+"/api/push/subscribe",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({subscription:sub.toJSON()})})).json();
+    if(!sj||!sj.success) throw new Error((sj&&sj.error)||"сервер не принял подписку");
+    crmPush={state:"on",busy:false};
+  }catch(e){
+    crmPush={state:"off",busy:false};
+    alert("Не удалось включить уведомления: "+((e&&e.message)||e));
+  }
+  ui();
+}
+async function crmPushDisable(){
+  try{
+    var reg=await navigator.serviceWorker.ready; var sub=await reg.pushManager.getSubscription();
+    if(sub){
+      await fetch(API_BASE+"/api/push/unsubscribe",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({endpoint:sub.endpoint})}).catch(function(){});
+      await sub.unsubscribe();
+    }
+  }catch(e){ console.error("push off",e); }
+  crmPush={state:"off",busy:false}; ui();
+}
+
 let crmNewClient={name:"",phone:"",msg:"",notes:""};
 
 const CRM_STAGES=[
@@ -25639,6 +25829,8 @@ function tCRM(){
   crmEnsureChats();   // подтянуть Avito-диалоги для подсветки/карточек
   if(crmView==="instruction") return tCRMInstruction();
   if(crmView==="client"&&crmOpenId) return tCRMClient(crmOpenId);
+  if(crmView==="chats") return tCRMChats();
+  if(crmView==="chat"&&crmChatKey) return tCRMChat(crmChatKey);
   return tCRMFunnel();
 }
 
@@ -25657,6 +25849,7 @@ function tCRMFunnel(){
       '<div style="font-size:12px;color:#5a7a9a;margin-top:2px">'+total+' клиентов в работе</div>'+
     '</div>'+
     '<div style="display:flex;gap:6px">'+
+      (isCrmApp()?'':'<button data-a="crm-app-nav" data-v="chats" style="position:relative;padding:6px 12px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;font-size:11px;color:#2980b9;font-weight:700">💬 Чаты'+(crmUnansweredCount()?' <span style="background:'+BADGE_RED+';color:#fff;border-radius:8px;padding:0 5px">'+crmUnansweredCount()+'</span>':'')+'</button>')+
       ((currentUser&&currentUser.roles&&currentUser.roles.includes("admin"))?'<button data-a="crm-select-toggle" style="padding:6px 12px;background:'+(crmSelectMode?"#e74c3c":"#fff")+';border:1px solid '+(crmSelectMode?"#e74c3c":"#d0dae8")+';border-radius:8px;cursor:pointer;font-size:11px;color:'+(crmSelectMode?"#fff":"#7a9aaa")+';font-weight:700">'+(crmSelectMode?"✕ Отмена":"☑ Выбрать")+'</button>':'')+
       '<button data-a="crm-add" style="padding:6px 12px;background:#2980b9;border:none;border-radius:8px;cursor:pointer;font-size:11px;color:#fff;font-weight:700">+ Клиент</button>'+
     '</div>'+
@@ -26002,15 +26195,7 @@ function tCRMClient(cid){
         '<button data-a="crm-unlink-avito" data-cid="'+c.id+'" style="padding:3px 9px;background:#fff;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;font-size:10px;color:#e74c3c;font-weight:700">Отвязать</button>'+
       '</div>'+
       '<div style="max-height:300px;overflow-y:auto;margin-bottom:8px">'+
-        (_msgs.length?_msgs.map(function(m){
-          var mine=m.role==="assistant";
-          var who=!mine?"👤 Клиент":(m.auto?"🟢 Авто":(m.manual?"🙋 Вы":"🤖 ИИ"));
-          var hl=(!mine&&m===_msgs[_msgs.length-1]&&_unans);
-          return '<div style="background:'+(mine?"#eef6f4":(hl?"#fff0f0":"#f4f7fb"))+';'+(hl?"border:1px solid #e74c3c55;":"")+'border-radius:9px;padding:7px 9px;margin-bottom:5px;'+(mine?"margin-left:20px":"margin-right:20px")+'">'+
-            '<div style="font-size:9px;color:#7a9aaa;font-weight:700;margin-bottom:2px">'+who+'</div>'+
-            '<div style="font-size:12px;color:#1a2a3a;line-height:1.4;white-space:pre-wrap">'+esc(m.text||"")+'</div>'+
-          '</div>';
-        }).join(""):'<div style="font-size:11px;color:#9aabbf;text-align:center;padding:8px">Сообщений нет</div>')+
+        crmMsgsHtml(_msgs,_unans,false)+
       '</div>'+
       '<textarea id="crm-reply-'+c.id+'" placeholder="Ответить клиенту в Avito..." style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;height:58px;resize:vertical;margin-bottom:6px"></textarea>'+
       '<button data-a="crm-send-avito" data-key="'+esc(c.avitoKey||"")+'" data-cid="'+c.id+'" style="width:100%;padding:9px;background:#005bff;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Отправить клиенту в Avito</button>'+
@@ -30660,8 +30845,36 @@ function bind(){
       catch(e){ alert("Ошибка: "+((e&&e.message)||e)); }
       try{ const r2=await fetch(API_BASE+"/api/ai/chats",{headers:authHeaders()}); const j2=await r2.json(); crmChats=(j2&&j2.success)?(j2.chats||{}):crmChats; }catch(e){}
       render();
+      if(cid==="chat") setTimeout(function(){ try{ window.scrollTo(0,document.body.scrollHeight); }catch(e){} },0);
+    };}
+    else if(a==="crm-app-nav"){el.onclick=()=>{
+      crmView=el.dataset.v==="chats"?"chats":"funnel"; crmOpenId=null; crmChatKey=null; crmBackView=null;
+      if(crmView==="chats") crmRefreshChats().then(function(){ if(crmView==="chats")render(); });
+      render(); try{window.scrollTo(0,0);}catch(e){}
+    };}
+    else if(a==="crm-chat-open"){el.onclick=()=>{ crmOpenChat(el.dataset.key); };}
+    else if(a==="crm-chat-card"){el.onclick=()=>{
+      crmBackView=crmChatKey; crmOpenId=el.dataset.cid; crmView="client"; crmStagePickerOpen=false;
+      render(); try{window.scrollTo(0,0);}catch(e){}
+    };}
+    else if(a==="crm-chats-refresh"){el.onclick=()=>{ el.textContent="⏳"; crmRefreshChats().then(function(){ if(crmAutoLinkAvito())fl(); else render(); }); };}
+    else if(a==="crm-draft-use"){el.onclick=()=>{
+      const ch=crmChats&&crmChats[crmChatKey]; const m=ch&&(ch.messages||[])[+el.dataset.i];
+      const ta=document.getElementById("crm-reply-chat"); if(!m||!ta)return;
+      ta.value=m.text||""; try{ta.focus();}catch(e){}
+    };}
+    else if(a==="crm-push-on"){el.onclick=()=>{ crmPushEnable(); };}
+    else if(a==="crm-push-off"){el.onclick=()=>{ crmPushDisable(); };}
+    else if(a==="crm-push-test"){el.onclick=async()=>{
+      el.textContent="⏳";
+      try{ const j=await (await fetch(API_BASE+"/api/push/test",{method:"POST",headers:authHeaders()})).json();
+        if(!(j&&j.success)) alert("Тестовое уведомление не ушло"+(j&&j.error?": "+j.error:". Выключите и включите уведомления заново.")); }
+      catch(e){ alert("Нет связи с сервером"); }
+      el.textContent="Проверить";
     };}
     else if(a==="crm-back"){el.onclick=()=>{
+      // Карточку открыли из диалога — туда и возвращаемся.
+      if(crmBackView){ const k=crmBackView; crmBackView=null; crmOpenId=null; crmOpenChat(k); return; }
       crmView="funnel";
       crmOpenId=null;
       render();
@@ -32371,6 +32584,7 @@ function _startLoops(){
   setInterval(apiSave, 2500);
   setInterval(pollOnce, POLL_MS);
   crmEnsureChats(); setInterval(crmPollBadge, 45000);   // счётчик неотвеченных CRM
+  crmAppInit();                                         // /crm: service worker и пуши
   document.addEventListener("visibilitychange", function(){ if (!document.hidden) pollOnce(); });
 }
 
@@ -32393,6 +32607,7 @@ function applyDeepLink(){
     history.replaceState(null,"",location.pathname+(rest?"?"+rest:""));
     if(q.obj&&objects.some(function(o){return o.id===q.obj;})){ tab="assign"; openObject=q.obj; }
     else if(q.tab) tab=q.tab;
+    if(q.chat){ tab="crm"; crmView="chat"; crmChatKey=q.chat; }
     if(q.view&&["works","money","receive"].indexOf(q.view)>=0) objWorkView=q.view;
   }catch(e){}
 }
