@@ -1,9 +1,9 @@
 {
-  "id": "/crm",
+  "id": "/crm?app=1",
   "name": "КубрДом CRM",
   "short_name": "CRM КубрДом",
   "description": "CRM КубрДом: клиенты, воронка и переписка с Авито.",
-  "start_url": "/crm",
+  "start_url": "/crm?app=1",
   "scope": "/crm",
   "display": "standalone",
   "orientation": "portrait",
