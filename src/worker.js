@@ -32,6 +32,7 @@ import { STATE_SECTIONS, emptySection, validateStateItems, MAX_STATE_BYTES } fro
 import { hashPin, checkPin, protectCredentials, credentialVersion } from "./credentials.js";
 import { commitState } from "./state-store.js";
 import { pushReady, pushSubscribe, pushUnsubscribe, pushToAll, avitoPushData } from "./push.js";
+import { avitoImageUrl, avitoChatInfo, waitReminders, dueReminders, waitLabel, chatDeepLink, clientDeepLink } from "./crm-app.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
@@ -1357,14 +1358,32 @@ async function aiProcessIncoming(env, opt) {
   c.source = source;
   if (opt.avitoChatId) c.avitoChatId = opt.avitoChatId;
   if (opt.itemId) c.itemId = opt.itemId;
-  c.messages.push({ role: "user", text: text, status: "in", ts: Date.now() });
+  const image = opt.image ? String(opt.image) : "";
+  c.messages.push(image ? { role: "user", text: text, image: image, status: "in", ts: Date.now() } : { role: "user", text: text, status: "in", ts: Date.now() });
+  c.archived = false;                       // клиент написал снова — диалог возвращается из архива
+  // Объявление и настоящее имя клиента — один раз, best-effort (без них диалог всё равно живёт).
+  if (source === "avito" && c.avitoChatId && !c.item) {
+    try {
+      const info = await avitoChatMeta(env, c.avitoChatId);
+      if (info.item) c.item = info.item;
+      if (info.userName && /^Avito · /.test(c.name || "")) c.name = info.userName;
+    } catch (e) { console.error("avito chat info", String(e)); }
+  }
   await aiSaveChats(env, chats);
+  // Спам: сообщение сохранено, но ни пуша, ни Telegram, ни ИИ.
+  if (c.spam) return { success: true, spam: true };
   // Пуш на телефоны CRM — сразу после записи (диалог уже открывается), не дожидаясь ИИ.
   if (source === "avito") {
     try { await notifyAvitoIncoming(env, clientKey, c.name, text); } catch (e) { console.error("push avito", String(e)); }
   }
   if (source === "avito") {
     try { await upsertSalesCard(env, {id:clientKey,crmId:"avito-"+clientKey.slice(6),source:"avito",chatId:c.chatId||env.TG_SALES_CHAT_ID,topicId:c.topicId,name:c.name,phone:extractPhone(text),summary:text}); } catch(e) { console.error("sales card pending retry",String(e)); }
+  }
+  if (image) {
+    // Фото клиента: показать в ветке и ждать человека — ИИ по картинке ответить не может.
+    try { await salesTg(env, "sendPhoto", { chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, photo: image, caption: "👤 Клиент прислал фото" }); } catch (e) {}
+    c.updatedAt = Date.now(); await aiSaveChats(env, chats);
+    return { success: true, image: true };
   }
   await salesTg(env, "sendMessage", { chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "👤 Клиент:\n" + text });
   // Мастер-выключатель: нейропродавец на паузе — лид сохранён, но ИИ не отвечает (ответ вручную).
@@ -1518,6 +1537,130 @@ async function aiChatsList(env) {
   return json({ success: true, chats });
 }
 
+// ─── CRM-приложение: работа с диалогом из телефона ───
+// Объявление и имя клиента из карточки чата Авито.
+async function avitoChatMeta(env, chatId) {
+  const t = await avitoToken(env);
+  const r = await fetch("https://api.avito.ru/messenger/v2/accounts/" + env.AVITO_USER_ID + "/chats/" + encodeURIComponent(chatId), { headers: { Authorization: "Bearer " + t }, signal: AbortSignal.timeout(10000) });
+  if (!r.ok) throw new Error("chat " + r.status);
+  return avitoChatInfo(await r.json(), env.AVITO_USER_ID);
+}
+// POST /api/ai/chat-info {clientKey} — подтянуть объявление для старого диалога.
+async function aiChatInfo(env, request) {
+  const body = await request.json().catch(function () { return {}; });
+  const key = String(body.clientKey || "");
+  const chats = await aiLoadChats(env);
+  const c = chats[key];
+  if (!c || !c.avitoChatId) return json({ success: false, error: "chat not found" }, 404);
+  const info = await avitoChatMeta(env, c.avitoChatId);
+  c.item = info.item || { title: "", price: "", url: "", img: "" };   // пустое — чтобы не спрашивать снова
+  if (info.userName && /^Avito · /.test(c.name || "")) c.name = info.userName;
+  await aiSaveChats(env, chats);
+  return json({ success: true, item: c.item, name: c.name });
+}
+// POST /api/ai/redraft {clientKey, idx, hint} — переписать черновик ИИ по указанию человека.
+async function aiRedraft(env, request) {
+  const body = await request.json().catch(function () { return {}; });
+  const key = String(body.clientKey || ""), idx = Number(body.idx);
+  const hint = String(body.hint || "").trim().slice(0, 300);
+  if (!hint) return json({ success: false, error: "Скажите, как переписать" }, 400);
+  const chats = await aiLoadChats(env);
+  const c = chats[key];
+  const d = c && c.messages && c.messages[idx];
+  if (!d || d.role !== "assistant" || d.status !== "draft") return json({ success: false, error: "Черновик не найден" }, 404);
+  const history = c.messages.slice(0, idx).filter(function (m) { return (m.role === "user" || m.role === "assistant") && m.status !== "draft"; }).slice(-12)
+    .map(function (m) { return { role: m.role === "assistant" ? "assistant" : "user", content: m.text }; });
+  history.push({ role: "user", content: "[Система] Твой черновик ответа клиенту: «" + d.text + "». Менеджер просит переписать его: " + hint + ". Верни новый вариант ответа клиенту." });
+  const ai = await aiSellerReply(env, history, { itemId: c.itemId });
+  c.messages[idx] = Object.assign({}, d, { text: ai.reply, needsApproval: ai.needsApproval, plans: ai.plans, rewritten: (d.rewritten || 0) + 1, ts: Date.now() });
+  await aiSaveChats(env, chats);
+  return json({ success: true, reply: ai.reply });
+}
+// Записать исходящую картинку в диалог и в ветку Telegram.
+async function aiLogOutImage(env, key, text, image) {
+  const chats = await aiLoadChats(env);
+  const c = chats[key]; if (!c) return;
+  c.messages.push({ role: "assistant", text: text, image: image, status: "sent", manual: true, ts: Date.now() });
+  c.updatedAt = Date.now();
+  await aiSaveChats(env, chats);
+  if (c.topicId) { try { await salesTg(env, "sendPhoto", { chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, photo: image.indexOf("/") === 0 ? String(env.PUBLIC_BASE_URL || "https://portal.kubrdom.ru").replace(/\/+$/, "") + image : image, caption: "✅ Из CRM клиенту: " + text }); } catch (e) {} }
+}
+// POST /api/ai/send-plan {clientKey, key} — планировка из каталога картинок в чат Авито.
+async function aiSendPlan(env, request) {
+  const body = await request.json().catch(function () { return {}; });
+  const key = String(body.clientKey || ""), plan = String(body.key || "");
+  if (!PLAN_IMAGES[plan]) return json({ success: false, error: "Нет такой планировки" }, 400);
+  const chats = await aiLoadChats(env);
+  const c = chats[key];
+  if (!c || !c.avitoChatId) return json({ success: false, error: "Это не чат Авито" }, 404);
+  await avitoSendImage(env, c.avitoChatId, plan);
+  await aiLogOutImage(env, key, "🖼 " + PLAN_IMAGES[plan].title, "/plans/" + PLAN_IMAGES[plan].file);
+  return json({ success: true });
+}
+// POST /api/ai/send-photo {clientKey, key} — фото, уже загруженное в R2 (/api/file), в чат Авито.
+async function aiSendPhoto(env, request) {
+  const body = await request.json().catch(function () { return {}; });
+  const key = String(body.clientKey || ""), file = String(body.key || "");
+  if (!/^plans\/[0-9a-f-]{36}\.(jpe?g|png|webp)$/.test(file)) return json({ success: false, error: "Нужна картинка jpg/png/webp" }, 400);
+  const chats = await aiLoadChats(env);
+  const c = chats[key];
+  if (!c || !c.avitoChatId) return json({ success: false, error: "Это не чат Авито" }, 404);
+  const obj = env.FILES ? await env.FILES.get(file) : null;
+  if (!obj) return json({ success: false, error: "Файл не найден" }, 404);
+  const t = await avitoToken(env);
+  const base = "https://api.avito.ru/messenger/v1/accounts/" + env.AVITO_USER_ID;
+  const up = await fetch(base + "/uploadImages", { method: "POST", headers: { Authorization: "Bearer " + t }, body: avitoUploadForm(await obj.arrayBuffer(), file.split("/").pop()) });
+  const upRaw = await up.text(); let upJ = null; try { upJ = JSON.parse(upRaw); } catch (e) {}
+  const imageId = up.ok ? avitoImageId(upJ) : "";
+  if (!imageId) return json({ success: false, error: "Авито не принял фото: " + up.status }, 502);
+  const r = await fetch(base + "/chats/" + c.avitoChatId + "/messages/image", { method: "POST", headers: { Authorization: "Bearer " + t, "Content-Type": "application/json" }, body: JSON.stringify({ image_id: imageId }) });
+  if (!r.ok) return json({ success: false, error: "Авито не отправил фото: " + r.status }, 502);
+  await aiLogOutImage(env, key, "📷 Фото", "/api/file/" + file);
+  return json({ success: true });
+}
+// POST /api/ai/chat-flag {clientKey, archived?, spam?} — убрать диалог в архив / пометить спамом.
+async function aiChatFlag(env, request) {
+  const body = await request.json().catch(function () { return {}; });
+  const key = String(body.clientKey || "");
+  const chats = await aiLoadChats(env);
+  const c = chats[key];
+  if (!c) return json({ success: false, error: "chat not found" }, 404);
+  if (typeof body.archived === "boolean") c.archived = body.archived;
+  if (typeof body.spam === "boolean") c.spam = body.spam;
+  await aiSaveChats(env, chats);
+  return json({ success: true, archived: !!c.archived, spam: !!c.spam });
+}
+
+// Раз в 5 минут: «клиент ждёт ответа N мин» и напоминания «перезвонить» из карточек.
+// Отметки, о чём уже напомнили, — отдельной строкой (не в aiChats: её пишет вебхук,
+// и запись по крону могла бы затереть только что пришедшее сообщение).
+const CRM_MARKS = { storage: "crm_marks", id: "push" };
+async function crmTick(env) {
+  if (!pushReady(env)) return;
+  const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind(CRM_MARKS.storage, CRM_MARKS.id).first();
+  let marks = {}; try { marks = row && row.data ? JSON.parse(row.data) || {} : {}; } catch (e) {}
+  const now = Date.now();
+  const mskHour = (new Date(now).getUTCHours() + 3) % 24;
+  const chats = await aiLoadChats(env);
+  const snap = await readSnapshot(env, ["crmClients"]);
+  const clients = Array.isArray(snap.crmClients) ? snap.crmClients : [];
+  const waits = waitReminders(chats, marks, now, mskHour);
+  const due = dueReminders(clients, marks, now);
+  if (!waits.length && !due.length) return;
+  const allow = await pushAllowUid(env);
+  for (const w of waits) {
+    const cl = clients.find(function (x) { return x && x.avitoKey === w.key; });
+    await pushToAll(env, { title: "⏰ Ждёт ответа " + waitLabel(w.waited) + ": " + ((cl && cl.name) || chats[w.key].name || "клиент Авито"), body: "Клиент в Авито ещё без ответа", tag: "wait:" + w.key, url: chatDeepLink(w.key) }, allow);
+    marks[w.key] = w.since;
+  }
+  for (const c of due) {
+    await pushToAll(env, { title: "📞 Напоминание: " + (c.name || "клиент"), body: String(c.remindNote || "Связаться с клиентом").slice(0, 160), tag: "remind:" + c.id, url: clientDeepLink(c.id) }, allow);
+    marks["r:" + c.id] = Number(c.remindAt);
+  }
+  await env.DB.prepare("INSERT INTO work_states (storage_key, work_id, data, updated_at) VALUES (?,?,?,?) ON CONFLICT(storage_key, work_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at")
+    .bind(CRM_MARKS.storage, CRM_MARKS.id, JSON.stringify(marks), now).run();
+}
+
 // POST /api/ai/test-chat {history:[{role,content}]} — песочница диалога (вы клиент, отвечает ИИ).
 // Ничего не сохраняет и не шлёт — только ответ по текущей инструкции. Требует токен.
 async function aiTestChat(env, request) {
@@ -1611,11 +1754,12 @@ async function avitoWebhook(env, request) {
   const upd = await request.json().catch(function () { return {}; });
   const v = upd && upd.payload && upd.payload.value;
   if (!v || (upd.payload.type && upd.payload.type !== "message")) return json({ ok: true });
-  if (v.type && v.type !== "text") return json({ ok: true });
+  if (v.type && v.type !== "text" && v.type !== "image") return json({ ok: true });
   if (String(v.author_id) === String(env.AVITO_USER_ID)) return json({ ok: true });  // наше исходящее — игнор
-  const text = (v.content && v.content.text) || "";
+  const image = v.type === "image" ? avitoImageUrl(v.content) : "";
+  const text = image ? "📷 Фото" : ((v.content && v.content.text) || "");
   if (!text) return json({ ok: true });
-  await aiProcessIncoming(env, { clientKey: "avito:" + v.chat_id, clientName: "Avito · " + (v.author_id || v.chat_id), text: text, source: "avito", avitoChatId: v.chat_id, itemId: v.item_id });
+  await aiProcessIncoming(env, { clientKey: "avito:" + v.chat_id, clientName: "Avito · " + (v.author_id || v.chat_id), text: text, image: image, source: "avito", avitoChatId: v.chat_id, itemId: v.item_id });
   return json({ ok: true });
 }
 
@@ -1728,7 +1872,11 @@ async function getPrice(url){
 
 export default {
   async scheduled(event, env, ctx) {
-    if (event.cron === "*/5 * * * *") { ctx.waitUntil((async()=>{await deliverWebsiteLeads(env);await salesTick(env);})().catch(e=>console.error("sales tick",String(e)))); return; }
+    if (event.cron === "*/5 * * * *") {
+      ctx.waitUntil((async()=>{await deliverWebsiteLeads(env);await salesTick(env);})().catch(e=>console.error("sales tick",String(e))));
+      ctx.waitUntil(crmTick(env).catch(e=>console.error("crm tick",String(e))));
+      return;
+    }
     // 0 6 — 09:00 МСК (дожим клиентов, утренние напоминания, удержание за вчерашний
     // незакрытый день), 0 16 — 19:00 («закройте день» + часы), 0 17 — 20:00 (сводка дня),
     // 0 18 — 21:00 (последнее предупреждение по незакрытому дню). Расписание — в wrangler.toml.
@@ -1956,6 +2104,12 @@ export default {
     if (url.pathname === "/api/ai/chats" && request.method === "GET") {
       try { return await aiChatsList(env); }
       catch (err) { return json({ success: false, error: String(err) }, 500); }
+    }
+    // CRM-приложение: объявление, переписать черновик, фото/планировка, архив/спам (с токеном).
+    const CRM_CHAT_ROUTES = { "/api/ai/chat-info": aiChatInfo, "/api/ai/redraft": aiRedraft, "/api/ai/send-plan": aiSendPlan, "/api/ai/send-photo": aiSendPhoto, "/api/ai/chat-flag": aiChatFlag };
+    if (CRM_CHAT_ROUTES[url.pathname] && request.method === "POST") {
+      try { return await CRM_CHAT_ROUTES[url.pathname](env, request); }
+      catch (err) { return json({ success: false, error: String(err && err.message || err) }, 500); }
     }
 
     // Пуш-уведомления CRM (с токеном): ключ VAPID, подписка телефона, проверка.

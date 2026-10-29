@@ -84,7 +84,8 @@ import { installInPageCamera } from "../src/camera.js";
 // Закрытие дня и штраф за незакрытый — общий модуль с напоминаниями (src/dayclose.js):
 // панель и крон ОБЯЗАНЫ считать «день закрыт» одинаково, иначе человек видит галочку,
 // а утром у него удерживают деньги. См. docs/domain/day-close.md.
-import { isCrmPath, chatFeed, feedTime, draftKinds } from "../src/crm-app.js";
+import { isCrmPath, chatFeed, feedTime, draftKinds, FEED_MODES, filterFeed, WAIT_ALERT_MIN, waitLabel, todayReminders, safeImageUrl, quickReplies, REDRAFT_HINTS, salesSummary } from "../src/crm-app.js";
+import { PLAN_IMAGES } from "../src/plan-images.js";
 import { unb64u } from "../src/webpush.js";
 import { dayCloseState, dayFineCfg, underDayFine, fineSum, DAY_FINE_CAT, DAY_FINE_DEFAULT } from "../src/dayclose.js";
 
@@ -25585,6 +25586,12 @@ function crmAutoLinkAvito(){
     else { var np=normPhone(x.phone); if(np && !byPhone[np]) byPhone[np]=x.id; }   // кандидаты для матча — без привязки
   });
   var changed=false; var today=todayISO();
+  // Номер, который клиент написал в чате, — в привязанную карточку без телефона.
+  crmClients=crmClients.map(function(x){
+    if(!x.avitoKey||normPhone(x.phone)||!crmChats[x.avitoKey]) return x;
+    var ph=extractPhoneFromChat(crmChats[x.avitoKey]); if(!ph) return x;
+    changed=true; return Object.assign({},x,{phone:"+7"+ph});
+  });
   Object.keys(crmChats).forEach(function(k){
     var ch=crmChats[k]; if(!ch||ch.source!=="avito"||linked[k]) return;
     var phone=extractPhoneFromChat(ch);
@@ -25643,6 +25650,17 @@ function crmPollBadge(){
 let crmChatKey=null;          // открытый диалог в ленте «Чаты»
 let crmBackView=null;         // куда вернуться из карточки клиента, открытой из диалога
 let crmPush={state:"unknown",busy:false};   // unknown | on | off | denied | unsupported
+// Экранное состояние ленты и диалога (в снимок не идёт — перерисовка через ui()).
+let crmFeedMode="all";        // all | wait | draft | archive (FEED_MODES)
+let crmFeedStage=null;        // фильтр ленты по стадии воронки
+let crmFeedQ="";              // поиск по ленте
+let crmSwipeKey=null;         // строка ленты с открытыми действиями (свайп влево)
+let crmSwipeStage=false;      // в открытых действиях — выбор стадии
+let crmRedraftIdx=null;       // черновик, для которого открыт «Переписать»
+let crmBusy="";               // идёт запрос: "redraft" | "photo" | "plan"
+let crmPlanPicker=false;      // выбор планировки для отправки
+let crmQuickEdit=false;       // правка списка быстрых ответов
+const crmInfoAsked={};        // по каким диалогам уже спрашивали объявление
 function isCrmApp(){ try{ return isCrmPath(location.pathname); }catch(e){ return false; } }
 function crmChatsSig(){ var n=0; if(crmChats)for(var k in crmChats){ var ch=crmChats[k]; n+=(ch&&ch.messages?ch.messages.length:0); } return n; }
 // Счётчик на иконке приложения (Android показывает точку/число) — только в самом приложении.
@@ -25663,11 +25681,12 @@ function crmMsgTimeHtml(m){ return m.ts?'<span style="font-weight:500;margin-lef
 function crmDraftCardHtml(m,i,withBtns){
   var tag=m.needsApproval?'<span style="background:#fde2c4;color:#a0521a;border-radius:6px;padding:1px 6px;margin-left:6px">🟠 нужно одобрение</span>':'';
   return '<div style="background:#fff7d6;border:2px solid #f0b429;border-radius:12px;padding:9px 11px;margin:10px 0 6px;box-shadow:0 2px 8px rgba(240,180,41,0.18)">'+
-    '<div style="font-size:10px;color:#8a5a00;font-weight:800;letter-spacing:.4px;margin-bottom:4px">🤖 ИИ ПРЕДЛАГАЕТ ОТВЕТ · НЕ ОТПРАВЛЕНО'+tag+crmMsgTimeHtml(m)+'</div>'+
+    '<div style="font-size:10px;color:#8a5a00;font-weight:800;letter-spacing:.4px;margin-bottom:4px">🤖 ИИ ПРЕДЛАГАЕТ ОТВЕТ · НЕ ОТПРАВЛЕНО'+tag+(m.rewritten?'<span style="margin-left:6px;font-weight:600">переписан</span>':'')+crmMsgTimeHtml(m)+'</div>'+
     '<div style="font-size:12.5px;color:#4a3a10;line-height:1.4;white-space:pre-wrap;font-style:italic">'+esc(m.text||"")+'</div>'+
     (withBtns?'<div style="display:flex;gap:6px;margin-top:8px">'+
       '<button data-a="crm-draft-send" data-i="'+i+'" style="flex:1;padding:8px;background:#005bff;border:none;border-radius:8px;cursor:pointer;font-size:12px;color:#fff;font-weight:700">📤 Отправить как есть</button>'+
-      '<button data-a="crm-draft-use" data-i="'+i+'" style="flex:1;padding:8px;background:#fff;border:1px solid #f0b429;border-radius:8px;cursor:pointer;font-size:12px;color:#8a5a00;font-weight:700">✏️ Править</button>'+
+      '<button data-a="crm-draft-use" data-i="'+i+'" style="padding:8px 10px;background:#fff;border:1px solid #f0b429;border-radius:8px;cursor:pointer;font-size:12px;color:#8a5a00;font-weight:700">✏️ Править</button>'+
+      '<button data-a="crm-redraft" data-i="'+i+'" style="padding:8px 10px;background:'+(crmRedraftIdx===i?"#f0b429":"#fff")+';border:1px solid #f0b429;border-radius:8px;cursor:pointer;font-size:12px;color:'+(crmRedraftIdx===i?"#fff":"#8a5a00")+';font-weight:700">🔄 ИИ</button>'+
     '</div>':'<div style="font-size:10.5px;color:#8a5a00;margin-top:6px">Отправить или поправить — в «💬 Чатах».</div>')+
   '</div>';
 }
@@ -25686,9 +25705,15 @@ function crmMsgsHtml(msgs, unans, withDraftBtn){
     var bd=failed?"border:1px dashed #e74c3c;":(hl?"border:1px solid #e74c3c55;":"");
     return '<div style="background:'+bg+';'+bd+'border-radius:9px;padding:7px 9px;margin-bottom:5px;'+(mine?"margin-left:20px":"margin-right:20px")+'">'+
       '<div style="font-size:9px;color:'+(failed?"#c0392b":"#7a9aaa")+';font-weight:700;margin-bottom:2px">'+who+crmMsgTimeHtml(m)+'</div>'+
-      '<div style="font-size:12.5px;color:#1a2a3a;line-height:1.4;white-space:pre-wrap">'+esc(m.text||"")+'</div>'+
+      crmMsgImgHtml(m)+
+      (crmMsgImgHtml(m)&&/^(📷 Фото)$/.test(m.text||"")?'':'<div style="font-size:12.5px;color:#1a2a3a;line-height:1.4;white-space:pre-wrap">'+esc(m.text||"")+'</div>')+
     '</div>';
   }).join("");
+}
+// Картинка в реплике (фото клиента из Авито, наше фото или планировка) — тап открывает целиком.
+function crmMsgImgHtml(m){
+  var u=safeImageUrl(m&&m.image); if(!u) return "";
+  return '<a href="'+esc(u)+'" target="_blank" rel="noopener"><img src="'+esc(u)+'" loading="lazy" alt="📷 фото (не загрузилось — нажмите)" style="display:block;max-width:100%;max-height:260px;border-radius:8px;margin:3px 0;font-size:12px;color:#2980b9"></a>';
 }
 function crmStageChip(sid){
   var s=CRM_STAGES.find(function(x){return x.id===sid;}); if(!s) return "";
@@ -25707,55 +25732,247 @@ function crmPushBtnHtml(){
     '</div>';
   return '<button data-a="crm-push-on" '+(crmPush.busy?"disabled":"")+' style="width:100%;margin-bottom:10px;padding:11px;background:#2980b9;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">'+(crmPush.busy?"⏳ Включаю…":"🔔 Включить уведомления о сообщениях")+'</button>';
 }
-function tCRMChats(){
-  var feed=chatFeed(crmChats||{}, crmClients);
-  var html='<div>'+
-    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'+
-      '<div><div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">💬 ПЕРЕПИСКА АВИТО</div>'+
-      '<div style="font-size:12px;color:#5a7a9a;margin-top:2px">'+feed.length+' диалогов · не отвечено: '+feed.filter(function(x){return x.unanswered;}).length+'</div></div>'+
-      '<button data-a="crm-chats-refresh" style="padding:6px 12px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;font-size:12px;color:#5a7a9a;font-weight:700">⟳</button>'+
-    '</div>'+crmPushBtnHtml();
-  if(crmChats===null) return html+'<div style="text-align:center;color:#9aabbf;font-size:12px;padding:30px">Загрузка…</div></div>';
-  if(!feed.length) return html+'<div style="text-align:center;color:#9aabbf;font-size:12px;padding:30px">Диалогов с Авито пока нет</div></div>';
-  feed.forEach(function(f){
-    html+='<div data-a="crm-chat-open" data-key="'+esc(f.key)+'" style="display:flex;gap:10px;align-items:flex-start;background:#fff;border:1px solid '+(f.unanswered?"#e74c3c55":"#e4ebf2")+';border-radius:12px;padding:10px 12px;margin-bottom:7px;cursor:pointer">'+
-      '<div style="width:36px;height:36px;border-radius:50%;background:'+(f.unanswered?"#fde8e8":"#eaf2fa")+';display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">👤</div>'+
-      '<div style="flex:1;min-width:0">'+
-        '<div style="display:flex;align-items:center;gap:6px">'+
-          '<span style="flex:1;min-width:0;font-size:13px;font-weight:'+(f.unanswered?800:600)+';color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name)+'</span>'+
-          '<span style="font-size:10.5px;color:'+(f.unanswered?"#e74c3c":"#9aabbf")+';font-weight:700;flex-shrink:0">'+feedTime(f.ts)+'</span>'+
-        '</div>'+
-        '<div style="font-size:12px;color:'+(f.unanswered?"#1a2a3a":"#7a8a9a")+';margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(f.unanswered?"":"Вы: ")+esc(f.text)+'</div>'+
-        '<div style="display:flex;gap:5px;margin-top:4px;align-items:center">'+crmStageChip(f.stage)+
-          (f.draft?'<span style="font-size:9.5px;font-weight:800;color:#8a5a00;background:#fff7d6;border:1px solid #f0b429;border-radius:6px;padding:0 6px">🤖 ИИ подготовил ответ</span>':'')+
-          (f.unanswered?'<span style="font-size:9.5px;font-weight:800;color:#e74c3c">● ждёт ответа</span>':'')+
-        '</div>'+
+// Список «Сегодня»: кому перезвонить до конца дня (просроченные — красным).
+function crmTodayHtml(){
+  var list=todayReminders(crmClients, Date.now()); if(!list.length) return "";
+  var now=Date.now();
+  return '<div style="background:#fff;border:1.5px solid #f0b429;border-radius:12px;padding:10px 12px;margin-bottom:12px">'+
+    '<div style="font-size:10px;color:#8a5a00;font-weight:800;letter-spacing:1px;margin-bottom:6px">📅 СЕГОДНЯ · '+list.length+'</div>'+
+    list.map(function(c){
+      var late=c.remindAt<now, d=new Date(c.remindAt), hm=String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");
+      var when=late&&d.toDateString()!==new Date(now).toDateString()?feedTime(c.remindAt):hm;
+      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid #f4efe0">'+
+        '<span style="font-size:12px;font-weight:800;color:'+(late?"#e74c3c":"#8a5a00")+';min-width:42px">'+when+'</span>'+
+        '<div data-a="crm-today-open" data-cid="'+esc(c.id)+'" style="flex:1;min-width:0;cursor:pointer"><div style="font-size:12.5px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.name||"Клиент")+'</div>'+
+          (c.remindNote?'<div style="font-size:11px;color:#7a8a9a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.remindNote)+'</div>':'')+'</div>'+
+        '<button data-a="crm-remind-done" data-cid="'+esc(c.id)+'" style="padding:5px 9px;background:#eefaf2;border:1px solid #27ae6055;border-radius:7px;cursor:pointer;font-size:11px;color:#27ae60;font-weight:700">✓</button>'+
+      '</div>';
+    }).join("")+
+  '</div>';
+}
+function crmChipHtml(a,v,label,on,extra){
+  return '<button data-a="'+a+'" data-v="'+esc(v)+'" style="flex-shrink:0;padding:5px 11px;border-radius:16px;cursor:pointer;font-size:11.5px;font-weight:700;white-space:nowrap;border:1px solid '+(on?"#2980b9":"#d0dae8")+';background:'+(on?"#2980b9":"#fff")+';color:'+(on?"#fff":"#5a7a9a")+'">'+label+(extra||"")+'</button>';
+}
+function crmFeedRowHtml(f){
+  var now=Date.now(), waited=f.unanswered&&f.waitSince?now-f.waitSince:0, late=waited>=WAIT_ALERT_MIN*60000;
+  var open=crmSwipeKey===f.key;
+  var row='<div data-a="crm-chat-open" data-swipe="'+esc(f.key)+'" data-key="'+esc(f.key)+'" style="display:flex;gap:10px;align-items:flex-start;background:#fff;border:1px solid '+(f.unanswered&&late?"#e74c3c88":(f.unanswered?"#f0b42988":"#e4ebf2"))+';border-radius:12px;padding:10px 12px;cursor:pointer;touch-action:pan-y">'+
+    (safeImageUrl(f.item&&f.item.img)?'<img src="'+esc(f.item.img)+'" alt="" style="width:38px;height:38px;border-radius:9px;object-fit:cover;flex-shrink:0">':
+      '<div style="width:38px;height:38px;border-radius:50%;background:'+(f.unanswered?"#fde8e8":"#eaf2fa")+';display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">👤</div>')+
+    '<div style="flex:1;min-width:0">'+
+      '<div style="display:flex;align-items:center;gap:6px">'+
+        '<span style="flex:1;min-width:0;font-size:13px;font-weight:'+(f.unanswered?800:600)+';color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name)+'</span>'+
+        '<span style="font-size:10.5px;color:'+(f.unanswered?"#e74c3c":"#9aabbf")+';font-weight:700;flex-shrink:0">'+feedTime(f.ts)+'</span>'+
       '</div>'+
+      (f.item&&f.item.title?'<div style="font-size:10.5px;color:#9aabbf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📢 '+esc(f.item.title)+'</div>':'')+
+      '<div style="font-size:12px;color:'+(f.unanswered?"#1a2a3a":"#7a8a9a")+';margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(f.unanswered?"":"Вы: ")+esc(f.text)+'</div>'+
+      '<div style="display:flex;gap:5px;margin-top:4px;align-items:center;flex-wrap:wrap">'+crmStageChip(f.stage)+
+        (f.draft?'<span style="font-size:9.5px;font-weight:800;color:#8a5a00;background:#fff7d6;border:1px solid #f0b429;border-radius:6px;padding:0 6px">🤖 ИИ подготовил ответ</span>':'')+
+        (f.unanswered?'<span style="font-size:9.5px;font-weight:800;color:'+(late?"#e74c3c":"#c27c0e")+'">⏳ ждёт '+waitLabel(waited)+'</span>':'')+
+        (f.spam?'<span style="font-size:9.5px;font-weight:700;color:#7a8a9a">🚫 спам</span>':(f.archived?'<span style="font-size:9.5px;font-weight:700;color:#7a8a9a">🗄 архив</span>':''))+
+      '</div>'+
+    '</div>'+
+    '<button data-a="crm-swipe" data-key="'+esc(f.key)+'" aria-label="Действия" style="flex-shrink:0;align-self:center;padding:4px 6px;background:transparent;border:none;cursor:pointer;font-size:16px;color:#9aabbf">⋯</button>'+
+  '</div>';
+  if(!open) return '<div data-feed-key="'+esc(f.key)+'" style="margin-bottom:7px">'+row+'</div>';
+  var btn=function(a,label,bg,col,v){ return '<button data-a="'+a+'" data-key="'+esc(f.key)+'"'+(v!=null?' data-v="'+v+'"':'')+' style="flex:1;padding:9px 4px;background:'+bg+';border:none;border-radius:9px;cursor:pointer;font-size:11.5px;color:'+col+';font-weight:700">'+label+'</button>'; };
+  var acts='<div style="display:flex;gap:6px;margin-top:5px">'+
+    btn("crm-chat-flag",f.archived?"↩ Из архива":"🗄 В архив","#eef2f6","#4a5a6a",f.archived?"unarchive":"archive")+
+    btn("crm-chat-flag",f.spam?"✓ Не спам":"🚫 Спам","#fff0f0","#c0392b",f.spam?"unspam":"spam")+
+    (f.clientId?btn("crm-swipe-stage","🎯 Стадия","#eaf2fa","#2980b9"):'')+
+  '</div>';
+  if(crmSwipeStage&&f.clientId) acts+='<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:5px">'+CRM_STAGES.map(function(st){
+    return '<button data-a="crm-swipe-set-stage" data-cid="'+esc(f.clientId)+'" data-v="'+st.id+'" style="padding:5px 9px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;border:1px solid '+st.color+';background:'+(f.stage===st.id?st.color:"#fff")+';color:'+(f.stage===st.id?"#fff":st.color)+'">'+esc(st.label)+'</button>';
+  }).join("")+'</div>';
+  return '<div data-feed-key="'+esc(f.key)+'" style="margin-bottom:9px">'+row+acts+'</div>';
+}
+function tCRMChats(){
+  var all=chatFeed(crmChats||{}, crmClients);
+  var feed=filterFeed(all,{mode:crmFeedMode,stage:crmFeedStage});
+  var count=function(m){ return filterFeed(all,{mode:m}).length; };
+  var html='<div>'+
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'+
+      '<div><div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">💬 ПЕРЕПИСКА АВИТО</div>'+
+      '<div style="font-size:12px;color:#5a7a9a;margin-top:2px">'+count("all")+' диалогов · ждут ответа: '+count("wait")+'</div></div>'+
+      '<button data-a="crm-chats-refresh" style="padding:6px 12px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;font-size:12px;color:#5a7a9a;font-weight:700">⟳</button>'+
+    '</div>'+crmPushBtnHtml()+crmTodayHtml();
+  if(crmChats===null) return html+'<div style="text-align:center;color:#9aabbf;font-size:12px;padding:30px">Загрузка…</div></div>';
+  html+='<input id="crm-feed-q" value="'+esc(crmFeedQ)+'" placeholder="🔍 Имя, телефон, текст, объявление…" style="width:100%;padding:9px 12px;border-radius:10px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:8px">'+
+    '<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:4px">'+
+      FEED_MODES.map(function(m){ var n=count(m.id); return crmChipHtml("crm-feed-mode",m.id,m.label,crmFeedMode===m.id,n?' <span style="opacity:.75">'+n+'</span>':''); }).join("")+
+    '</div>'+
+    '<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:8px">'+
+      crmChipHtml("crm-feed-stage","","Все стадии",!crmFeedStage)+
+      CRM_STAGES.map(function(st){ return crmChipHtml("crm-feed-stage",st.id,st.label,crmFeedStage===st.id); }).join("")+
     '</div>';
+  if(!feed.length) return html+'<div style="text-align:center;color:#9aabbf;font-size:12px;padding:30px">'+(all.length?"Под фильтр ничего не попало":"Диалогов с Авито пока нет")+'</div></div>';
+  html+='<div style="font-size:10px;color:#a9b4bf;margin-bottom:6px">Свайп влево или ⋯ — архив, спам, стадия</div>';
+  feed.forEach(function(f){ html+=crmFeedRowHtml(f); });
+  return html+'<div id="crm-feed-empty" style="display:none;text-align:center;color:#9aabbf;font-size:12px;padding:30px">Ничего не найдено</div></div>';
+}
+// Живой поиск по ленте без перерисовки: клавиатура телефона не прыгает.
+function crmFeedApplySearch(){
+  var shown=filterFeed(chatFeed(crmChats||{}, crmClients),{mode:crmFeedMode,stage:crmFeedStage,q:crmFeedQ});
+  var keep={}; shown.forEach(function(f){ keep[f.key]=true; });
+  var n=0;
+  document.querySelectorAll("[data-feed-key]").forEach(function(el){ var on=!!keep[el.getAttribute("data-feed-key")]; el.style.display=on?"":"none"; if(on)n++; });
+  var e=document.getElementById("crm-feed-empty"); if(e) e.style.display=n?"none":"";
+}
+// Свайп по строке ленты: влево — действия, вправо — спрятать.
+function crmBindSwipes(){
+  document.querySelectorAll("[data-swipe]").forEach(function(el){
+    if(el._swBound) return; el._swBound=true;
+    var x0=0,y0=0;
+    el.addEventListener("touchstart",function(e){ var t=e.touches[0]; x0=t.clientX; y0=t.clientY; },{passive:true});
+    el.addEventListener("touchend",function(e){
+      var t=e.changedTouches[0], dx=t.clientX-x0, dy=t.clientY-y0;
+      if(Math.abs(dx)<50||Math.abs(dy)>40) return;
+      var k=el.getAttribute("data-swipe");
+      crmSwipeKey=dx<0?k:null; crmSwipeStage=false; ui();
+    },{passive:true});
   });
-  return html+'</div>';
+}
+function crmPhoneBarHtml(f,ch){
+  var raw=f.phone||(extractPhoneFromChat(ch)?"+7"+extractPhoneFromChat(ch):"");
+  var d=String(raw).replace(/\D/g,""); if(d.length<10) return "";
+  var tel="+7"+d.slice(-10), wa="7"+d.slice(-10);
+  return '<div style="display:flex;gap:6px;margin-bottom:10px">'+
+    '<a href="tel:'+tel+'" onclick="window._callPhone(\''+tel+'\',event)" style="flex:1;padding:9px;background:#27ae60;border-radius:9px;text-decoration:none;color:#fff;font-size:12px;font-weight:700;text-align:center">📞 '+esc(tel)+'</a>'+
+    '<a href="https://wa.me/'+wa+'" onclick="window._openExt(\'https://wa.me/'+wa+'\',event)" target="_blank" rel="noopener" style="padding:9px 14px;background:#25d366;border-radius:9px;text-decoration:none;color:#fff;font-size:12px;font-weight:700">WhatsApp</a>'+
+  '</div>';
+}
+function crmItemBarHtml(item){
+  if(!item||!item.title) return "";
+  var img=safeImageUrl(item.img), body=(img?'<img src="'+esc(img)+'" alt="" style="width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0">':'<div style="font-size:20px">📢</div>')+
+    '<div style="flex:1;min-width:0"><div style="font-size:9.5px;color:#7a9aaa;font-weight:700;letter-spacing:.5px">ПИШЕТ ПО ОБЪЯВЛЕНИЮ</div>'+
+    '<div style="font-size:12.5px;font-weight:700;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(item.title)+'</div>'+
+    (item.price?'<div style="font-size:11.5px;color:#27ae60;font-weight:700">'+esc(item.price)+'</div>':'')+'</div>';
+  var box='display:flex;gap:10px;align-items:center;background:#fff;border:1px solid #e4ebf2;border-radius:10px;padding:7px 10px;margin-bottom:10px;text-decoration:none';
+  return item.url?'<a href="'+esc(item.url)+'" target="_blank" rel="noopener" style="'+box+'">'+body+'<span style="color:#9aabbf">›</span></a>':'<div style="'+box+'">'+body+'</div>';
+}
+function crmRedraftHtml(i){
+  return '<div style="background:#fffdf2;border:1px solid #f0d58a;border-radius:10px;padding:8px 10px;margin:-2px 0 8px">'+
+    '<div style="font-size:10.5px;color:#8a5a00;font-weight:700;margin-bottom:6px">Как переписать?</div>'+
+    '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px">'+REDRAFT_HINTS.map(function(h){
+      return '<button data-a="crm-redraft-go" data-i="'+i+'" data-v="'+esc(h)+'" '+(crmBusy?"disabled":"")+' style="padding:5px 10px;background:#fff;border:1px solid #f0b429;border-radius:14px;cursor:pointer;font-size:11.5px;color:#8a5a00;font-weight:700">'+esc(h)+'</button>';
+    }).join("")+'</div>'+
+    '<div style="display:flex;gap:6px"><input id="crm-redraft-own" placeholder="Своё указание: «упомяни рассрочку»…" style="flex:1;min-width:0;padding:7px 9px;border-radius:8px;border:1px solid #e6d7a8;font-size:12px;outline:none">'+
+      '<button data-a="crm-redraft-go" data-i="'+i+'" data-v="" '+(crmBusy?"disabled":"")+' style="padding:7px 12px;background:#f0b429;border:none;border-radius:8px;cursor:pointer;font-size:12px;color:#fff;font-weight:700">'+(crmBusy==="redraft"?"⏳":"🔄")+'</button></div>'+
+  '</div>';
+}
+function crmQuickHtml(){
+  var list=quickReplies(settings);
+  if(crmQuickEdit) return '<div style="background:#fff;border:1px solid #d0dae8;border-radius:10px;padding:8px;margin-bottom:6px">'+
+    '<div style="font-size:10.5px;color:#7a9aaa;font-weight:700;margin-bottom:5px">БЫСТРЫЕ ОТВЕТЫ — каждый с новой строки</div>'+
+    '<textarea id="crm-quick-edit" style="width:100%;height:150px;padding:8px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;box-sizing:border-box;outline:none">'+esc(list.join("\n"))+'</textarea>'+
+    '<div style="display:flex;gap:6px;margin-top:6px"><button data-a="crm-quick-save" style="flex:1;padding:8px;background:#27ae60;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Сохранить для всех</button>'+
+    '<button data-a="crm-quick-edit" style="padding:8px 12px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;font-size:12px;color:#7a9aaa">Отмена</button></div></div>';
+  return '<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:5px;margin-bottom:2px">'+
+    list.map(function(t,i){ return '<button data-a="crm-quick" data-i="'+i+'" style="flex-shrink:0;max-width:210px;padding:6px 10px;background:#fff;border:1px solid #d0dae8;border-radius:14px;cursor:pointer;font-size:11.5px;color:#2c4a63;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(t)+'</button>'; }).join("")+
+    '<button data-a="crm-quick-edit" aria-label="Настроить быстрые ответы" style="flex-shrink:0;padding:6px 10px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:14px;cursor:pointer;font-size:11.5px;color:#7a9aaa">⚙</button>'+
+  '</div>';
+}
+function crmPlanPickerHtml(){
+  return '<div style="background:#fff;border:1px solid #d0dae8;border-radius:10px;padding:8px;margin-bottom:6px">'+
+    '<div style="display:flex;align-items:center;margin-bottom:6px"><span style="flex:1;font-size:10.5px;color:#7a9aaa;font-weight:700">🖼 ОТПРАВИТЬ ПЛАНИРОВКУ В АВИТО</span>'+
+    '<button data-a="crm-plan-toggle" style="padding:2px 8px;background:transparent;border:1px solid #d0dae8;border-radius:6px;cursor:pointer;font-size:11px;color:#7a9aaa">✕</button></div>'+
+    '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px">'+Object.keys(PLAN_IMAGES).map(function(k){
+      return '<button data-a="crm-plan-send" data-v="'+k+'" '+(crmBusy?"disabled":"")+' style="padding:0;background:#f6f8fa;border:1px solid #e4ebf2;border-radius:8px;cursor:pointer;overflow:hidden;text-align:left">'+
+        '<img src="/plans/'+esc(PLAN_IMAGES[k].file)+'" loading="lazy" alt="" style="display:block;width:100%;height:64px;object-fit:cover">'+
+        '<div style="font-size:9.5px;color:#2c4a63;padding:3px 4px;line-height:1.2;height:24px;overflow:hidden">'+esc(PLAN_IMAGES[k].title)+'</div></button>';
+    }).join("")+'</div></div>';
 }
 function tCRMChat(key){
   var ch=crmChats&&crmChats[key];
   var f=chatFeed(crmChats||{}, crmClients).find(function(x){return x.key===key;});
   var back='<button data-a="crm-app-nav" data-v="chats" style="padding:6px 12px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;font-size:12px;color:#5a7a9a;font-weight:700">← Чаты</button>';
   if(!ch||!f) return '<div>'+back+'<div style="text-align:center;color:#9aabbf;font-size:12px;padding:30px">'+(crmChats===null?"Загрузка…":"Диалог не найден")+'</div></div>';
+  var msgs=ch.messages||[], kinds=draftKinds(msgs), pending=kinds.indexOf("pending");
+  var msgsHtml=crmMsgsHtml(msgs, f.unanswered, true);
+  if(crmRedraftIdx!==null&&crmRedraftIdx===pending) msgsHtml+=crmRedraftHtml(pending);
+  var tool=function(a,label,on){ return '<button data-a="'+a+'" '+(crmBusy?"disabled":"")+' style="flex:1;padding:7px;background:'+(on?"#eaf2fa":"#fff")+';border:1px solid #d0dae8;border-radius:8px;cursor:pointer;font-size:11.5px;color:#2c4a63;font-weight:700">'+label+'</button>'; };
   return '<div>'+
     '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">'+back+
       '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:800;color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name)+'</div>'+
       '<div style="margin-top:2px">'+crmStageChip(f.stage)+'</div></div>'+
       (f.clientId?'<button data-a="crm-chat-card" data-cid="'+esc(f.clientId)+'" style="padding:6px 10px;background:#eaf2fa;border:none;border-radius:8px;cursor:pointer;font-size:11px;color:#2980b9;font-weight:700;white-space:nowrap">Карточка →</button>':'')+
     '</div>'+
-    '<div id="crm-chat-msgs" style="margin-bottom:8px">'+crmMsgsHtml(ch.messages||[], f.unanswered, true)+'</div>'+
+    crmItemBarHtml(f.item)+crmPhoneBarHtml(f,ch)+
+    '<div id="crm-chat-msgs" style="margin-bottom:8px">'+msgsHtml+'</div>'+
     '<div style="position:sticky;bottom:calc(64px + env(safe-area-inset-bottom,0px));background:#f6f8fa;padding:6px 0">'+
+      (crmPlanPicker?crmPlanPickerHtml():'')+crmQuickHtml()+
+      '<div style="display:flex;gap:6px;margin-bottom:6px">'+
+        tool("crm-photo-pick",crmBusy==="photo"?"⏳ Отправляю…":"📷 Фото")+tool("crm-plan-toggle","🖼 Планировка",crmPlanPicker)+
+      '</div>'+
+      '<input id="crm-photo-file" type="file" accept="image/*" style="display:none">'+
       '<textarea id="crm-reply-chat" placeholder="Ответить клиенту в Авито..." style="width:100%;padding:9px 11px;border-radius:10px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;height:64px;resize:vertical;margin-bottom:6px"></textarea>'+
       '<button data-a="crm-send-avito" data-key="'+esc(key)+'" data-cid="chat" style="width:100%;padding:11px;background:#005bff;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">Отправить в Авито</button>'+
     '</div>'+
   '</div>';
 }
+// Сводка продаж: лиды, скорость ответа, воронка, объявления.
+function tCRMSummary(){
+  var s=salesSummary(crmChats||{}, crmClients, CRM_STAGES, Date.now());
+  var tile=function(v,label,col,sub){ return '<div style="background:#fff;border:1px solid #e4ebf2;border-radius:10px;padding:10px 12px"><div style="font-size:20px;font-weight:800;color:'+(col||"#1a2a3a")+'">'+v+'</div><div style="font-size:11px;color:#7a9aaa;margin-top:2px">'+label+'</div>'+(sub?'<div style="font-size:10.5px;color:#9aabbf;margin-top:2px">'+sub+'</div>':'')+'</div>'; };
+  var diff=s.leadsWeek-s.leadsPrev;
+  var top=Math.max(1,(s.funnel[0]||{}).reached||0);
+  var html='<div><div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:10px">📊 СВОДКА ПРОДАЖ</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:12px">'+
+      tile(s.leadsWeek,"Лидов за 7 дней",null,(diff>=0?"▲ +":"▼ ")+diff+" к прошлой неделе")+
+      tile(s.dialogsWeek,"Новых диалогов Авито")+
+      tile(s.responses?waitLabel(s.medianMs):"—","Обычное время ответа",s.medianMs>WAIT_ALERT_MIN*60000?"#e74c3c":"#27ae60","медиана за 30 дней")+
+      tile(s.responses?s.fastShare+"%":"—","Ответов за "+WAIT_ALERT_MIN+" мин",s.fastShare>=70?"#27ae60":"#c27c0e")+
+    '</div>'+
+    (s.waitingNow?'<button data-a="crm-summary-wait" style="width:100%;margin-bottom:12px;padding:10px;background:#fff0f0;border:1px solid #e74c3c55;border-radius:10px;cursor:pointer;font-size:12.5px;color:#c0392b;font-weight:700">⏳ Сейчас ждут ответа: '+s.waitingNow+' →</button>':'')+
+    '<div style="background:#fff;border:1px solid #e4ebf2;border-radius:10px;padding:10px 12px;margin-bottom:12px"><div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">ВОРОНКА: СКОЛЬКО ДОШЛО ДО СТАДИИ</div>'+
+      s.funnel.map(function(r){ var st=CRM_STAGES.find(function(x){return x.id===r.id;})||{label:r.id,color:"#7a9aaa"};
+        return '<div style="margin-bottom:6px"><div style="display:flex;font-size:11.5px;color:#1a2a3a"><span style="flex:1">'+esc(st.label)+'</span><b>'+r.reached+'</b></div>'+
+          '<div style="height:6px;background:#f0f4f8;border-radius:3px;overflow:hidden;margin-top:2px"><div style="height:100%;width:'+Math.round(r.reached/top*100)+'%;background:'+st.color+'"></div></div></div>'; }).join("")+
+    '</div>'+
+    '<div style="background:#fff;border:1px solid #e4ebf2;border-radius:10px;padding:10px 12px"><div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:6px">КАКИЕ ОБЪЯВЛЕНИЯ ПРИВОДЯТ КЛИЕНТОВ</div>'+
+      (s.listings.length?'<div style="display:flex;font-size:10px;color:#9aabbf;font-weight:700;padding:3px 0"><span style="flex:1">Объявление</span><span style="width:52px;text-align:right">Диалоги</span><span style="width:52px;text-align:right">Встречи</span><span style="width:56px;text-align:right">Договоры</span></div>'+
+        s.listings.map(function(l){ return '<div style="display:flex;font-size:11.5px;color:#1a2a3a;padding:5px 0;border-top:1px solid #f0f4f8"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(l.title)+'</span><span style="width:52px;text-align:right">'+l.dialogs+'</span><span style="width:52px;text-align:right">'+l.meetings+'</span><span style="width:56px;text-align:right;font-weight:700;color:#27ae60">'+l.contracts+'</span></div>'; }).join(""):
+        '<div style="font-size:11.5px;color:#9aabbf">Диалогов с Авито пока нет</div>')+
+      '<div style="font-size:10px;color:#a9b4bf;margin-top:6px">Объявление подтягивается из Авито при первом сообщении; у старых диалогов — когда их откроешь.</div>'+
+    '</div></div>';
+  return html;
+}
+// Напоминание «перезвонить» в карточке клиента.
+function crmRemindHtml(c){
+  var head='<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">⏰ НАПОМНИТЬ</div>';
+  var box='background:#fff;border-radius:12px;border:1px solid '+(c.remindAt?"#f0b429":"#dde6f0")+';padding:12px 14px;margin-bottom:12px';
+  if(c.remindAt){
+    var d=new Date(c.remindAt), late=c.remindAt<Date.now();
+    return '<div style="'+box+'">'+head+
+      '<div style="font-size:13px;font-weight:700;color:'+(late?"#e74c3c":"#1a2a3a")+'">'+d.toLocaleDateString("ru-RU",{day:"numeric",month:"long",weekday:"short"})+', '+String(d.getHours()).padStart(2,"0")+':'+String(d.getMinutes()).padStart(2,"0")+(late?" · просрочено":"")+'</div>'+
+      (c.remindNote?'<div style="font-size:12px;color:#5a7a9a;margin-top:2px">'+esc(c.remindNote)+'</div>':'')+
+      '<div style="display:flex;gap:6px;margin-top:8px"><button data-a="crm-remind-done" data-cid="'+esc(c.id)+'" style="flex:1;padding:8px;background:#27ae60;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">✓ Сделано</button>'+
+      '<button data-a="crm-remind-set" data-cid="'+esc(c.id)+'" data-v="custom" style="padding:8px 12px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;font-size:12px;color:#5a7a9a">Перенести</button></div></div>';
+  }
+  var q=function(v,label){ return '<button data-a="crm-remind-set" data-cid="'+esc(c.id)+'" data-v="'+v+'" style="padding:6px 10px;background:#fff7d6;border:1px solid #f0b429;border-radius:14px;cursor:pointer;font-size:11.5px;color:#8a5a00;font-weight:700">'+label+'</button>'; };
+  return '<div style="'+box+'">'+head+
+    '<input id="crm-remind-note-'+esc(c.id)+'" placeholder="О чём: перезвонить, прислать КП…" style="width:100%;padding:7px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12.5px;outline:none;box-sizing:border-box;margin-bottom:6px">'+
+    '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px">'+q("1h","Через час")+q("tomorrow","Завтра 10:00")+q("3d","Через 3 дня")+q("week","Через неделю")+'</div>'+
+    '<div style="display:flex;gap:6px"><input id="crm-remind-at-'+esc(c.id)+'" type="datetime-local" style="flex:1;min-width:0;padding:7px 9px;border-radius:8px;border:1px solid #d0dae8;font-size:12.5px">'+
+    '<button data-a="crm-remind-set" data-cid="'+esc(c.id)+'" data-v="at" style="padding:7px 12px;background:#2980b9;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Поставить</button></div>'+
+    '<div style="font-size:10px;color:#9aabbf;margin-top:6px">В срок придёт пуш на телефоны с CRM, клиент появится в списке «📅 Сегодня».</div></div>';
+}
+// Когда напомнить по быстрой кнопке.
+function crmRemindAt(v, now){
+  var d=new Date(now);
+  if(v==="1h") return now+3600000;
+  if(v==="tomorrow"){ d.setDate(d.getDate()+1); d.setHours(10,0,0,0); return d.getTime(); }
+  if(v==="3d"){ d.setDate(d.getDate()+3); d.setHours(10,0,0,0); return d.getTime(); }
+  if(v==="week"){ d.setDate(d.getDate()+7); d.setHours(10,0,0,0); return d.getTime(); }
+  return 0;
+}
+function crmSetClient(cid, patch){
+  crmClients=crmClients.map(function(x){ return x.id===cid?Object.assign({},x,patch):x; });
+  fl();
+}
 // Нижняя панель приложения: «Воронка» и «Чаты» вместо ленты вкладок портала.
 function crmAppBarHtml(){
-  var onChats=crmView==="chats"||crmView==="chat";
+  var onChats=crmView==="chats"||crmView==="chat", onSum=crmView==="summary";
   var n=crmUnansweredCount();
   function b(v,icon,label,on,badge){
     return '<button data-a="crm-app-nav" data-v="'+v+'" style="flex:1;border:none;background:transparent;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 2px">'+
@@ -25765,7 +25982,7 @@ function crmAppBarHtml(){
   }
   return '<div id="bottom-bar" style="position:fixed;left:0;right:0;bottom:0;z-index:60">'+
     '<div style="max-width:480px;margin:0 auto;background:#fff;border-top:1px solid #e2e8f0;display:flex;padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px));box-shadow:0 -1px 10px rgba(13,27,46,0.06)">'+
-      b("funnel","🎯","Воронка",!onChats,0)+b("chats","💬","Чаты",onChats,n)+
+      b("funnel","🎯","Воронка",!onChats&&!onSum,0)+b("chats","💬","Чаты",onChats,n)+b("summary","📊","Сводка",onSum,0)+
     '</div></div>';
 }
 function crmNoAccessHtml(){
@@ -25774,15 +25991,40 @@ function crmNoAccessHtml(){
     '<div style="font-size:12px;color:#7a9aaa;margin-top:6px;line-height:1.5">Попросите администратора открыть вам раздел «CRM-клиенты» или работайте в <a href="/admin" style="color:#2980b9">полном портале</a>.</div></div>';
 }
 function crmOpenChat(key){
+  if(crmChatKey!==key){ crmRedraftIdx=null; crmPlanPicker=false; crmQuickEdit=false; }
   crmChatKey=key; crmView="chat"; tab="crm";
+  crmAskChatInfo(key);
   render();
   setTimeout(function(){ try{ window.scrollTo(0,document.body.scrollHeight); }catch(e){} },0);
+}
+// Объявление у старого диалога (до этой правки его не сохраняли) — спросить один раз.
+function crmAskChatInfo(key){
+  var ch=crmChats&&crmChats[key];
+  if(!ch||ch.item||!ch.avitoChatId||crmInfoAsked[key]) return;
+  crmInfoAsked[key]=true;
+  fetch(API_BASE+"/api/ai/chat-info",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({clientKey:key})})
+    .then(function(r){return r.json();}).then(function(j){
+      if(!j||!j.success||!crmChats||!crmChats[key]) return;
+      crmChats[key]=Object.assign({},crmChats[key],{item:j.item,name:j.name||crmChats[key].name});
+      if(crmView==="chat"&&crmChatKey===key) ui();
+    }).catch(function(){});
+}
+// POST к /api/ai/* из диалога: ошибка — человеку словами, после — свежие диалоги.
+async function crmChatPost(path, body){
+  try{
+    var r=await fetch(API_BASE+path,{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify(body)});
+    var j=await r.json().catch(function(){return null;});
+    if(!(j&&j.success)){ alert("Не получилось: "+((j&&(j.error||j.note))||("ошибка "+r.status))); return null; }
+    return j;
+  }catch(e){ alert("Нет связи: "+((e&&e.message)||e)); return null; }
+  finally{ await crmRefreshChats(); }
 }
 // Ссылка из пуша (/crm?go=chat%3D<key>) → открыть диалог в уже открытом окне.
 function crmOpenFromUrl(url){
   try{
     var go=new URL(url,location.origin).searchParams.get("go")||"";
     if(go.indexOf("chat=")===0){ var key=go.slice(5); crmRefreshChats().then(function(){ crmOpenChat(key); }); }
+    else if(go.indexOf("client=")===0){ crmOpenId=go.slice(7); crmView="client"; tab="crm"; crmBackView=null; render(); }
   }catch(e){}
 }
 function crmPushSupported(){ return typeof navigator!=="undefined"&&"serviceWorker" in navigator&&typeof window!=="undefined"&&"PushManager" in window&&"Notification" in window; }
@@ -25848,6 +26090,7 @@ function tCRM(){
   if(crmView==="client"&&crmOpenId) return tCRMClient(crmOpenId);
   if(crmView==="chats") return tCRMChats();
   if(crmView==="chat"&&crmChatKey) return tCRMChat(crmChatKey);
+  if(crmView==="summary") return tCRMSummary();
   return tCRMFunnel();
 }
 
@@ -25866,11 +26109,13 @@ function tCRMFunnel(){
       '<div style="font-size:12px;color:#5a7a9a;margin-top:2px">'+total+' клиентов в работе</div>'+
     '</div>'+
     '<div style="display:flex;gap:6px">'+
+      (isCrmApp()?'':'<button data-a="crm-app-nav" data-v="summary" style="padding:6px 10px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;font-size:11px;color:#2980b9;font-weight:700">📊</button>')+
       (isCrmApp()?'':'<button data-a="crm-app-nav" data-v="chats" style="position:relative;padding:6px 12px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;font-size:11px;color:#2980b9;font-weight:700">💬 Чаты'+(crmUnansweredCount()?' <span style="background:'+BADGE_RED+';color:#fff;border-radius:8px;padding:0 5px">'+crmUnansweredCount()+'</span>':'')+'</button>')+
       ((currentUser&&currentUser.roles&&currentUser.roles.includes("admin"))?'<button data-a="crm-select-toggle" style="padding:6px 12px;background:'+(crmSelectMode?"#e74c3c":"#fff")+';border:1px solid '+(crmSelectMode?"#e74c3c":"#d0dae8")+';border-radius:8px;cursor:pointer;font-size:11px;color:'+(crmSelectMode?"#fff":"#7a9aaa")+';font-weight:700">'+(crmSelectMode?"✕ Отмена":"☑ Выбрать")+'</button>':'')+
       '<button data-a="crm-add" style="padding:6px 12px;background:#2980b9;border:none;border-radius:8px;cursor:pointer;font-size:11px;color:#fff;font-weight:700">+ Клиент</button>'+
     '</div>'+
   '</div>';
+  html+=crmTodayHtml();
   // Панель массового удаления (режим выбора)
   if(crmSelectMode){
     const _nsel=Object.keys(crmSelected).filter(function(k){return crmSelected[k];}).length;
@@ -26177,6 +26422,7 @@ function tCRMClient(cid){
   }
   html+='</div>';
   html+=crmContractsHtml(c);
+  html+=crmRemindHtml(c);
   // Quick contact buttons (only if phone exists)
   const phoneRaw=(c.phone||"").replace(/[^0-9+]/g,"");
   const phoneDigits=phoneRaw.replace(/[^0-9]/g,"");
@@ -26466,6 +26712,14 @@ function bind(){
   });
 
   // Bind CRM search input (live filtering without re-render)
+  // Лента «Чаты»: живой поиск и свайпы по строкам.
+  const cfInp=document.getElementById("crm-feed-q");
+  if(cfInp&&!cfInp._cfBound){
+    cfInp._cfBound=true;
+    cfInp.addEventListener("input",function(){ crmFeedQ=this.value; crmFeedApplySearch(); });
+    if(crmFeedQ) crmFeedApplySearch();
+  }
+  crmBindSwipes();
   const csInp=document.getElementById("crm-search");
   if(csInp&&!csInp._csBound){
     csInp._csBound=true;
@@ -30865,8 +31119,8 @@ function bind(){
       if(cid==="chat") setTimeout(function(){ try{ window.scrollTo(0,document.body.scrollHeight); }catch(e){} },0);
     };}
     else if(a==="crm-app-nav"){el.onclick=()=>{
-      crmView=el.dataset.v==="chats"?"chats":"funnel"; crmOpenId=null; crmChatKey=null; crmBackView=null;
-      if(crmView==="chats") crmRefreshChats().then(function(){ if(crmView==="chats")render(); });
+      crmView=["chats","summary"].indexOf(el.dataset.v)>=0?el.dataset.v:"funnel"; crmOpenId=null; crmChatKey=null; crmBackView=null; crmSwipeKey=null;
+      if(crmView!=="funnel") crmRefreshChats().then(function(){ if(crmView==="chats"||crmView==="summary")render(); });
       render(); try{window.scrollTo(0,0);}catch(e){}
     };}
     else if(a==="crm-chat-open"){el.onclick=()=>{ crmOpenChat(el.dataset.key); };}
@@ -30875,6 +31129,72 @@ function bind(){
       render(); try{window.scrollTo(0,0);}catch(e){}
     };}
     else if(a==="crm-chats-refresh"){el.onclick=()=>{ el.textContent="⏳"; crmRefreshChats().then(function(){ if(crmAutoLinkAvito())fl(); else render(); }); };}
+    else if(a==="crm-feed-mode"){el.onclick=()=>{ crmFeedMode=el.dataset.v; crmSwipeKey=null; ui(); };}
+    else if(a==="crm-feed-stage"){el.onclick=()=>{ crmFeedStage=el.dataset.v||null; crmSwipeKey=null; ui(); };}
+    else if(a==="crm-swipe"){el.onclick=(e)=>{ e.stopPropagation(); const k=el.dataset.key; crmSwipeKey=crmSwipeKey===k?null:k; crmSwipeStage=false; ui(); };}
+    else if(a==="crm-swipe-stage"){el.onclick=()=>{ crmSwipeStage=!crmSwipeStage; ui(); };}
+    else if(a==="crm-swipe-set-stage"){el.onclick=()=>{ crmSwipeKey=null; crmSwipeStage=false; crmSetClient(el.dataset.cid,{stage:el.dataset.v}); };}
+    else if(a==="crm-chat-flag"){el.onclick=async()=>{
+      const v=el.dataset.v, key=el.dataset.key;
+      const body={clientKey:key}; if(v==="archive"||v==="unarchive")body.archived=v==="archive"; else body.spam=v==="spam";
+      el.textContent="⏳"; crmSwipeKey=null;
+      await crmChatPost("/api/ai/chat-flag",body); render();
+    };}
+    else if(a==="crm-summary-wait"){el.onclick=()=>{ crmFeedMode="wait"; crmFeedStage=null; crmView="chats"; render(); try{window.scrollTo(0,0);}catch(e){} };}
+    else if(a==="crm-today-open"){el.onclick=()=>{ crmOpenId=el.dataset.cid; crmView="client"; crmBackView=null; crmStagePickerOpen=false; render(); try{window.scrollTo(0,0);}catch(e){} };}
+    else if(a==="crm-remind-done"){el.onclick=()=>{ crmSetClient(el.dataset.cid,{remindAt:null,remindNote:""}); };}
+    else if(a==="crm-remind-set"){el.onclick=()=>{
+      const cid=el.dataset.cid, v=el.dataset.v;
+      if(v==="custom"){ crmSetClient(cid,{remindAt:null}); return; }   // «перенести» — снова показать выбор, заметка остаётся
+      let at=crmRemindAt(v, Date.now());
+      if(v==="at"){ const inp=document.getElementById("crm-remind-at-"+cid); at=inp&&inp.value?new Date(inp.value).getTime():0; }
+      if(!at||isNaN(at)){ alert("Выберите дату и время"); return; }
+      const noteEl=document.getElementById("crm-remind-note-"+cid); const cur=crmClients.find(function(x){return x.id===cid;})||{};
+      crmSetClient(cid,{remindAt:at,remindNote:((noteEl&&noteEl.value)||cur.remindNote||"").trim().slice(0,200)});
+    };}
+    else if(a==="crm-quick"){el.onclick=()=>{
+      const t=quickReplies(settings)[+el.dataset.i]; const ta=document.getElementById("crm-reply-chat"); if(!t||!ta)return;
+      ta.value=ta.value.trim()?ta.value.replace(/\s+$/,"")+"\n"+t:t; try{ta.focus();}catch(e){}
+    };}
+    else if(a==="crm-quick-edit"){el.onclick=()=>{ crmQuickEdit=!crmQuickEdit; ui(); };}
+    else if(a==="crm-quick-save"){el.onclick=()=>{
+      const ta=document.getElementById("crm-quick-edit"); if(!ta)return;
+      const list=ta.value.split("\n").map(function(x){return x.trim();}).filter(Boolean).slice(0,30);
+      settings=Object.assign({},settings,{crmQuickReplies:list}); crmQuickEdit=false; fl();
+    };}
+    else if(a==="crm-redraft"){el.onclick=()=>{ const i=+el.dataset.i; crmRedraftIdx=crmRedraftIdx===i?null:i; ui(); };}
+    else if(a==="crm-redraft-go"){el.onclick=async()=>{
+      const own=document.getElementById("crm-redraft-own"); const hint=(el.dataset.v||(own&&own.value)||"").trim();
+      if(!hint){ if(own)own.focus(); return; }
+      crmBusy="redraft"; ui();
+      const j=await crmChatPost("/api/ai/redraft",{clientKey:crmChatKey,idx:+el.dataset.i,hint:hint});
+      crmBusy=""; if(j) crmRedraftIdx=null; render();
+    };}
+    else if(a==="crm-plan-toggle"){el.onclick=()=>{ crmPlanPicker=!crmPlanPicker; ui(); };}
+    else if(a==="crm-plan-send"){el.onclick=async()=>{
+      const k=el.dataset.v; if(!PLAN_IMAGES[k]||!confirm("Отправить клиенту в Авито планировку «"+PLAN_IMAGES[k].title+"»?"))return;
+      crmBusy="plan"; crmPlanPicker=false; ui();
+      await crmChatPost("/api/ai/send-plan",{clientKey:crmChatKey,key:k});
+      crmBusy=""; render(); setTimeout(function(){ try{ window.scrollTo(0,document.body.scrollHeight); }catch(e){} },0);
+    };}
+    else if(a==="crm-photo-pick"){el.onclick=()=>{
+      const inp=document.getElementById("crm-photo-file"); if(!inp)return;
+      inp.onchange=async()=>{
+        const file=inp.files&&inp.files[0]; if(!file)return;
+        if(!confirm("Отправить это фото клиенту в Авито?"))return;
+        crmBusy="photo"; ui();
+        try{
+          const small=await compressImage(file, 1024*1024);
+          const ext=/png$/i.test(small.type||"")?"png":(/webp$/i.test(small.type||"")?"webp":"jpg");
+          const r=await fetch(API_BASE+"/api/file?name=crm."+ext,{method:"POST",headers:authHeaders({"Content-Type":small.type||"image/jpeg"}),body:small});
+          const up=await r.json().catch(function(){return null;});
+          if(!(up&&up.success)) alert("Фото не загрузилось: "+((up&&up.error)||r.status));
+          else await crmChatPost("/api/ai/send-photo",{clientKey:crmChatKey,key:up.key});
+        }catch(e){ alert("Ошибка: "+((e&&e.message)||e)); }
+        crmBusy=""; render(); setTimeout(function(){ try{ window.scrollTo(0,document.body.scrollHeight); }catch(e){} },0);
+      };
+      inp.click();
+    };}
     else if(a==="crm-draft-send"){el.onclick=async()=>{
       const key=crmChatKey; const ch=crmChats&&crmChats[key]; const m=ch&&(ch.messages||[])[+el.dataset.i];
       const text=(m&&m.text||"").trim(); if(!text)return;
@@ -32635,6 +32955,7 @@ function applyDeepLink(){
     if(q.obj&&objects.some(function(o){return o.id===q.obj;})){ tab="assign"; openObject=q.obj; }
     else if(q.tab) tab=q.tab;
     if(q.chat){ tab="crm"; crmView="chat"; crmChatKey=q.chat; }
+    if(q.client){ tab="crm"; crmView="client"; crmOpenId=q.client; }
     if(q.view&&["works","money","receive"].indexOf(q.view)>=0) objWorkView=q.view;
   }catch(e){}
 }

@@ -10,7 +10,7 @@ import { webcrypto as crypto } from 'node:crypto'
 import fs from 'node:fs'
 import { boot, reporter } from './harness/panel-vm.js'
 import { b64u, unb64u, cleanSubscription, encryptPayload, vapidHeader, sendPush } from '../src/webpush.js'
-import { isCrmPath, chatDeepLink, chatFeed, feedTime, draftKinds } from '../src/crm-app.js'
+import { isCrmPath, chatDeepLink, chatFeed, feedTime, draftKinds, filterFeed, waitSince, waitLabel, waitReminders, dueReminders, todayReminders, safeImageUrl, avitoImageUrl, avitoChatInfo, quickReplies, QUICK_REPLIES_DEFAULT, salesSummary, clientDeepLink } from '../src/crm-app.js'
 import { pushSubscribe, pushToAll, avitoPushData, PUSH_STORAGE_KEY } from '../src/push.js'
 import { routeAllowed } from '../src/access.js'
 
@@ -178,6 +178,51 @@ const CLIENTS = [{ id: 'c3', name: 'Мария', stage: 'qualified', avitoKey: '
   t.ok('время: сегодня — часы, раньше — дата', feedTime(new Date(2026, 9, 28, 9, 5).getTime(), now) === '09:05' && feedTime(new Date(2026, 9, 3, 9, 5).getTime(), now) === '03.10')
 }
 
+{
+  t.section('Лента: фильтры, таймер, напоминания')
+  const M = 60000
+  const chats = {
+    'avito:a': { source: 'avito', name: 'А', messages: [{ role: 'assistant', text: 'Здравствуйте', status: 'sent', ts: 0 }, { role: 'user', text: 'Цена бани 6 м?', ts: 1000 * M }, { role: 'user', text: 'и доставка', ts: 1001 * M }, { role: 'assistant', text: 'черн', status: 'draft', ts: 1002 * M }] },
+    'avito:b': { source: 'avito', name: 'Б', archived: true, messages: [{ role: 'user', text: 'привет', ts: 900 * M }] },
+    'avito:c': { source: 'avito', name: 'В', spam: true, messages: [{ role: 'user', text: 'спам', ts: 950 * M }] },
+    'avito:d': { source: 'avito', name: 'Г', messages: [{ role: 'user', text: 'тел 8 916 111-22-33', ts: 10 * M }, { role: 'assistant', text: 'ок', status: 'sent', ts: 20 * M }] },
+  }
+  const feed = chatFeed(chats, [{ id: 'cd', name: 'Гена', stage: 'kp', avitoKey: 'avito:d', phone: '+7 916 111-22-33' }])
+  t.ok('ждёт с первой реплики клиента после нашего ответа, черновик не в счёт', waitSince(chats['avito:a'].messages) === 1000 * M && waitSince(chats['avito:d'].messages) === 0)
+  t.ok('«Все» прячут архив и спам, «Архив» показывает их', filterFeed(feed, {}).map((f) => f.key).sort().join() === 'avito:a,avito:d' && filterFeed(feed, { mode: 'archive' }).map((f) => f.key).sort().join() === 'avito:b,avito:c')
+  t.ok('«Ждут ответа» и «С черновиком»', filterFeed(feed, { mode: 'wait' }).map((f) => f.key).join() === 'avito:a' && filterFeed(feed, { mode: 'draft' }).map((f) => f.key).join() === 'avito:a')
+  t.ok('поиск по тексту, по цифрам телефона и стадия', filterFeed(feed, { q: 'доставка' }).length === 1 && filterFeed(feed, { q: '916 111' })[0].key === 'avito:d' && filterFeed(feed, { stage: 'kp' }).map((f) => f.key).join() === 'avito:d')
+  t.ok('таймер словами', waitLabel(30 * 1000) === 'только что' && waitLabel(14 * M) === '14 мин' && waitLabel(135 * M) === '2 ч 15 мин' && waitLabel(3 * 24 * 60 * M) === '3 дн')
+  const now = 1020 * M
+  t.ok('повторный пуш: ждёт ≥15 мин, днём, один раз на реплику, без архива/спама', waitReminders(chats, {}, now, 12).map((w) => w.key).join() === 'avito:a' && waitReminders(chats, { 'avito:a': 1000 * M }, now, 12).length === 0)
+  t.ok('ночью и раньше 15 мин — не будим', waitReminders(chats, {}, now, 23).length === 0 && waitReminders(chats, {}, 1010 * M, 12).length === 0)
+  t.ok('ждущих дольше суток не напоминаем (не засыпать пушами после выката)', waitReminders(chats, {}, 1000 * M + 25 * 60 * M * 60, 12).length === 0)
+  const cl = [{ id: 'x', remindAt: 500 }, { id: 'y', remindAt: 5000 }, { id: 'z' }]
+  t.ok('напоминание «перезвонить»: пришло время и ещё не слали', dueReminders(cl, {}, 1000).map((c) => c.id).join() === 'x' && dueReminders(cl, { 'r:x': 500 }, 1000).length === 0)
+  const day = new Date(2026, 9, 29, 12).getTime()
+  t.ok('«Сегодня»: просроченные и до конца дня, по времени', todayReminders([{ id: 'late', remindAt: day - 86400000 }, { id: 'eve', remindAt: day + 6 * 3600000 }, { id: 'tmr', remindAt: day + 30 * 3600000 }], day).map((c) => c.id).join() === 'late,eve')
+  t.ok('ссылка пуша-напоминания открывает карточку', clientDeepLink('c 1') === '/crm?go=client%3Dc%201')
+}
+
+{
+  t.section('Авито: фото, объявление, быстрые ответы, сводка')
+  t.ok('картинки: только https и свои файлы', safeImageUrl('https://img.avito.st/x.jpg') && safeImageUrl('/api/file/plans/a.jpg') && safeImageUrl('/plans/kd29-1.jpg') && !safeImageUrl('javascript:alert(1)') && !safeImageUrl('https://x/"onerror=') && !safeImageUrl('http://x/a.jpg'))
+  t.ok('фото из вебхука — самый крупный размер', avitoImageUrl({ image: { sizes: { '140x105': 'https://a/s.jpg', '1280x960': 'https://a/b.jpg', '640x480': 'https://a/m.jpg' } } }) === 'https://a/b.jpg' && avitoImageUrl({}) === '')
+  const info = avitoChatInfo({ context: { value: { id: 7, title: 'Баня 6 м', price_string: '890 000 ₽', url: 'https://www.avito.ru/moskva/doma/banya_7', images: { main: { '140x105': 'https://img.avito.st/1.jpg' } } } }, users: [{ id: 1, name: 'Мы' }, { id: 2, name: 'Пётр' }] }, '1')
+  t.ok('объявление и имя клиента (не наше) из карточки чата', info.item.title === 'Баня 6 м' && info.item.price === '890 000 ₽' && info.item.img === 'https://img.avito.st/1.jpg' && info.userName === 'Пётр')
+  t.ok('ссылка объявления — только на avito.ru', avitoChatInfo({ context: { value: { title: 'x', url: 'https://evil.ru/a' } } }, '1').item.url === '')
+  t.ok('быстрые ответы: свои из настроек, иначе по умолчанию', quickReplies({ crmQuickReplies: [' Привет ', ''] }).join() === 'Привет' && quickReplies({}).length === QUICK_REPLIES_DEFAULT.length && quickReplies({ crmQuickReplies: [] }).length === QUICK_REPLIES_DEFAULT.length)
+  const H = 3600000, now = Date.now()
+  const sm = salesSummary({
+    'avito:1': { source: 'avito', item: { title: 'Баня' }, messages: [{ role: 'user', text: 'а', ts: now - 5 * H }, { role: 'assistant', text: 'б', status: 'sent', ts: now - 5 * H + 10 * 60000 }] },
+    'avito:2': { source: 'avito', item: { title: 'Баня' }, messages: [{ role: 'user', text: 'а', ts: now - 3 * H }, { role: 'assistant', text: 'черн', status: 'draft', ts: now - 3 * H + 60000 }, { role: 'assistant', text: 'б', status: 'sent', ts: now - H }] },
+    'avito:3': { source: 'avito', messages: [{ role: 'user', text: 'а', ts: now - H }] },
+  }, [{ id: 'c1', avitoKey: 'avito:1', stage: 'contract', date: new Date(now).toISOString().slice(0, 10) }, { id: 'c2', avitoKey: 'avito:2', stage: 'kp', date: '2020-01-01' }],
+  ['new', 'qualified', 'kp', 'meeting', 'contract', 'montaj'], now)
+  t.ok('сводка: время ответа считается до отправленного, не до черновика', sm.responses === 2 && sm.fastShare === 50 && sm.waitingNow === 1)
+  t.ok('сводка: воронка «дошли до стадии» и объявления', sm.funnel[0].reached === 2 && sm.funnel[3].reached === 1 && sm.listings[0].title === 'Баня' && sm.listings[0].dialogs === 2 && sm.listings[0].contracts === 1 && sm.leadsWeek === 1)
+}
+
 function panel(pathname) {
   const p = boot({})
   p.ctx.location.pathname = pathname
@@ -212,8 +257,33 @@ function panel(pathname) {
   const card = p.run('crmMsgsHtml(crmChats["avito:2"].messages,true,false)')
   t.ok('в карточке клиента черновик тоже выделен, но без кнопок отправки', card.indexOf('НЕ ОТПРАВЛЕНО') >= 0 && card.indexOf('crm-draft-send') < 0)
   t.ok('ответ уходит в Авито тем же обработчиком', chat.indexOf('data-a="crm-send-avito" data-key="avito:2" data-cid="chat"') >= 0 && chat.indexOf('id="crm-reply-chat"') >= 0)
+  t.ok('диалог: быстрые ответы, фото, планировка и «переписать» у черновика', chat.indexOf('data-a="crm-quick"') >= 0 && chat.indexOf('data-a="crm-photo-pick"') >= 0 && chat.indexOf('data-a="crm-plan-toggle"') >= 0 && chat.indexOf('data-a="crm-redraft" data-i="1"') >= 0)
+  p.run('crmRedraftIdx=1;crmPlanPicker=true')
+  const chat2 = p.run('tCRM()')
+  t.ok('«переписать» даёт подсказки, выбор планировки — картинки', chat2.indexOf('data-a="crm-redraft-go"') >= 0 && chat2.indexOf('data-a="crm-plan-send" data-v="kd29-1"') >= 0)
+  p.run('crmRedraftIdx=null;crmPlanPicker=false')
   p.run('crmChatKey="avito:3"')
-  t.ok('у привязанного — переход в карточку клиента', p.run('tCRM()').indexOf('data-a="crm-chat-card" data-cid="c3"') >= 0)
+  const chat3 = p.run('tCRM()')
+  t.ok('у привязанного — переход в карточку клиента', chat3.indexOf('data-a="crm-chat-card" data-cid="c3"') >= 0)
+  p.run('crmChats["avito:3"].messages.push({role:"user",text:"📷 Фото",image:"https://img.avito.st/p.jpg",ts:2100});crmChats["avito:3"].item={title:"Баня 6 м",price:"890 000 ₽",url:"https://www.avito.ru/x",img:""}')
+  const chat4 = p.run('tCRM()')
+  t.ok('фото клиента видно в диалоге, объявление — в шапке', chat4.indexOf('<img src="https://img.avito.st/p.jpg"') >= 0 && chat4.indexOf('ПИШЕТ ПО ОБЪЯВЛЕНИЮ') >= 0 && chat4.indexOf('Баня 6 м') >= 0)
+  p.run('crmChats["avito:3"].messages.push({role:"user",text:"мой номер +7 926 555-44-33",ts:2200})')
+  t.ok('телефон из переписки — кнопки звонка и WhatsApp', p.run('tCRM()').indexOf('href="tel:+79265554433"') >= 0 && p.run('tCRM()').indexOf('wa.me/79265554433') >= 0)
+
+  p.run('crmView="chats";crmFeedMode="wait"')
+  const waitFeed = p.run('tCRM()')
+  t.ok('лента: фильтры, поиск, таймер ожидания, действия ⋯', waitFeed.indexOf('id="crm-feed-q"') >= 0 && waitFeed.indexOf('data-a="crm-feed-mode" data-v="archive"') >= 0 && waitFeed.indexOf('⏳ ждёт') >= 0 && waitFeed.indexOf('data-a="crm-swipe"') >= 0)
+  p.run('crmSwipeKey="avito:3"')
+  const sw = p.run('tCRM()')
+  t.ok('свайп открывает архив, спам и стадию', sw.indexOf('data-a="crm-chat-flag" data-key="avito:3" data-v="archive"') >= 0 && sw.indexOf('data-v="spam"') >= 0 && sw.indexOf('data-a="crm-swipe-stage"') >= 0)
+  p.run('crmSwipeKey=null;crmFeedMode="all";crmClients=crmClients.map(function(c){return Object.assign({},c,{remindAt:Date.now()-60000,remindNote:"перезвонить"});})')
+  t.ok('«Сегодня» в ленте и в воронке', p.run('tCRM()').indexOf('📅 СЕГОДНЯ') >= 0 && p.run('crmView="funnel";tCRM()').indexOf('📅 СЕГОДНЯ') >= 0)
+  t.ok('карточка: напоминание стоит, можно отметить сделанным', p.run('crmView="client";crmOpenId="c3";tCRM()').indexOf('data-a="crm-remind-done" data-cid="c3"') >= 0)
+  p.run('crmView="summary"')
+  const sum = p.run('tCRM()')
+  t.ok('сводка продаж и вкладка внизу', sum.indexOf('СВОДКА ПРОДАЖ') >= 0 && sum.indexOf('КАКИЕ ОБЪЯВЛЕНИЯ') >= 0 && p.run('page()').indexOf('data-a="crm-app-nav" data-v="summary"') >= 0)
+  p.run('crmView="chats"')
 
   p.run('currentUser=users[1];')
   const denied = p.run('page()')
