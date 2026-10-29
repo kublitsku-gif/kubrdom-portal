@@ -31,6 +31,8 @@ import { accessFor, permissionsFor, routeAllowed } from "./access.js";
 import { STATE_SECTIONS, emptySection, validateStateItems, MAX_STATE_BYTES } from "./state-schema.js";
 import { hashPin, checkPin, protectCredentials, credentialVersion } from "./credentials.js";
 import { commitState } from "./state-store.js";
+import { handleCardDav, DAV_ROOT } from "./carddav.js";
+import { contactCards } from "./crm-contacts.js";
 import { pushReady, pushSubscribe, pushUnsubscribe, pushToAll, avitoPushData } from "./push.js";
 import { avitoImageUrl, avitoChatInfo, hasIncoming, dupHidden, avitoHistory, mergeAvitoHistory, draftForButton, waitReminders, dueReminders, waitLabel, chatDeepLink, clientDeepLink } from "./crm-app.js";
 
@@ -1650,6 +1652,53 @@ async function aiChatFlag(env, request) {
 // Отметки, о чём уже напомнили, — отдельной строкой (не в aiChats: её пишет вебхук,
 // и запись по крону могла бы затереть только что пришедшее сообщение).
 const CRM_MARKS = { storage: "crm_marks", id: "push" };
+// ─── Клиенты CRM в телефонной книге (CardDAV, src/carddav.js) ───
+// Пароль для телефона — свой у каждого сотрудника, в D1 только его HMAC (строка dav_tokens/<uid>).
+// Право проверяется на каждый запрос: уволили или сняли CRM — книга в телефоне перестаёт обновляться.
+const DAV_TOKENS = "dav_tokens";
+const DAV_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";   // без 0/o, 1/l/i — пароль иногда вводят руками
+function crmPublicBase(env) { return env.PUBLIC_BASE_URL || "https://portal.kubrdom.ru"; }
+function phoneTail(s) { return String(s || "").replace(/\D/g, "").slice(-10); }
+function davPass(p) { return String(p || "").toLowerCase().replace(/[^a-z0-9]/g, ""); }   // дефисы и регистр не важны
+async function davAuthenticate(env, user, pass) {
+  if (!user || !pass) return null;
+  const { users } = await loadUsersPerms(env);
+  const tail = phoneTail(user);
+  const u = users.find(function (x) { return x && !x.disabled && ((tail.length === 10 && phoneTail(x.phone) === tail) || x.id === user); });
+  if (!u) return null;
+  const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind(DAV_TOKENS, u.id).first();
+  let saved = null; try { saved = row && row.data ? JSON.parse(row.data) : null; } catch (e) {}
+  if (!saved || !saved.hash) return null;
+  const hash = await hmacRaw(env, "dav:" + u.id + ":" + davPass(pass));
+  if (!safeEqual(hash, saved.hash)) return null;
+  return (await (await pushAllowUid(env))(u.id)) ? u.id : null;
+}
+async function crmContactsToken(env, request, auth) {
+  const uid = auth && auth.uid;
+  if (!uid || uid === "__master__") return json({ success: false, error: "Войдите под своим именем — пароль выдаётся сотруднику" }, 400);
+  const { users } = await loadUsersPerms(env);
+  const u = users.find(function (x) { return x.id === uid; });
+  if (!u) return json({ success: false, error: "Сотрудник не найден" }, 404);
+  const login = phoneTail(u.phone).length === 10 ? "7" + phoneTail(u.phone) : u.id;
+  const url = crmPublicBase(env) + "/api/dav/";
+  if (request.method === "GET") {
+    const row = await env.DB.prepare("SELECT updated_at FROM work_states WHERE storage_key=? AND work_id=?").bind(DAV_TOKENS, uid).first();
+    return json({ success: true, connected: !!row, at: row ? Number(row.updated_at) : 0, url: url, login: login });
+  }
+  const body = await request.json().catch(function () { return {}; });
+  if (body && body.revoke) {
+    await env.DB.prepare("DELETE FROM work_states WHERE storage_key=? AND work_id=?").bind(DAV_TOKENS, uid).run();
+    return json({ success: true, connected: false });
+  }
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  const raw = Array.from(bytes, function (b) { return DAV_ALPHABET[b % DAV_ALPHABET.length]; }).join("");
+  const password = raw.match(/.{4}/g).join("-");
+  const hash = await hmacRaw(env, "dav:" + uid + ":" + davPass(password));
+  await env.DB.prepare("INSERT INTO work_states (storage_key, work_id, data, updated_at) VALUES (?,?,?,?) ON CONFLICT(storage_key, work_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at")
+    .bind(DAV_TOKENS, uid, JSON.stringify({ hash: hash }), Date.now()).run();
+  return json({ success: true, connected: true, url: url, login: login, password: password });
+}
+
 // ─── Переписка как в Авито: наши ответы из Авито, сверка истории, чистка повторов ───
 // Наше сообщение, набранное в самом Авито (вебхук приходит и на него).
 // Ответ из CRM/бота мы уже записали — узнаём по id, у старых записей по тексту за последние 10 минут.
@@ -2125,6 +2174,17 @@ export default {
       catch (err) { return json({ ok: false, error: String(err) }, 200); }   // 200 — чтобы Telegram не ретраил вечно
     }
 
+    // CardDAV: клиенты CRM — адресная книга телефона. ДО общей авторизации: телефон ходит
+    // Basic-входом (телефон сотрудника + пароль для телефона из CRM), а не токеном панели.
+    if (url.pathname === "/api/dav" || url.pathname.indexOf(DAV_ROOT) === 0) {
+      try {
+        return await handleCardDav(request, url, {
+          authenticate: function (user, pass) { return davAuthenticate(env, user, pass); },
+          loadCards: async function () { const snap = await readSnapshot(env, ["crmClients"]); return contactCards(snap.crmClients, crmPublicBase(env)); },
+        });
+      } catch (err) { console.error("carddav", String(err)); return new Response("Ошибка сервера", { status: 500 }); }
+    }
+
     // Вебхук Avito (входящие сообщения клиентов) — ДО авторизации. Защита: ?s=<ADMIN_TOKEN> в URL подписки.
     if (url.pathname === "/api/avito/webhook" && request.method === "POST") {
       const ws = url.searchParams.get("s") || "";
@@ -2259,6 +2319,11 @@ export default {
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
     // CRM-приложение: объявление, переписать черновик, фото/планировка, архив/спам (с токеном).
+    // Пароль телефона для книги контактов CRM (CardDAV): GET — подключён ли, POST — новый, POST {revoke} — отключить.
+    if (url.pathname === "/api/crm/contacts-token" && (request.method === "GET" || request.method === "POST")) {
+      try { return await crmContactsToken(env, request, auth); }
+      catch (err) { return json({ success: false, error: String(err && err.message || err) }, 500); }
+    }
     const CRM_CHAT_ROUTES = { "/api/ai/chat-info": aiChatInfo, "/api/ai/resync": aiResync, "/api/ai/redraft": aiRedraft, "/api/ai/send-plan": aiSendPlan, "/api/ai/send-photo": aiSendPhoto, "/api/ai/chat-flag": aiChatFlag };
     if (CRM_CHAT_ROUTES[url.pathname] && request.method === "POST") {
       try { return await CRM_CHAT_ROUTES[url.pathname](env, request); }

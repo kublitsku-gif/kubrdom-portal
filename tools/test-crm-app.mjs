@@ -326,6 +326,9 @@ function panel(pathname) {
   p.run('crmView="summary"')
   const sum = p.run('tCRM()')
   t.ok('сводка продаж и вкладка внизу', sum.indexOf('СВОДКА ПРОДАЖ') >= 0 && sum.indexOf('КАКИЕ ОБЪЯВЛЕНИЯ') >= 0 && p.run('page()').indexOf('data-a="crm-app-nav" data-v="summary"') >= 0)
+  t.ok('в сводке — подключение телефонной книги', sum.indexOf('КЛИЕНТЫ В ТЕЛЕФОННОЙ КНИГЕ') >= 0 && sum.indexOf('data-a="crm-dav-new"') >= 0)
+  p.run('crmAutoLinkAvito()')   // так CRM делает при загрузке диалогов
+  t.ok('клиентам выданы номера КД-NNN', p.q('crmClients.every(function(c){return c.code>0})') === true)
   p.run('crmView="chats"')
 
   p.run('currentUser=users[1];')

@@ -99,7 +99,7 @@ export function routeAllowed(auth, path) {
   if (auth.adm) return true;
   if (auth.client) return /^\/api\/state\//.test(path) || path === '/api/client/accept-stage';
   const p = auth.permissions || [];
-  if (/^\/api\/(ai|avito|push)\//.test(path)) return p.includes('crm') || p.includes('marketing');
+  if (/^\/api\/(ai|avito|push|crm)\//.test(path)) return p.includes('crm') || p.includes('marketing');
   if (/^\/api\/voice/.test(path)) return p.includes('voiceai');
   if (['/api/photo-delete','/api/topic-rename','/api/notion/upload'].includes(path)) return false;
   if (path === '/api/plan-read') return ['works','spec','projects','kp'].some(x => p.includes(x));

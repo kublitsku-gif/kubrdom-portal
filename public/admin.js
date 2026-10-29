@@ -84,6 +84,7 @@ import { installInPageCamera } from "../src/camera.js";
 // Закрытие дня и штраф за незакрытый — общий модуль с напоминаниями (src/dayclose.js):
 // панель и крон ОБЯЗАНЫ считать «день закрыт» одинаково, иначе человек видит галочку,
 // а утром у него удерживают деньги. См. docs/domain/day-close.md.
+import { assignClientCodes, clientCode } from "../src/crm-contacts.js";
 import { isCrmPath, chatFeed, feedTime, draftKinds, dupHidden, isPlaceholderName, FEED_MODES, filterFeed, WAIT_ALERT_MIN, waitLabel, todayReminders, safeImageUrl, quickReplies, REDRAFT_HINTS, salesSummary } from "../src/crm-app.js";
 import { PLAN_IMAGES } from "../src/plan-images.js";
 import { unb64u } from "../src/webpush.js";
@@ -25610,6 +25611,9 @@ function crmAutoLinkAvito(){
     crmClients.push({ id:gid(), name:(ch.name||"Avito клиент"), phone:(phone?"+7"+phone:""), source:"Авито", stage:"new", msg:(firstUser&&firstUser.text)||"", date:today, notes:"", avitoKey:k });
     linked[k]=true; changed=true;
   });
+  // Номер клиента «КД-057» — для телефонной книги и разговоров с бригадой; выдаётся один раз.
+  var coded=assignClientCodes(crmClients);
+  if(coded!==crmClients){ crmClients=coded; changed=true; }
   return changed;
 }
 // Лениво подгружаем Avito-диалоги один раз при входе в CRM (для подсветки/карточек + авто-привязки).
@@ -25664,6 +25668,7 @@ let crmRedraftIdx=null;       // черновик, для которого от�
 let crmBusy="";               // идёт запрос: "redraft" | "photo" | "plan"
 let crmPlanPicker=false;      // выбор планировки для отправки
 let crmQuickEdit=false;       // правка списка быстрых ответов
+let crmDav=null;              // книга контактов в телефоне: {connected,url,login,password?,busy,err}; экранное
 const crmInfoAsked={};        // по каким диалогам уже спрашивали объявление
 const crmSyncAsked={};        // какие диалоги уже сверяли с Авито в этой вкладке
 function isCrmApp(){ try{ return isCrmPath(location.pathname); }catch(e){ return false; } }
@@ -25949,7 +25954,37 @@ function tCRMSummary(){
         '<div style="font-size:11.5px;color:#9aabbf">Диалогов с Авито пока нет</div>')+
       '<div style="font-size:10px;color:#a9b4bf;margin-top:6px">Объявление подтягивается из Авито при первом сообщении; у старых диалогов — когда их откроешь.</div>'+
     '</div></div>';
-  return html;
+  return html+crmContactsHtml();
+}
+// Клиенты CRM в телефонной книге (CardDAV, src/carddav.js): при звонке видно «КД-057 📄 Имя».
+function crmContactsHtml(){
+  if(crmDav===null){
+    crmDav={busy:true};
+    fetch(API_BASE+"/api/crm/contacts-token",{headers:authHeaders()}).then(function(r){return r.json();})
+      .then(function(j){ crmDav=(j&&j.success)?{connected:!!j.connected,url:j.url,login:j.login}:{err:(j&&j.error)||"Не удалось узнать"}; ui(); })
+      .catch(function(){ crmDav={err:"Нет связи с сервером"}; ui(); });
+  }
+  var d=crmDav||{};
+  var row=function(label,v){ return '<div style="display:flex;align-items:center;gap:6px;margin-top:5px"><span style="width:62px;font-size:10.5px;color:#7a9aaa">'+label+'</span>'+
+    '<code style="flex:1;min-width:0;font-size:12px;background:#f4f7fb;border-radius:6px;padding:5px 7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(v)+'</code>'+
+    '<button data-a="crm-dav-copy" data-v="'+esc(v)+'" style="border:1px solid #d6e2ee;background:#fff;border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer">⧉</button></div>'; };
+  var creds=d.password?'<div style="margin-top:8px;padding:8px;border:1px dashed #27ae60;border-radius:8px;background:#f3fbf6">'+
+      '<div style="font-size:11px;font-weight:700;color:#1e8449">Пароль показан один раз — сразу введите его в телефоне</div>'+
+      row("Адрес",d.url)+row("Логин",d.login)+row("Пароль",d.password)+'</div>':'';
+  var status=d.busy?'⏳ Проверяю…':(d.err?'⚠️ '+esc(d.err):(d.connected?'🟢 Пароль для телефона выдан':'⚪ Не подключено'));
+  return '<div style="background:#fff;border:1px solid #e4ebf2;border-radius:10px;padding:10px 12px;margin-top:12px">'+
+    '<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:6px">📇 КЛИЕНТЫ В ТЕЛЕФОННОЙ КНИГЕ</div>'+
+    '<div style="font-size:12px;color:#1a2a3a;line-height:1.45">Клиенты CRM — отдельной книгой «КубрДом CRM» в контактах телефона. При звонке высветится, например, <b>КД-057 📄 Светлана Орлова</b>: номер клиента, стадия, имя. Новые клиенты и смена стадии подтягиваются сами.</div>'+
+    '<div style="font-size:11.5px;color:#5a6f80;margin-top:6px">'+status+'</div>'+creds+
+    '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">'+
+      '<button data-a="crm-dav-new" style="border:0;background:#2980b9;color:#fff;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer">'+(d.connected?'🔑 Новый пароль':'📲 Подключить телефон')+'</button>'+
+      (d.connected?'<button data-a="crm-dav-off" style="border:1px solid #e3b5b5;background:#fff;color:#c0392b;border-radius:8px;padding:7px 12px;font-size:12px;cursor:pointer">Отключить</button>':'')+
+    '</div>'+
+    '<details style="margin-top:8px;font-size:11.5px;color:#3d5366;line-height:1.5"><summary style="cursor:pointer;font-weight:700">Как подключить</summary>'+
+      '<div style="margin-top:4px"><b>Android:</b> поставьте приложение <b>DAVx⁵</b> (Google Play или бесплатно в F-Droid) → «+» → «Вход по URL и имени пользователя» → адрес, логин и пароль отсюда → «Войти» → включите книгу «КубрДом CRM». Затем в «Контактах» покажите контакты аккаунта DAVx⁵.</div>'+
+      '<div style="margin-top:4px"><b>iPhone:</b> Настройки → Контакты → Учётные записи → Новая учётная запись → Другое → «Учётная запись CardDAV»: сервер — адрес отсюда, пользователь — логин, пароль — пароль.</div>'+
+      '<div style="margin-top:4px;color:#7a9aaa">Книга только для чтения: клиентов правят в CRM. В книге — клиенты с телефоном.</div>'+
+    '</details></div>';
 }
 // Напоминание «перезвонить» в карточке клиента.
 function crmRemindHtml(c){
@@ -26415,7 +26450,7 @@ function tCRMClient(cid){
   // Back button + name
   html+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">'+
     '<button data-a="crm-back" style="padding:6px 14px;background:transparent;border:1px solid #d0dae8;border-radius:20px;cursor:pointer;font-size:12px;color:#7a9aaa">← Воронка</button>'+
-    '<div style="flex:1;font-size:15px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.name)+'</div>'+
+    '<div style="flex:1;font-size:15px;font-weight:700;color:#0d1b2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(c.code?'<span style="font-size:11px;color:#7a9aaa;font-weight:800;margin-right:6px">'+esc(clientCode(c.code))+'</span>':'')+esc(c.name)+'</div>'+
   '</div>';
   // Stage section: current badge (clickable to expand) + optional full list
   const curStageIdx=CRM_STAGES.findIndex(function(s){return s.id===c.stage;});
@@ -31166,6 +31201,19 @@ function bind(){
       const body={clientKey:key}; if(v==="archive"||v==="unarchive")body.archived=v==="archive"; else body.spam=v==="spam";
       el.textContent="⏳"; crmSwipeKey=null;
       await crmChatPost("/api/ai/chat-flag",body); render();
+    };}
+    else if(a==="crm-dav-copy"){el.onclick=()=>{ var v=el.dataset.v||""; try{ navigator.clipboard.writeText(v).then(function(){ el.textContent="✓"; }).catch(function(){ prompt("Скопируйте:",v); }); }catch(e){ prompt("Скопируйте:",v); } };}
+    else if(a==="crm-dav-new"||a==="crm-dav-off"){el.onclick=async()=>{
+      var off=a==="crm-dav-off", was=crmDav&&crmDav.connected;
+      if(off&&!confirm("Отключить книгу контактов? Телефон перестанет получать обновления."))return;
+      if(!off&&was&&!confirm("Выдать новый пароль? Старый перестанет работать — его нужно будет заменить в телефоне."))return;
+      el.disabled=true;
+      try{
+        const r=await fetch(API_BASE+"/api/crm/contacts-token",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify(off?{revoke:true}:{})});
+        const j=await r.json();
+        crmDav=(j&&j.success)?{connected:!!j.connected,url:j.url||(crmDav&&crmDav.url),login:j.login||(crmDav&&crmDav.login),password:j.password||""}:{connected:was,url:crmDav&&crmDav.url,login:crmDav&&crmDav.login,err:(j&&j.error)||"Не получилось"};
+      }catch(e){ crmDav=Object.assign({},crmDav,{err:"Нет связи с сервером"}); }
+      ui();
     };}
     else if(a==="crm-summary-wait"){el.onclick=()=>{ crmFeedMode="wait"; crmFeedStage=null; crmView="chats"; render(); try{window.scrollTo(0,0);}catch(e){} };}
     else if(a==="crm-today-open"){el.onclick=()=>{ crmOpenId=el.dataset.cid; crmView="client"; crmBackView=null; crmStagePickerOpen=false; render(); try{window.scrollTo(0,0);}catch(e){} };}
