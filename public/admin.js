@@ -23165,30 +23165,32 @@ function tMarketingMain(){
 
 // Вкладки экрана инструкций: скрипт бани, скрипт дома и факты с сайта (подкладываются к обоим).
 var MKT_INST={banya:{key:"aiSellerPromptBanya",title:"ИНСТРУКЦИЯ ДЛЯ БАНЬ 🛁",name:"баня"},house:{key:"aiSellerPromptHouse",title:"ИНСТРУКЦИЯ ДЛЯ ДОМОВ 🏠",name:"дом"},site:{key:"aiSiteKnowledge",title:"ФАКТЫ С САЙТА kubrdom.ru 🌐",name:"сайт"}};
-// Голос в песочнице: диктовка браузера (Web Speech API) прямо в поле ввода — сервер и ключи
-// не нужны. Текст не отправляется сам: его можно поправить и нажать ➤. Кнопку красим
-// напрямую, без перерисовки, — перерисовка стёрла бы уже надиктованное в поле.
-var mktMic=null;
-function mktMicToggle(btn){
-  if(mktMic){ try{ mktMic.stop(); }catch(e){} return; }
+// Голосовой ввод: диктовка браузера (Web Speech API) прямо в поле — сервер и ключи не нужны.
+// Текст не отправляется сам: его можно поправить и отправить. Кнопку красим напрямую, без
+// перерисовки, — перерисовка стёрла бы уже надиктованное. На странице идёт одна запись.
+var voiceRec=null;
+function voiceDictate(inputId, btnSel, color, btn){
+  if(voiceRec){ try{ voiceRec.stop(); }catch(e){} return; }
   var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){ alert("Голосовой ввод в этом браузере не работает. Откройте портал в Chrome или Safari."); return; }
-  var inp=document.getElementById("mkt-test-text"); if(!inp) return;
+  var inp=document.getElementById(inputId); if(!inp) return;
   var base=inp.value?inp.value.replace(/\s+$/,"")+" ":"";
   var rec=new SR(); rec.lang="ru-RU"; rec.interimResults=true; rec.continuous=true;
-  function face(on){ var b=document.querySelector('[data-a="mkt-test-mic"]')||btn; if(!b) return; b.textContent=on?"⏹":"🎤"; b.style.background=on?"#e74c3c":"#fff"; b.style.borderColor=on?"#e74c3c":"#8e44ad"; b.title=on?"Остановить запись":"Сказать голосом"; }
+  function face(on){ var b=document.querySelector(btnSel)||btn; if(!b) return; b.textContent=on?"⏹":"🎤"; b.style.background=on?"#e74c3c":"#fff"; b.style.borderColor=on?"#e74c3c":color; b.title=on?"Остановить запись":"Сказать голосом"; }
   rec.onresult=function(ev){
     var fin="", tmp="";
     for(var i=0;i<ev.results.length;i++){ var t=ev.results[i][0].transcript; if(ev.results[i].isFinal) fin+=t; else tmp+=t; }
-    var el2=document.getElementById("mkt-test-text"); if(el2) el2.value=base+(fin+tmp).replace(/^\s+/,"");
+    var el2=document.getElementById(inputId); if(el2) el2.value=base+(fin+tmp).replace(/^\s+/,"");
   };
   rec.onerror=function(ev){
     if(ev.error==="not-allowed"||ev.error==="service-not-allowed") alert("Нет доступа к микрофону. Разрешите микрофон для портала в настройках браузера.");
     else if(ev.error!=="no-speech"&&ev.error!=="aborted") alert("Голосовой ввод: "+ev.error);
   };
-  rec.onend=function(){ mktMic=null; face(false); var el2=document.getElementById("mkt-test-text"); if(el2) el2.focus(); };
-  try{ rec.start(); mktMic=rec; face(true); }catch(e){ mktMic=null; alert("Не удалось включить микрофон: "+((e&&e.message)||e)); }
+  rec.onend=function(){ voiceRec=null; face(false); var el2=document.getElementById(inputId); if(el2) el2.focus(); };
+  try{ rec.start(); voiceRec=rec; face(true); }catch(e){ voiceRec=null; alert("Не удалось включить микрофон: "+((e&&e.message)||e)); }
 }
+// Голос в песочнице нейропродавца.
+function mktMicToggle(btn){ voiceDictate("mkt-test-text",'[data-a="mkt-test-mic"]',"#8e44ad",btn); }
 function tMarketingInstruction(){
   var kind=MKT_INST[window._mktInstKind]?window._mktInstKind:"banya";
   var key=MKT_INST[kind].key, isSite=kind==="site";
@@ -25660,7 +25662,7 @@ function crmPollBadge(){
     crmChats=j.chats||{};
     crmAutoLinkAvito();                  // новые Avito-диалоги → лиды (автосейв сохранит)
     crmAppBadge();
-    var ae=document.activeElement; var typing=ae&&(ae.tagName==="INPUT"||ae.tagName==="TEXTAREA");
+    var ae=document.activeElement; var typing=voiceRec||(ae&&(ae.tagName==="INPUT"||ae.tagName==="TEXTAREA"));   // и пока диктуют
     var inChats=tab==="crm"&&(crmView==="chats"||crmView==="chat");
     if(!typing && (crmUnansweredCount()!==before || (inChats&&crmChatsSig()!==sigBefore))) render();
   }).catch(function(){});
@@ -25927,6 +25929,7 @@ function crmRedraftHtml(i){
       return '<button data-a="crm-redraft-go" data-i="'+i+'" data-v="'+esc(h)+'" '+(crmBusy?"disabled":"")+' style="padding:5px 10px;background:#fff;border:1px solid #f0b429;border-radius:14px;cursor:pointer;font-size:11.5px;color:#8a5a00;font-weight:700">'+esc(h)+'</button>';
     }).join("")+'</div>'+
     '<div style="display:flex;gap:6px"><input id="crm-redraft-own" placeholder="Своё указание: «упомяни рассрочку»…" style="flex:1;min-width:0;padding:7px 9px;border-radius:8px;border:1px solid #e6d7a8;font-size:12px;outline:none">'+
+      '<button data-a="crm-redraft-mic" title="Сказать голосом" '+(crmBusy?"disabled":"")+' style="padding:7px 10px;background:#fff;border:1.5px solid #f0b429;border-radius:8px;cursor:pointer;font-size:14px">🎤</button>'+
       '<button data-a="crm-redraft-go" data-i="'+i+'" data-v="" '+(crmBusy?"disabled":"")+' style="padding:7px 12px;background:#f0b429;border:none;border-radius:8px;cursor:pointer;font-size:12px;color:#fff;font-weight:700">'+(crmBusy==="redraft"?"⏳":"🔄")+'</button></div>'+
   '</div>';
 }
@@ -31558,6 +31561,7 @@ function bind(){
       setTimeout(function(){var el2=document.getElementById("mkt-test-text"); if(el2)el2.focus();},0);
     };}
     else if(a==="mkt-test-mic"){el.onclick=()=>mktMicToggle(el);}
+    else if(a==="crm-redraft-mic"){el.onclick=()=>voiceDictate("crm-redraft-own",'[data-a="crm-redraft-mic"]',"#f0b429",el);}
     else if(a==="mkt-test-clear"){el.onclick=()=>{ mktTest=[]; mktTestBusy=false; render(); };}
     else if(a==="mkt-test-kind"){el.onclick=()=>{ mktTestKind=el.dataset.kind; render(); };}
     else if(a==="mkt-load-listings"){el.onclick=async()=>{

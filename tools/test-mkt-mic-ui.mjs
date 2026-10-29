@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Голос в песочнице нейропродавца (public/admin.js, mktMicToggle).
+// Голосовой ввод (public/admin.js, voiceDictate): песочница нейропродавца и указание ИИ
+// «как переписать черновик» в диалоге CRM.
 //
 // Кнопка 🎤 включает диктовку браузера (Web Speech API): сказанное дописывается в
 // поле ввода к уже набранному, но не отправляется само — человек правит и жмёт ➤.
@@ -44,7 +45,7 @@ const result = (parts) => {
   t.ok('итоговый текст заменил промежуточный', p.q('document.getElementById("mkt-test-text").value') === 'Здравствуйте! Сколько стоит баня шесть метров')
   t.ok('в песочницу ничего не ушло', p.q('mktTest.length') === 0)
   mic.onclick()
-  t.ok('повторное нажатие останавливает запись', last.stopped && p.q('mktMic') === null && mic.textContent === '🎤')
+  t.ok('повторное нажатие останавливает запись', last.stopped && p.q('voiceRec') === null && mic.textContent === '🎤')
 }
 
 {
@@ -59,6 +60,21 @@ const result = (parts) => {
   alerts.length = 0
   const mic = p.dom.node({ a: 'mkt-test-mic' }); p.run('bind();'); mic.onclick()
   t.ok('без Web Speech — подсказка про Chrome/Safari', alerts.some((a) => a.indexOf('Chrome или Safari') >= 0), alerts.join(' | '))
+}
+
+{
+  t.section('«Как переписать?» у черновика — голосом')
+  p.ctx.webkitSpeechRecognition = FakeSR
+  const html = p.run('crmBusy=false;crmRedraftHtml(3)')
+  t.ok('рядом со «Своё указание» — кнопка 🎤 перед 🔄', html.indexOf('data-a="crm-redraft-mic"') >= 0 && html.indexOf('data-a="crm-redraft-mic"') < html.lastIndexOf('data-a="crm-redraft-go"'))
+  p.dom.field('crm-redraft-own', '')
+  p.run('document.getElementById("crm-redraft-own").focus=function(){}')
+  const mic = p.dom.node({ a: 'crm-redraft-mic' }); p.run('bind();'); mic.onclick()
+  result([['упомяни рассрочку на год', true]])
+  t.ok('сказанное легло в поле указания', p.q('document.getElementById("crm-redraft-own").value') === 'упомяни рассрочку на год')
+  t.ok('пока диктуют, кнопка — «стоп»', mic.textContent === '⏹')
+  mic.onclick()
+  t.ok('остановка возвращает 🎤', mic.textContent === '🎤' && p.q('voiceRec') === null)
 }
 
 t.done()
