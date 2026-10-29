@@ -42,6 +42,7 @@
 - Адрес подписки принимается только у настоящих push-сервисов (`cleanSubscription`: FCM, Mozilla, Windows, Apple), иначе Worker можно было бы заставить постучаться куда угодно.
 - Шифрование и VAPID — свои, на WebCrypto (`src/webpush.js`, RFC 8291 aes128gcm + RFC 8292). Ключи: `VAPID_PUBLIC_KEY` в `wrangler.toml`, приватный — GitHub-секрет `VAPID_PRIVATE_KEY` → `deploy.yml` → Worker. Сменить ключи = все телефоны должны заново включить уведомления.
 - Нажатие на пуш: окно `/crm` открыто — `postMessage({type:"crm-open"})` → `crmOpenFromUrl`; нет — открывается `/crm?go=chat%3D<key>`, разбирает `applyDeepLink` (`q.chat`).
+- **Цифра на иконке** — `unansweredCount` (диалоги Авито, где последним писал клиент; черновик ИИ не ответ; архив/спам не в счёт). Открытая CRM ставит её сама (`crmAppBadge` → `navigator.setAppBadge`), закрытая — из пуша: в данных пуша `count`, `sw.js` зовёт `setAppBadge`/`clearAppBadge`. Работает у УСТАНОВЛЕННОГО приложения (WebAPK на Android, установленное PWA на Маке); окно `--app` из обёртки «CRM КубрДом.app» своей иконки и цифры не имеет. Ответили, пока приложение закрыто, — цифра обновится при следующем пуше или открытии (тихих пушей Chrome не даёт).
 - Android-пуши идут через FCM (Google). Если в РФ отвалится — дублировать в Telegram (sales-бот уже шлёт ветку по каждому клиенту).
 - Сторожит `tools/test-crm-app.mjs` (в т.ч. расшифровка пуша «браузером» по RFC и проверка подписи VAPID).
 

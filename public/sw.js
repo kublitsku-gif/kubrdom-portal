@@ -7,6 +7,10 @@ self.addEventListener("activate", function (e) { e.waitUntil(self.clients.claim(
 self.addEventListener("push", function (e) {
   var d = {};
   try { d = e.data ? e.data.json() : {}; } catch (err) { d = { body: e.data ? e.data.text() : "" }; }
+  // Цифра на иконке (Android, установленное приложение на Маке): сколько диалогов ждут ответа.
+  if (typeof d.count === "number" && self.navigator && self.navigator.setAppBadge) {
+    try { if (d.count > 0) self.navigator.setAppBadge(d.count); else self.navigator.clearAppBadge(); } catch (err) {}
+  }
   e.waitUntil(self.registration.showNotification(d.title || "КубрДом CRM", {
     body: d.body || "",
     tag: d.tag || undefined,

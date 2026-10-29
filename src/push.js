@@ -66,7 +66,7 @@ export async function pushToAll(env, data, allowUid, fetchFn) {
 }
 
 // Текст пуша о новом сообщении клиента: имя из карточки CRM, если диалог к ней привязан.
-export function avitoPushData(key, chatName, text, clients) {
+export function avitoPushData(key, chatName, text, clients, count) {
   const client = (clients || []).find((c) => c && c.avitoKey === key);
   const t = String(text || "").replace(/\s+/g, " ").trim();
   return {
@@ -74,5 +74,7 @@ export function avitoPushData(key, chatName, text, clients) {
     body: t.length > PUSH_TEXT_MAX ? t.slice(0, PUSH_TEXT_MAX - 1) + "…" : t,
     tag: key,
     url: chatDeepLink(key),
+    // Цифра на иконке приложения: sw.js ставит её, даже когда CRM закрыта.
+    ...(Number.isFinite(count) ? { count } : {}),
   };
 }

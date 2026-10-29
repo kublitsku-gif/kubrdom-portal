@@ -87,7 +87,7 @@ import { installInPageCamera } from "../src/camera.js";
 // панель и крон ОБЯЗАНЫ считать «день закрыт» одинаково, иначе человек видит галочку,
 // а утром у него удерживают деньги. См. docs/domain/day-close.md.
 import { assignClientCodes, clientCode } from "../src/crm-contacts.js";
-import { isCrmPath, chatFeed, feedTime, draftKinds, dupHidden, isPlaceholderName, FEED_MODES, filterFeed, WAIT_ALERT_MIN, waitLabel, todayReminders, safeImageUrl, quickReplies, REDRAFT_HINTS, salesSummary } from "../src/crm-app.js";
+import { unansweredCount, isCrmPath, chatFeed, feedTime, draftKinds, dupHidden, isPlaceholderName, FEED_MODES, filterFeed, WAIT_ALERT_MIN, waitLabel, todayReminders, safeImageUrl, quickReplies, REDRAFT_HINTS, salesSummary } from "../src/crm-app.js";
 import { PLAN_IMAGES } from "../src/plan-images.js";
 import { unb64u } from "../src/webpush.js";
 import { dayCloseState, dayFineCfg, underDayFine, fineSum, DAY_FINE_CAT, DAY_FINE_DEFAULT } from "../src/dayclose.js";
@@ -25652,7 +25652,7 @@ function chatUnanswered(ch){
   return false;
 }
 // Кол-во неотвеченных Avito-диалогов (для бейджа на вкладке CRM).
-function crmUnansweredCount(){ var n=0; if(crmChats)for(var k in crmChats){ var ch=crmChats[k]; if(ch&&ch.source==="avito"&&chatUnanswered(ch))n++; } return n; }
+function crmUnansweredCount(){ return unansweredCount(crmChats||{}); }   // та же мера, что цифра в пуше
 // Фоновое обновление диалогов (для живого бейджа); не дёргаем render при наборе текста.
 function crmPollBadge(){
   if(!_hydrated||!getToken())return;

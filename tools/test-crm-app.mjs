@@ -10,7 +10,7 @@ import { webcrypto as crypto } from 'node:crypto'
 import fs from 'node:fs'
 import { boot, reporter } from './harness/panel-vm.js'
 import { b64u, unb64u, cleanSubscription, encryptPayload, vapidHeader, sendPush } from '../src/webpush.js'
-import { isCrmPath, chatDeepLink, chatFeed, feedTime, draftKinds, hasIncoming, dupHidden, isPlaceholderName, isDirectChat, avitoHistory, mergeAvitoHistory, dupTelegram, draftForButton, filterFeed, waitSince, waitLabel, waitReminders, dueReminders, todayReminders, safeImageUrl, avitoImageUrl, avitoChatInfo, quickReplies, QUICK_REPLIES_DEFAULT, salesSummary, clientDeepLink } from '../src/crm-app.js'
+import { unansweredCount, isCrmPath, chatDeepLink, chatFeed, feedTime, draftKinds, hasIncoming, dupHidden, isPlaceholderName, isDirectChat, avitoHistory, mergeAvitoHistory, dupTelegram, draftForButton, filterFeed, waitSince, waitLabel, waitReminders, dueReminders, todayReminders, safeImageUrl, avitoImageUrl, avitoChatInfo, quickReplies, QUICK_REPLIES_DEFAULT, salesSummary, clientDeepLink } from '../src/crm-app.js'
 import { pushSubscribe, pushToAll, avitoPushData, PUSH_STORAGE_KEY } from '../src/push.js'
 import { routeAllowed } from '../src/access.js'
 
@@ -133,6 +133,24 @@ function fakeDB() {
   const d = avitoPushData('avito:7', 'Avito · 123', 'Здравствуйте,\n  сколько   стоит?', [{ id: 'c1', name: 'Иван Петров', avitoKey: 'avito:7' }])
   t.ok('имя из карточки CRM, пробелы схлопнуты', d.title === '💬 Иван Петров' && d.body === 'Здравствуйте, сколько стоит?', JSON.stringify(d))
   t.ok('tag по диалогу (новое заменяет старое), ссылка на диалог', d.tag === 'avito:7' && d.url === chatDeepLink('avito:7'))
+  t.ok('в пуше — цифра для иконки, без неё поля нет', avitoPushData('avito:9', 'А', 'б', [], 3).count === 3 && !('count' in avitoPushData('avito:9', 'А', 'б', [])))
+  t.ok('цифра = диалоги Авито, где последним писал клиент; черновик ИИ не ответ; архив и спам не в счёт', unansweredCount({
+    a: { source: 'avito', messages: [{ role: 'user', text: '1' }, { role: 'assistant', text: 'ч', status: 'draft' }] },
+    b: { source: 'avito', messages: [{ role: 'user', text: '1' }, { role: 'assistant', text: 'ок', status: 'sent' }] },
+    c: { source: 'avito', archived: true, messages: [{ role: 'user', text: '1' }] },
+    d: { source: 'telegram', messages: [{ role: 'user', text: '1' }] },
+  }) === 1)
+  {
+    const fs = await import('node:fs')
+    const sw = fs.readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8')
+    let badge = null, shown = false
+    const self = { addEventListener: (ev, fn) => { self['on' + ev] = fn }, navigator: { setAppBadge: (n) => { badge = n }, clearAppBadge: () => { badge = 0 } }, registration: { showNotification: () => { shown = true; return Promise.resolve() } }, skipWaiting() {}, clients: {} }
+    new Function('self', sw)(self)
+    self.onpush({ data: { json: () => ({ title: 'x', count: 4 }) }, waitUntil() {} })
+    t.ok('сервис-воркер ставит цифру на иконку из пуша', badge === 4 && shown)
+    self.onpush({ data: { json: () => ({ title: 'x', count: 0 }) }, waitUntil() {} })
+    t.ok('ноль — цифра снимается', badge === 0)
+  }
   const long = avitoPushData('avito:8', 'Avito · 8', 'а'.repeat(500), [])
   t.ok('без карточки — имя чата; длинный текст обрезан', long.title === '💬 Avito · 8' && long.body.length === 160 && long.body.endsWith('…'))
 }

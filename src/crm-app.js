@@ -223,6 +223,16 @@ export function isDirectChat(key) {
   return /^avito:u2u-/.test(String(key || ""));
 }
 
+// Сколько диалогов Авито ждут нашего ответа — цифра на иконке приложения (и в пуше, и в
+// открытой CRM). Архив и спам не считаем: их разобрали.
+export function unansweredCount(chats) {
+  return Object.values(chats || {}).filter((c) => {
+    if (!c || c.source !== "avito" || c.archived || c.spam) return false;
+    const last = lastOf(c.messages || [], (m) => m.status !== "draft");
+    return !!(last && last.role === "user");
+  }).length;
+}
+
 // Время в ленте: сегодня — «14:05», раньше — «27.10».
 export function feedTime(ts, now = Date.now()) {
   if (!ts) return "";

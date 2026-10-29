@@ -38,7 +38,7 @@ import { transcribeVoice } from "./stt.js";
 import { dialogLabel, dialogCardText, dialogKeyboard, planKeyboard, redraftHint, sentStatus, STATUS, crmChatLink } from "./sales-dialog.js";
 import { tgChatKey, applyBusinessUpdate, businessChatId, businessConnId, connectionRecord, BUSINESS_UPDATES } from "./tg-business.js";
 import { pushReady, pushSubscribe, pushUnsubscribe, pushToAll, avitoPushData } from "./push.js";
-import { avitoImageUrl, avitoChatInfo, hasIncoming, dupHidden, avitoHistory, mergeAvitoHistory, draftForButton, waitReminders, dueReminders, waitLabel, chatDeepLink, clientDeepLink } from "./crm-app.js";
+import { unansweredCount, avitoImageUrl, avitoChatInfo, hasIncoming, dupHidden, avitoHistory, mergeAvitoHistory, draftForButton, waitReminders, dueReminders, waitLabel, chatDeepLink, clientDeepLink } from "./crm-app.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
@@ -1388,7 +1388,7 @@ async function aiProcessIncoming(env, opt) {
   if (c.spam) return { success: true, spam: true };
   // Пуш на телефоны CRM — сразу после записи (диалог уже открывается), не дожидаясь ИИ.
   if (source === "avito") {
-    try { await notifyAvitoIncoming(env, clientKey, c.name, text); } catch (e) { console.error("push avito", String(e)); }
+    try { await notifyAvitoIncoming(env, clientKey, c.name, text, unansweredCount(chats)); } catch (e) { console.error("push avito", String(e)); }
   }
   let sales = null;
   if (source === "avito") {
@@ -1602,10 +1602,10 @@ async function pushAllowUid(env) {
     return (u.roles || []).includes("admin") || p.includes("crm") || p.includes("marketing");
   };
 }
-async function notifyAvitoIncoming(env, key, name, text) {
+async function notifyAvitoIncoming(env, key, name, text, count) {
   if (!pushReady(env)) return;
   const snap = await readSnapshot(env, ["crmClients"]);
-  await pushToAll(env, avitoPushData(key, name, text, snap.crmClients), await pushAllowUid(env));
+  await pushToAll(env, avitoPushData(key, name, text, snap.crmClients, count), await pushAllowUid(env));
 }
 
 // POST /api/ai/send {clientKey,text} — ответ клиенту из карточки CRM. Шлёт в Avito + лог + Telegram. Требует токен.
