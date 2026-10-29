@@ -92,7 +92,7 @@ import { PLAN_IMAGES } from "../src/plan-images.js";
 import { unb64u } from "../src/webpush.js";
 import { dayCloseState, dayFineCfg, underDayFine, fineSum, DAY_FINE_CAT, DAY_FINE_DEFAULT } from "../src/dayclose.js";
 
-const APP_BUILD = "2026-10-29.crm-sales";
+const APP_BUILD = "2026-10-29.crm-sales.2";
 
 // Память посчитанного о проектах (см. projFacts). Объявлена наверху: applyState
 // сбрасывает её, а зовут его уже при загрузке кэша — раньше строки с проектами.
@@ -26185,7 +26185,7 @@ async function crmPushDisable(){
   crmPush={state:"off",busy:false}; ui();
 }
 
-let salesFilter="active", salesDays=30, salesSuggestions={}, salesRemindEdit=null;
+let salesFilter="all", salesDays=30, salesSuggestions={}, salesRemindEdit=null;
 let crmNewClient={name:"",phone:"",msg:"",notes:""};
 
 const CRM_STAGES=[
@@ -26204,7 +26204,7 @@ async function salesAction(action,id,el){
  const field=k=>(document.getElementById('sales-'+k)||{}).value||'';
  const c=crmClients.find(x=>x.id===id);
  try {
- if(action==='filter'){salesFilter=id;ui();return;}
+ if(action==='filter'){salesFilter=id;crmStageFilter=null;ui();return;}
  if(action==='period'){salesDays=Number(field('days'))||30;ui();return;}
  if(action==='chat'){crmOpenChat(id);return;}
  if(action==='profile'){
@@ -26259,10 +26259,11 @@ function tCRM(){
 
 function tCRMFunnel(){
   // Stats
-  const shown=crmClients.filter(c=>matchesSales(c,salesFilter,currentUser&&currentUser.id));
-  const total=shown.length;
+  const allClients=crmClients.filter(visibleClient);
+  const shown=allClients.filter(c=>matchesSales(c,salesFilter,currentUser&&currentUser.id));
+  const total=allClients.length;
   const byStage={};
-  CRM_STAGES.forEach(function(s){byStage[s.id]=shown.filter(function(c){return c.stage===s.id;});});
+  CRM_STAGES.forEach(function(s){byStage[s.id]=allClients.filter(function(c){return c.stage===s.id;});});
 
   let html='<div>';
   crmVisibleIds=[];   // собираем id показанных клиентов по ходу рендера
@@ -26270,7 +26271,7 @@ function tCRMFunnel(){
   html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">'+
     '<div>'+
       '<div style="font-size:11px;color:#7a9aaa;font-weight:700;letter-spacing:1px">CRM — ЗАЯВКИ И ПРОДАЖИ</div>'+
-      '<div style="font-size:12px;color:#5a7a9a;margin-top:2px">'+total+' клиентов в работе</div>'+
+      '<div style="font-size:12px;color:#5a7a9a;margin-top:2px">'+total+' клиентов в CRM</div>'+
     '</div>'+
     '<div style="display:flex;gap:6px">'+
       (isCrmApp()?'':'<button data-a="crm-app-nav" data-v="summary" style="padding:6px 10px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;font-size:11px;color:#2980b9;font-weight:700">📊</button>')+
@@ -26292,8 +26293,8 @@ function tCRMFunnel(){
   }
 
   // Pipeline — horizontal bar funnel with icons
-  const totalClients=shown.length;
-  const contractedCnt=shown.filter(c=>["contract","montaj"].includes(c.stage)).length;
+  const totalClients=allClients.length;
+  const contractedCnt=allClients.filter(c=>["contract","montaj"].includes(c.stage)).length;
   const convRate=totalClients>0?Math.round(contractedCnt/totalClients*100):0;
 
   // Stage icons map
@@ -26329,6 +26330,7 @@ function tCRMFunnel(){
       '</div>'+
     '</div>';
 
+  html+='<div style="font-size:12px;color:#5a7a9a;margin:8px 0">Воронка всех клиентов · рабочий фильтр применяется к списку ниже</div>';
   // Funnel rows
   html+='<div style="display:flex;flex-direction:column;gap:0;margin-bottom:12px">';
   CRM_STAGES.forEach(function(s,i){
@@ -26405,7 +26407,7 @@ function tCRMFunnel(){
     return name.indexOf(searchQ)>=0||(qPhone&&phone.indexOf(qPhone)>=0)||msg.indexOf(searchQ)>=0||notes.indexOf(searchQ)>=0;
   }
   const filteredByStage={};
-  CRM_STAGES.forEach(function(s){filteredByStage[s.id]=(byStage[s.id]||[]).filter(matchesSearch);});
+  CRM_STAGES.forEach(function(s){filteredByStage[s.id]=shown.filter(c=>c.stage===s.id).filter(matchesSearch);});
   const totalFound=Object.values(filteredByStage).reduce(function(a,arr){return a+arr.length;},0);
 
   if(searchQ){
@@ -31211,7 +31213,7 @@ function bind(){
       finAddForm=false;
       fl();
     };}
-    else if(a==="crm-filter-stage"){el.onclick=()=>{crmStageFilter=crmStageFilter===el.dataset.sid?null:el.dataset.sid;render();};}
+    else if(a==="crm-filter-stage"){el.onclick=()=>{crmStageFilter=crmStageFilter===el.dataset.sid?null:el.dataset.sid;salesFilter="all";ui();};}
     else if(a==="crm-clear-filter"){el.onclick=()=>{crmStageFilter=null;render();};}
     else if(a==="crm-search-clear"){el.onclick=()=>{crmClientSearch="";render();};}
     else if(a.indexOf("sales-")===0){el.onclick=()=>salesAction(a.slice(6),el.dataset.cid,el);}

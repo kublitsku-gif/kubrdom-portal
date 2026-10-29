@@ -39,3 +39,13 @@ await b.run('salesAction("merge","a|b",{})');assert.equal(b.q('crmClients[1].mer
 assert.ok(b.run('tCRMFunnel()').includes('Без следующего действия'));
 assert.ok(b.run('tCRMSummary()').includes('Отдача рекламы'));
 console.log('✓ CRM sales: history, cohorts, tasks, ownership UI, brief, proposals, merges, ads, AI validation and real panel handlers');
+
+// Signed clients must remain visible on initial entry, and filters must not zero the funnel.
+const f=boot();f.set({crmClients:[original,{...original,id:'signed',name:'Клиент с договором',stage:'contract'},{...original,id:'built',name:'Клиент на монтаже',stage:'montaj'}],crmChats:{},settings:{},contractDocs:[]});
+assert.equal(f.q('salesFilter'),'all');
+let allHtml=f.run('tCRMFunnel()');assert.ok(allHtml.includes('Клиент с договором')&&allHtml.includes('Клиент на монтаже'));
+await f.run('salesAction("filter","active",{})');
+let filteredHtml=f.run('tCRMFunnel()');assert.ok(!filteredHtml.includes('Клиент с договором'));assert.ok(filteredHtml.includes('67%'),'overall signed share survives work filter');
+const node=f.dom.node({a:'crm-filter-stage',sid:'contract'});f.run('bind()');node.onclick();
+assert.equal(f.q('salesFilter'),'all');assert.ok(f.run('tCRMFunnel()').includes('Клиент с договором'));
+assert.equal(f.q('crmClients.length'),3);
