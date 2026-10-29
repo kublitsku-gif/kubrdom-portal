@@ -47,11 +47,12 @@ export function chatFeed(chats, clients) {
       const last = msgs[msgs.length - 1] || null;
       const lastSaid = lastOf(msgs, (m) => m.status !== "draft") || last;
       const client = byKey[k] || null;
-      const name = (client && client.name) || ch.name || "Клиент Авито";
+      const name = feedName(client && client.name, ch.name);
       const item = ch.item || null;
       return {
         key: k,
         name,
+        direct: isDirectChat(k),
         clientId: client ? client.id : null,
         stage: client ? client.stage : null,
         phone: client ? String(client.phone || "") : "",
@@ -197,6 +198,22 @@ export function quickReplies(settings) {
 
 // Подсказки «переписать черновик» — что сказать ИИ одним тапом.
 export const REDRAFT_HINTS = ["Короче", "Теплее и проще", "Добавь цену", "Предложи созвон", "Пригласи на производство"];
+
+// Имя-заглушка: карточку завели раньше, чем узнали имя («Новый клиент», «Avito · 123»),
+// или Авито само не знает имени («Пользователь»). Настоящее имя из чата важнее заглушки.
+const PLACEHOLDER_NAME = /^(Avito · .*|Avito клиент|Клиент Авито|Новый клиент|Пользователь)$/;
+export function isPlaceholderName(name) {
+  return !String(name || "").trim() || PLACEHOLDER_NAME.test(String(name).trim());
+}
+function feedName(cardName, chatName) {
+  if (cardName && !isPlaceholderName(cardName)) return cardName;
+  if (chatName && !isPlaceholderName(chatName)) return chatName;
+  return cardName || chatName || "Клиент Авито";
+}
+// Чат Авито «u2u» — клиент написал в профиль, а не из объявления: объявления у него нет вовсе.
+export function isDirectChat(key) {
+  return /^avito:u2u-/.test(String(key || ""));
+}
 
 // Время в ленте: сегодня — «14:05», раньше — «27.10».
 export function feedTime(ts, now = Date.now()) {

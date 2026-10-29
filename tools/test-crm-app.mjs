@@ -10,7 +10,7 @@ import { webcrypto as crypto } from 'node:crypto'
 import fs from 'node:fs'
 import { boot, reporter } from './harness/panel-vm.js'
 import { b64u, unb64u, cleanSubscription, encryptPayload, vapidHeader, sendPush } from '../src/webpush.js'
-import { isCrmPath, chatDeepLink, chatFeed, feedTime, draftKinds, hasIncoming, dupHidden, avitoHistory, mergeAvitoHistory, dupTelegram, draftForButton, filterFeed, waitSince, waitLabel, waitReminders, dueReminders, todayReminders, safeImageUrl, avitoImageUrl, avitoChatInfo, quickReplies, QUICK_REPLIES_DEFAULT, salesSummary, clientDeepLink } from '../src/crm-app.js'
+import { isCrmPath, chatDeepLink, chatFeed, feedTime, draftKinds, hasIncoming, dupHidden, isPlaceholderName, isDirectChat, avitoHistory, mergeAvitoHistory, dupTelegram, draftForButton, filterFeed, waitSince, waitLabel, waitReminders, dueReminders, todayReminders, safeImageUrl, avitoImageUrl, avitoChatInfo, quickReplies, QUICK_REPLIES_DEFAULT, salesSummary, clientDeepLink } from '../src/crm-app.js'
 import { pushSubscribe, pushToAll, avitoPushData, PUSH_STORAGE_KEY } from '../src/push.js'
 import { routeAllowed } from '../src/access.js'
 
@@ -167,6 +167,8 @@ const CLIENTS = [{ id: 'c3', name: 'Мария', stage: 'qualified', avitoKey: '
   t.ok('только Авито, свежие сверху', f.map((x) => x.key).join() === 'avito:2,avito:3,avito:1', f.map((x) => x.key).join())
   t.ok('черновик ИИ — не ответ: диалог ждёт ответа, в превью реплика клиента', f[0].unanswered && f[0].draft && f[0].text === 'Есть доставка?')
   t.ok('отвеченный — не ждёт', !f[2].unanswered && f[2].text === 'От 900 тыс.')
+  t.ok('имя-заглушка карточки уступает имени из Авито', chatFeed({ 'avito:u2i-x': { source: 'avito', name: 'Татьяна', messages: [] } }, [{ id: 'k', name: 'Новый клиент', avitoKey: 'avito:u2i-x' }])[0].name === 'Татьяна' && isPlaceholderName('Avito · 123') && isPlaceholderName('Пользователь') && !isPlaceholderName('Маргарита'))
+  t.ok('чат u2u — написал в профиль, без объявления', isDirectChat('avito:u2u-abc') && !isDirectChat('avito:u2i-abc') && chatFeed({ 'avito:u2u-y': { source: 'avito', name: 'А', messages: [] } }, [])[0].direct === true)
   t.ok('имя и стадия из привязанной карточки', f[1].name === 'Мария' && f[1].stage === 'qualified' && f[1].clientId === 'c3')
   const now = new Date(2026, 9, 28, 15, 0).getTime()
   const D = (text, extra) => Object.assign({ role: 'assistant', text, status: 'draft' }, extra || {})
@@ -300,6 +302,7 @@ function panel(pathname) {
   p.run('crmRedraftIdx=null;crmPlanPicker=false')
   p.run('crmChatKey="avito:3"')
   const chat3 = p.run('tCRM()')
+  t.ok('в диалоге без объявления — пояснение «написал в профиль»', p.run('crmItemBarHtml(null,true)').indexOf('в профиль') >= 0 && p.run('crmItemBarHtml(null,false)') === '')
   t.ok('у привязанного — переход в карточку клиента', chat3.indexOf('data-a="crm-chat-card" data-cid="c3"') >= 0)
   p.run('__keepClients=crmClients;__keepName=crmChats["avito:3"].name;crmClients=[{id:"c9",name:"Avito · 144160146",phone:"",stage:"new",avitoKey:"avito:3"}];crmChats["avito:3"].name="Маргарита";crmAutoLinkAvito()')
   t.ok('карточка с именем-заглушкой «Avito · …» получает имя из Авито', p.q('crmClients[0].name') === 'Маргарита')

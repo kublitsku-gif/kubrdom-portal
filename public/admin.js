@@ -84,7 +84,7 @@ import { installInPageCamera } from "../src/camera.js";
 // Закрытие дня и штраф за незакрытый — общий модуль с напоминаниями (src/dayclose.js):
 // панель и крон ОБЯЗАНЫ считать «день закрыт» одинаково, иначе человек видит галочку,
 // а утром у него удерживают деньги. См. docs/domain/day-close.md.
-import { isCrmPath, chatFeed, feedTime, draftKinds, dupHidden, FEED_MODES, filterFeed, WAIT_ALERT_MIN, waitLabel, todayReminders, safeImageUrl, quickReplies, REDRAFT_HINTS, salesSummary } from "../src/crm-app.js";
+import { isCrmPath, chatFeed, feedTime, draftKinds, dupHidden, isPlaceholderName, FEED_MODES, filterFeed, WAIT_ALERT_MIN, waitLabel, todayReminders, safeImageUrl, quickReplies, REDRAFT_HINTS, salesSummary } from "../src/crm-app.js";
 import { PLAN_IMAGES } from "../src/plan-images.js";
 import { unb64u } from "../src/webpush.js";
 import { dayCloseState, dayFineCfg, underDayFine, fineSum, DAY_FINE_CAT, DAY_FINE_DEFAULT } from "../src/dayclose.js";
@@ -25587,12 +25587,12 @@ function crmAutoLinkAvito(){
   });
   var changed=false; var today=todayISO();
   // Номер, который клиент написал в чате, — в привязанную карточку без телефона;
-  // имя-заглушка «Avito · 123» (карточка заведена до имени из Авито) — на настоящее.
+  // имя-заглушка («Новый клиент», «Avito · 123» — карточка заведена до имени из Авито) — на настоящее.
   crmClients=crmClients.map(function(x){
     var ch=x.avitoKey&&crmChats[x.avitoKey]; if(!ch) return x;
     var patch={};
     if(!normPhone(x.phone)){ var ph=extractPhoneFromChat(ch); if(ph) patch.phone="+7"+ph; }
-    if(/^Avito · /.test(x.name||"")&&ch.name&&!/^Avito · /.test(ch.name)) patch.name=ch.name;
+    if(isPlaceholderName(x.name)&&!isPlaceholderName(ch.name)) patch.name=ch.name;
     if(!Object.keys(patch).length) return x;
     changed=true; return Object.assign({},x,patch);
   });
@@ -25770,7 +25770,8 @@ function crmFeedRowHtml(f){
         '<span style="flex:1;min-width:0;font-size:13px;font-weight:'+(f.unanswered?800:600)+';color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name)+'</span>'+
         '<span style="font-size:10.5px;color:'+(f.unanswered?"#e74c3c":"#9aabbf")+';font-weight:700;flex-shrink:0">'+feedTime(f.ts)+'</span>'+
       '</div>'+
-      (f.item&&f.item.title?'<div style="font-size:10.5px;color:#9aabbf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📢 '+esc(f.item.title)+'</div>':'')+
+      (f.item&&f.item.title?'<div style="font-size:10.5px;color:#9aabbf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📢 '+esc(f.item.title)+'</div>':
+        (f.direct?'<div style="font-size:10.5px;color:#9aabbf">💬 написал в профиль, не по объявлению</div>':''))+
       '<div style="font-size:12px;color:'+(f.unanswered?"#1a2a3a":"#7a8a9a")+';margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(f.unanswered?"":"Вы: ")+esc(f.text)+'</div>'+
       '<div style="display:flex;gap:5px;margin-top:4px;align-items:center;flex-wrap:wrap">'+crmStageChip(f.stage)+
         (f.draft?'<span style="font-size:9.5px;font-weight:800;color:#8a5a00;background:#fff7d6;border:1px solid #f0b429;border-radius:6px;padding:0 6px">🤖 ИИ подготовил ответ</span>':'')+
@@ -25853,7 +25854,8 @@ function crmPhoneBarHtml(f,ch){
     '</div>'+
   '</div>';
 }
-function crmItemBarHtml(item){
+function crmItemBarHtml(item, direct){
+  if((!item||!item.title)&&direct) return '<div style="background:#fff;border:1px solid #e4ebf2;border-radius:10px;padding:7px 10px;margin-bottom:10px;font-size:11.5px;color:#7a9aaa">💬 Клиент написал вам в профиль Авито, не из объявления — объявления у этого чата нет.</div>';
   if(!item||!item.title) return "";
   var img=safeImageUrl(item.img), body=(img?'<img src="'+esc(img)+'" alt="" style="width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0">':'<div style="font-size:20px">📢</div>')+
     '<div style="flex:1;min-width:0"><div style="font-size:9.5px;color:#7a9aaa;font-weight:700;letter-spacing:.5px">ПИШЕТ ПО ОБЪЯВЛЕНИЮ</div>'+
@@ -25909,7 +25911,7 @@ function tCRMChat(key){
       '<div style="margin-top:2px">'+crmStageChip(f.stage)+'</div></div>'+
       (f.clientId?'<button data-a="crm-chat-card" data-cid="'+esc(f.clientId)+'" style="padding:6px 10px;background:#eaf2fa;border:none;border-radius:8px;cursor:pointer;font-size:11px;color:#2980b9;font-weight:700;white-space:nowrap">Карточка →</button>':'')+
     '</div>'+
-    crmItemBarHtml(f.item)+crmPhoneBarHtml(f,ch)+
+    crmItemBarHtml(f.item,f.direct)+crmPhoneBarHtml(f,ch)+
     '<div id="crm-chat-msgs" style="margin-bottom:8px">'+msgsHtml+'</div>'+
     '<div style="position:sticky;bottom:calc(64px + env(safe-area-inset-bottom,0px));background:#f6f8fa;padding:6px 0">'+
       (crmPlanPicker?crmPlanPickerHtml():'')+crmQuickHtml()+
