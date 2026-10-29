@@ -71,6 +71,8 @@ const login = async (phone, pin) => (await (await call('/api/login', { method: '
 
   console.log('CardDAV')
   const auth = { Authorization: basic('79032599333', mk.password) }
+  const opt = await call('/api/dav/', { method: 'OPTIONS' })
+  ok('OPTIONS говорит «умею CardDAV», а не отвечает как CORS', /addressbook/.test(opt.headers.get('DAV') || ''), String(opt.headers.get('DAV')))
   ok('без входа — 401 с Basic', (await call('/api/dav/', { method: 'PROPFIND' })).headers.get('WWW-Authenticate').startsWith('Basic'))
   ok('чужой пароль — 401', (await call('/api/dav/', { method: 'PROPFIND', headers: { Authorization: basic('79032599333', 'aaaa-bbbb-cccc-dddd') } })).status === 401)
   ok('пароль без дефисов и заглавными тоже подходит', (await call('/api/dav/', { method: 'PROPFIND', headers: { Authorization: basic('+7 903 259 93 33', mk.password.replace(/-/g, '').toUpperCase()) } })).status === 207)

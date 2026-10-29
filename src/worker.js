@@ -2088,11 +2088,13 @@ export default {
     ctx.waitUntil(runReminders(env, reminderCron).catch(function () {}));
   },
   async fetch(request, env, ctx) {
-    if (request.method === "OPTIONS") {
+    const url = new URL(request.url);
+    // OPTIONS книги контактов — это не CORS, а вопрос «умеешь CardDAV?» (заголовок DAV); отвечает carddav.js.
+    const isDav = url.pathname === "/api/dav" || url.pathname.indexOf(DAV_ROOT) === 0;
+    if (request.method === "OPTIONS" && !isDav) {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
 
-    const url = new URL(request.url);
     if (url.pathname === "/api/website-lead") return websiteLeadFetch(request, env, ctx);
 
     // Публичная отдача файлов из R2 (для <img src>) — ДО авторизации, т.к. <img> не шлёт заголовки.
@@ -2176,7 +2178,7 @@ export default {
 
     // CardDAV: клиенты CRM — адресная книга телефона. ДО общей авторизации: телефон ходит
     // Basic-входом (телефон сотрудника + пароль для телефона из CRM), а не токеном панели.
-    if (url.pathname === "/api/dav" || url.pathname.indexOf(DAV_ROOT) === 0) {
+    if (isDav) {
       try {
         return await handleCardDav(request, url, {
           authenticate: function (user, pass) { return davAuthenticate(env, user, pass); },
