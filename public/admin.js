@@ -25582,7 +25582,10 @@ function extractPhoneFromChat(ch){
 function crmAutoLinkAvito(){
   if(!crmChats) return false;
   var linked={}, byPhone={};
+  var byPhoneTg={};
   crmClients.forEach(function(x){
+    if(x.tgKey) linked[x.tgKey]=true;
+    else { var tp=normPhone(x.phone); if(tp && !byPhoneTg[tp]) byPhoneTg[tp]=x.id; }   // для Telegram — карточки без своего чата
     if(x.avitoKey){ linked[x.avitoKey]=true; }
     else { var np=normPhone(x.phone); if(np && !byPhone[np]) byPhone[np]=x.id; }   // кандидаты для матча — без привязки
   });
@@ -25610,6 +25613,14 @@ function crmAutoLinkAvito(){
     var firstUser=(ch.messages||[]).filter(function(m){return m.role==="user";})[0];
     crmClients.push({ id:gid(), name:(ch.name||"Avito клиент"), phone:(phone?"+7"+phone:""), source:"Авито", stage:"new", msg:(firstUser&&firstUser.text)||"", date:today, notes:"", avitoKey:k });
     linked[k]=true; changed=true;
+  });
+  // Личный чат Telegram с номером клиента из CRM — к его карточке. Новых лидов из Telegram
+  // сами не заводим: там и друзья, и семья — «👤 Сделать клиентом» решает человек.
+  Object.keys(crmChats).forEach(function(k){
+    var ch=crmChats[k]; if(!ch||ch.source!=="telegram"||ch.spam||linked[k]) return;
+    var phone=extractPhoneFromChat(ch); var cid=phone&&byPhoneTg[phone]; if(!cid) return;
+    delete byPhoneTg[phone]; linked[k]=true; changed=true;
+    crmClients=crmClients.map(function(x){ return x.id===cid?Object.assign({},x,{tgKey:k}):x; });
   });
   // Номер клиента «КД-057» — для телефонной книги и разговоров с бригадой; выдаётся один раз.
   var coded=assignClientCodes(crmClients);
@@ -25668,6 +25679,7 @@ let crmRedraftIdx=null;       // черновик, для которого от�
 let crmBusy="";               // идёт запрос: "redraft" | "photo" | "plan"
 let crmPlanPicker=false;      // выбор планировки для отправки
 let crmQuickEdit=false;       // правка списка быстрых ответов
+let crmTgPickerFor=null;       // карточка, к которой выбираем чат Telegram; экранное
 let crmDav=null;              // книга контактов в телефоне: {connected,url,login,password?,busy,err}; экранное
 const crmInfoAsked={};        // по каким диалогам уже спрашивали объявление
 const crmSyncAsked={};        // какие диалоги уже сверяли с Авито в этой вкладке
@@ -25700,7 +25712,7 @@ function crmDraftCardHtml(m,i,withBtns){
     '</div>':'<div style="font-size:10.5px;color:#8a5a00;margin-top:6px">Отправить или поправить — в «💬 Чатах».</div>')+
   '</div>';
 }
-function crmMsgsHtml(msgs, unans, withDraftBtn){
+function crmMsgsHtml(msgs, unans, withDraftBtn, channel){
   if(!msgs.length) return '<div style="font-size:11px;color:#9aabbf;text-align:center;padding:8px">Сообщений нет</div>';
   var kinds=draftKinds(msgs), dup=dupHidden(msgs), lastShown=-1;
   dup.forEach(function(h,i){ if(!h) lastShown=i; });
@@ -25710,7 +25722,7 @@ function crmMsgsHtml(msgs, unans, withDraftBtn){
     if(kind==="pending") return crmDraftCardHtml(m,i,withDraftBtn);
     if(kind==="stale") return "";   // черновик, который так и не ушёл, — не переписка
     var mine=m.role==="assistant", failed=kind==="failed";
-    var who=!mine?"👤 Клиент":(failed?"⚠️ Не ушло клиенту — Авито не принял":(m.auto?"🟢 Авто":(m.manual?"🙋 Вы":"🤖 ИИ")));
+    var who=!mine?"👤 Клиент":(failed?"⚠️ Не ушло клиенту — "+(channel==="telegram"?"Telegram":"Авито")+" не принял":(m.auto?"🟢 Авто":(m.manual?"🙋 Вы":"🤖 ИИ")));
     var hl=(!mine&&i===lastShown&&unans);
     var bg=failed?"#fff0f0":(mine?"#eef6f4":(hl?"#fff0f0":"#f4f7fb"));
     var bd=failed?"border:1px dashed #e74c3c;":(hl?"border:1px solid #e74c3c55;":"");
@@ -25775,7 +25787,8 @@ function crmFeedRowHtml(f){
         '<span style="flex:1;min-width:0;font-size:13px;font-weight:'+(f.unanswered?800:600)+';color:#1a2a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name)+'</span>'+
         '<span style="font-size:10.5px;color:'+(f.unanswered?"#e74c3c":"#9aabbf")+';font-weight:700;flex-shrink:0">'+feedTime(f.ts)+'</span>'+
       '</div>'+
-      (f.item&&f.item.title?'<div style="font-size:10.5px;color:#9aabbf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📢 '+esc(f.item.title)+'</div>':
+      (f.channel==="telegram"?'<div style="font-size:10.5px;color:#0088cc">✈️ Telegram'+(f.clientId?'':' · не в CRM')+'</div>':
+       f.item&&f.item.title?'<div style="font-size:10.5px;color:#9aabbf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📢 '+esc(f.item.title)+'</div>':
         (f.direct?'<div style="font-size:10.5px;color:#9aabbf">💬 написал в профиль, не по объявлению</div>':''))+
       '<div style="font-size:12px;color:'+(f.unanswered?"#1a2a3a":"#7a8a9a")+';margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(f.unanswered?"":"Вы: ")+esc(f.text)+'</div>'+
       '<div style="display:flex;gap:5px;margin-top:4px;align-items:center;flex-wrap:wrap">'+crmStageChip(f.stage)+
@@ -25859,6 +25872,41 @@ function crmPhoneBarHtml(f,ch){
     '</div>'+
   '</div>';
 }
+// Блок «Telegram» в карточке клиента: переписка из вашего Telegram и ответ от вашего имени.
+function crmTgCardHtml(c){
+  var ch=c.tgKey&&crmChats&&crmChats[c.tgKey];
+  var box='background:#fff;border-radius:12px;border:1px solid #cfe6f3;padding:12px 14px;margin-bottom:12px';
+  var title='<span style="font-size:10px;color:#0088cc;font-weight:700;letter-spacing:1px;flex:1">✈️ TELEGRAM</span>';
+  if(ch){
+    var unans=chatUnanswered(ch);
+    return '<div style="'+box+'"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+title+
+        '<button data-a="crm-tg-unlink" data-cid="'+esc(c.id)+'" style="padding:3px 9px;background:#fff;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;font-size:10px;color:#e74c3c;font-weight:700">Отвязать</button></div>'+
+      '<div style="max-height:300px;overflow-y:auto;margin-bottom:8px">'+crmMsgsHtml(ch.messages||[],unans,false,"telegram")+'</div>'+
+      '<textarea id="crm-reply-'+esc(c.id)+'tg" placeholder="Ответить в Telegram..." style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;height:58px;resize:vertical;margin-bottom:6px"></textarea>'+
+      '<button data-a="crm-send-avito" data-key="'+esc(c.tgKey)+'" data-cid="'+esc(c.id)+'tg" style="width:100%;padding:9px;background:#0088cc;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Отправить в Telegram</button></div>';
+  }
+  var linked={}; crmClients.forEach(function(x){ if(x.tgKey) linked[x.tgKey]=1; });
+  var free=crmChats?Object.keys(crmChats).filter(function(k){ var x=crmChats[k]; return x&&x.source==="telegram"&&!x.spam&&!linked[k]; }):[];
+  if(!free.length) return '';
+  if(crmTgPickerFor!==c.id) return '<div style="'+box+'">'+
+    '<button data-a="crm-tg-pick-open" data-cid="'+esc(c.id)+'" style="width:100%;padding:8px;background:#0088cc12;border:1px solid #0088cc44;border-radius:8px;cursor:pointer;color:#0088cc;font-size:12px;font-weight:700">✈️ Привязать чат из Telegram</button></div>';
+  return '<div style="'+box+'">'+free.map(function(k){ var x=crmChats[k]; var last=(x.messages||[]).slice(-1)[0]||{};
+      return '<div data-a="crm-tg-pick" data-cid="'+esc(c.id)+'" data-key="'+esc(k)+'" style="border:1px solid #eef2f7;border-radius:9px;padding:8px 10px;margin-bottom:5px;cursor:pointer">'+
+        '<div style="font-size:12px;font-weight:700;color:#0d1b2e">'+esc(x.name||k)+'</div>'+
+        '<div style="font-size:10px;color:#5a7a9a;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc((last.text||"").slice(0,90))+'</div></div>';
+    }).join("")+
+    '<button data-a="crm-tg-pick-open" data-cid="" style="width:100%;margin-top:4px;padding:6px;background:#f0f4f8;border:none;border-radius:7px;cursor:pointer;font-size:11px;color:#7a9aaa;font-weight:600">Отмена</button></div>';
+}
+// Шапка личного чата Telegram (Telegram Business): ещё не клиент — сделать карточку или скрыть чат.
+function crmTgBarHtml(f){
+  var box='background:#fff;border:1px solid #cfe6f3;border-radius:10px;padding:8px 10px;margin-bottom:10px';
+  if(f.clientId) return '<div style="'+box+';font-size:11.5px;color:#3d6f8c">✈️ Переписка из вашего Telegram — пишете клиенту от своего имени.</div>';
+  return '<div style="'+box+'"><div style="font-size:11.5px;color:#3d6f8c;margin-bottom:6px">✈️ Личный чат из вашего Telegram. Это клиент?</div>'+
+    '<div style="display:flex;gap:6px">'+
+      '<button data-a="crm-tg-new" data-key="'+esc(f.key)+'" style="flex:1;padding:7px;background:#0088cc;color:#fff;border:0;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">👤 Сделать клиентом</button>'+
+      '<button data-a="crm-tg-ignore" data-key="'+esc(f.key)+'" style="flex:1;padding:7px;background:#fff;color:#c0392b;border:1px solid #e3b5b5;border-radius:8px;font-size:12px;cursor:pointer">🚫 Не клиент</button>'+
+    '</div><div style="font-size:10px;color:#9aabbf;margin-top:5px">«Не клиент» — переписка этого чата удаляется из CRM и дальше не сохраняется.</div></div>';
+}
 function crmItemBarHtml(item, direct){
   if((!item||!item.title)&&direct) return '<div style="background:#fff;border:1px solid #e4ebf2;border-radius:10px;padding:7px 10px;margin-bottom:10px;font-size:11.5px;color:#7a9aaa">💬 Клиент написал вам в профиль Авито, не из объявления — объявления у этого чата нет.</div>';
   if(!item||!item.title) return "";
@@ -25906,8 +25954,9 @@ function tCRMChat(key){
   var f=chatFeed(crmChats||{}, crmClients).find(function(x){return x.key===key;});
   var back='<button data-a="crm-app-nav" data-v="chats" style="padding:6px 12px;background:#fff;border:1px solid #d0dae8;border-radius:8px;cursor:pointer;font-size:12px;color:#5a7a9a;font-weight:700">← Чаты</button>';
   if(!ch||!f) return '<div>'+back+'<div style="text-align:center;color:#9aabbf;font-size:12px;padding:30px">'+(crmChats===null?"Загрузка…":"Диалог не найден")+'</div></div>';
+  var isTg=ch.source==="telegram";
   var msgs=ch.messages||[], kinds=draftKinds(msgs), pending=kinds.indexOf("pending");
-  var msgsHtml=crmMsgsHtml(msgs, f.unanswered, true);
+  var msgsHtml=crmMsgsHtml(msgs, f.unanswered, true, ch.source);
   if(crmRedraftIdx!==null&&crmRedraftIdx===pending) msgsHtml+=crmRedraftHtml(pending);
   var tool=function(a,label,on){ return '<button data-a="'+a+'" '+(crmBusy?"disabled":"")+' style="flex:1;padding:7px;background:'+(on?"#eaf2fa":"#fff")+';border:1px solid #d0dae8;border-radius:8px;cursor:pointer;font-size:11.5px;color:#2c4a63;font-weight:700">'+label+'</button>'; };
   return '<div>'+
@@ -25916,16 +25965,16 @@ function tCRMChat(key){
       '<div style="margin-top:2px">'+crmStageChip(f.stage)+'</div></div>'+
       (f.clientId?'<button data-a="crm-chat-card" data-cid="'+esc(f.clientId)+'" style="padding:6px 10px;background:#eaf2fa;border:none;border-radius:8px;cursor:pointer;font-size:11px;color:#2980b9;font-weight:700;white-space:nowrap">Карточка →</button>':'')+
     '</div>'+
-    crmItemBarHtml(f.item,f.direct)+crmPhoneBarHtml(f,ch)+
+    (isTg?crmTgBarHtml(f):crmItemBarHtml(f.item,f.direct))+crmPhoneBarHtml(f,ch)+
     '<div id="crm-chat-msgs" style="margin-bottom:8px">'+msgsHtml+'</div>'+
     '<div style="position:sticky;bottom:calc(64px + env(safe-area-inset-bottom,0px));background:#f6f8fa;padding:6px 0">'+
       (crmPlanPicker?crmPlanPickerHtml():'')+crmQuickHtml()+
-      '<div style="display:flex;gap:6px;margin-bottom:6px">'+
+      (isTg?'':'<div style="display:flex;gap:6px;margin-bottom:6px">'+
         tool("crm-photo-pick",crmBusy==="photo"?"⏳ Отправляю…":"📷 Фото")+tool("crm-plan-toggle","🖼 Планировка",crmPlanPicker)+
-      '</div>'+
+      '</div>')+
       '<input id="crm-photo-file" type="file" accept="image/*" style="display:none">'+
-      '<textarea id="crm-reply-chat" placeholder="Ответить клиенту в Авито..." style="width:100%;padding:9px 11px;border-radius:10px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;height:64px;resize:vertical;margin-bottom:6px"></textarea>'+
-      '<button data-a="crm-send-avito" data-key="'+esc(key)+'" data-cid="chat" style="width:100%;padding:11px;background:#005bff;border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">Отправить в Авито</button>'+
+      '<textarea id="crm-reply-chat" placeholder="'+(isTg?'Ответить в Telegram...':'Ответить клиенту в Авито...')+'" style="width:100%;padding:9px 11px;border-radius:10px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;height:64px;resize:vertical;margin-bottom:6px"></textarea>'+
+      '<button data-a="crm-send-avito" data-key="'+esc(key)+'" data-cid="chat" style="width:100%;padding:11px;background:'+(isTg?'#0088cc':'#005bff')+';border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">'+(isTg?'Отправить в Telegram':'Отправить в Авито')+'</button>'+
     '</div>'+
   '</div>';
 }
@@ -26509,6 +26558,7 @@ function tCRMClient(cid){
     '<input id="crm-edit-source-'+c.id+'" value="'+c.source.replace(/"/g,"&quot;")+'" placeholder="Источник" style="width:100%;padding:7px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;margin-bottom:6px;outline:none;box-sizing:border-box">'+
     '<button data-a="crm-save-contact" data-cid="'+c.id+'" style="width:100%;padding:7px;background:#2980b9;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">💾 Сохранить контакт</button>'+
   '</div>';
+  html+=crmTgCardHtml(c);
   // ── ДИАЛОГ AVITO (привязка + переписка + ответ) ──
   const _ch=crmChatFor(c);
   if(_ch){
@@ -31186,6 +31236,20 @@ function bind(){
       render(); try{window.scrollTo(0,0);}catch(e){}
     };}
     else if(a==="crm-chat-open"){el.onclick=()=>{ crmOpenChat(el.dataset.key); };}
+    else if(a==="crm-tg-pick-open"){el.onclick=()=>{ crmTgPickerFor=el.dataset.cid||null; ui(); };}
+    else if(a==="crm-tg-pick"){el.onclick=()=>{ const cid=el.dataset.cid,key=el.dataset.key; crmTgPickerFor=null; crmClients=crmClients.map(function(x){return x.id===cid?Object.assign({},x,{tgKey:key}):x;}); fl(); };}
+    else if(a==="crm-tg-unlink"){el.onclick=()=>{ const cid=el.dataset.cid; crmClients=crmClients.map(function(x){return x.id===cid?Object.assign({},x,{tgKey:null}):x;}); fl(); };}
+    else if(a==="crm-tg-new"){el.onclick=()=>{
+      var key=el.dataset.key, ch=crmChats&&crmChats[key]; if(!ch) return;
+      var phone=extractPhoneFromChat(ch), first=(ch.messages||[]).filter(function(m){return m.role==="user";})[0];
+      var c={ id:gid(), name:ch.name||"Клиент из Telegram", phone:phone?"+7"+phone:"", source:"Telegram", stage:"new", msg:(first&&first.text)||"", date:todayISO(), notes:"", tgKey:key };
+      crmClients=crmClients.concat([c]); fl();
+    };}
+    else if(a==="crm-tg-ignore"){el.onclick=async()=>{
+      if(!confirm("Это не клиент? Переписка этого чата удалится из CRM и дальше сохраняться не будет."))return;
+      const r=await crmChatPost("/api/ai/chat-flag",{clientKey:el.dataset.key,spam:true});
+      if(r){ crmChatKey=null; crmView="chats"; render(); try{window.scrollTo(0,0);}catch(e){} }
+    };}
     else if(a==="crm-chat-card"){el.onclick=()=>{
       crmBackView=crmChatKey; crmOpenId=el.dataset.cid; crmView="client"; crmStagePickerOpen=false;
       render(); try{window.scrollTo(0,0);}catch(e){}

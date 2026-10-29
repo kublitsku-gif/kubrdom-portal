@@ -33,6 +33,7 @@ import { hashPin, checkPin, protectCredentials, credentialVersion } from "./cred
 import { commitState } from "./state-store.js";
 import { handleCardDav, DAV_ROOT } from "./carddav.js";
 import { contactCards } from "./crm-contacts.js";
+import { tgChatKey, applyBusinessUpdate, businessChatId, businessConnId, connectionRecord, BUSINESS_UPDATES } from "./tg-business.js";
 import { pushReady, pushSubscribe, pushUnsubscribe, pushToAll, avitoPushData } from "./push.js";
 import { avitoImageUrl, avitoChatInfo, hasIncoming, dupHidden, avitoHistory, mergeAvitoHistory, draftForButton, waitReminders, dueReminders, waitLabel, chatDeepLink, clientDeepLink } from "./crm-app.js";
 
@@ -1451,6 +1452,7 @@ async function aiIncoming(env, request) {
 // POST /api/ai/webhook — вебхук sales-бота (кнопки + ручные ответы в ветке). Публичный, проверка по секрет-токену.
 async function aiWebhook(env, request) {
   const upd = await request.json().catch(function () { return {}; });
+  if (await tgBusinessWebhook(env, upd)) return json({ ok: true });
   if (await salesWebhook(env, upd)) return json({ok:true});
   // нажатие кнопки
   if (upd.callback_query) {
@@ -1536,6 +1538,7 @@ async function aiSend(env, request) {
   const chats = await aiLoadChats(env);
   const c = chats[key];
   if (!c) return json({ success: false, error: "chat not found" }, 404);
+  if (c.source === "telegram") return tgBusinessSend(env, chats, key, text);
   let ok = false, note = "(не Avito-чат)", sentId = "";
   if (c.avitoChatId) {
     try { const sr = await avitoSend(env, c.avitoChatId, text); ok = !!(sr && sr.id); if (ok) sentId = String(sr.id); else note = JSON.stringify(sr).slice(0, 140); }
@@ -1644,6 +1647,8 @@ async function aiChatFlag(env, request) {
   if (!c) return json({ success: false, error: "chat not found" }, 404);
   if (typeof body.archived === "boolean") c.archived = body.archived;
   if (typeof body.spam === "boolean") c.spam = body.spam;
+  // Telegram «не клиент» — это личный чат: переписку не держим в общей CRM (и дальше не пишем).
+  if (c.source === "telegram" && c.spam) c.messages = [];
   await aiSaveChats(env, chats);
   return json({ success: true, archived: !!c.archived, spam: !!c.spam });
 }
@@ -1652,6 +1657,74 @@ async function aiChatFlag(env, request) {
 // Отметки, о чём уже напомнили, — отдельной строкой (не в aiChats: её пишет вебхук,
 // и запись по крону могла бы затереть только что пришедшее сообщение).
 const CRM_MARKS = { storage: "crm_marks", id: "push" };
+// ─── Telegram Business: переписка из вашего личного Telegram (src/tg-business.js) ───
+// Подключения бота к аккаунтам — строки work_states tg_business/<connection_id>: кто владелец
+// (его сообщения — наши ответы) и разрешено ли боту отвечать от его имени.
+const TG_BUSINESS = "tg_business";
+async function tgBusinessConn(env, id) {
+  if (!id) return null;
+  const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind(TG_BUSINESS, id).first();
+  if (row && row.data) { try { return JSON.parse(row.data); } catch (e) {} }
+  // Обновление пришло раньше записи о подключении (или её потеряли) — спросим у Telegram.
+  const j = await salesTg(env, "getBusinessConnection", { business_connection_id: id });
+  if (!j || !j.ok) return null;
+  const rec = connectionRecord(j.result);
+  await tgBusinessConnSave(env, id, rec);
+  return rec;
+}
+async function tgBusinessConnSave(env, id, rec) {
+  await env.DB.prepare("INSERT INTO work_states (storage_key, work_id, data, updated_at) VALUES (?,?,?,?) ON CONFLICT(storage_key, work_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at")
+    .bind(TG_BUSINESS, id, JSON.stringify(rec), Date.now()).run();
+}
+// true — обновление было про Telegram Business и обработано здесь.
+async function tgBusinessWebhook(env, upd) {
+  if (upd.business_connection) {
+    await tgBusinessConnSave(env, upd.business_connection.id, connectionRecord(upd.business_connection));
+    return true;
+  }
+  const chatId = businessChatId(upd);
+  if (chatId === null) return false;
+  const conn = await tgBusinessConn(env, businessConnId(upd));
+  const chats = await aiLoadChats(env);
+  const key = tgChatKey(chatId);
+  const next = applyBusinessUpdate(chats[key] || null, upd, conn);
+  if (!next) return true;
+  chats[key] = next;
+  await aiSaveChats(env, chats);
+  return true;
+}
+// Ответ клиенту из CRM в его Telegram — от имени владельца аккаунта.
+async function tgBusinessSend(env, chats, key, text) {
+  const c = chats[key];
+  const conn = await tgBusinessConn(env, c.bcId);
+  if (!conn || !conn.enabled) return json({ success: false, error: "Бот отключён от вашего Telegram — подключите его снова в «Telegram для бизнеса → Чат-боты»" }, 409);
+  if (!conn.canReply) return json({ success: false, error: "Боту не разрешено отвечать: в «Telegram для бизнеса → Чат-боты» включите «Отвечать на сообщения»" }, 409);
+  const j = await salesTg(env, "sendMessage", { business_connection_id: c.bcId, chat_id: c.tgChatId, text: text });
+  const ok = !!(j && j.ok);
+  c.messages.push(ok ? { role: "assistant", text: text, status: "sent", manual: true, tgMid: j.result.message_id, ts: Date.now() }
+    : { role: "assistant", text: text, status: "draft", manual: true, ts: Date.now() });
+  c.updatedAt = Date.now();
+  await aiSaveChats(env, chats);
+  return json({ success: ok, sent: ok, note: ok ? "" : String((j && j.description) || "Telegram не принял").slice(0, 140) });
+}
+// Вебхук бота продаж должен получать business_*: если его ставили со списком allowed_updates,
+// дописываем их один раз (отметка crm_marks/tgbiz_hook). Пустой список = «всё», там они уже есть.
+async function tgBusinessEnsureHook(env) {
+  if (!env.TG_SALES_BOT_TOKEN) return;
+  if (await crmMarkGet(env, "tgbiz_hook")) return;
+  const info = await salesTg(env, "getWebhookInfo", {});
+  const r = info && info.ok ? info.result : null;
+  if (!r || !r.url) return;
+  const allowed = Array.isArray(r.allowed_updates) ? r.allowed_updates : [];
+  let result = "already";
+  if (allowed.length && BUSINESS_UPDATES.some(function (u) { return allowed.indexOf(u) < 0; })) {
+    const set = await salesTg(env, "setWebhook", { url: r.url, secret_token: env.WEBHOOK_SECRET || undefined,
+      allowed_updates: Array.from(new Set(allowed.concat(BUSINESS_UPDATES))) });
+    result = set && set.ok ? "set" : "error: " + String(set && set.description || "?");
+  }
+  await crmMarkSet(env, "tgbiz_hook", { result: result, allowed: allowed, at: Date.now() });
+}
+
 // ─── Клиенты CRM в телефонной книге (CardDAV, src/carddav.js) ───
 // Пароль для телефона — свой у каждого сотрудника, в D1 только его HMAC (строка dav_tokens/<uid>).
 // Право проверяется на каждый запрос: уволили или сняли CRM — книга в телефоне перестаёт обновляться.
@@ -1845,6 +1918,7 @@ async function crmTgQueue(env) {
 async function crmTick(env) {
   // Разовая чистка повторов вебхука: сверка с Авито, затем очередь Telegram; пройдя всё — сразу выходит.
   try { if (await crmCleanupOnce(env)) await crmTgQueue(env); } catch (e) { console.error("crm cleanup", String(e)); }
+  try { await tgBusinessEnsureHook(env); } catch (e) { console.error("tg business hook", String(e)); }
   if (!pushReady(env)) return;
   const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind(CRM_MARKS.storage, CRM_MARKS.id).first();
   let marks = {}; try { marks = row && row.data ? JSON.parse(row.data) || {} : {}; } catch (e) {}

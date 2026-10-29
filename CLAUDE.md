@@ -102,3 +102,4 @@
 | нейропродавец: Avito → черновик в Telegram, выбор модели (Claude Sonnet) | `docs/domain/ai-seller.md` | `aiProcessIncoming`, `src/claude-chat.js` |
 | приложение `/crm` на рабочем столе, лента чатов Авито, пуш-уведомления | `docs/domain/crm-app.md` | `src/crm-app.js`, `src/push.js`, `public/sw.js` |
 | клиенты CRM в контактах телефона (CardDAV), код клиента «КД-057» | `docs/domain/crm-contacts.md` | `src/crm-contacts.js`, `src/carddav.js` |
+| переписка из личного Telegram в CRM (Telegram Business) | `docs/domain/tg-business.md` | `src/tg-business.js`, `tgBusinessWebhook` |

@@ -34,13 +34,16 @@ export function waitSince(msgs) {
   return since;
 }
 
+// Какие диалоги идут в ленту: Авито и личные чаты Telegram (Telegram Business, src/tg-business.js).
+export const FEED_SOURCES = ["avito", "telegram"];
+
 // Лента диалогов Авито: свежие сверху, у каждого — последняя реплика, «не отвечено»
 // (последним писал клиент), ждущий черновик ИИ, объявление и привязанная карточка CRM.
 export function chatFeed(chats, clients) {
   const byKey = {};
-  (clients || []).forEach((c) => { if (c && c.avitoKey) byKey[c.avitoKey] = c; });
+  (clients || []).forEach((c) => { if (c) [c.avitoKey, c.tgKey].filter(Boolean).forEach((k) => { byKey[k] = c; }); });
   return Object.keys(chats || {})
-    .filter((k) => chats[k] && chats[k].source === "avito")
+    .filter((k) => chats[k] && FEED_SOURCES.includes(chats[k].source))
     .map((k) => {
       const ch = chats[k];
       const msgs = ch.messages || [];
@@ -49,9 +52,13 @@ export function chatFeed(chats, clients) {
       const client = byKey[k] || null;
       const name = feedName(client && client.name, ch.name);
       const item = ch.item || null;
+      // Личный чат Telegram, ещё не привязанный к клиенту, «ждущим ответа» не считаем:
+      // это может быть кто угодно, а не лид.
+      const counts = ch.source !== "telegram" || !!client;
       return {
         key: k,
         name,
+        channel: ch.source,
         direct: isDirectChat(k),
         clientId: client ? client.id : null,
         stage: client ? client.stage : null,
@@ -59,8 +66,8 @@ export function chatFeed(chats, clients) {
         text: lastSaid ? String(lastSaid.text || "") : "",
         ts: Number((last && last.ts) || ch.updatedAt || 0),
         // Черновик ИИ клиенту не ушёл, поэтому ответом не считается.
-        unanswered: !!(lastSaid && lastSaid.role === "user"),
-        waitSince: waitSince(msgs),
+        unanswered: counts && !!(lastSaid && lastSaid.role === "user"),
+        waitSince: counts ? waitSince(msgs) : 0,
         draft: !!(last && last.status === "draft"),
         archived: !!ch.archived,
         spam: !!ch.spam,
