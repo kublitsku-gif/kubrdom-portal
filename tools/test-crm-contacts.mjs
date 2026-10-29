@@ -100,5 +100,17 @@ const login = async (phone, pin) => (await (await call('/api/login', { method: '
   ok('«Отключить» — старый пароль больше не подходит', (await call('/api/dav/', { method: 'PROPFIND', headers: auth })).status === 401)
 }
 
+{
+  console.log('Цифра для ярлыка в Доке')
+  const key = 'k'.repeat(32)
+  const hash = (await import('node:crypto')).createHash('sha256').update(key).digest('hex')
+  await real.db.prepare("INSERT OR REPLACE INTO work_states VALUES ('crm_marks','badge_keys',?,1)").bind(JSON.stringify({ hashes: [hash] })).run()
+  real.set('aiChats', { 'avito:1': { source: 'avito', messages: [{ role: 'user', text: 'а' }] }, 'avito:2': { source: 'avito', messages: [{ role: 'user', text: 'б' }, { role: 'assistant', text: 'ок', status: 'sent' }] } })
+  const get = (k) => call('/api/crm/badge' + (k === null ? '' : '?k=' + k))
+  ok('без ключа и с чужим ключом — 401', (await get(null)).status === 401 && (await get('x'.repeat(32))).status === 401)
+  const r = await (await get(key)).json()
+  ok('со своим ключом — только число ждущих ответа', r.success && r.count === 1 && Object.keys(r).join() === 'success,count', JSON.stringify(r))
+}
+
 if (failed) { console.log('\n✘ провалено проверок: ' + failed); process.exit(1) }
 console.log('\n✓ все проверки прошли')

@@ -1836,6 +1836,16 @@ async function tgBusinessEnsureHook(env) {
   await crmMarkSet(env, "tgbiz_hook", { result: result, allowed: allowed, at: Date.now() });
 }
 
+// GET /api/crm/badge?k=<ключ> — число для ярлыка в Доке (см. маршрут).
+async function crmBadge(env, key) {
+  if (!key || key.length < 24) return json({ success: false }, 401);
+  const keys = (await crmMarkGet(env, "badge_keys")) || {};
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key));
+  const hex = Array.from(new Uint8Array(digest), function (b) { return b.toString(16).padStart(2, "0"); }).join("");
+  if (!(keys.hashes || []).some(function (h) { return safeEqual(h, hex); })) return json({ success: false }, 401);
+  return json({ success: true, count: unansweredCount(await aiLoadChats(env)) });
+}
+
 // ─── Клиенты CRM в телефонной книге (CardDAV, src/carddav.js) ───
 // Пароль для телефона — свой у каждого сотрудника, в D1 только его HMAC (строка dav_tokens/<uid>).
 // Право проверяется на каждый запрос: уволили или сняли CRM — книга в телефоне перестаёт обновляться.
@@ -2422,6 +2432,14 @@ export default {
       if (!env.WEBHOOK_SECRET || !safeEqual(wts, env.WEBHOOK_SECRET)) return unauthorized();
       try { return await aiWebhook(env, request); }
       catch (err) { return json({ ok: false, error: String(err) }, 200); }   // 200 — чтобы Telegram не ретраил вечно
+    }
+
+    // Цифра на ярлыке CRM в Доке Мака: сколько диалогов ждут ответа. ДО общей авторизации —
+    // у ярлыка нет входа в панель; пускаем по ключу, в D1 только его SHA-256 (crm_marks/badge_keys).
+    // Отдаём одно число, без имён и текста.
+    if (url.pathname === "/api/crm/badge" && request.method === "GET") {
+      try { return await crmBadge(env, url.searchParams.get("k") || ""); }
+      catch (err) { return json({ success: false }, 500); }
     }
 
     // CardDAV: клиенты CRM — адресная книга телефона. ДО общей авторизации: телефон ходит
