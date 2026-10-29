@@ -233,6 +233,128 @@ export function draftKinds(msgs) {
   return kinds;
 }
 
+// Повтор вебхука Авито: это сообщение клиента уже записано (id сообщения в Авито).
+// Авито шлёт вебхук заново, пока мы не ответили, а ответ ждёт ИИ — без этой проверки
+// каждый повтор становился новой репликой клиента со своим черновиком.
+export function hasIncoming(msgs, avitoMsgId) {
+  if (!avitoMsgId) return false;
+  return (msgs || []).some((m) => m && m.avitoMsgId === avitoMsgId);
+}
+
+// Какие реплики спрятать как старые повторы вебхука (записанные до avitoMsgId):
+// реплика клиента тем же текстом, что его предыдущая, без нашего ответа между ними.
+// Прячем повтор и черновики ИИ на предыдущий повтор — остаётся одна реплика и последний черновик.
+// Реплики с разными id Авито — настоящие (клиент сам написал то же) и остаются.
+export function dupHidden(msgs) {
+  const list = msgs || [];
+  const hide = new Array(list.length).fill(false);
+  let prev = null;
+  let drafts = [];
+  list.forEach((raw, i) => {
+    const m = raw || {};
+    if (m.status === "draft") { if (!m.manual) drafts.push(i); return; }
+    if (m.role !== "user") { prev = null; drafts = []; return; }
+    const key = String(m.text || "").trim() + "|" + (m.image || "");
+    const sameId = !m.avitoMsgId || !prev || !prev.id || prev.id === m.avitoMsgId;
+    if (prev && prev.key === key && sameId) {
+      hide[i] = true;
+      drafts.forEach((d) => { hide[d] = true; });
+    } else prev = { key, id: m.avitoMsgId || "" };
+    drafts = [];
+  });
+  return hide;
+}
+
+// Какой черновик отправить по кнопке в Telegram: тот, к чьему сообщению кнопка приделана.
+// Номер из кнопки — только запасной путь для черновика без сообщения; не черновик — -1.
+export function draftForButton(msgs, tgMsgId, idx) {
+  const list = msgs || [];
+  const byTg = tgMsgId ? list.findIndex((m) => m && m.tgMsgId === tgMsgId) : -1;
+  const i = byTg >= 0 ? byTg : idx;
+  const m = list[i];
+  if (!m || m.role !== "assistant" || m.status !== "draft") return -1;
+  if (byTg < 0 && m.tgMsgId) return -1;
+  return i;
+}
+
+// Подпись реплики Авито без текста (фото, голосовое, звонок…).
+const AVITO_KIND_TEXT = { image: "📷 Фото", voice: "🎤 Голосовое сообщение", call: "📞 Звонок", file: "📎 Файл", location: "📍 Геопозиция", item: "📦 Объявление" };
+
+// История диалога из Авито (GET messenger/v3/.../messages) → наши реплики, старые сверху.
+// direction "out" (или автор — мы) — наша реплика, хоть из CRM, хоть набранная прямо в Авито.
+// Системные и удалённые пропускаем: в переписке их нет.
+export function avitoHistory(raw, ownUserId) {
+  const list = Array.isArray(raw) ? raw : ((raw && raw.messages) || []);
+  const own = String(ownUserId || "");
+  const out = [];
+  list.forEach((v) => {
+    if (!v || !v.id || v.type === "system" || v.type === "deleted") return;
+    const c = v.content || {};
+    const image = v.type === "image" ? avitoImageUrl(c) : "";
+    const text = (c.text || (c.link && (c.link.text || c.link.url)) || (c.item && c.item.title && "📦 " + c.item.title) || AVITO_KIND_TEXT[v.type] || "").toString().slice(0, 2000);
+    if (!text && !image) return;
+    const mine = v.direction ? v.direction === "out" : String(v.author_id) === own;
+    const m = { role: mine ? "assistant" : "user", text: text || "📷 Фото", status: mine ? "sent" : "in", ts: (Number(v.created) || 0) * 1000, avitoMsgId: String(v.id) };
+    out.push(image ? { ...m, image } : m);
+  });
+  return out.sort((a, b) => a.ts - b.ts);
+}
+
+// Сверка нашей записи диалога с историей Авито. Ничего своего не теряем:
+// повторы вебхука (dupHidden) выкидываем, реплику Авито узнаём по id или по тому же
+// тексту той же стороны (старые записи без id) — ей ставим id; чего у нас нет
+// (например, ответ, набранный прямо в Авито), — вставляем по времени.
+export function mergeAvitoHistory(local, hist) {
+  const dup = dupHidden(local);
+  const base = (local || []).filter((m, i) => m && !dup[i]);
+  const ids = new Set(base.map((m) => m.avitoMsgId).filter(Boolean));
+  const key = (m) => m.role + "|" + String(m.text || "").trim();
+  const loose = {};
+  base.forEach((m, i) => {
+    if (m.status === "draft" || m.avitoMsgId) return;
+    (loose[key(m)] = loose[key(m)] || []).push(i);
+  });
+  const patched = base.slice();
+  const added = [];
+  (hist || []).forEach((h) => {
+    if (ids.has(h.avitoMsgId)) return;
+    const q = loose[key(h)];
+    if (q && q.length) { const i = q.shift(); patched[i] = { ...patched[i], avitoMsgId: h.avitoMsgId }; return; }
+    added.push(h);
+  });
+  const removed = (local || []).length - base.length;
+  if (!added.length) return { messages: patched, added: 0, removed };
+  // Слияние по времени, свои реплики сохраняют порядок между собой.
+  const merged = [];
+  let a = 0;
+  patched.forEach((m) => {
+    while (a < added.length && added[a].ts < (Number(m.ts) || 0)) merged.push(added[a++]);
+    merged.push(m);
+  });
+  while (a < added.length) merged.push(added[a++]);
+  return { messages: merged, added: added.length, removed };
+}
+
+// Что убрать из ветки Telegram за старые повторы вебхука: черновики-повторы (их id мы знаем)
+// и посты «👤 Клиент» повторов — их id не хранили, но бот слал пост прямо перед черновиком,
+// поэтому ищем его чуть ниже id следующего черновика (сервер сверяет текст, прежде чем удалить).
+export function dupTelegram(msgs) {
+  const list = msgs || [];
+  const hide = dupHidden(list);
+  const drafts = [];
+  const posts = [];
+  list.forEach((m, i) => {
+    if (!hide[i] || !m) return;
+    if (m.status === "draft") { if (m.tgMsgId) drafts.push(m.tgMsgId); return; }
+    for (let j = i + 1; j < list.length; j++) {
+      const n = list[j] || {};
+      if (n.status !== "draft") break;
+      if (n.tgMsgId) { posts.push({ text: "👤 Клиент:\n" + String(m.text || ""), before: n.tgMsgId }); break; }
+    }
+  });
+  return { drafts, posts };
+}
+
 // Время ответа по диалогу: от первой реплики клиента в «ожидании» до нашего отправленного ответа.
 function responseTimes(msgs, from) {
   const out = [];

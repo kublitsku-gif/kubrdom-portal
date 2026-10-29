@@ -84,7 +84,7 @@ import { installInPageCamera } from "../src/camera.js";
 // Закрытие дня и штраф за незакрытый — общий модуль с напоминаниями (src/dayclose.js):
 // панель и крон ОБЯЗАНЫ считать «день закрыт» одинаково, иначе человек видит галочку,
 // а утром у него удерживают деньги. См. docs/domain/day-close.md.
-import { isCrmPath, chatFeed, feedTime, draftKinds, FEED_MODES, filterFeed, WAIT_ALERT_MIN, waitLabel, todayReminders, safeImageUrl, quickReplies, REDRAFT_HINTS, salesSummary } from "../src/crm-app.js";
+import { isCrmPath, chatFeed, feedTime, draftKinds, dupHidden, FEED_MODES, filterFeed, WAIT_ALERT_MIN, waitLabel, todayReminders, safeImageUrl, quickReplies, REDRAFT_HINTS, salesSummary } from "../src/crm-app.js";
 import { PLAN_IMAGES } from "../src/plan-images.js";
 import { unb64u } from "../src/webpush.js";
 import { dayCloseState, dayFineCfg, underDayFine, fineSum, DAY_FINE_CAT, DAY_FINE_DEFAULT } from "../src/dayclose.js";
@@ -25661,6 +25661,7 @@ let crmBusy="";               // идёт запрос: "redraft" | "photo" | "p
 let crmPlanPicker=false;      // выбор планировки для отправки
 let crmQuickEdit=false;       // правка списка быстрых ответов
 const crmInfoAsked={};        // по каким диалогам уже спрашивали объявление
+const crmSyncAsked={};        // какие диалоги уже сверяли с Авито в этой вкладке
 function isCrmApp(){ try{ return isCrmPath(location.pathname); }catch(e){ return false; } }
 function crmChatsSig(){ var n=0; if(crmChats)for(var k in crmChats){ var ch=crmChats[k]; n+=(ch&&ch.messages?ch.messages.length:0); } return n; }
 // Счётчик на иконке приложения (Android показывает точку/число) — только в самом приложении.
@@ -25692,15 +25693,16 @@ function crmDraftCardHtml(m,i,withBtns){
 }
 function crmMsgsHtml(msgs, unans, withDraftBtn){
   if(!msgs.length) return '<div style="font-size:11px;color:#9aabbf;text-align:center;padding:8px">Сообщений нет</div>';
-  var kinds=draftKinds(msgs);
+  var kinds=draftKinds(msgs), dup=dupHidden(msgs), lastShown=-1;
+  dup.forEach(function(h,i){ if(!h) lastShown=i; });
   return msgs.map(function(m,i){
     var kind=kinds[i];
-    if(kind==="used") return "";
+    if(dup[i]||kind==="used") return "";
     if(kind==="pending") return crmDraftCardHtml(m,i,withDraftBtn);
-    if(kind==="stale") return '<div style="font-size:10.5px;color:#a9b4bf;margin:0 0 5px 20px;padding:4px 9px;border-left:2px solid #e3e8ee;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🤖 черновик не отправлен: '+esc(m.text||"")+'</div>';
+    if(kind==="stale") return "";   // черновик, который так и не ушёл, — не переписка
     var mine=m.role==="assistant", failed=kind==="failed";
     var who=!mine?"👤 Клиент":(failed?"⚠️ Не ушло клиенту — Авито не принял":(m.auto?"🟢 Авто":(m.manual?"🙋 Вы":"🤖 ИИ")));
-    var hl=(!mine&&i===msgs.length-1&&unans);
+    var hl=(!mine&&i===lastShown&&unans);
     var bg=failed?"#fff0f0":(mine?"#eef6f4":(hl?"#fff0f0":"#f4f7fb"));
     var bd=failed?"border:1px dashed #e74c3c;":(hl?"border:1px solid #e74c3c55;":"");
     return '<div style="background:'+bg+';'+bd+'border-radius:9px;padding:7px 9px;margin-bottom:5px;'+(mine?"margin-left:20px":"margin-right:20px")+'">'+
@@ -26000,10 +26002,23 @@ function crmOpenChat(key){
   if(crmChatKey!==key){ crmRedraftIdx=null; crmPlanPicker=false; crmQuickEdit=false; }
   crmChatKey=key; crmView="chat"; tab="crm";
   crmAskChatInfo(key);
+  crmSyncChat(key);
   render();
   setTimeout(function(){ try{ window.scrollTo(0,document.body.scrollHeight); }catch(e){} },0);
 }
 // Объявление у старого диалога (до этой правки его не сохраняли) — спросить один раз.
+// Сверка диалога с Авито при открытии: наши ответы, набранные прямо в Авито, и уборка повторов.
+function crmSyncChat(key){
+  var ch=crmChats&&crmChats[key];
+  if(!ch||!ch.avitoChatId||crmSyncAsked[key]) return;
+  crmSyncAsked[key]=true;
+  fetch(API_BASE+"/api/ai/resync",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({clientKey:key})})
+    .then(function(r){return r.json();}).then(function(j){
+      if(!j||!j.success||!j.chat||!(j.added||j.removed)||!crmChats) return;
+      crmChats[key]=j.chat;
+      if(crmView==="chat"&&crmChatKey===key) ui();
+    }).catch(function(){});
+}
 function crmAskChatInfo(key){
   var ch=crmChats&&crmChats[key];
   if(!ch||ch.item||!ch.avitoChatId||crmInfoAsked[key]) return;

@@ -10,7 +10,7 @@ import { webcrypto as crypto } from 'node:crypto'
 import fs from 'node:fs'
 import { boot, reporter } from './harness/panel-vm.js'
 import { b64u, unb64u, cleanSubscription, encryptPayload, vapidHeader, sendPush } from '../src/webpush.js'
-import { isCrmPath, chatDeepLink, chatFeed, feedTime, draftKinds, filterFeed, waitSince, waitLabel, waitReminders, dueReminders, todayReminders, safeImageUrl, avitoImageUrl, avitoChatInfo, quickReplies, QUICK_REPLIES_DEFAULT, salesSummary, clientDeepLink } from '../src/crm-app.js'
+import { isCrmPath, chatDeepLink, chatFeed, feedTime, draftKinds, hasIncoming, dupHidden, avitoHistory, mergeAvitoHistory, dupTelegram, draftForButton, filterFeed, waitSince, waitLabel, waitReminders, dueReminders, todayReminders, safeImageUrl, avitoImageUrl, avitoChatInfo, quickReplies, QUICK_REPLIES_DEFAULT, salesSummary, clientDeepLink } from '../src/crm-app.js'
 import { pushSubscribe, pushToAll, avitoPushData, PUSH_STORAGE_KEY } from '../src/push.js'
 import { routeAllowed } from '../src/access.js'
 
@@ -175,6 +175,34 @@ const CLIENTS = [{ id: 'c3', name: 'Мария', stage: 'qualified', avitoKey: '
   t.ok('черновик, после которого клиент ответил, — уже не свежий', draftKinds([D('x'), S('user', 'б')]).join() === 'stale,')
   t.ok('ушедший тем же текстом черновик не рисуем', draftKinds([D('Да, по области.'), S('assistant', 'Да, по области.')]).join() === 'used,')
   t.ok('ваш ответ, который Авито не принял, — отдельно', draftKinds([S('user', 'а'), D('мой', { manual: true })]).join() === ',failed')
+  t.ok('повтор вебхука Авито узнаём по id сообщения', hasIncoming([{ role: 'user', text: 'а', avitoMsgId: 'm1' }], 'm1') && !hasIncoming([{ role: 'user', text: 'а', avitoMsgId: 'm1' }], 'm2') && !hasIncoming([{ role: 'user', text: 'а' }], ''))
+  const U = (text, extra) => Object.assign({ role: 'user', text, status: 'in' }, extra || {})
+  const dupRun = [U('ТЗ пришлю'), D('x1'), U('ТЗ пришлю'), D('x2'), U('ТЗ пришлю'), D('x3')]
+  t.ok('старые повторы вебхука прячем: одна реплика клиента и последний черновик', dupHidden(dupRun).join() === 'false,true,true,true,true,false', dupHidden(dupRun).join())
+  t.ok('после нашего ответа тот же текст клиента — не повтор', dupHidden([U('да'), S('assistant', 'ок'), U('да')]).join() === 'false,false,false')
+  t.ok('разные id Авито — клиент сам написал то же дважды, показываем оба', dupHidden([U('да', { avitoMsgId: 'a' }), U('да', { avitoMsgId: 'b' })]).join() === 'false,false')
+  t.ok('другой текст между повторами — не повтор', dupHidden([U('а'), U('б'), U('а')]).join() === 'false,false,false')
+  const AV = [
+    { id: 'm3', direction: 'out', author_id: 1, created: 300, type: 'text', content: { text: 'Пришлю расчёт вечером' } },
+    { id: 'm2', direction: 'out', author_id: 1, created: 200, type: 'text', content: { text: 'Здравствуйте!' } },
+    { id: 's1', direction: 'in', author_id: 0, created: 150, type: 'system', content: { text: 'Покупатель смотрит' } },
+    { id: 'm1', direction: 'in', author_id: 9, created: 100, type: 'text', content: { text: 'ТЗ пришлю' } },
+    { id: 'm4', direction: 'in', author_id: 9, created: 400, type: 'image', content: { image: { sizes: { '140x105': 'https://img.avito.st/s.jpg', '1280x960': 'https://img.avito.st/b.jpg' } } } },
+  ]
+  const hist = avitoHistory({ messages: AV }, 1)
+  t.ok('история Авито: по времени, системные без, наше — ответ, фото крупное', hist.map((m) => m.avitoMsgId + ':' + m.role).join() === 'm1:user,m2:assistant,m3:assistant,m4:user' && hist[0].ts === 100000 && hist[3].image === 'https://img.avito.st/b.jpg', hist.map((m) => m.avitoMsgId).join())
+  t.ok('история Авито приходит и голым массивом', avitoHistory(AV, 1).length === 4)
+  const local = [U('ТЗ пришлю', { ts: 100500 }), D('x1', { tgMsgId: 11 }), U('ТЗ пришлю', { ts: 160000 }), D('x2', { tgMsgId: 13 }), { role: 'assistant', text: 'Здравствуйте!', status: 'sent', auto: true, ts: 200500 }]
+  const mg = mergeAvitoHistory(local, hist)
+  t.ok('сверка: повторы ушли, свои реплики узнаны по тексту и получили id', mg.removed === 2 && mg.messages[0].avitoMsgId === 'm1' && mg.messages.find((m) => m.text === 'Здравствуйте!').avitoMsgId === 'm2' && mg.messages.find((m) => m.text === 'Здравствуйте!').auto, JSON.stringify(mg))
+  t.ok('сверка: ответ, набранный прямо в Авито, и фото встали по времени', mg.added === 2 && mg.messages.map((m) => m.text).join('|') === 'ТЗ пришлю|x2|Здравствуйте!|Пришлю расчёт вечером|📷 Фото', mg.messages.map((m) => m.text).join('|'))
+  t.ok('сверка без Авито (не ответил) — только убирает повторы', mergeAvitoHistory(local, []).messages.length === 3)
+  t.ok('повторная сверка ничего не меняет', mergeAvitoHistory(mg.messages, hist).added === 0 && mergeAvitoHistory(mg.messages, hist).removed === 0)
+  const tg = dupTelegram([U('ТЗ пришлю'), D('x1', { tgMsgId: 11 }), U('ТЗ пришлю'), D('x2', { tgMsgId: 13 })])
+  t.ok('Telegram: черновик-повтор удаляем по id, пост клиента ищем перед следующим черновиком', tg.drafts.join() === '11' && tg.posts.length === 1 && tg.posts[0].before === 13 && tg.posts[0].text === '👤 Клиент:\nТЗ пришлю', JSON.stringify(tg))
+  const btn = [U('а'), D('x1', { tgMsgId: 11 }), S('assistant', 'ок'), D('x2', { tgMsgId: 13 })]
+  t.ok('кнопка Telegram находит свой черновик по сообщению, а не по номеру', draftForButton(btn, 13, 1) === 3 && draftForButton(btn, 11, 3) === 1)
+  t.ok('кнопка на сдвинутый номер без своего черновика — ничего не шлёт', draftForButton(btn, 99, 2) === -1 && draftForButton(btn, 99, 3) === -1 && draftForButton(btn, 99, 0) === -1)
   t.ok('время: сегодня — часы, раньше — дата', feedTime(new Date(2026, 9, 28, 9, 5).getTime(), now) === '09:05' && feedTime(new Date(2026, 9, 3, 9, 5).getTime(), now) === '03.10')
 }
 
@@ -256,6 +284,10 @@ function panel(pathname) {
   t.ok('диалог: черновик — карточка «не отправлено» с «Отправить» и «Править»', chat.indexOf('НЕ ОТПРАВЛЕНО') >= 0 && chat.indexOf('data-a="crm-draft-send" data-i="1"') >= 0 && chat.indexOf('data-a="crm-draft-use" data-i="1"') >= 0)
   const card = p.run('crmMsgsHtml(crmChats["avito:2"].messages,true,false)')
   t.ok('в карточке клиента черновик тоже выделен, но без кнопок отправки', card.indexOf('НЕ ОТПРАВЛЕНО') >= 0 && card.indexOf('crm-draft-send') < 0)
+  const dupHtml = p.run('crmMsgsHtml([{role:"user",text:"ТЗ пришлю",ts:1},{role:"assistant",text:"черн-1",status:"draft",ts:2},{role:"user",text:"ТЗ пришлю",ts:3},{role:"assistant",text:"черн-2",status:"draft",ts:4}],true,true)')
+  t.ok('повтор вебхука в диалоге не дублируется, черновик — последний', (dupHtml.match(/ТЗ пришлю/g) || []).length === 1 && dupHtml.indexOf('черн-1') < 0 && dupHtml.indexOf('черн-2') >= 0 && dupHtml.indexOf('data-i="3"') >= 0)
+  const staleHtml = p.run('crmMsgsHtml([{role:"user",text:"а",ts:1},{role:"assistant",text:"старый-черн",status:"draft",ts:2},{role:"user",text:"б",ts:3}],true,true)')
+  t.ok('неотправленный старый черновик в переписке не показываем', staleHtml.indexOf('старый-черн') < 0 && staleHtml.indexOf('черновик') < 0)
   t.ok('ответ уходит в Авито тем же обработчиком', chat.indexOf('data-a="crm-send-avito" data-key="avito:2" data-cid="chat"') >= 0 && chat.indexOf('id="crm-reply-chat"') >= 0)
   t.ok('диалог: быстрые ответы, фото, планировка и «переписать» у черновика', chat.indexOf('data-a="crm-quick"') >= 0 && chat.indexOf('data-a="crm-photo-pick"') >= 0 && chat.indexOf('data-a="crm-plan-toggle"') >= 0 && chat.indexOf('data-a="crm-redraft" data-i="1"') >= 0)
   p.run('crmRedraftIdx=1;crmPlanPicker=true')

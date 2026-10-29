@@ -32,7 +32,7 @@ import { STATE_SECTIONS, emptySection, validateStateItems, MAX_STATE_BYTES } fro
 import { hashPin, checkPin, protectCredentials, credentialVersion } from "./credentials.js";
 import { commitState } from "./state-store.js";
 import { pushReady, pushSubscribe, pushUnsubscribe, pushToAll, avitoPushData } from "./push.js";
-import { avitoImageUrl, avitoChatInfo, waitReminders, dueReminders, waitLabel, chatDeepLink, clientDeepLink } from "./crm-app.js";
+import { avitoImageUrl, avitoChatInfo, hasIncoming, dupHidden, avitoHistory, mergeAvitoHistory, dupTelegram, draftForButton, waitReminders, dueReminders, waitLabel, chatDeepLink, clientDeepLink } from "./crm-app.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
@@ -1354,12 +1354,16 @@ async function aiProcessIncoming(env, opt) {
   if (!text) return { success: false, error: "empty text" };
   if (!env.TG_SALES_BOT_TOKEN || !env.TG_SALES_CHAT_ID) return { success: false, error: "sales-бот не настроен" };
   const chats = await aiLoadChats(env);
+  const avitoMsgId = opt.avitoMsgId ? String(opt.avitoMsgId) : "";
+  // Повтор вебхука (Авито шлёт заново, пока ИИ пишет ответ) — уже записано, второй раз не надо.
+  if (chats[clientKey] && hasIncoming(chats[clientKey].messages, avitoMsgId)) return { success: true, duplicate: true };
   const c = await ensureClientTopic(env, chats, clientKey, clientName);
   c.source = source;
   if (opt.avitoChatId) c.avitoChatId = opt.avitoChatId;
   if (opt.itemId) c.itemId = opt.itemId;
   const image = opt.image ? String(opt.image) : "";
-  c.messages.push(image ? { role: "user", text: text, image: image, status: "in", ts: Date.now() } : { role: "user", text: text, status: "in", ts: Date.now() });
+  const inMsg = image ? { role: "user", text: text, image: image, status: "in", ts: Date.now() } : { role: "user", text: text, status: "in", ts: Date.now() };
+  c.messages.push(avitoMsgId ? { ...inMsg, avitoMsgId } : inMsg);
   c.archived = false;                       // клиент написал снова — диалог возвращается из архива
   // Объявление и настоящее имя клиента — один раз, best-effort (без них диалог всё равно живёт).
   if (source === "avito" && c.avitoChatId && !c.item) {
@@ -1392,7 +1396,8 @@ async function aiProcessIncoming(env, opt) {
     c.updatedAt = Date.now(); await aiSaveChats(env, chats);
     return { success: true, paused: true };
   }
-  const history = c.messages.filter(function (m) { return m.role === "user" || m.role === "assistant"; }).slice(-12)
+  const dup = dupHidden(c.messages);
+  const history = c.messages.filter(function (m, i) { return !dup[i] && (m.role === "user" || m.role === "assistant"); }).slice(-12)
     .map(function (m) { return { role: m.role === "assistant" ? "assistant" : "user", content: m.text }; });
   let ai;
   try { ai = await aiSellerReply(env, history, { itemId: c.itemId }); }
@@ -1403,14 +1408,14 @@ async function aiProcessIncoming(env, opt) {
   }
   const idx = c.messages.length;
   // Авто-режим: простой ответ (🟢) + реальный Avito-чат → отправляем клиенту сразу.
-  let autoOk = false;
+  let autoOk = false, autoId = "";
   if (!ai.needsApproval && c.avitoChatId && await aiAutoSendEnabled(env)) {
-    try { const sr = await avitoSend(env, c.avitoChatId, ai.reply); autoOk = !!(sr && sr.id); } catch (e) {}
+    try { const sr = await avitoSend(env, c.avitoChatId, ai.reply); autoOk = !!(sr && sr.id); if (autoOk) autoId = String(sr.id); } catch (e) {}
   }
   let autoPlanNote = "";
   if (autoOk && ai.plans.length) autoPlanNote = await avitoSendPlans(env, c.avitoChatId, ai.plans);
   if (autoOk) {
-    c.messages.push({ role: "assistant", text: ai.reply, status: "sent", auto: true, needsApproval: false, plans: ai.plans, ts: Date.now() });
+    c.messages.push({ role: "assistant", text: ai.reply, status: "sent", auto: true, needsApproval: false, plans: ai.plans, avitoMsgId: autoId, ts: Date.now() });
     await salesTg(env, "sendMessage", { chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "🟢 Автоответ отправлен клиенту:\n\n" + (ai.reply.length>350?ai.reply.slice(0,350)+"…\nПолный текст — в CRM → Диалоги.":ai.reply) + autoPlanNote });
   } else {
     c.messages.push({ role: "assistant", text: ai.reply, status: "draft", needsApproval: ai.needsApproval, plans: ai.plans, ts: Date.now() });
@@ -1448,18 +1453,25 @@ async function aiWebhook(env, request) {
     const topicId = (cq.message && cq.message.message_thread_id) || 0;
     const chats = await aiLoadChats(env);
     const key = findClientByTopic(chats, topicId, cq.message.chat.id, env.TG_SALES_CHAT_ID);
-    const parts = (cq.data || "").split(":"); const act = parts[0]; const idx = parseInt(parts[1] || "-1", 10);
+    const parts = (cq.data || "").split(":"); const act = parts[0];
+    // Черновик ищем по сообщению Telegram, а не по номеру из кнопки: после сверки с Авито
+    // номера реплик сдвигаются, и старая кнопка отправила бы клиенту чужую реплику.
+    const idx = key ? draftForButton(chats[key].messages, cq.message.message_id, parseInt(parts[1] || "-1", 10)) : -1;
+    if (key && idx < 0 && (act === "send" || act === "sendp" || act === "edit")) {
+      await salesTg(env, "answerCallbackQuery", { callback_query_id: cq.id, text: "Черновик уже неактуален" });
+      return json({ ok: true });
+    }
     if (key && chats[key].messages[idx]) {
       const c = chats[key], m = c.messages[idx];
       if (act === "send" || act === "sendp") {
-        let note = " (демо — это не Avito-чат)", textOk = false;
+        let note = " (демо — это не Avito-чат)", textOk = false, sentId = "";
         if (c.avitoChatId) {
-          try { const sr = await avitoSend(env, c.avitoChatId, m.text); textOk = !!(sr && sr.id); note = textOk ? " клиенту в Avito ✅" : ("\n⚠️ Avito: " + JSON.stringify(sr).slice(0, 140)); }
+          try { const sr = await avitoSend(env, c.avitoChatId, m.text); textOk = !!(sr && sr.id); if (textOk) sentId = String(sr.id); note = textOk ? " клиенту в Avito ✅" : ("\n⚠️ Avito: " + JSON.stringify(sr).slice(0, 140)); }
           catch (e) { note = "\n⚠️ Avito ошибка: " + (e.message || e); }
         }
         // Картинку шлём только следом за ушедшим текстом: без него в чате окажется план без слов.
         if (act === "sendp" && textOk && m.plans && m.plans.length) { note += await avitoSendPlans(env, c.avitoChatId, m.plans); m.plansSent = true; }
-        m.status = "sent"; c.updatedAt = Date.now(); await aiSaveChats(env, chats);
+        m.status = "sent"; if (sentId) m.avitoMsgId = sentId; c.updatedAt = Date.now(); await aiSaveChats(env, chats);
         await salesTg(env, "editMessageReplyMarkup", { chat_id: cq.message.chat.id, message_id: cq.message.message_id, reply_markup: { inline_keyboard: [] } });
         await salesTg(env, "sendMessage", { chat_id: cq.message.chat.id, message_thread_id: topicId, text: "✅ Ответ отправлен" + note });
         await salesTg(env, "answerCallbackQuery", { callback_query_id: cq.id, text: "Отправлено" });
@@ -1478,12 +1490,12 @@ async function aiWebhook(env, request) {
     const chats = await aiLoadChats(env);
     const key = findClientByTopic(chats, msg.message_thread_id, msg.chat.id, env.TG_SALES_CHAT_ID);
     if (key) {
-      let note = " (записан; это не Avito-чат)";
+      let note = " (записан; это не Avito-чат)", sentId = "";
       if (chats[key].avitoChatId) {
-        try { const sr = await avitoSend(env, chats[key].avitoChatId, msg.text); note = (sr && sr.id) ? " клиенту в Avito ✅" : ("\n⚠️ Avito: " + JSON.stringify(sr).slice(0, 140)); }
+        try { const sr = await avitoSend(env, chats[key].avitoChatId, msg.text); if (sr && sr.id) sentId = String(sr.id); note = sentId ? " клиенту в Avito ✅" : ("\n⚠️ Avito: " + JSON.stringify(sr).slice(0, 140)); }
         catch (e) { note = "\n⚠️ Avito ошибка: " + (e.message || e); }
       }
-      chats[key].messages.push({ role: "assistant", text: msg.text, status: "sent", manual: true, ts: Date.now() });
+      chats[key].messages.push({ role: "assistant", text: msg.text, status: "sent", manual: true, avitoMsgId: sentId, ts: Date.now() });
       chats[key].updatedAt = Date.now();
       await aiSaveChats(env, chats);
       await salesTg(env, "sendMessage", { chat_id: msg.chat.id, message_thread_id: msg.message_thread_id, text: "✅ Ваш ответ отправлен" + note });
@@ -1519,12 +1531,12 @@ async function aiSend(env, request) {
   const chats = await aiLoadChats(env);
   const c = chats[key];
   if (!c) return json({ success: false, error: "chat not found" }, 404);
-  let ok = false, note = "(не Avito-чат)";
+  let ok = false, note = "(не Avito-чат)", sentId = "";
   if (c.avitoChatId) {
-    try { const sr = await avitoSend(env, c.avitoChatId, text); ok = !!(sr && sr.id); if (!ok) note = JSON.stringify(sr).slice(0, 140); }
+    try { const sr = await avitoSend(env, c.avitoChatId, text); ok = !!(sr && sr.id); if (ok) sentId = String(sr.id); else note = JSON.stringify(sr).slice(0, 140); }
     catch (e) { note = e.message || String(e); }
   }
-  c.messages.push({ role: "assistant", text: text, status: ok ? "sent" : "draft", manual: true, ts: Date.now() });
+  c.messages.push({ role: "assistant", text: text, status: ok ? "sent" : "draft", manual: true, avitoMsgId: sentId, ts: Date.now() });
   c.updatedAt = Date.now();
   await aiSaveChats(env, chats);
   if (c.topicId) { try { await salesTg(env, "sendMessage", { chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: (ok ? "✅ Ответ из CRM отправлен клиенту:\n\n" : "⚠️ Ответ из CRM НЕ ушёл (" + note + "):\n\n") + text }); } catch (e) {} }
@@ -1635,7 +1647,124 @@ async function aiChatFlag(env, request) {
 // Отметки, о чём уже напомнили, — отдельной строкой (не в aiChats: её пишет вебхук,
 // и запись по крону могла бы затереть только что пришедшее сообщение).
 const CRM_MARKS = { storage: "crm_marks", id: "push" };
+// ─── Переписка как в Авито: наши ответы из Авито, сверка истории, чистка повторов ───
+// Наше сообщение, набранное в самом Авито (вебхук приходит и на него).
+// Ответ из CRM/бота мы уже записали — узнаём по id, у старых записей по тексту за последние 10 минут.
+async function aiRecordOutgoing(env, v, image) {
+  const key = "avito:" + v.chat_id;
+  const chats = await aiLoadChats(env);
+  const c = chats[key];
+  if (!c) return;
+  const id = String(v.id || "");
+  if (hasIncoming(c.messages, id)) return;
+  const text = image ? "📷 Фото" : String((v.content && v.content.text) || "").slice(0, 2000);
+  if (!text) return;
+  const ts = (Number(v.created) || 0) * 1000 || Date.now();
+  const twin = c.messages.findIndex(function (m) { return m.role === "assistant" && m.status === "sent" && !m.avitoMsgId && String(m.text || "").trim() === text.trim() && Math.abs((Number(m.ts) || 0) - ts) < 600000; });
+  if (twin >= 0) c.messages[twin] = Object.assign({}, c.messages[twin], { avitoMsgId: id });
+  else {
+    const m = { role: "assistant", text: text, status: "sent", manual: true, fromAvito: true, avitoMsgId: id, ts: ts };
+    c.messages.push(image ? { ...m, image } : m);
+    c.updatedAt = Date.now();
+  }
+  await aiSaveChats(env, chats);
+}
+const AVITO_HISTORY_PAGES = 5, AVITO_HISTORY_PAGE = 100;
+// История диалога из Авито (новые сначала, страницами по 100).
+async function avitoMessages(env, chatId) {
+  const t = await avitoToken(env);
+  const all = [];
+  for (let p = 0; p < AVITO_HISTORY_PAGES; p++) {
+    const r = await fetch("https://api.avito.ru/messenger/v3/accounts/" + env.AVITO_USER_ID + "/chats/" + encodeURIComponent(chatId) + "/messages/?limit=" + AVITO_HISTORY_PAGE + "&offset=" + (p * AVITO_HISTORY_PAGE), { headers: { Authorization: "Bearer " + t }, signal: AbortSignal.timeout(10000) });
+    if (!r.ok) throw new Error("messages " + r.status);
+    const j = await r.json();
+    const page = Array.isArray(j) ? j : ((j && j.messages) || []);
+    all.push.apply(all, page);
+    if (page.length < AVITO_HISTORY_PAGE) break;
+  }
+  return avitoHistory(all, env.AVITO_USER_ID);
+}
+// Сверить один диалог с Авито (в объекте chats). Авито не ответил — хотя бы убираем повторы.
+async function aiSyncChat(env, chats, key) {
+  const c = chats[key];
+  if (!c || !c.avitoChatId) return { added: 0, removed: 0 };
+  let hist = [], avitoErr = "";
+  try { hist = await avitoMessages(env, c.avitoChatId); } catch (e) { avitoErr = String(e && e.message || e); }
+  const r = mergeAvitoHistory(c.messages, hist);
+  if (r.added || r.removed || hist.length) c.messages = r.messages;
+  if (!c.item) {
+    try { const info = await avitoChatMeta(env, c.avitoChatId); if (info.item) c.item = info.item; if (info.userName && /^Avito · /.test(c.name || "")) c.name = info.userName; } catch (e) {}
+  }
+  return { added: r.added, removed: r.removed, error: avitoErr };
+}
+// POST /api/ai/resync {clientKey} — сверить диалог с Авито (CRM зовёт при открытии диалога).
+async function aiResync(env, request) {
+  const body = await request.json().catch(function () { return {}; });
+  const key = String(body.clientKey || "");
+  const chats = await aiLoadChats(env);
+  if (!chats[key] || !chats[key].avitoChatId) return json({ success: false, error: "chat not found" }, 404);
+  const r = await aiSyncChat(env, chats, key);
+  if (r.added || r.removed) await aiSaveChats(env, chats);
+  return json({ success: true, added: r.added, removed: r.removed, error: r.error || "", chat: chats[key] });
+}
+// Telegram: метод с одним повтором после 429 (в группе бот шлёт ~20 сообщений в минуту).
+async function salesTgRetry(env, method, payload) {
+  const j = await salesTg(env, method, payload);
+  if (j && j.error_code === 429) {
+    const wait = Math.min(60, Number(j.parameters && j.parameters.retry_after) || 5);
+    await new Promise(function (res) { setTimeout(res, wait * 1000); });
+    return salesTg(env, method, payload);
+  }
+  return j;
+}
+// Убрать из ветки клиента посты старых повторов вебхука. Пост «👤 Клиент» удаляем, только
+// если его текст совпал: читаем его, переслав в ту же ветку (без звука) и сразу удалив копию.
+async function tgDropDups(env, c) {
+  const plan = dupTelegram(c.messages);
+  const chat = c.chatId || env.TG_SALES_CHAT_ID;
+  let deleted = 0;
+  for (const id of plan.drafts) {
+    const j = await salesTgRetry(env, "deleteMessage", { chat_id: chat, message_id: id });
+    if (j && j.ok) deleted++;
+  }
+  for (const p of plan.posts) {
+    for (let id = p.before - 1; id >= p.before - 4 && id > 0; id--) {
+      const f = await salesTgRetry(env, "forwardMessage", { chat_id: chat, message_thread_id: c.topicId, from_chat_id: chat, message_id: id, disable_notification: true });
+      if (!f || !f.ok || !f.result) continue;
+      await salesTgRetry(env, "deleteMessage", { chat_id: chat, message_id: f.result.message_id });
+      if (String(f.result.text || "") !== p.text) continue;
+      const d = await salesTgRetry(env, "deleteMessage", { chat_id: chat, message_id: id });
+      if (d && d.ok) deleted++;
+      break;
+    }
+  }
+  return deleted;
+}
+// Разовая чистка всех диалогов (крон, по 3 диалога за проход): повторы из Telegram,
+// сверка с Авито. Отметка — своя строка crm_marks/cleanup1, не трогает пуш-отметки.
+const CRM_CLEANUP = { id: "cleanup1", perTick: 3 };
+async function crmCleanupOnce(env) {
+  const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind(CRM_MARKS.storage, CRM_CLEANUP.id).first();
+  let done = {}; try { done = row && row.data ? JSON.parse(row.data) || {} : {}; } catch (e) {}
+  if (done.__all) return;
+  const first = await aiLoadChats(env);
+  const keys = Object.keys(first).filter(function (k) { return first[k] && first[k].avitoChatId && !done[k]; });
+  for (const key of keys.slice(0, CRM_CLEANUP.perTick)) {
+    let tg = 0;
+    if (env.TG_SALES_BOT_TOKEN) { try { tg = await tgDropDups(env, first[key]); } catch (e) { console.error("tg dups", key, String(e)); } }
+    const chats = await aiLoadChats(env);   // свежие: пока чистили Telegram, мог прийти вебхук
+    const r = await aiSyncChat(env, chats, key);
+    if (r.added || r.removed) await aiSaveChats(env, chats);
+    done[key] = { tg: tg, added: r.added, removed: r.removed, error: r.error || "", at: Date.now() };
+  }
+  if (keys.length <= CRM_CLEANUP.perTick) done.__all = Date.now();
+  await env.DB.prepare("INSERT INTO work_states (storage_key, work_id, data, updated_at) VALUES (?,?,?,?) ON CONFLICT(storage_key, work_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at")
+    .bind(CRM_MARKS.storage, CRM_CLEANUP.id, JSON.stringify(done), Date.now()).run();
+}
+
 async function crmTick(env) {
+  // Разовая чистка повторов вебхука — пока не пройдёт все диалоги, потом сразу выходит.
+  try { await crmCleanupOnce(env); } catch (e) { console.error("crm cleanup", String(e)); }
   if (!pushReady(env)) return;
   const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind(CRM_MARKS.storage, CRM_MARKS.id).first();
   let marks = {}; try { marks = row && row.data ? JSON.parse(row.data) || {} : {}; } catch (e) {}
@@ -1755,11 +1884,12 @@ async function avitoWebhook(env, request) {
   const v = upd && upd.payload && upd.payload.value;
   if (!v || (upd.payload.type && upd.payload.type !== "message")) return json({ ok: true });
   if (v.type && v.type !== "text" && v.type !== "image") return json({ ok: true });
-  if (String(v.author_id) === String(env.AVITO_USER_ID)) return json({ ok: true });  // наше исходящее — игнор
   const image = v.type === "image" ? avitoImageUrl(v.content) : "";
+  // Наше исходящее: ответ из CRM/бота уже записан (тот же id), а набранный прямо в Авито — дописываем.
+  if (String(v.author_id) === String(env.AVITO_USER_ID)) { await aiRecordOutgoing(env, v, image); return json({ ok: true }); }
   const text = image ? "📷 Фото" : ((v.content && v.content.text) || "");
   if (!text) return json({ ok: true });
-  await aiProcessIncoming(env, { clientKey: "avito:" + v.chat_id, clientName: "Avito · " + (v.author_id || v.chat_id), text: text, image: image, source: "avito", avitoChatId: v.chat_id, itemId: v.item_id });
+  await aiProcessIncoming(env, { clientKey: "avito:" + v.chat_id, clientName: "Avito · " + (v.author_id || v.chat_id), text: text, image: image, source: "avito", avitoChatId: v.chat_id, itemId: v.item_id, avitoMsgId: v.id || "" });
   return json({ ok: true });
 }
 
@@ -1785,9 +1915,10 @@ async function aiNudge(env) {
     let ai; try { ai = await aiSellerReply(env, history, { itemId: c.itemId }); } catch (e) { continue; }
     c.nudgeCount = (c.nudgeCount || 0) + 1; c.lastNudge = now; c.updatedAt = now;
     const idx = c.messages.length; let autoOk = false;
-    if (!ai.needsApproval && autoOn) { try { const sr = await avitoSend(env, c.avitoChatId, ai.reply); autoOk = !!(sr && sr.id); } catch (e) {} }
+    let autoId = "";
+    if (!ai.needsApproval && autoOn) { try { const sr = await avitoSend(env, c.avitoChatId, ai.reply); autoOk = !!(sr && sr.id); if (autoOk) autoId = String(sr.id); } catch (e) {} }
     if (autoOk) {
-      c.messages.push({ role: "assistant", text: ai.reply, status: "sent", auto: true, nudge: true, ts: now });
+      c.messages.push({ role: "assistant", text: ai.reply, status: "sent", auto: true, nudge: true, avitoMsgId: autoId, ts: now });
       await salesTg(env, "sendMessage", { chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "⏰🟢 Авто-дожим отправлен (молчал " + silentDays + " дн.):\n\n" + ai.reply });
     } else {
       c.messages.push({ role: "assistant", text: ai.reply, status: "draft", nudge: true, needsApproval: ai.needsApproval, ts: now });
@@ -2106,7 +2237,7 @@ export default {
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
     // CRM-приложение: объявление, переписать черновик, фото/планировка, архив/спам (с токеном).
-    const CRM_CHAT_ROUTES = { "/api/ai/chat-info": aiChatInfo, "/api/ai/redraft": aiRedraft, "/api/ai/send-plan": aiSendPlan, "/api/ai/send-photo": aiSendPhoto, "/api/ai/chat-flag": aiChatFlag };
+    const CRM_CHAT_ROUTES = { "/api/ai/chat-info": aiChatInfo, "/api/ai/resync": aiResync, "/api/ai/redraft": aiRedraft, "/api/ai/send-plan": aiSendPlan, "/api/ai/send-photo": aiSendPhoto, "/api/ai/chat-flag": aiChatFlag };
     if (CRM_CHAT_ROUTES[url.pathname] && request.method === "POST") {
       try { return await CRM_CHAT_ROUTES[url.pathname](env, request); }
       catch (err) { return json({ success: false, error: String(err && err.message || err) }, 500); }
