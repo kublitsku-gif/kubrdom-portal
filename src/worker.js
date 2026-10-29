@@ -536,10 +536,13 @@ async function getState(env, storageKey, auth) {
 // Скоуп прав НЕ применяем намеренно: версия — это отметка времени, по ней нельзя узнать
 // ни одной цифры из финансов, а фильтрация по правам сделала бы «сверху ничего не менялось»
 // неверным для тех, от кого раздел скрыт, и они перестали бы видеть чужие правки вовсе.
+// Считаем только разделы снимка (STATE_SECTIONS — ровно то, что отдаёт GET): служебные строки
+// той же storage_key (aiChats — её пишет вебхук Авито на каждое сообщение) иначе двигали версию
+// мимо снимка, и каждая вкладка тянула весь мегабайт раз в 15 с впустую.
 async function getStateVersion(env, storageKey) {
   const row = await env.DB
-    .prepare("SELECT MAX(updated_at) AS v FROM work_states WHERE storage_key = ?")
-    .bind(storageKey).first();
+    .prepare("SELECT MAX(updated_at) AS v FROM work_states WHERE storage_key = ? AND work_id IN (" + STATE_SECTIONS.map(function () { return "?"; }).join(",") + ")")
+    .bind(storageKey, ...STATE_SECTIONS).first();
   return json({ success: true, storage_key: storageKey, version: Number((row && row.v) || 0) });
 }
 

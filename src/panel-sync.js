@@ -229,7 +229,26 @@ async function pollOnce(){
   if (!data || !Array.isArray(data.items)) return;
   ctx.updateServerCounts(data.items);   // страж всегда знает СВЕЖИЕ серверные счётчики (даже без применения стейта)
   const serverV = ctx.maxUpdatedAt(data.items);
-  if (serverV > ctx._lastSeen) showUpdateBanner(data.items, serverV);
+  if (serverV > ctx._lastSeen) applyRemote(data.items);
+}
+
+// Чужая правка применяется сама — тем же трёхсторонним слиянием, что кнопка «Обновить»
+// (у человека открыты и /crm, и портал, и каждое сохранение одного окна всплывало кнопкой
+// в другом). Спрашиваем, только если одно поле правили с двух сторон (showConflictDetails).
+// Пока человек печатает, не трогаем экран: перерисовка унесла бы фокус и набранное, —
+// следующий опрос попробует снова.
+function isTyping(){
+  const el = document.activeElement;
+  if (!el) return false;
+  const tag = String(el.tagName || "").toUpperCase();
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || !!el.isContentEditable;
+}
+function applyRemote(items){
+  if (isTyping()) return { deferred: true };
+  const y = (typeof window !== "undefined" && window.scrollY) || 0;
+  const res = _handleSaveConflict(items);
+  try { if (y && window.scrollTo) window.scrollTo(0, y); } catch { /* Keep the existing fallback state. */ }
+  return res;
 }
 
 function showUpdateBanner(items, version){
@@ -321,5 +340,5 @@ function showConflictDetails(serverItems,result,choices){
   const close=document.createElement("button");close.textContent="Решить позже";close.onclick=function(){b.remove();ctx._pollPaused=false;};b.appendChild(close);
   document.body.appendChild(b);
 }
-return {apiSave,showSaveError,clearSaveError,scheduleSave,flushSaveOnLeave,pollOnce,showUpdateBanner,_handleSaveConflict,showConflictDetails};
+return {apiSave,showSaveError,clearSaveError,scheduleSave,flushSaveOnLeave,pollOnce,showUpdateBanner,applyRemote,_handleSaveConflict,showConflictDetails};
 }

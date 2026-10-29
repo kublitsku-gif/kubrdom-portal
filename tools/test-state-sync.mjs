@@ -153,16 +153,27 @@ function panel(net) {
   const p = panel(net)
   p.run('document.hidden=false;')
   await p.ctx.pollOnce()
-  const apply = p.ctx.document.getElementById('live-apply')
-  t.ok('баннер предложил обновиться', !!apply && typeof apply.onclick === 'function')
-  apply.onclick()
-  t.ok('данные применились', p.q('objects[0].name') === 'Переименовали в другой вкладке')
+  t.ok('чужая правка применилась сама, без кнопки «Обновить»', p.q('objects[0].name') === 'Переименовали в другой вкладке' && !p.ctx.document.getElementById('live-apply'))
 
   net.calls.length = 0
   const r = await p.ctx.apiSave()
   t.ok('обратно на сервер ничего не ушло', net.saves().length === 0 && r.skipped === true,
     JSON.stringify(net.saves().map((c) => c.body.items.map((i) => i.work_id))) +
     ' — иначе вкладка переписывает только что принятое и отбивает 409 остальным')
+}
+
+// ── 8б. Пока человек печатает, чужую правку не накатываем ──────────────────────
+{
+  t.section('Чужая правка во время набора')
+  const server = [{ work_id: 'objects', data: [{ id: 'o1', name: 'С другого устройства', stages: [] }], updated_at: 9999 }]
+  const net = server_({ version: 9999, items: server })
+  const p = panel(net)
+  p.run('document.hidden=false;document.activeElement={tagName:"TEXTAREA"};')
+  await p.ctx.pollOnce()
+  t.ok('пока фокус в поле ввода — экран не трогаем', p.q('objects[0].name') !== 'С другого устройства')
+  p.run('document.activeElement=null;')
+  await p.ctx.pollOnce()
+  t.ok('набор закончен — следующий опрос применил правку', p.q('objects[0].name') === 'С другого устройства')
 }
 
 // ── 9. Отметка сохранения говорит про облако, а не про нажатие ──────────────

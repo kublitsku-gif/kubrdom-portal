@@ -4,10 +4,10 @@ import worker from '../src/worker.js';
 import { sqliteDB } from './harness/sqlite-db.js';
 import { commitState } from '../src/state-store.js';
 const secret='test-master';
-const s=sqliteDB({objects:{data:[{id:'o1',name:'Initial',stages:[]}],at:1000},finTxns:{data:[],at:5000},users:{data:[{id:'admin',roles:['admin'],pin:'864219'}],at:1000}});
+const s=sqliteDB({objects:{data:[{id:'o1',name:'Initial',stages:[]}],at:1000},finTxns:{data:[],at:5000},users:{data:[{id:'admin',roles:['admin'],pin:'864219'}],at:1000},aiChats:{data:{},at:9000}});
 const jobs=[];
 async function call(path,body){const r=await worker.fetch(new Request('https://test.invalid/api/'+path,{method:body?'POST':'GET',headers:{'X-Admin-Token':secret,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined}),{DB:s.db,ADMIN_TOKEN:secret},{waitUntil(p){jobs.push(p);}});return {status:r.status,...await r.json()};}
-let r=await call('state/admin_panel/version');assert.equal(r.version,5000);assert.equal(r.items,undefined);
+let r=await call('state/admin_panel/version');assert.equal(r.version,5000,'служебная строка aiChats (вебхук Авито) версию снимка не двигает');assert.equal(r.items,undefined);
 r=await call('state/admin_panel');assert.ok(r.items.find(x=>x.work_id==='objects').data.length===1);
 assert.ok(!r.items.find(x=>x.work_id==='users').data[0].pin,'PIN never leaves server, including admin');
 r=await call('state/admin_panel',{items:[{work_id:'objects',data:[{id:'o1',name:'Changed',stages:[]}]}],baseVersions:{objects:1000}});assert.equal(r.success,true);assert.deepEqual(r.accepted,['objects']);
