@@ -1808,6 +1808,15 @@ async function crmTgQueue(env) {
   if (!q || !Array.isArray(q.ops) || q.done || !env.TG_SALES_BOT_TOKEN) return;
   q.i = q.i || 0; q.log = q.log || [];
   let calls = 0;
+  // Права бота в группе — один раз за проход, в журнал: «message can't be deleted» на старых
+  // сообщениях значит, что бот не админ с правом удалять (свои он удаляет только 48 часов).
+  try {
+    const me = await salesTg(env, "getMe", {});
+    const chat = (q.ops[q.i] && q.ops[q.i].chat) || env.TG_SALES_CHAT_ID;
+    const cm = me && me.ok ? await salesTg(env, "getChatMember", { chat_id: chat, user_id: me.result.id }) : null;
+    q.rights = { bot: me && me.ok ? me.result.username : "?", status: cm && cm.ok ? cm.result.status : String(cm && cm.description || "?"), canDelete: !!(cm && cm.ok && cm.result.can_delete_messages), at: Date.now() };
+    calls += 2;
+  } catch (e) { q.rights = { error: String(e) }; }
   const note = function (op, res) { if (q.log.length < 300) q.log.push((op.k === "del" ? "del " + op.id : "probe<" + op.before) + " " + res); };
   while (q.i < q.ops.length && calls + 9 <= TG_QUEUE.budget) {
     const op = Object.assign({}, q.ops[q.i], { chat: q.ops[q.i].chat || env.TG_SALES_CHAT_ID });
