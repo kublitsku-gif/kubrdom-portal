@@ -1,4 +1,6 @@
 import { changeClient, nextAt, chatKeys } from "./crm-sales.js";
+import { STAGE_TITLE, clientCode } from "./crm-contacts.js";
+import { waitSince, waitLabel, clientDeepLink } from "./crm-app.js";
 // Telegram sales workspace. Per-client rows avoid overwriting unrelated dialogs.
 const states = {
   new: "🆕 Новый",
@@ -34,24 +36,29 @@ const stamp = (t) =>
     hour: "2-digit",
     minute: "2-digit",
   });
+// Название темы — только имя клиента. Статус в названии менялся на каждой реплике
+// («🆕» ↔ «⏳»), и Telegram писал в ветку «переименовал(а) тему» служебной строкой.
+// Статус, город и интерес — в закреплённой карточке.
 export function topicName(c) {
   return (
-    (states[c.status] || states.new).split(" ")[0] +
-    " " +
     c.name +
     (c.name === "Новый клиент"
       ? " · №" + (c.topicId || String(c.id).slice(-6))
-      : "") +
-    (c.location ? " · " + c.location : "") +
-    (c.interest ? " · " + c.interest : "")
+      : "")
   ).slice(0, 128);
+}
+// Тема закрыта (🔒), когда по клиенту работать не нужно: архив, отказ, неактуально.
+// Договор не закрываем — после продажи клиент пишет про монтаж.
+export function topicShouldClose(c) {
+  return !!c.archived || ["refused", "closed"].includes(c.status);
 }
 export function cardText(c) {
   return [
     (states[c.status] || states.new) +
       " · " +
       (c.source === "website" ? "Сайт" : "Авито"),
-    c.name,
+    c.name + (c.code ? " · " + clientCode(c.code) : "") + (STAGE_TITLE[c.stage] ? " · " + STAGE_TITLE[c.stage] : ""),
+    c.itemTitle ? "📢 " + c.itemTitle : "",
     c.phone ? "📞 " + c.phone : "📞 Телефон не получен",
     c.location ? "📍 " + c.location : "",
     c.interest ? "🏠 " + c.interest : "",
@@ -67,23 +74,23 @@ export function cardText(c) {
               ? "заявка закрыта"
               : "связаться с клиентом"),
     c.note ? "📝 " + c.note.slice(-700) : "",
-    "CRM: https://portal.kubrdom.ru/admin",
   ]
     .filter(Boolean)
     .join("\n");
 }
 const button = (text, action) => ({ text, callback_data: "sales:" + action });
-function keyboard() {
-  return {
-    inline_keyboard: [
-      [button("📞 Перезвонить", "call"), button("📝 Итог звонка", "note")],
-      [button("⏳ Ждём клиента", "wait"), button("✅ Закрыть", "close")],
-      [
-        button("✏️ Имя / город / интерес", "profile"),
-        button("🆕 В работу", "reopen"),
-      ],
+function keyboard(c) {
+  const rows = [
+    [button("📞 Перезвонить", "call"), button("📝 Итог звонка", "note")],
+    [button("⏳ Ждём клиента", "wait"), button("✅ Закрыть", "close")],
+    [
+      button("✏️ Имя / город / интерес", "profile"),
+      button("🆕 В работу", "reopen"),
     ],
-  };
+  ];
+  // Прямо в карточку клиента CRM, а не на главную панели.
+  if (c && c.crmId) rows.push([{ text: "🔗 Открыть в CRM", url: "https://portal.kubrdom.ru" + clientDeepLink(c.crmId) }]);
+  return { inline_keyboard: rows };
 }
 export async function tg(env, method, payload) {
   const r = await fetch(
@@ -167,7 +174,7 @@ async function syncCRM(env, c) {
       (x) => x.id === c.crmId || (c.source === "avito" && chatKeys(x).includes(c.id)),
     );
     if(lead&&lead.mergedInto)lead=clients.find(x=>x.id===lead.mergedInto)||lead;
-    if (lead) c.crmId = lead.id;
+    if (lead) { c.crmId = lead.id; c.code = lead.code || c.code; c.stage = lead.stage || c.stage; }
     if (!lead) {
       if (c.source === "website") return;
       lead = {
@@ -265,7 +272,7 @@ async function refresh(env, c) {
         chat_id: c.chatId,
         message_id: c.cardId,
         text,
-        reply_markup: keyboard(),
+        reply_markup: keyboard(c),
         link_preview_options: { is_disabled: true },
       });
     } catch (e) {
@@ -276,19 +283,33 @@ async function refresh(env, c) {
       chat_id: c.chatId,
       message_thread_id: c.topicId,
       text,
-      reply_markup: keyboard(),
+      reply_markup: keyboard(c),
       link_preview_options: { is_disabled: true },
     });
     c.cardId = m.message_id;
     await save(env, c);
   }
-  await tg(env, "editForumTopic", {
-    chat_id: c.chatId,
-    message_thread_id: c.topicId,
-    name: topicName(c),
-  }).catch((e) => {
-    if (!/not[ _]modified/i.test(String(e))) throw e;
-  });
+  // Переименовываем, только когда имя правда сменилось (заглушка → настоящее, правка профиля).
+  if (c.topicTitle !== topicName(c)) {
+    await tg(env, "editForumTopic", {
+      chat_id: c.chatId,
+      message_thread_id: c.topicId,
+      name: topicName(c),
+    }).catch((e) => {
+      if (!/not[ _]modified/i.test(String(e))) throw e;
+    });
+    c.topicTitle = topicName(c);
+  }
+  const shut = topicShouldClose(c);
+  if (shut !== !!c.topicClosed) {
+    await tg(env, shut ? "closeForumTopic" : "reopenForumTopic", {
+      chat_id: c.chatId,
+      message_thread_id: c.topicId,
+    }).catch((e) => {
+      if (!/not[ _]modified/i.test(String(e))) throw e;
+    });
+    c.topicClosed = shut;
+  }
   if (!c.pinned) {
     await tg(env, "pinChatMessage", {
       chat_id: c.chatId,
@@ -304,6 +325,7 @@ async function refresh(env, c) {
       message_thread_id: c.topicId,
       phone_number: c.phone,
       first_name: c.name,
+      disable_notification: true,
     });
     c.contactPhone = c.phone;
     await save(env, c);
@@ -351,9 +373,12 @@ export async function upsertSalesCard(env, input) {
       c.name = input.name;
     if (input.summary) {
       c.summary = input.summary;
-      if (c.status === "waiting") c.status = "new";
+      // Написал снова — ждём ответа; после «Отказ» / «Неактуально» клиент вернулся в работу.
+      if (["waiting", "refused", "closed"].includes(c.status)) c.status = "new";
     }
   }
+  if (input.itemTitle) c.itemTitle = String(input.itemTitle).slice(0, 120);
+  if (typeof input.archived === "boolean") c.archived = input.archived;
   if (!c.interest) {
     const text = String(input.interestText || input.summary || "");
     const kind = /бан[яюиь]/i.test(text)
@@ -372,6 +397,16 @@ export async function upsertSalesCard(env, input) {
   await save(env, c);
   await refresh(env, c);
   return c;
+}
+// Архив / спам из CRM или кнопкой карточки → тема закрывается (🔒), вернули — открывается.
+export async function salesSetArchived(env, id, archived) {
+  await ensureSales(env);
+  const c = await get(env, id);
+  if (!c || !!c.archived === !!archived) return;
+  c.archived = !!archived;
+  c.dirty = true;
+  await save(env, c);
+  await refresh(env, c);
 }
 export async function deliverSiteCard(env, lead) {
   if (
@@ -708,8 +743,13 @@ export async function refreshToday(env) {
   const list = cards
     .filter((c) => c.status === "new" || (c.due && c.due < endTime))
     .sort((a, b) => (a.due || Infinity) - (b.due || Infinity));
+  const waiting = await waitingChats(env, now);
+  const waitText = waiting.length
+    ? "⏳ Ждут ответа:\n" + waiting.slice(0, 15).map((w) => "• " + w.name + " — " + waitLabel(w.waited) + "\n" + w.url).join("\n") + "\n\n"
+    : "";
   const text = (
     "📋 Заявки на сегодня · МСК\n" +
+    waitText +
     (list.length
       ? list
           .slice(0, 25)
@@ -757,6 +797,38 @@ export async function refreshToday(env) {
     });
   }
   cfg.text = text;
+  await setMeta(env, "today", cfg);
+}
+// Кто из клиентов Авито ждёт нашего ответа (последней написала не наша сторона), дольше — выше.
+async function waitingChats(env, now) {
+  const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key='admin_panel' AND work_id='aiChats'").first();
+  let chats = {};
+  try { chats = JSON.parse(row?.data || "{}"); } catch (e) { chats = {}; }
+  return Object.values(chats)
+    .filter((c) => c && c.source === "avito" && c.topicId && !c.archived && !c.spam)
+    .map((c) => ({ name: c.name || "Клиент", since: waitSince(c.messages), url: "https://t.me/c/" + String(c.chatId || env.TG_SALES_CHAT_ID).replace(/^-100/, "") + "/" + c.topicId }))
+    .filter((w) => w.since)
+    .map((w) => ({ ...w, waited: now - w.since }))
+    .sort((a, b) => b.waited - a.waited);
+}
+// Утром (9:00 МСК) — одно сообщение со звуком в тему «Сегодня»: сколько ждут ответа и звонков.
+// Весь день список правится молча; служебное в ветках клиентов тоже без звука.
+const MORNING_HOUR_MSK = 9;
+async function morningDigest(env) {
+  const now = Date.now();
+  const msk = new Date(now + 10800000);
+  if (msk.getUTCHours() !== MORNING_HOUR_MSK) return;
+  const day = msk.toISOString().slice(0, 10);
+  const cfg = await meta(env, "today");
+  if (!cfg || cfg.morning === day) return;
+  const waiting = await waitingChats(env, now);
+  const rows = await env.DB.prepare("SELECT data FROM sales_cards").all();
+  const end = Date.UTC(msk.getUTCFullYear(), msk.getUTCMonth(), msk.getUTCDate() + 1) - 10800000;
+  const calls = rows.results.map((r) => JSON.parse(r.data)).filter((c) => !closed(c.status) && c.due && c.due < end).length;
+  const text = "☀️ Доброе утро! Ждут ответа: " + waiting.length + " · звонков сегодня: " + calls +
+    (waiting.length ? "\n\n" + waiting.slice(0, 5).map((w) => "• " + w.name + " — " + waitLabel(w.waited) + "\n" + w.url).join("\n") : "");
+  await tg(env, "sendMessage", { chat_id: cfg.chatId, message_thread_id: cfg.topicId, text, link_preview_options: { is_disabled: true } });
+  cfg.morning = day;
   await setMeta(env, "today", cfg);
 }
 export async function salesTick(env) {
@@ -828,6 +900,7 @@ export async function salesTick(env) {
     }
   }
   await refreshToday(env);
+  await morningDigest(env);
 }
 
 export async function salesClosed(env, id) {

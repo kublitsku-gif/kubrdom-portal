@@ -2,7 +2,7 @@ import { chatKeys, nextAt, cleanBriefSuggestion } from "./crm-sales.js";
 import { claudeBody, claudeHeaders, claudeText, CLAUDE_SELLER_MODEL, CLAUDE_HAIKU_MODEL } from "./claude-chat.js";
 import { PLAN_IMAGES, PLAN_INSTRUCTION, normPlans, planUrl, planTitles, avitoUploadForm, avitoImageId } from "./plan-images.js";
 import { SITE_ORIGIN, sitemapUrls, htmlToText, knowledgeMessages, withSiteKnowledge, MAX_KNOWLEDGE_CHARS } from "./site-knowledge.js";
-import { upsertSalesCard, extractPhone, readableText, salesWebhook, salesTick, salesService, salesDestination, salesClosed, salesSetup } from "./sales-workspace.js";
+import { upsertSalesCard, salesSetArchived, extractPhone, readableText, salesWebhook, salesTick, salesService, salesDestination, salesClosed, salesSetup } from "./sales-workspace.js";
 import { websiteLeadFetch, deliverWebsiteLeads } from "./website-leads.js";
 // Cloudflare Worker: API для KUBRDOM-portal.
 //   GET  /api/state/:storageKey  → текущее состояние объекта (массив работ)
@@ -34,6 +34,8 @@ import { hashPin, checkPin, protectCredentials, credentialVersion } from "./cred
 import { commitState } from "./state-store.js";
 import { handleCardDav, DAV_ROOT } from "./carddav.js";
 import { contactCards } from "./crm-contacts.js";
+import { transcribeVoice } from "./stt.js";
+import { dialogLabel, dialogCardText, dialogKeyboard, planKeyboard, redraftHint, sentStatus, STATUS, crmChatLink } from "./sales-dialog.js";
 import { tgChatKey, applyBusinessUpdate, businessChatId, businessConnId, connectionRecord, BUSINESS_UPDATES } from "./tg-business.js";
 import { pushReady, pushSubscribe, pushUnsubscribe, pushToAll, avitoPushData } from "./push.js";
 import { avitoImageUrl, avitoChatInfo, hasIncoming, dupHidden, avitoHistory, mergeAvitoHistory, draftForButton, waitReminders, dueReminders, waitLabel, chatDeepLink, clientDeepLink } from "./crm-app.js";
@@ -1364,22 +1366,23 @@ async function aiProcessIncoming(env, opt) {
   const avitoMsgId = opt.avitoMsgId ? String(opt.avitoMsgId) : "";
   // Повтор вебхука (Авито шлёт заново, пока ИИ пишет ответ) — уже записано, второй раз не надо.
   if (chats[clientKey] && hasIncoming(chats[clientKey].messages, avitoMsgId)) return { success: true, duplicate: true };
-  const c = await ensureClientTopic(env, chats, clientKey, clientName);
+  // Объявление и настоящее имя клиента — ДО создания темы: тема сразу называется «Маргарита»,
+  // а не «Avito · 123» с переименованием следом (служебная строка в ветке). Best-effort.
+  let meta = null;
+  if (source === "avito" && opt.avitoChatId && !(chats[clientKey] && chats[clientKey].item)) {
+    try { meta = await avitoChatMeta(env, opt.avitoChatId); } catch (e) { console.error("avito chat info", String(e)); }
+  }
+  const firstName = meta && meta.userName && /^Avito · /.test(clientName) ? meta.userName : clientName;
+  const c = await ensureClientTopic(env, chats, clientKey, firstName);
   c.source = source;
   if (opt.avitoChatId) c.avitoChatId = opt.avitoChatId;
   if (opt.itemId) c.itemId = opt.itemId;
+  if (meta && meta.item) c.item = meta.item;
+  if (meta && meta.userName && /^Avito · /.test(c.name || "")) c.name = meta.userName;
   const image = opt.image ? String(opt.image) : "";
   const inMsg = image ? { role: "user", text: text, image: image, status: "in", ts: Date.now() } : { role: "user", text: text, status: "in", ts: Date.now() };
   c.messages.push(avitoMsgId ? { ...inMsg, avitoMsgId } : inMsg);
   c.archived = false;                       // клиент написал снова — диалог возвращается из архива
-  // Объявление и настоящее имя клиента — один раз, best-effort (без них диалог всё равно живёт).
-  if (source === "avito" && c.avitoChatId && !c.item) {
-    try {
-      const info = await avitoChatMeta(env, c.avitoChatId);
-      if (info.item) c.item = info.item;
-      if (info.userName && /^Avito · /.test(c.name || "")) c.name = info.userName;
-    } catch (e) { console.error("avito chat info", String(e)); }
-  }
   await aiSaveChats(env, chats);
   // Спам: сообщение сохранено, но ни пуша, ни Telegram, ни ИИ.
   if (c.spam) return { success: true, spam: true };
@@ -1387,19 +1390,32 @@ async function aiProcessIncoming(env, opt) {
   if (source === "avito") {
     try { await notifyAvitoIncoming(env, clientKey, c.name, text); } catch (e) { console.error("push avito", String(e)); }
   }
+  let sales = null;
   if (source === "avito") {
-    try { await upsertSalesCard(env, {id:clientKey,crmId:"avito-"+clientKey.slice(6),source:"avito",chatId:c.chatId||env.TG_SALES_CHAT_ID,topicId:c.topicId,name:c.name,phone:extractPhone(text),summary:text}); } catch(e) { console.error("sales card pending retry",String(e)); }
+    try { sales = await upsertSalesCard(env, { id: clientKey, crmId: "avito-" + clientKey.slice(6), source: "avito", chatId: c.chatId || env.TG_SALES_CHAT_ID, topicId: c.topicId, name: c.name, phone: extractPhone(text), summary: text, itemTitle: c.item && c.item.title, archived: false }); } catch (e) { console.error("sales card pending retry", String(e)); }
   }
+  const chat = salesChatOf(env, c);
   if (image) {
     // Фото клиента: показать в ветке и ждать человека — ИИ по картинке ответить не может.
-    try { await salesTg(env, "sendPhoto", { chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, photo: image, caption: "👤 Клиент прислал фото" }); } catch (e) {}
+    try { await salesTg(env, "sendPhoto", { chat_id: chat, message_thread_id: c.topicId, photo: image, caption: "👤 " + (c.name || "Клиент") + " прислал фото" }); } catch (e) {}
     c.updatedAt = Date.now(); await aiSaveChats(env, chats);
     return { success: true, image: true };
   }
-  await salesTg(env, "sendMessage", { chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "👤 Клиент:\n" + text });
+  // Одна карточка на реплику: сразу «👤 что написал» + «⏳ ИИ готовит ответ», потом дописываем.
+  const card = { label: dialogLabel({ source: source, itemTitle: c.item && c.item.title, stage: sales && sales.stage, code: sales && sales.code }), name: c.name, clientText: text };
+  await tgCardsStale(env, c);
+  let cardId = 0;
+  try {
+    const post = await salesTg(env, "sendMessage", { chat_id: chat, message_thread_id: c.topicId, text: dialogCardText(Object.assign({}, card, { status: STATUS.thinking })), link_preview_options: { is_disabled: true } });
+    if (post && post.ok && post.result) cardId = post.result.message_id;
+  } catch (e) { console.error("tg card", String(e)); }
+  const editCard = function (status) {
+    if (!cardId) return Promise.resolve();
+    return salesTg(env, "editMessageText", { chat_id: chat, message_id: cardId, text: dialogCardText(Object.assign({}, card, { status: status })), link_preview_options: { is_disabled: true } }).catch(function () {});
+  };
   // Мастер-выключатель: нейропродавец на паузе — лид сохранён, но ИИ не отвечает (ответ вручную).
   if (!(await aiEnabled(env))) {
-    await salesTg(env, "sendMessage", { chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "🔕 Нейропродавец выключен — ответьте клиенту вручную." });
+    await editCard(STATUS.paused);
     c.updatedAt = Date.now(); await aiSaveChats(env, chats);
     return { success: true, paused: true };
   }
@@ -1409,6 +1425,7 @@ async function aiProcessIncoming(env, opt) {
   let ai;
   try { ai = await aiSellerReply(env, history, { itemId: c.itemId }); }
   catch (e) {
+    await editCard(STATUS.failed);
     await salesService(env, "⚠️ Не удалось подготовить ответ ИИ. Диалог: " + clientKey);
     await aiSaveChats(env, chats);
     return { success: false, error: String(e) };
@@ -1423,21 +1440,15 @@ async function aiProcessIncoming(env, opt) {
   if (autoOk && ai.plans.length) autoPlanNote = await avitoSendPlans(env, c.avitoChatId, ai.plans);
   if (autoOk) {
     c.messages.push({ role: "assistant", text: ai.reply, status: "sent", auto: true, needsApproval: false, plans: ai.plans, avitoMsgId: autoId, ts: Date.now() });
-    await salesTg(env, "sendMessage", { chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: "🟢 Автоответ отправлен клиенту:\n\n" + (ai.reply.length>350?ai.reply.slice(0,350)+"…\nПолный текст — в CRM → Диалоги.":ai.reply) + autoPlanNote });
+    if (cardId) {
+      const autoText = dialogCardText(Object.assign({}, card, { draft: ai.reply, tag: "🟢 автоответ", plansNote: ai.plans.length ? planTitles(ai.plans) : "", status: "✅ Отправлено автоматически" + autoPlanNote }));
+      await salesTg(env, "editMessageText", { chat_id: chat, message_id: cardId, text: autoText, link_preview_options: { is_disabled: true } }).catch(function () {});
+    }
   } else {
-    c.messages.push({ role: "assistant", text: ai.reply, status: "draft", needsApproval: ai.needsApproval, plans: ai.plans, ts: Date.now() });
-    const tag = ai.needsApproval ? "🟠 нужно одобрение" : "🟢 можно авто";
-    // Превью — best-effort: не открылась картинка, черновик всё равно должен прийти.
-    if (ai.plans.length) { try { await tgPlanPreview(env, c.chatId || env.TG_SALES_CHAT_ID, c.topicId, ai.plans); } catch (e) {} }
-    const kb = ai.plans.length
-      ? [[{ text: "✅ Отправить с планировкой", callback_data: "sendp:" + idx }], [{ text: "✅ Только текст", callback_data: "send:" + idx }, { text: "✏️ Изменить", callback_data: "edit:" + idx }]]
-      : [[{ text: "✅ Отправить", callback_data: "send:" + idx }, { text: "✏️ Изменить", callback_data: "edit:" + idx }]];
-    const sent = await salesTg(env, "sendMessage", {
-      chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId,
-      text: "🤖 Черновик (" + tag + "):\n\n" + ai.reply + (ai.plans.length ? "\n\n🖼 + " + planTitles(ai.plans) : ""),
-      reply_markup: { inline_keyboard: kb }
-    });
-    if (sent && sent.ok && sent.result) c.messages[idx].tgMsgId = sent.result.message_id;
+    c.messages.push({ role: "assistant", text: ai.reply, status: "draft", needsApproval: ai.needsApproval, plans: ai.plans, ts: Date.now(), tgMsgId: cardId || undefined, card: card });
+    // Превью — best-effort и без звука: не открылась картинка, черновик всё равно должен прийти.
+    if (ai.plans.length) { try { await tgPlanPreview(env, chat, c.topicId, ai.plans); } catch (e) {} }
+    if (cardId) { try { await tgCardRender(env, c, idx, "", true, clientKey); } catch (e) { console.error("tg card draft", String(e)); } }
   }
   c.updatedAt = Date.now();
   await aiSaveChats(env, chats);
@@ -1457,59 +1468,126 @@ async function aiWebhook(env, request) {
   if (await salesWebhook(env, upd)) return json({ok:true});
   // нажатие кнопки
   if (upd.callback_query) {
-    const cq = upd.callback_query;
-    const topicId = (cq.message && cq.message.message_thread_id) || 0;
-    const chats = await aiLoadChats(env);
-    const key = findClientByTopic(chats, topicId, cq.message.chat.id, env.TG_SALES_CHAT_ID);
-    const parts = (cq.data || "").split(":"); const act = parts[0];
-    // Черновик ищем по сообщению Telegram, а не по номеру из кнопки: после сверки с Авито
-    // номера реплик сдвигаются, и старая кнопка отправила бы клиенту чужую реплику.
-    const idx = key ? draftForButton(chats[key].messages, cq.message.message_id, parseInt(parts[1] || "-1", 10)) : -1;
-    if (key && idx < 0 && (act === "send" || act === "sendp" || act === "edit")) {
-      await salesTg(env, "answerCallbackQuery", { callback_query_id: cq.id, text: "Черновик уже неактуален" });
-      return json({ ok: true });
-    }
-    if (key && chats[key].messages[idx]) {
-      const c = chats[key], m = c.messages[idx];
-      if (act === "send" || act === "sendp") {
-        let note = " (демо — это не Avito-чат)", textOk = false, sentId = "";
-        if (c.avitoChatId) {
-          try { const sr = await avitoSend(env, c.avitoChatId, m.text); textOk = !!(sr && sr.id); if (textOk) sentId = String(sr.id); note = textOk ? " клиенту в Avito ✅" : ("\n⚠️ Avito: " + JSON.stringify(sr).slice(0, 140)); }
-          catch (e) { note = "\n⚠️ Avito ошибка: " + (e.message || e); }
-        }
-        // Картинку шлём только следом за ушедшим текстом: без него в чате окажется план без слов.
-        if (act === "sendp" && textOk && m.plans && m.plans.length) { note += await avitoSendPlans(env, c.avitoChatId, m.plans); m.plansSent = true; }
-        m.status = "sent"; if (sentId) m.avitoMsgId = sentId; c.updatedAt = Date.now(); await aiSaveChats(env, chats);
-        await salesTg(env, "editMessageReplyMarkup", { chat_id: cq.message.chat.id, message_id: cq.message.message_id, reply_markup: { inline_keyboard: [] } });
-        await salesTg(env, "sendMessage", { chat_id: cq.message.chat.id, message_thread_id: topicId, text: "✅ Ответ отправлен" + note });
-        await salesTg(env, "answerCallbackQuery", { callback_query_id: cq.id, text: "Отправлено" });
-      } else if (act === "edit") {
-        await salesTg(env, "answerCallbackQuery", { callback_query_id: cq.id, text: "Напишите свой вариант ответом в этой ветке" });
-        await salesTg(env, "sendMessage", { chat_id: cq.message.chat.id, message_thread_id: topicId, text: "✏️ Напишите свой вариант ответа сообщением в этой ветке — он заменит черновик." });
-      }
-    } else {
-      await salesTg(env, "answerCallbackQuery", { callback_query_id: cq.id, text: "Диалог не найден" });
-    }
+    await tgCardButton(env, upd.callback_query);
     return json({ ok: true });
   }
-  // обычное сообщение в ветке от человека = ответ клиенту (ручной/правка)
+  // сообщение в ветке от человека: текст — ответ клиенту, голосовое — расшифровка в черновик
   const msg = upd.message;
-  if (msg && msg.message_thread_id && msg.text && !(msg.from && msg.from.is_bot)) {
+  if (msg && msg.message_thread_id && !(msg.from && msg.from.is_bot) && (msg.text || msg.voice)) {
     const chats = await aiLoadChats(env);
     const key = findClientByTopic(chats, msg.message_thread_id, msg.chat.id, env.TG_SALES_CHAT_ID);
-    if (key) {
-      let note = " (записан; это не Avito-чат)", sentId = "";
-      if (chats[key].avitoChatId) {
-        try { const sr = await avitoSend(env, chats[key].avitoChatId, msg.text); if (sr && sr.id) sentId = String(sr.id); note = sentId ? " клиенту в Avito ✅" : ("\n⚠️ Avito: " + JSON.stringify(sr).slice(0, 140)); }
-        catch (e) { note = "\n⚠️ Avito ошибка: " + (e.message || e); }
-      }
-      chats[key].messages.push({ role: "assistant", text: msg.text, status: "sent", manual: true, avitoMsgId: sentId, ts: Date.now() });
-      chats[key].updatedAt = Date.now();
-      await aiSaveChats(env, chats);
-      await salesTg(env, "sendMessage", { chat_id: msg.chat.id, message_thread_id: msg.message_thread_id, text: "✅ Ваш ответ отправлен" + note });
-    }
+    if (key && msg.voice) await tgVoiceDraft(env, chats, key, msg);
+    else if (key) await tgTopicReply(env, chats, key, msg);
   }
   return json({ ok: true });
+}
+// Текст в ветке = ответ клиенту в Авито. Подтверждаем реакцией 👌 на само сообщение
+// (а не «✅ Ваш ответ отправлен» отдельной строкой), карточку закрываем статусом.
+async function tgTopicReply(env, chats, key, msg) {
+  const c = chats[key];
+  let sentId = "", err = "";
+  if (c.avitoChatId) {
+    try { const sr = await avitoSend(env, c.avitoChatId, msg.text); if (sr && sr.id) sentId = String(sr.id); else err = JSON.stringify(sr).slice(0, 140); }
+    catch (e) { err = String(e.message || e); }
+  }
+  c.messages.push({ role: "assistant", text: msg.text, status: "sent", manual: true, avitoMsgId: sentId, ts: Date.now() });
+  c.updatedAt = Date.now();
+  if (!err) await tgCardSettle(env, c, "ответ в Telegram", msg.text, { quiet: true });
+  await aiSaveChats(env, chats);
+  if (err) { await salesTg(env, "sendMessage", { chat_id: msg.chat.id, message_thread_id: msg.message_thread_id, reply_to_message_id: msg.message_id, text: "⚠️ Не ушло в Авито: " + err }); return; }
+  try { await salesTg(env, "setMessageReaction", { chat_id: msg.chat.id, message_id: msg.message_id, reaction: [{ type: "emoji", emoji: "👌" }] }); } catch (e) {}
+}
+// Голосовое в ветке → расшифровка (Yandex SpeechKit, src/stt.js) → карточка «🎤 Вы надиктовали»:
+// отправить клиенту как есть или отдать ИИ как указание. Файл качаем ботом продаж —
+// голосовое пришло ему, а не основному боту портала.
+async function tgVoiceDraft(env, chats, key, msg) {
+  const c = chats[key];
+  const salesEnv = Object.assign({}, env, { TG_BOT_TOKEN: env.TG_SALES_BOT_TOKEN });
+  let tr;
+  try { tr = await transcribeVoice(salesEnv, msg.voice.file_id, msg.voice.duration); } catch (e) { tr = { ok: false, reason: String(e.message || e) }; }
+  if (!tr || !tr.ok || !tr.text) {
+    await salesTg(env, "sendMessage", { chat_id: msg.chat.id, message_thread_id: msg.message_thread_id, reply_to_message_id: msg.message_id, text: "🎤 Не расшифровал: " + ((tr && tr.reason) || "пусто") });
+    return;
+  }
+  await tgCardsStale(env, c);
+  const idx = c.messages.length;
+  const card = { label: "", name: "", clientText: "" };
+  const d = { role: "assistant", text: String(tr.text).slice(0, 2000), status: "draft", dictated: true, needsApproval: true, plans: [], ts: Date.now(), card: card };
+  const post = await salesTg(env, "sendMessage", { chat_id: msg.chat.id, message_thread_id: msg.message_thread_id, reply_to_message_id: msg.message_id,
+    text: dialogCardText({ draft: d.text, dictated: true }), reply_markup: dialogKeyboard({ idx: idx, dictated: true, crmUrl: crmChatLink(env.PUBLIC_BASE_URL, key) }) });
+  if (post && post.ok && post.result) d.tgMsgId = post.result.message_id;
+  c.messages.push(d);
+  await aiSaveChats(env, chats);
+}
+// Кнопки карточки: отправить, переписать, планировки, архив/спам, голосовой черновик.
+// Черновик ищем по сообщению Telegram (draftForButton), номер из кнопки — запасной путь.
+async function tgCardButton(env, cq) {
+  const answer = function (text) { return salesTg(env, "answerCallbackQuery", { callback_query_id: cq.id, text: text || "" }).catch(function () {}); };
+  const topicId = (cq.message && cq.message.message_thread_id) || 0;
+  const chats = await aiLoadChats(env);
+  const key = findClientByTopic(chats, topicId, cq.message.chat.id, env.TG_SALES_CHAT_ID);
+  if (!key) return answer("Диалог не найден");
+  const c = chats[key];
+  const parts = (cq.data || "").split(":"); const act = parts[0];
+  const idx = draftForButton(c.messages, cq.message.message_id, parseInt(parts[1] || "-1", 10));
+  if (idx < 0) {
+    await salesTg(env, "editMessageReplyMarkup", { chat_id: cq.message.chat.id, message_id: cq.message.message_id, reply_markup: { inline_keyboard: [] } }).catch(function () {});
+    return answer("Черновик уже неактуален");
+  }
+  const m = c.messages[idx];
+  if (act === "edit") return answer("Ответьте на эту карточку своим текстом — он уйдёт клиенту. Или голосовым — расшифрую.");
+  if (act === "send" || act === "sendp") {
+    let err = "", sentId = "", planNote = "";
+    if (c.avitoChatId) {
+      try { const sr = await avitoSend(env, c.avitoChatId, m.text); if (sr && sr.id) sentId = String(sr.id); else err = JSON.stringify(sr).slice(0, 140); }
+      catch (e) { err = String(e.message || e); }
+    }
+    // Картинку шлём только следом за ушедшим текстом: без него в чате окажется план без слов.
+    if (act === "sendp" && !err && m.plans && m.plans.length) { planNote = await avitoSendPlans(env, c.avitoChatId, m.plans); m.plansSent = true; }
+    if (err) { await answer("Авито не принял"); await tgCardRender(env, c, idx, "⚠️ Не ушло в Авито: " + err, true, key); return; }
+    c.messages[idx] = Object.assign({}, m, { status: "sent", avitoMsgId: sentId || undefined, cardDone: true, dictated: false });
+    c.updatedAt = Date.now(); await aiSaveChats(env, chats);
+    await tgCardRender(env, c, idx, sentStatus({ how: c.avitoChatId ? "кнопкой" : "демо, не Авито", ts: Date.now() }) + planNote, false);
+    return answer("Отправлено");
+  }
+  if (act === "rd" || act === "rv") {
+    const hint = act === "rv" ? "Сделай из этого нормальный ответ клиенту, сохранив смысл" : redraftHint(parts[2]);
+    if (!hint) return answer();
+    await answer("Переписываю…");
+    try { await redraftAt(env, c, idx, hint); } catch (e) { await tgCardRender(env, c, idx, "⚠️ ИИ не переписал: " + String(e.message || e).slice(0, 100), true, key); return; }
+    await aiSaveChats(env, chats);
+    await tgCardRender(env, c, idx, "🔄 Переписан: " + hint.toLowerCase(), true, key);
+    return;
+  }
+  if (act === "drop") {
+    c.messages.splice(idx, 1); await aiSaveChats(env, chats);
+    await salesTg(env, "deleteMessage", { chat_id: cq.message.chat.id, message_id: cq.message.message_id }).catch(function () {});
+    return answer("Не отправляю");
+  }
+  if (act === "pl") {
+    await salesTg(env, "editMessageReplyMarkup", { chat_id: cq.message.chat.id, message_id: cq.message.message_id, reply_markup: planKeyboard(idx, PLAN_IMAGES) }).catch(function () {});
+    return answer("Какую планировку отправить?");
+  }
+  if (act === "plb") { await tgCardRender(env, c, idx, "", true, key); return answer(); }
+  if (act === "pls") {
+    const plan = parts[2];
+    if (!PLAN_IMAGES[plan] || !c.avitoChatId) return answer("Не получилось");
+    try { await avitoSendImage(env, c.avitoChatId, plan); } catch (e) { return answer("Авито не принял картинку"); }
+    c.messages.push({ role: "assistant", text: "🖼 " + PLAN_IMAGES[plan].title, image: "/plans/" + PLAN_IMAGES[plan].file, status: "sent", manual: true, ts: Date.now() });
+    c.updatedAt = Date.now(); await aiSaveChats(env, chats);
+    await tgCardRender(env, c, idx, "🖼 Клиенту ушла планировка: " + PLAN_IMAGES[plan].title, true, key);
+    return answer("Планировка отправлена");
+  }
+  if (act === "arc" || act === "spm") {
+    const spam = act === "spm";
+    if (spam) c.spam = true; else c.archived = true;
+    c.messages[idx] = Object.assign({}, m, { cardDone: true });
+    await aiSaveChats(env, chats);
+    await tgCardRender(env, c, idx, spam ? STATUS.spam : STATUS.archived, false);
+    try { await salesSetArchived(env, key, true); } catch (e) { console.error("sales archive", String(e)); }
+    return answer(spam ? "Спам" : "В архиве");
+  }
+  return answer();
 }
 
 // Кому слать пуши CRM: тем, у кого ЕЩЁ есть доступ к CRM. Подписка переживает
@@ -1548,7 +1626,10 @@ async function aiSend(env, request) {
   c.messages.push({ role: "assistant", text: text, status: ok ? "sent" : "draft", manual: true, avitoMsgId: sentId, ts: Date.now() });
   c.updatedAt = Date.now();
   await aiSaveChats(env, chats);
-  if (c.topicId) { try { await salesTg(env, "sendMessage", { chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, text: (ok ? "✅ Ответ из CRM отправлен клиенту:\n\n" : "⚠️ Ответ из CRM НЕ ушёл (" + note + "):\n\n") + text }); } catch (e) {} }
+  // Ушло — закрываем свежую карточку «✅ Отправлено · из CRM»; не ушло — говорим в ветке громко.
+  if (ok) await tgCardSettle(env, c, "из CRM", text);
+  else if (c.topicId) { try { await salesTg(env, "sendMessage", { chat_id: salesChatOf(env, c), message_thread_id: c.topicId, text: "⚠️ Ответ из CRM НЕ ушёл (" + note + "):\n\n" + text }); } catch (e) {} }
+  if (ok) await aiSaveChats(env, chats);
   return json({ success: ok || !c.avitoChatId, sent: ok, note: ok ? "" : note });
 }
 
@@ -1594,6 +1675,17 @@ async function aiBrief(env, request) {
 }
 
 // POST /api/ai/redraft {clientKey, idx, hint} — переписать черновик ИИ по указанию человека.
+// Переписать черновик по указанию менеджера (из CRM, кнопкой или голосом в Telegram):
+// история до черновика + указание → новый текст в ТОТ ЖЕ черновик (rewritten).
+async function redraftAt(env, c, idx, hint) {
+  const d = c.messages[idx];
+  const history = c.messages.slice(0, idx).filter(function (m) { return (m.role === "user" || m.role === "assistant") && m.status !== "draft"; }).slice(-12)
+    .map(function (m) { return { role: m.role === "assistant" ? "assistant" : "user", content: m.text }; });
+  history.push({ role: "user", content: "[Система] Твой черновик ответа клиенту: «" + d.text + "». Менеджер просит переписать его: " + hint + ". Верни новый вариант ответа клиенту." });
+  const ai = await aiSellerReply(env, history, { itemId: c.itemId });
+  c.messages[idx] = Object.assign({}, d, { dictated: false, text: ai.reply, needsApproval: ai.needsApproval, plans: ai.plans, rewritten: (d.rewritten || 0) + 1, ts: Date.now() });
+  return c.messages[idx];
+}
 async function aiRedraft(env, request) {
   const body = await request.json().catch(function () { return {}; });
   const key = String(body.clientKey || ""), idx = Number(body.idx);
@@ -1603,13 +1695,10 @@ async function aiRedraft(env, request) {
   const c = chats[key];
   const d = c && c.messages && c.messages[idx];
   if (!d || d.role !== "assistant" || d.status !== "draft") return json({ success: false, error: "Черновик не найден" }, 404);
-  const history = c.messages.slice(0, idx).filter(function (m) { return (m.role === "user" || m.role === "assistant") && m.status !== "draft"; }).slice(-12)
-    .map(function (m) { return { role: m.role === "assistant" ? "assistant" : "user", content: m.text }; });
-  history.push({ role: "user", content: "[Система] Твой черновик ответа клиенту: «" + d.text + "». Менеджер просит переписать его: " + hint + ". Верни новый вариант ответа клиенту." });
-  const ai = await aiSellerReply(env, history, { itemId: c.itemId });
-  c.messages[idx] = Object.assign({}, d, { text: ai.reply, needsApproval: ai.needsApproval, plans: ai.plans, rewritten: (d.rewritten || 0) + 1, ts: Date.now() });
+  const nd = await redraftAt(env, c, idx, hint);
+  await tgCardRender(env, c, idx, "🔄 Переписан в CRM", true, key);
   await aiSaveChats(env, chats);
-  return json({ success: true, reply: ai.reply });
+  return json({ success: true, reply: nd.text });
 }
 // Записать исходящую картинку в диалог и в ветку Telegram.
 async function aiLogOutImage(env, key, text, image) {
@@ -1618,7 +1707,7 @@ async function aiLogOutImage(env, key, text, image) {
   c.messages.push({ role: "assistant", text: text, image: image, status: "sent", manual: true, ts: Date.now() });
   c.updatedAt = Date.now();
   await aiSaveChats(env, chats);
-  if (c.topicId) { try { await salesTg(env, "sendPhoto", { chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, photo: image.indexOf("/") === 0 ? String(env.PUBLIC_BASE_URL || "https://portal.kubrdom.ru").replace(/\/+$/, "") + image : image, caption: "✅ Из CRM клиенту: " + text }); } catch (e) {} }
+  if (c.topicId) { try { await salesTg(env, "sendPhoto", { chat_id: c.chatId || env.TG_SALES_CHAT_ID, message_thread_id: c.topicId, disable_notification: true, photo: image.indexOf("/") === 0 ? String(env.PUBLIC_BASE_URL || "https://portal.kubrdom.ru").replace(/\/+$/, "") + image : image, caption: "✅ Из CRM клиенту: " + text }); } catch (e) {} }
 }
 // POST /api/ai/send-plan {clientKey, key} — планировка из каталога картинок в чат Авито.
 async function aiSendPlan(env, request) {
@@ -1664,7 +1753,14 @@ async function aiChatFlag(env, request) {
   if (typeof body.spam === "boolean") c.spam = body.spam;
   // Telegram «не клиент» — это личный чат: переписку не держим в общей CRM (и дальше не пишем).
   if (c.source === "telegram" && c.spam) c.messages = [];
+  const shut = !!(c.archived || c.spam);
+  if (shut) for (const i of openCards(c)) {
+    c.messages[i] = Object.assign({}, c.messages[i], { cardDone: true });
+    try { await tgCardRender(env, c, i, c.spam ? STATUS.spam : STATUS.archived, false); } catch (e) {}
+  }
   await aiSaveChats(env, chats);
+  // Тема в Telegram: архив/спам — закрыть, вернули — открыть (src/sales-workspace.js).
+  if (c.source === "avito") { try { await salesSetArchived(env, key, shut); } catch (e) { console.error("sales archive", String(e)); } }
   return json({ success: true, archived: !!c.archived, spam: !!c.spam });
 }
 
@@ -1787,6 +1883,58 @@ async function crmContactsToken(env, request, auth) {
   return json({ success: true, connected: true, url: url, login: login, password: password });
 }
 
+// ─── Карточка сообщения клиента в ветке Telegram (src/sales-dialog.js) ───
+// Одна карточка на реплику клиента: «👤 что написал» → «🤖 черновик» + кнопки → строка
+// статуса. Ответили (кнопкой, из CRM, в Авито, текстом в ветке) — карточка правится:
+// «✅ Отправлено 17:50 · из CRM», кнопки уходят. Новых служебных сообщений не плодим.
+function salesChatOf(env, c) { return c.chatId || env.TG_SALES_CHAT_ID; }
+function cardTag(d) { return d.needsApproval ? "🟠 нужно одобрение" : "🟢 можно авто"; }
+function cardKeyFor(chats, c) { return Object.keys(chats).find(function (k) { return chats[k] === c; }) || ""; }
+async function tgCardRender(env, c, idx, status, withKb, key) {
+  const d = c.messages[idx];
+  if (!c.topicId || !d || !d.tgMsgId) return;
+  // Черновик старого вида (до карточек) — текста карточки нет; хотя бы снимаем кнопки.
+  if (!d.card) { if (!withKb) await salesTg(env, "editMessageReplyMarkup", { chat_id: salesChatOf(env, c), message_id: d.tgMsgId, reply_markup: { inline_keyboard: [] } }); return; }
+  const text = dialogCardText({ label: d.card.label, name: d.card.name, clientText: d.card.clientText, draft: d.text, tag: d.dictated ? "" : cardTag(d),
+    plansNote: d.plans && d.plans.length ? planTitles(d.plans) : "", status: status || "", dictated: d.dictated });
+  const kb = withKb ? dialogKeyboard({ idx: idx, plans: d.plans, dictated: d.dictated, crmUrl: key ? crmChatLink(env.PUBLIC_BASE_URL, key) : "" }) : { inline_keyboard: [] };
+  await salesTg(env, "editMessageText", { chat_id: salesChatOf(env, c), message_id: d.tgMsgId, text: text, reply_markup: kb, link_preview_options: { is_disabled: true } });
+}
+// Ждущие карточки (черновик ещё с кнопками).
+function openCards(c) {
+  const out = [];
+  (c.messages || []).forEach(function (m, i) { if (m && m.role === "assistant" && m.status === "draft" && m.tgMsgId && !m.cardDone) out.push(i); });
+  return out;
+}
+// Клиент написал ещё — прежние карточки «устарели», кнопки с них снимаем.
+// Правим в Telegram только последние STALE_EDITS: у старых диалогов висят десятки черновиков
+// с кнопками, а у Worker ~50 внешних запросов на вызов — остальные просто помечаем.
+const STALE_EDITS = 3;
+async function tgCardsStale(env, c) {
+  const open = openCards(c);
+  for (let n = 0; n < open.length; n++) {
+    const i = open[n];
+    c.messages[i] = Object.assign({}, c.messages[i], { cardDone: true });
+    if (n < open.length - STALE_EDITS) continue;
+    try { await tgCardRender(env, c, i, STATUS.stale, false); } catch (e) {}
+  }
+}
+// Ответ ушёл клиенту не кнопкой карточки (из CRM, в самом Авито, текстом в ветке):
+// закрываем свежую карточку строкой «✅ Отправлено», а нет карточки — коротко пишем в ветку.
+async function tgCardSettle(env, c, how, text, opts) {
+  if (!c.topicId) return;
+  const open = openCards(c);
+  const i = open.length ? open[open.length - 1] : -1;
+  if (i >= 0) {
+    const d = c.messages[i];
+    c.messages[i] = Object.assign({}, d, { cardDone: true });
+    try { await tgCardRender(env, c, i, sentStatus({ how: how, ts: Date.now(), text: opts && opts.quiet ? "" : text, draft: d.text }), false); } catch (e) {}
+    return;
+  }
+  if (opts && opts.quiet) return;
+  try { await salesTg(env, "sendMessage", { chat_id: salesChatOf(env, c), message_thread_id: c.topicId, text: "🙋 Вы · " + how + ":\n" + String(text || "").slice(0, 3500), disable_notification: true }); } catch (e) {}
+}
+
 // ─── Переписка как в Авито: наши ответы из Авито, сверка истории, чистка повторов ───
 // Наше сообщение, набранное в самом Авито (вебхук приходит и на него).
 // Ответ из CRM/бота мы уже записали — узнаём по id, у старых записей по тексту за последние 10 минут.
@@ -1806,6 +1954,8 @@ async function aiRecordOutgoing(env, v, image) {
     const m = { role: "assistant", text: text, status: "sent", manual: true, fromAvito: true, avitoMsgId: id, ts: ts };
     c.messages.push(image ? { ...m, image } : m);
     c.updatedAt = Date.now();
+    // Ответили прямо в приложении Авито — ветка тоже должна это видеть.
+    await tgCardSettle(env, c, "в Авито", text);
   }
   await aiSaveChats(env, chats);
 }
@@ -2044,8 +2194,8 @@ async function avitoSendPlans(env, chatId, keys) {
 // Превью планировок в ветке Telegram перед черновиком: одна — фото, несколько — альбом.
 async function tgPlanPreview(env, chatId, topicId, keys) {
   const ks = normPlans(keys); if (!ks.length) return;
-  if (ks.length === 1) return salesTg(env, "sendPhoto", { chat_id: chatId, message_thread_id: topicId, photo: planUrl(env.PUBLIC_BASE_URL, ks[0]), caption: "🖼 К черновику: " + PLAN_IMAGES[ks[0]].title });
-  return salesTg(env, "sendMediaGroup", { chat_id: chatId, message_thread_id: topicId, media: ks.map(function (k, i) { return { type: "photo", media: planUrl(env.PUBLIC_BASE_URL, k), caption: i === 0 ? "🖼 К черновику: " + planTitles(ks) : undefined }; }) });
+  if (ks.length === 1) return salesTg(env, "sendPhoto", { chat_id: chatId, message_thread_id: topicId, disable_notification: true, photo: planUrl(env.PUBLIC_BASE_URL, ks[0]), caption: "🖼 К черновику: " + PLAN_IMAGES[ks[0]].title });
+  return salesTg(env, "sendMediaGroup", { chat_id: chatId, message_thread_id: topicId, disable_notification: true, media: ks.map(function (k, i) { return { type: "photo", media: planUrl(env.PUBLIC_BASE_URL, k), caption: i === 0 ? "🖼 К черновику: " + planTitles(ks) : undefined }; }) });
 }
 // Вебхук Avito: новое сообщение клиента → общий конвейер. Фильтруем свои/системные/не-текст.
 async function avitoWebhook(env, request) {
