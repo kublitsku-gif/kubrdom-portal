@@ -10,7 +10,7 @@ import { webcrypto as crypto } from 'node:crypto'
 import fs from 'node:fs'
 import { boot, reporter } from './harness/panel-vm.js'
 import { b64u, unb64u, cleanSubscription, encryptPayload, vapidHeader, sendPush } from '../src/webpush.js'
-import { isCrmPath, chatDeepLink, chatFeed, feedTime } from '../src/crm-app.js'
+import { isCrmPath, chatDeepLink, chatFeed, feedTime, draftKinds } from '../src/crm-app.js'
 import { pushSubscribe, pushToAll, avitoPushData, PUSH_STORAGE_KEY } from '../src/push.js'
 import { routeAllowed } from '../src/access.js'
 
@@ -169,6 +169,12 @@ const CLIENTS = [{ id: 'c3', name: 'Мария', stage: 'qualified', avitoKey: '
   t.ok('отвеченный — не ждёт', !f[2].unanswered && f[2].text === 'От 900 тыс.')
   t.ok('имя и стадия из привязанной карточки', f[1].name === 'Мария' && f[1].stage === 'qualified' && f[1].clientId === 'c3')
   const now = new Date(2026, 9, 28, 15, 0).getTime()
+  const D = (text, extra) => Object.assign({ role: 'assistant', text, status: 'draft' }, extra || {})
+  const S = (role, text) => ({ role, text, status: 'sent' })
+  t.ok('черновики: свежий — один, последний; старые — бледные', draftKinds([S('user', 'а'), D('x'), D('y')]).join() === ',stale,pending')
+  t.ok('черновик, после которого клиент ответил, — уже не свежий', draftKinds([D('x'), S('user', 'б')]).join() === 'stale,')
+  t.ok('ушедший тем же текстом черновик не рисуем', draftKinds([D('Да, по области.'), S('assistant', 'Да, по области.')]).join() === 'used,')
+  t.ok('ваш ответ, который Авито не принял, — отдельно', draftKinds([S('user', 'а'), D('мой', { manual: true })]).join() === ',failed')
   t.ok('время: сегодня — часы, раньше — дата', feedTime(new Date(2026, 9, 28, 9, 5).getTime(), now) === '09:05' && feedTime(new Date(2026, 9, 3, 9, 5).getTime(), now) === '03.10')
 }
 
@@ -202,7 +208,9 @@ function panel(pathname) {
   t.ok('в приложении — кнопка включения уведомлений', chats.indexOf('data-a="crm-push-on"') >= 0)
   p.run('crmChatKey="avito:2";crmView="chat"')
   const chat = p.run('tCRM()')
-  t.ok('диалог: черновик помечен и его можно взять в ответ', chat.indexOf('Черновик ИИ') >= 0 && chat.indexOf('data-a="crm-draft-use"') >= 0)
+  t.ok('диалог: черновик — карточка «не отправлено» с «Отправить» и «Править»', chat.indexOf('НЕ ОТПРАВЛЕНО') >= 0 && chat.indexOf('data-a="crm-draft-send" data-i="1"') >= 0 && chat.indexOf('data-a="crm-draft-use" data-i="1"') >= 0)
+  const card = p.run('crmMsgsHtml(crmChats["avito:2"].messages,true,false)')
+  t.ok('в карточке клиента черновик тоже выделен, но без кнопок отправки', card.indexOf('НЕ ОТПРАВЛЕНО') >= 0 && card.indexOf('crm-draft-send') < 0)
   t.ok('ответ уходит в Авито тем же обработчиком', chat.indexOf('data-a="crm-send-avito" data-key="avito:2" data-cid="chat"') >= 0 && chat.indexOf('id="crm-reply-chat"') >= 0)
   p.run('crmChatKey="avito:3"')
   t.ok('у привязанного — переход в карточку клиента', p.run('tCRM()').indexOf('data-a="crm-chat-card" data-cid="c3"') >= 0)

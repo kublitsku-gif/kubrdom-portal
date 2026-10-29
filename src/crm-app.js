@@ -57,3 +57,29 @@ export function feedTime(ts, now = Date.now()) {
   if (d.toDateString() === n.toDateString()) return p(d.getHours()) + ":" + p(d.getMinutes());
   return p(d.getDate()) + "." + p(d.getMonth() + 1);
 }
+
+// Что за черновик у каждой реплики диалога (null — обычная реплика):
+//  "pending" — ИИ предлагает ответ сейчас: последний черновик, после него клиенту ничего не ушло;
+//  "stale"   — черновик, который так и не отправили, а разговор ушёл дальше;
+//  "used"    — черновик, который потом ушёл клиенту тем же текстом (показывать незачем);
+//  "failed"  — ваш ответ из CRM, который Авито не принял (сервер кладёт его черновиком).
+export function draftKinds(msgs) {
+  const list = msgs || [];
+  const sentAfter = new Set();
+  let saidAfter = false;
+  let pendingTaken = false;
+  const kinds = new Array(list.length).fill(null);
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i] || {};
+    if (m.status !== "draft") {
+      saidAfter = true;
+      if (m.role === "assistant") sentAfter.add(String(m.text || "").trim());
+      continue;
+    }
+    if (m.manual) kinds[i] = "failed";
+    else if (sentAfter.has(String(m.text || "").trim())) kinds[i] = "used";
+    else if (!saidAfter && !pendingTaken) { kinds[i] = "pending"; pendingTaken = true; }
+    else kinds[i] = "stale";
+  }
+  return kinds;
+}

@@ -84,7 +84,7 @@ import { installInPageCamera } from "../src/camera.js";
 // Закрытие дня и штраф за незакрытый — общий модуль с напоминаниями (src/dayclose.js):
 // панель и крон ОБЯЗАНЫ считать «день закрыт» одинаково, иначе человек видит галочку,
 // а утром у него удерживают деньги. См. docs/domain/day-close.md.
-import { isCrmPath, chatFeed, feedTime } from "../src/crm-app.js";
+import { isCrmPath, chatFeed, feedTime, draftKinds } from "../src/crm-app.js";
 import { unb64u } from "../src/webpush.js";
 import { dayCloseState, dayFineCfg, underDayFine, fineSum, DAY_FINE_CAT, DAY_FINE_DEFAULT } from "../src/dayclose.js";
 
@@ -25657,19 +25657,36 @@ function crmRefreshChats(){
   }).catch(function(){});
 }
 // Реплики диалога пузырями — одни и те же в карточке клиента и в ленте «Чаты».
+// Черновик ИИ — НЕ пузырь ответа: клиент его не видел. Свежий («pending») — жёлтая карточка
+// «ИИ предлагает ответ» во всю ширину с кнопками, старый — бледная строка, ушедший — не рисуем.
+function crmMsgTimeHtml(m){ return m.ts?'<span style="font-weight:500;margin-left:6px">'+feedTime(m.ts)+'</span>':""; }
+function crmDraftCardHtml(m,i,withBtns){
+  var tag=m.needsApproval?'<span style="background:#fde2c4;color:#a0521a;border-radius:6px;padding:1px 6px;margin-left:6px">🟠 нужно одобрение</span>':'';
+  return '<div style="background:#fff7d6;border:2px solid #f0b429;border-radius:12px;padding:9px 11px;margin:10px 0 6px;box-shadow:0 2px 8px rgba(240,180,41,0.18)">'+
+    '<div style="font-size:10px;color:#8a5a00;font-weight:800;letter-spacing:.4px;margin-bottom:4px">🤖 ИИ ПРЕДЛАГАЕТ ОТВЕТ · НЕ ОТПРАВЛЕНО'+tag+crmMsgTimeHtml(m)+'</div>'+
+    '<div style="font-size:12.5px;color:#4a3a10;line-height:1.4;white-space:pre-wrap;font-style:italic">'+esc(m.text||"")+'</div>'+
+    (withBtns?'<div style="display:flex;gap:6px;margin-top:8px">'+
+      '<button data-a="crm-draft-send" data-i="'+i+'" style="flex:1;padding:8px;background:#005bff;border:none;border-radius:8px;cursor:pointer;font-size:12px;color:#fff;font-weight:700">📤 Отправить как есть</button>'+
+      '<button data-a="crm-draft-use" data-i="'+i+'" style="flex:1;padding:8px;background:#fff;border:1px solid #f0b429;border-radius:8px;cursor:pointer;font-size:12px;color:#8a5a00;font-weight:700">✏️ Править</button>'+
+    '</div>':'<div style="font-size:10.5px;color:#8a5a00;margin-top:6px">Отправить или поправить — в «💬 Чатах».</div>')+
+  '</div>';
+}
 function crmMsgsHtml(msgs, unans, withDraftBtn){
   if(!msgs.length) return '<div style="font-size:11px;color:#9aabbf;text-align:center;padding:8px">Сообщений нет</div>';
+  var kinds=draftKinds(msgs);
   return msgs.map(function(m,i){
-    var mine=m.role==="assistant", draft=mine&&m.status==="draft";
-    var who=!mine?"👤 Клиент":(draft?"🤖 Черновик ИИ — клиенту не ушёл":(m.auto?"🟢 Авто":(m.manual?"🙋 Вы":"🤖 ИИ")));
+    var kind=kinds[i];
+    if(kind==="used") return "";
+    if(kind==="pending") return crmDraftCardHtml(m,i,withDraftBtn);
+    if(kind==="stale") return '<div style="font-size:10.5px;color:#a9b4bf;margin:0 0 5px 20px;padding:4px 9px;border-left:2px solid #e3e8ee;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🤖 черновик не отправлен: '+esc(m.text||"")+'</div>';
+    var mine=m.role==="assistant", failed=kind==="failed";
+    var who=!mine?"👤 Клиент":(failed?"⚠️ Не ушло клиенту — Авито не принял":(m.auto?"🟢 Авто":(m.manual?"🙋 Вы":"🤖 ИИ")));
     var hl=(!mine&&i===msgs.length-1&&unans);
-    var bg=draft?"#fffaf0":(mine?"#eef6f4":(hl?"#fff0f0":"#f4f7fb"));
-    var bd=draft?"border:1px dashed #e6a23c;":(hl?"border:1px solid #e74c3c55;":"");
-    var t=m.ts?'<span style="font-weight:500;margin-left:6px">'+feedTime(m.ts)+'</span>':"";
+    var bg=failed?"#fff0f0":(mine?"#eef6f4":(hl?"#fff0f0":"#f4f7fb"));
+    var bd=failed?"border:1px dashed #e74c3c;":(hl?"border:1px solid #e74c3c55;":"");
     return '<div style="background:'+bg+';'+bd+'border-radius:9px;padding:7px 9px;margin-bottom:5px;'+(mine?"margin-left:20px":"margin-right:20px")+'">'+
-      '<div style="font-size:9px;color:#7a9aaa;font-weight:700;margin-bottom:2px">'+who+t+'</div>'+
+      '<div style="font-size:9px;color:'+(failed?"#c0392b":"#7a9aaa")+';font-weight:700;margin-bottom:2px">'+who+crmMsgTimeHtml(m)+'</div>'+
       '<div style="font-size:12.5px;color:#1a2a3a;line-height:1.4;white-space:pre-wrap">'+esc(m.text||"")+'</div>'+
-      (draft&&withDraftBtn?'<button data-a="crm-draft-use" data-i="'+i+'" style="margin-top:6px;padding:4px 10px;background:#fff;border:1px solid #e6a23c;border-radius:7px;cursor:pointer;font-size:11px;color:#b9762a;font-weight:700">✏️ Взять в ответ</button>':'')+
     '</div>';
   }).join("");
 }
@@ -25710,7 +25727,7 @@ function tCRMChats(){
         '</div>'+
         '<div style="font-size:12px;color:'+(f.unanswered?"#1a2a3a":"#7a8a9a")+';margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(f.unanswered?"":"Вы: ")+esc(f.text)+'</div>'+
         '<div style="display:flex;gap:5px;margin-top:4px;align-items:center">'+crmStageChip(f.stage)+
-          (f.draft?'<span style="font-size:9.5px;font-weight:700;color:#b9762a;background:#fff4e0;border-radius:6px;padding:1px 6px">🤖 черновик</span>':'')+
+          (f.draft?'<span style="font-size:9.5px;font-weight:800;color:#8a5a00;background:#fff7d6;border:1px solid #f0b429;border-radius:6px;padding:0 6px">🤖 ИИ подготовил ответ</span>':'')+
           (f.unanswered?'<span style="font-size:9.5px;font-weight:800;color:#e74c3c">● ждёт ответа</span>':'')+
         '</div>'+
       '</div>'+
@@ -30858,6 +30875,16 @@ function bind(){
       render(); try{window.scrollTo(0,0);}catch(e){}
     };}
     else if(a==="crm-chats-refresh"){el.onclick=()=>{ el.textContent="⏳"; crmRefreshChats().then(function(){ if(crmAutoLinkAvito())fl(); else render(); }); };}
+    else if(a==="crm-draft-send"){el.onclick=async()=>{
+      const key=crmChatKey; const ch=crmChats&&crmChats[key]; const m=ch&&(ch.messages||[])[+el.dataset.i];
+      const text=(m&&m.text||"").trim(); if(!text)return;
+      if(!confirm("Отправить клиенту в Авито ответ ИИ как есть?\n\n"+(text.length>300?text.slice(0,300)+"…":text)))return;
+      el.disabled=true; el.textContent="⏳ Отправка…";
+      try{ const r=await fetch(API_BASE+"/api/ai/send",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({clientKey:key,text:text})}); const j=await r.json(); if(!(j&&j.success))alert("Не отправлено: "+((j&&(j.note||j.error))||"ошибка")); }
+      catch(e){ alert("Ошибка: "+((e&&e.message)||e)); }
+      await crmRefreshChats(); render();
+      setTimeout(function(){ try{ window.scrollTo(0,document.body.scrollHeight); }catch(e){} },0);
+    };}
     else if(a==="crm-draft-use"){el.onclick=()=>{
       const ch=crmChats&&crmChats[crmChatKey]; const m=ch&&(ch.messages||[])[+el.dataset.i];
       const ta=document.getElementById("crm-reply-chat"); if(!m||!ta)return;
