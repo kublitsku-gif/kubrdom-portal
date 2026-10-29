@@ -92,7 +92,7 @@ function cardFile(id) {
 // Книга целиком: клиенты с телефоном (без номера контакт звонок не опознает).
 export function contactCards(clients, baseUrl) {
   return assignClientCodes(clients)
-    .filter((c) => c && c.id && contactPhone(c.phone))
+    .filter((c) => c && !c.mergedInto && c.id && contactPhone(c.phone))
     .map((c) => {
       const vcard = clientVcard(c, baseUrl);
       return { id: String(c.id), file: cardFile(c.id), vcard, etag: '"' + textHash(vcard) + '"' };

@@ -1,3 +1,4 @@
+import { changeClient, nextAt, chatKeys } from "./crm-sales.js";
 // Telegram sales workspace. Per-client rows avoid overwriting unrelated dialogs.
 const states = {
   new: "🆕 Новый",
@@ -163,8 +164,9 @@ async function syncCRM(env, c) {
     if (!row) throw new Error("CRM unavailable");
     const clients = JSON.parse(row.data);
     let lead = clients.find(
-      (x) => x.id === c.crmId || (c.source === "avito" && x.avitoKey === c.id),
+      (x) => x.id === c.crmId || (c.source === "avito" && chatKeys(x).includes(c.id)),
     );
+    if(lead&&lead.mergedInto)lead=clients.find(x=>x.id===lead.mergedInto)||lead;
     if (lead) c.crmId = lead.id;
     if (!lead) {
       if (c.source === "website") return;
@@ -197,6 +199,15 @@ async function syncCRM(env, c) {
       c.status = "contract";
       c.due = 0;
     }
+    // Independent fields with last-synced stamps: a Telegram edit wins only
+    // when the CRM has not edited that field since the previous reconciliation.
+    if ((lead.actionUpdatedAt && lead.actionUpdatedAt !== c.syncedActionAt) || (!c.syncedActionAt && !lead.actionUpdatedAt && lead.remindAt && (!c.due || lead.remindAt<c.due))) {
+      c.due=nextAt(lead); c.note=lead.remindNote||lead.salesNote||""; c.reminded=false;
+    }
+    if (lead.statusUpdatedAt && lead.statusUpdatedAt !== c.syncedStatusAt) c.status=lead.salesStatus;
+    const due=Number(c.due)||0;
+    if(nextAt(lead)!==due)Object.assign(lead,changeClient(lead,{remindAt:due,remindNote:c.note||""},"Telegram"));
+    if(lead.salesStatus!==c.status)Object.assign(lead,changeClient(lead,{salesStatus:c.status},"Telegram"));
     Object.assign(lead, {
       name: c.name,
       phone: c.phone || lead.phone || "",
@@ -206,10 +217,11 @@ async function syncCRM(env, c) {
       salesTopicUrl: topicUrl(c),
     });
     if (c.status === "contract" && lead.stage !== "montaj")
-      lead.stage = "contract";
+      Object.assign(lead,changeClient(lead,{stage:"contract"},"Telegram"));
     c.syncedName = c.name;
     c.syncedPhone = c.phone;
     c.syncedStage = lead.stage;
+    c.syncedActionAt=lead.actionUpdatedAt; c.syncedStatusAt=lead.statusUpdatedAt;
     const guard = crypto.randomUUID();
     try {
       await env.DB.batch([
@@ -789,7 +801,7 @@ export async function salesTick(env) {
       lead &&
       (lead.name !== c.syncedName ||
         normalizePhone(lead.phone) !== c.syncedPhone ||
-        lead.stage !== c.syncedStage)
+        lead.stage !== c.syncedStage || lead.mergedInto || lead.actionUpdatedAt !== c.syncedActionAt || lead.statusUpdatedAt !== c.syncedStatusAt)
     )
       c.dirty = true;
     try {

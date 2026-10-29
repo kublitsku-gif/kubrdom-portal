@@ -1,5 +1,7 @@
+import { changeClient, event as salesEvent, chatKeys, visibleClient, activeClient, nextAt, mergeClients, BRIEF_FIELDS } from "../src/crm-sales.js";
+import { salesToolbar, matchesSales, salesCard, salesAnalytics } from "../src/crm-sales-ui.js";
 import { createPanelSync } from "../src/panel-sync.js";
-import { assignedObjects, DEFAULT_PERMISSIONS } from "../src/access.js";
+import { assignedObjects, permissionsFor, DEFAULT_PERMISSIONS } from "../src/access.js";
 import { changedSections, mergeSnapshots, mergeValue, equalJSON, isIdArray } from "../src/sync-state.js";
 import { createSnapshotCache } from "../src/snapshot-cache.js";
 // Полифиллы для старых Safari (macOS/iOS): Array.flat/flatMap появились только в Safari 12.
@@ -90,7 +92,7 @@ import { PLAN_IMAGES } from "../src/plan-images.js";
 import { unb64u } from "../src/webpush.js";
 import { dayCloseState, dayFineCfg, underDayFine, fineSum, DAY_FINE_CAT, DAY_FINE_DEFAULT } from "../src/dayclose.js";
 
-const APP_BUILD = "2026-09-22.1";
+const APP_BUILD = "2026-10-29.crm-sales";
 
 // Память посчитанного о проектах (см. projFacts). Объявлена наверху: applyState
 // сбрасывает её, а зовут его уже при загрузке кэша — раньше строки с проектами.
@@ -1297,7 +1299,7 @@ window._crmMove=function(btn,ev){
   if(!target)return;
   const cid=target.dataset.cid, sid=target.dataset.sid;
   if(!cid||!sid)return;
-  crmClients=crmClients.map(function(c){return c.id===cid?Object.assign({},c,{stage:sid}):c;});
+  crmClients=crmClients.map(function(c){return c.id===cid?changeClient(c,{stage:sid},currentUser&&currentUser.name):c;});
   crmStagePickerOpen=false; // collapse after picking
   fl();
 };
@@ -25584,9 +25586,10 @@ function crmAutoLinkAvito(){
   var linked={}, byPhone={};
   var byPhoneTg={};
   crmClients.forEach(function(x){
-    if(x.tgKey) linked[x.tgKey]=true;
-    else { var tp=normPhone(x.phone); if(tp && !byPhoneTg[tp]) byPhoneTg[tp]=x.id; }   // для Telegram — карточки без своего чата
-    if(x.avitoKey){ linked[x.avitoKey]=true; }
+    if(x.mergedInto)return;
+    chatKeys(x).forEach(k=>linked[k]=true);
+    if(!x.tgKey && !(x.tgKeys||[]).length){var tp=normPhone(x.phone);if(tp&&!byPhoneTg[tp])byPhoneTg[tp]=x.id;}
+    if(x.avitoKey||(x.avitoKeys||[]).length){}
     else { var np=normPhone(x.phone); if(np && !byPhone[np]) byPhone[np]=x.id; }   // кандидаты для матча — без привязки
   });
   var changed=false; var today=todayISO();
@@ -25611,7 +25614,7 @@ function crmAutoLinkAvito(){
     }
     // новый лид (с телефоном, если нашёлся в переписке)
     var firstUser=(ch.messages||[]).filter(function(m){return m.role==="user";})[0];
-    crmClients.push({ id:gid(), name:(ch.name||"Avito клиент"), phone:(phone?"+7"+phone:""), source:"Авито", stage:"new", msg:(firstUser&&firstUser.text)||"", date:today, notes:"", avitoKey:k });
+    crmClients.push({ id:gid(), name:(ch.name||"Avito клиент"), phone:(phone?"+7"+phone:""), source:"Авито", stage:"new", msg:(firstUser&&firstUser.text)||"", date:today, createdAt:Number(firstUser&&firstUser.ts)||Date.now(), notes:"", avitoKey:k });
     linked[k]=true; changed=true;
   });
   // Личный чат Telegram с номером клиента из CRM — к его карточке. Новых лидов из Telegram
@@ -25885,7 +25888,7 @@ function crmTgCardHtml(c){
       '<textarea id="crm-reply-'+esc(c.id)+'tg" placeholder="Ответить в Telegram..." style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;height:58px;resize:vertical;margin-bottom:6px"></textarea>'+
       '<button data-a="crm-send-avito" data-key="'+esc(c.tgKey)+'" data-cid="'+esc(c.id)+'tg" style="width:100%;padding:9px;background:#0088cc;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Отправить в Telegram</button></div>';
   }
-  var linked={}; crmClients.forEach(function(x){ if(x.tgKey) linked[x.tgKey]=1; });
+  var linked={}; crmClients.forEach(function(x){ if(!x.mergedInto)chatKeys(x).forEach(k=>linked[k]=1); });
   var free=crmChats?Object.keys(crmChats).filter(function(k){ var x=crmChats[k]; return x&&x.source==="telegram"&&!x.spam&&!linked[k]; }):[];
   if(!free.length) return '';
   if(crmTgPickerFor!==c.id) return '<div style="'+box+'">'+
@@ -25992,11 +25995,7 @@ function tCRMSummary(){
       tile(s.responses?s.fastShare+"%":"—","Ответов за "+WAIT_ALERT_MIN+" мин",s.fastShare>=70?"#27ae60":"#c27c0e")+
     '</div>'+
     (s.waitingNow?'<button data-a="crm-summary-wait" style="width:100%;margin-bottom:12px;padding:10px;background:#fff0f0;border:1px solid #e74c3c55;border-radius:10px;cursor:pointer;font-size:12.5px;color:#c0392b;font-weight:700">⏳ Сейчас ждут ответа: '+s.waitingNow+' →</button>':'')+
-    '<div style="background:#fff;border:1px solid #e4ebf2;border-radius:10px;padding:10px 12px;margin-bottom:12px"><div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">ВОРОНКА: СКОЛЬКО ДОШЛО ДО СТАДИИ</div>'+
-      s.funnel.map(function(r){ var st=CRM_STAGES.find(function(x){return x.id===r.id;})||{label:r.id,color:"#7a9aaa"};
-        return '<div style="margin-bottom:6px"><div style="display:flex;font-size:11.5px;color:#1a2a3a"><span style="flex:1">'+esc(st.label)+'</span><b>'+r.reached+'</b></div>'+
-          '<div style="height:6px;background:#f0f4f8;border-radius:3px;overflow:hidden;margin-top:2px"><div style="height:100%;width:'+Math.round(r.reached/top*100)+'%;background:'+st.color+'"></div></div></div>'; }).join("")+
-    '</div>'+
+    salesAnalytics(crmClients,settings,contractDocs,salesDays)+
     '<div style="background:#fff;border:1px solid #e4ebf2;border-radius:10px;padding:10px 12px"><div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:6px">КАКИЕ ОБЪЯВЛЕНИЯ ПРИВОДЯТ КЛИЕНТОВ</div>'+
       (s.listings.length?'<div style="display:flex;font-size:10px;color:#9aabbf;font-weight:700;padding:3px 0"><span style="flex:1">Объявление</span><span style="width:52px;text-align:right">Диалоги</span><span style="width:52px;text-align:right">Встречи</span><span style="width:56px;text-align:right">Договоры</span></div>'+
         s.listings.map(function(l){ return '<div style="display:flex;font-size:11.5px;color:#1a2a3a;padding:5px 0;border-top:1px solid #f0f4f8"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(l.title)+'</span><span style="width:52px;text-align:right">'+l.dialogs+'</span><span style="width:52px;text-align:right">'+l.meetings+'</span><span style="width:56px;text-align:right;font-weight:700;color:#27ae60">'+l.contracts+'</span></div>'; }).join(""):
@@ -26037,9 +26036,10 @@ function crmContactsHtml(){
 }
 // Напоминание «перезвонить» в карточке клиента.
 function crmRemindHtml(c){
+  c=Object.assign({},c,{remindAt:nextAt(c),remindNote:c.remindNote||c.salesNote||""});
   var head='<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">⏰ НАПОМНИТЬ</div>';
   var box='background:#fff;border-radius:12px;border:1px solid '+(c.remindAt?"#f0b429":"#dde6f0")+';padding:12px 14px;margin-bottom:12px';
-  if(c.remindAt){
+  if(c.remindAt&&salesRemindEdit!==c.id){
     var d=new Date(c.remindAt), late=c.remindAt<Date.now();
     return '<div style="'+box+'">'+head+
       '<div style="font-size:13px;font-weight:700;color:'+(late?"#e74c3c":"#1a2a3a")+'">'+d.toLocaleDateString("ru-RU",{day:"numeric",month:"long",weekday:"short"})+', '+String(d.getHours()).padStart(2,"0")+':'+String(d.getMinutes()).padStart(2,"0")+(late?" · просрочено":"")+'</div>'+
@@ -26065,7 +26065,7 @@ function crmRemindAt(v, now){
   return 0;
 }
 function crmSetClient(cid, patch){
-  crmClients=crmClients.map(function(x){ return x.id===cid?Object.assign({},x,patch):x; });
+  crmClients=crmClients.map(function(x){ return x.id===cid?changeClient(x,patch,currentUser&&currentUser.name):x; });
   fl();
 }
 // Нижняя панель приложения: «Воронка» и «Чаты» вместо ленты вкладок портала.
@@ -26182,6 +26182,7 @@ async function crmPushDisable(){
   crmPush={state:"off",busy:false}; ui();
 }
 
+let salesFilter="active", salesDays=30, salesSuggestions={}, salesRemindEdit=null;
 let crmNewClient={name:"",phone:"",msg:"",notes:""};
 
 const CRM_STAGES=[
@@ -26195,6 +26196,54 @@ const CRM_STAGES=[
 
 let AI_INSTRUCTION="# Инструкция нейропродавца КубрДом\n\n## Роль\nТы — менеджер по продажам КубрДом. Отвечаешь на входящие сообщения клиентов из Авито. Твоя цель — квалифицировать клиента и назначить встречу на производстве.\n\n## Этапы работы с клиентом\n\n**1. Приветствие (Входящие)**\n- Отвечай в течение 5 минут\n- Поздоровайся, представься, уточни запрос\n- Пример: «Добрый день! Меня зовут [имя], менеджер КубрДом. Вы интересовались баней из контейнера — расскажите подробнее, что вы хотите?»\n\n**2. Квалификация**\nЗадай 3 вопроса:\n- Какой объект интересует? (баня/дом, размер)\n- Есть ли земельный участок? (адрес, назначение)\n- Бюджет и сроки?\n\n**3. Ключевой этап — Встреча на производстве**\n- Предложи приехать на производство: «Лучший способ убедиться в качестве — приехать и всё увидеть своими глазами. Мы находимся в [адрес]. Когда вам удобно?»\n- Встреча = 70% вероятность сделки\n\n**4. Договор**\n- После встречи высылай КП в течение 24 часов\n- Аванс 30%, остаток при сдаче\n\n## Важно\n- Не называй точную стоимость без расчёта\n- Всегда веди к встрече на производстве\n- Отвечай дружелюбно, без канцеляризма\n- Если клиент не отвечает 2 дня — напомни о себе";
 
+async function salesAction(action,id,el){
+ const actor=currentUser&&currentUser.name||'Менеджер';
+ const field=k=>(document.getElementById('sales-'+k)||{}).value||'';
+ const c=crmClients.find(x=>x.id===id);
+ try {
+ if(action==='filter'){salesFilter=id;ui();return;}
+ if(action==='period'){salesDays=Number(field('days'))||30;ui();return;}
+ if(action==='chat'){crmOpenChat(id);return;}
+ if(action==='profile'){
+  const status=field('status');if(status==='refused'&&!field('reason').trim())throw Error('Укажите причину отказа');
+  if(status==='waiting'&&!nextAt(c))throw Error('Сначала назначьте дату следующего действия в блоке «Напомнить»');
+  const owner=users.find(u=>!u.disabled&&u.id===field('owner'));
+  crmSetClient(id,{ownerId:owner?owner.id:'',ownerName:owner?owner.name:'',salesStatus:status,...(status==='contract'&&c.stage!=='montaj'?{stage:'contract'}:{}),lostReason:field('reason'),campaign:field('campaign')});return;
+ }
+ if(action==='brief'){let brief={};Object.keys(BRIEF_FIELDS).forEach(k=>brief[k]=field('brief-'+k).slice(0,500));crmSetClient(id,{brief});return;}
+ if(action==='event'){if(!field('event').trim())return;crmClients=crmClients.map(x=>x.id===id?salesEvent(x,'contact',field('event'),actor):x);fl();return;}
+ if(action==='proposal'){
+  const url=field('kp-url'),amount=Number(field('kp-amount'));
+  if(!field('kp-title').trim()||!/^https:\/\/[^\s<>"']+$/.test(url)||!Number.isFinite(amount)||amount<=0)throw Error('Нужны название, положительная сумма и https-ссылка на КП');
+  crmSetClient(id,{proposals:[...(c.proposals||[]),{id:gid(),title:field('kp-title').slice(0,200),amount,equipment:field('kp-equipment').slice(0,1000),url,createdAt:Date.now()}]});return;
+ }
+ if(action==='proposal-sent'){
+  const [cid,pid]=id.split('|');const client=crmClients.find(x=>x.id===cid);if(!confirm('КП действительно отправлено клиенту?'))return;
+  crmSetClient(cid,{proposals:(client.proposals||[]).map(p=>p.id===pid?{...p,sentAt:Date.now()}:p),...(['new','qualified'].includes(client.stage)?{stage:'kp'}:{})});return;
+ }
+ if(action==='merge'){
+  const [tid,sid]=id.split('|');const target=crmClients.find(x=>x.id===tid),source=crmClients.find(x=>x.id===sid);
+  if(!confirm('Объединить '+source.name+' с '+target.name+'? Данные исходной карточки сохранятся.'))return;
+  const pair=mergeClients(target,source,actor);crmClients=crmClients.map(x=>x.id===tid?pair[0]:x.id===sid?pair[1]:x.mergedInto===sid?{...x,mergedInto:tid}:x);
+  contractDocs=contractDocs.map(d=>d.crmClientId===sid?{...d,crmClientId:tid}:d);fl();return;
+ }
+ if(action==='cost'||action==='cost-delete'){
+  if(!(currentUser&&currentUser.roles||[]).includes('admin'))throw Error('Расходы на рекламу меняет администратор');
+  if(action==='cost-delete'){if(!confirm('Удалить ошибочную запись расхода?'))return;settings.crmAdCosts=(settings.crmAdCosts||[]).filter(x=>x.id!==id);}
+  else {const amount=Number(field('cost-amount'));if(!field('cost-campaign').trim()||!field('cost-date')||!Number.isFinite(amount)||amount<=0)throw Error('Укажите кампанию, дату и положительную сумму');settings.crmAdCosts=[...(settings.crmAdCosts||[]),{id:gid(),campaign:field('cost-campaign').trim(),date:field('cost-date'),amount}];}fl();return;
+ }
+ if(action==='ai'){
+  el.disabled=true;el.textContent='Готовлю сводку…';
+  const r=await fetch(API_BASE+'/api/ai/brief',{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({clientId:id})});const j=await r.json();if(!j.success)throw Error(j.error||'Не удалось подготовить сводку');salesSuggestions[id]=j.suggestion;ui();return;
+ }
+ if(action==='ai-apply'){
+  const v=salesSuggestions[id];if(!v)return;const brief={...(c.brief||{})};Object.keys(v.brief).forEach(k=>{if(!brief[k])brief[k]=field('ai-'+k).slice(0,500);});
+  const at=field('ai-date')?new Date(field('ai-date')).getTime():0;if(at&&!Number.isFinite(at))throw Error('Проверьте дату');
+  crmClients=crmClients.map(x=>x.id===id?salesEvent(changeClient({...x,brief,aiSummary:v.summary},at?{remindAt:at,remindNote:field('ai-action')}: {},actor),'ai','Проверена ИИ-сводка: '+v.summary+'\nСледующий шаг: '+v.nextAction,actor):x);delete salesSuggestions[id];fl();return;
+ }
+ }catch(err){alert(err.message||String(err));if(el){el.disabled=false;if(action==='ai')el.textContent='Повторить подготовку сводки';}}
+}
+
 function tCRM(){
   crmEnsureChats();   // подтянуть Avito-диалоги для подсветки/карточек
   if(crmView==="instruction") return tCRMInstruction();
@@ -26207,9 +26256,10 @@ function tCRM(){
 
 function tCRMFunnel(){
   // Stats
-  const total=crmClients.length;
+  const shown=crmClients.filter(c=>matchesSales(c,salesFilter,currentUser&&currentUser.id));
+  const total=shown.length;
   const byStage={};
-  CRM_STAGES.forEach(function(s){byStage[s.id]=crmClients.filter(function(c){return c.stage===s.id;});});
+  CRM_STAGES.forEach(function(s){byStage[s.id]=shown.filter(function(c){return c.stage===s.id;});});
 
   let html='<div>';
   crmVisibleIds=[];   // собираем id показанных клиентов по ходу рендера
@@ -26226,6 +26276,7 @@ function tCRMFunnel(){
       '<button data-a="crm-add" style="padding:6px 12px;background:#2980b9;border:none;border-radius:8px;cursor:pointer;font-size:11px;color:#fff;font-weight:700">+ Клиент</button>'+
     '</div>'+
   '</div>';
+  html+=salesToolbar(crmClients,salesFilter);
   html+=crmTodayHtml();
   // Панель массового удаления (режим выбора)
   if(crmSelectMode){
@@ -26238,8 +26289,8 @@ function tCRMFunnel(){
   }
 
   // Pipeline — horizontal bar funnel with icons
-  const totalClients=crmClients.length;
-  const contractedCnt=(byStage["contract"]||[]).length;
+  const totalClients=shown.length;
+  const contractedCnt=shown.filter(c=>["contract","montaj"].includes(c.stage)).length;
   const convRate=totalClients>0?Math.round(contractedCnt/totalClients*100):0;
 
   // Stage icons map
@@ -26256,6 +26307,7 @@ function tCRMFunnel(){
       '</div>'+
       '<input id="crm-n" placeholder="Имя клиента" style="width:100%;padding:9px 11px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;margin-bottom:8px;outline:none;box-sizing:border-box" autofocus>'+
       '<input id="crm-p" data-phone-mask="1" type="tel" inputmode="tel" placeholder="+7 (___) ___-__-__" style="width:100%;padding:9px 11px;border-radius:8px;border:1px solid #d0dae8;font-size:13px;margin-bottom:8px;outline:none;box-sizing:border-box">'+
+      '<select id="crm-new-source" style="width:100%;padding:9px;margin-bottom:8px"><option>Звонок</option><option>Авито</option><option>Сайт КубрДом</option><option>Рекомендация</option><option>Другое</option></select>'+
       '<textarea id="crm-m" placeholder="Первое сообщение / запрос клиента" style="width:100%;padding:9px 11px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;margin-bottom:8px;outline:none;box-sizing:border-box;height:70px;resize:none"></textarea>'+
       '<button data-a="crm-save-new" style="width:100%;padding:10px;background:#27ae60;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">✓ Добавить клиента</button>'+
     '</div>';
@@ -26270,7 +26322,7 @@ function tCRMFunnel(){
       '</div>'+
       '<div style="background:var(--color-background-secondary,#f6f8fa);border-radius:8px;padding:12px">'+
         '<div style="font-size:22px;font-weight:500;color:'+(convRate>=20?'#27ae60':convRate>=10?'#f39c12':'#e74c3c')+'">'+convRate+'%</div>'+
-        '<div style="font-size:12px;color:var(--color-text-secondary,#7a9aaa);margin-top:2px">Конверсия в договор</div>'+
+        '<div style="font-size:12px;color:var(--color-text-secondary,#7a9aaa);margin-top:2px">Сейчас на договоре / монтаже</div>'+
       '</div>'+
     '</div>';
 
@@ -26309,19 +26361,7 @@ function tCRMFunnel(){
         '</div>'+
       '</div>';
 
-    // Conversion arrow between stages
-    if(i<CRM_STAGES.length-1){
-      const next=CRM_STAGES[i+1];
-      const nextCnt=byStage[next.id].length;
-      const conv=cnt>0?Math.round(nextCnt/cnt*100):0;
-      const cvCol=conv>=50?'#27ae60':conv>=25?'#f39c12':'#e74c3c';
-      html+=
-        '<div style="display:flex;align-items:center;gap:6px;padding:2px 10px 2px 56px;opacity:0.7">'+
-          '<div style="width:1px;height:10px;background:'+s.color+';opacity:0.4"></div>'+
-          '<span style="font-size:10px;color:'+cvCol+';font-weight:600">↓ '+conv+'%</span>'+
-          '<span style="font-size:10px;color:var(--color-text-secondary,#9aabbf)">конверсия</span>'+
-        '</div>';
-    }
+
   });
   html+='</div>';
 
@@ -26474,7 +26514,7 @@ function tCRMFunnel(){
 // Договор и объект клиента — в его карточке CRM: менеджер видит, дошёл ли клиент до
 // стройки, и с какого договора её не видно, не открывая вкладку «Договора».
 function crmContractsHtml(cl){
-  const cts=contractDocs.filter(function(d){ return d.crmClientId?d.crmClientId===cl.id:(!!d.client&&d.client===cl.name); });
+  const cts=contractDocs.filter(function(d){ return d.crmClientId?(d.crmClientId===cl.id||(cl.mergedIds||[]).includes(d.crmClientId)):(!!d.client&&d.client===cl.name); });
   if(!cts.length)return "";
   return '<div style="background:#fff;border-radius:12px;border:1px solid #dde6f0;padding:12px 14px;margin-bottom:12px">'+
     '<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:4px">ДОГОВОР И ОБЪЕКТ</div>'+
@@ -26494,6 +26534,7 @@ function crmContractsHtml(cl){
 function tCRMClient(cid){
   const c=crmClients.find(function(x){return x.id===cid;});
   if(!c) return tCRMFunnel();
+  if(c.mergedInto)return tCRMClient(c.mergedInto);
   const stage=CRM_STAGES.find(function(s){return s.id===c.stage;})||CRM_STAGES[0];
   let html='<div>';
   // Back button + name
@@ -26559,6 +26600,7 @@ function tCRMClient(cid){
     '<button data-a="crm-save-contact" data-cid="'+c.id+'" style="width:100%;padding:7px;background:#2980b9;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">💾 Сохранить контакт</button>'+
   '</div>';
   html+=crmTgCardHtml(c);
+  html+=salesCard(c,users.filter(u=>(u.roles||[]).includes("admin")||permissionsFor(u,rolePermissions).some(p=>p==="crm"||p==="marketing")),crmClients,crmChats,salesSuggestions[c.id]);
   // ── ДИАЛОГ AVITO (привязка + переписка + ответ) ──
   const _ch=crmChatFor(c);
   if(_ch){
@@ -26579,7 +26621,7 @@ function tCRMClient(cid){
     html+='<div style="background:#fff;border-radius:12px;border:1px dashed #005bff44;padding:12px 14px;margin-bottom:12px">'+
       '<div style="font-size:10px;color:#7a9aaa;font-weight:700;letter-spacing:1px;margin-bottom:8px">💬 ДИАЛОГ AVITO</div>';
     if(crmLinkPickerFor===c.id){
-      var _linked={}; crmClients.forEach(function(x){ if(x.avitoKey)_linked[x.avitoKey]=x.id; });
+      var _linked={}; crmClients.forEach(function(x){ if(!x.mergedInto)chatKeys(x).forEach(k=>_linked[k]=x.id); });
       var _avail=crmChats?Object.keys(crmChats).filter(function(k){ return crmChats[k]&&crmChats[k].source==="avito"&&(!_linked[k]||_linked[k]===c.id); }):[];
       html+=(_avail.length?_avail.map(function(k){ var ch=crmChats[k]; var last=(ch.messages||[]).slice(-1)[0]||{};
           return '<div data-a="crm-link-pick" data-cid="'+c.id+'" data-key="'+esc(k)+'" style="border:1px solid #eef2f7;border-radius:9px;padding:8px 10px;margin-bottom:5px;cursor:pointer">'+
@@ -31169,6 +31211,7 @@ function bind(){
     else if(a==="crm-filter-stage"){el.onclick=()=>{crmStageFilter=crmStageFilter===el.dataset.sid?null:el.dataset.sid;render();};}
     else if(a==="crm-clear-filter"){el.onclick=()=>{crmStageFilter=null;render();};}
     else if(a==="crm-search-clear"){el.onclick=()=>{crmClientSearch="";render();};}
+    else if(a.indexOf("sales-")===0){el.onclick=()=>salesAction(a.slice(6),el.dataset.cid,el);}
     else if(a==="crm-add"){el.onclick=()=>{crmAddForm=!crmAddForm;render();};}
     else if(a==="crm-select-toggle"){el.onclick=()=>{ crmSelectMode=!crmSelectMode; if(!crmSelectMode)crmSelected={}; render(); };}
     else if(a==="crm-select-one"){el.onclick=()=>{ const id=el.dataset.cid; const n=Object.assign({},crmSelected); if(n[id])delete n[id]; else n[id]=true; crmSelected=n; render(); };}
@@ -31194,7 +31237,7 @@ function bind(){
       const phone=(document.getElementById("crm-p")||{}).value||"";
       const msg=(document.getElementById("crm-m")||{}).value||"";
       if(!name.trim())return;
-      crmClients.push({id:gid(),name:name.trim(),phone,source:"Авито",stage:"new",msg,date:todayISO(),notes:""});
+      crmClients.push({id:gid(),name:name.trim(),phone,source:(document.getElementById("crm-new-source")||{}).value||"Звонок",stage:"new",msg,date:todayISO(),createdAt:Date.now(),notes:""});
       crmAddForm=false;fl();
     };}
     else if(a==="analysis-obj"){el.onclick=()=>{analysisObjId=el.dataset.oid;analysisObjsOpen=false;ui();};}
@@ -31217,7 +31260,7 @@ function bind(){
     else if(a==="crm-link-avito"){el.onclick=async()=>{ crmLinkPickerFor=el.dataset.cid; try{ const r=await fetch(API_BASE+"/api/ai/chats",{headers:authHeaders()}); const j=await r.json(); crmChats=(j&&j.success)?(j.chats||{}):(crmChats||{}); }catch(e){} render(); };}
     else if(a==="crm-link-cancel"){el.onclick=()=>{ crmLinkPickerFor=null; render(); };}
     else if(a==="crm-link-pick"){el.onclick=()=>{ const cid=el.dataset.cid,key=el.dataset.key; crmClients=crmClients.map(function(x){return x.id===cid?Object.assign({},x,{avitoKey:key}):x;}); crmLinkPickerFor=null; fl(); };}
-    else if(a==="crm-unlink-avito"){el.onclick=()=>{ const cid=el.dataset.cid; crmClients=crmClients.map(function(x){return x.id===cid?Object.assign({},x,{avitoKey:null}):x;}); fl(); };}
+    else if(a==="crm-unlink-avito"){el.onclick=()=>{ const cid=el.dataset.cid; crmClients=crmClients.map(function(x){return x.id===cid?Object.assign({},x,{avitoKey:null,avitoKeys:(x.avitoKeys||[]).filter(k=>k!==x.avitoKey)}):x;}); fl(); };}
     else if(a==="crm-chat-refresh"){el.onclick=async()=>{ el.textContent="⏳"; try{ const r=await fetch(API_BASE+"/api/ai/chats",{headers:authHeaders()}); const j=await r.json(); crmChats=(j&&j.success)?(j.chats||{}):crmChats; }catch(e){} if(crmAutoLinkAvito())fl(); else render(); };}
     else if(a==="crm-send-avito"){el.onclick=async()=>{
       const cid=el.dataset.cid,key=el.dataset.key;
@@ -31238,11 +31281,11 @@ function bind(){
     else if(a==="crm-chat-open"){el.onclick=()=>{ crmOpenChat(el.dataset.key); };}
     else if(a==="crm-tg-pick-open"){el.onclick=()=>{ crmTgPickerFor=el.dataset.cid||null; ui(); };}
     else if(a==="crm-tg-pick"){el.onclick=()=>{ const cid=el.dataset.cid,key=el.dataset.key; crmTgPickerFor=null; crmClients=crmClients.map(function(x){return x.id===cid?Object.assign({},x,{tgKey:key}):x;}); fl(); };}
-    else if(a==="crm-tg-unlink"){el.onclick=()=>{ const cid=el.dataset.cid; crmClients=crmClients.map(function(x){return x.id===cid?Object.assign({},x,{tgKey:null}):x;}); fl(); };}
+    else if(a==="crm-tg-unlink"){el.onclick=()=>{ const cid=el.dataset.cid; crmClients=crmClients.map(function(x){return x.id===cid?Object.assign({},x,{tgKey:null,tgKeys:(x.tgKeys||[]).filter(k=>k!==x.tgKey)}):x;}); fl(); };}
     else if(a==="crm-tg-new"){el.onclick=()=>{
       var key=el.dataset.key, ch=crmChats&&crmChats[key]; if(!ch) return;
       var phone=extractPhoneFromChat(ch), first=(ch.messages||[]).filter(function(m){return m.role==="user";})[0];
-      var c={ id:gid(), name:ch.name||"Клиент из Telegram", phone:phone?"+7"+phone:"", source:"Telegram", stage:"new", msg:(first&&first.text)||"", date:todayISO(), notes:"", tgKey:key };
+      var c={ id:gid(), name:ch.name||"Клиент из Telegram", phone:phone?"+7"+phone:"", source:"Telegram", stage:"new", msg:(first&&first.text)||"", date:todayISO(), createdAt:Date.now(), notes:"", tgKey:key };
       crmClients=crmClients.concat([c]); fl();
     };}
     else if(a==="crm-tg-ignore"){el.onclick=async()=>{
@@ -31284,12 +31327,12 @@ function bind(){
     else if(a==="crm-remind-done"){el.onclick=()=>{ crmSetClient(el.dataset.cid,{remindAt:null,remindNote:""}); };}
     else if(a==="crm-remind-set"){el.onclick=()=>{
       const cid=el.dataset.cid, v=el.dataset.v;
-      if(v==="custom"){ crmSetClient(cid,{remindAt:null}); return; }   // «перенести» — снова показать выбор, заметка остаётся
+      if(v==="custom"){ salesRemindEdit=cid;ui();return; }   // «перенести» — снова показать выбор, заметка остаётся
       let at=crmRemindAt(v, Date.now());
       if(v==="at"){ const inp=document.getElementById("crm-remind-at-"+cid); at=inp&&inp.value?new Date(inp.value).getTime():0; }
       if(!at||isNaN(at)){ alert("Выберите дату и время"); return; }
       const noteEl=document.getElementById("crm-remind-note-"+cid); const cur=crmClients.find(function(x){return x.id===cid;})||{};
-      crmSetClient(cid,{remindAt:at,remindNote:((noteEl&&noteEl.value)||cur.remindNote||"").trim().slice(0,200)});
+      salesRemindEdit=null;crmSetClient(cid,{remindAt:at,remindNote:((noteEl&&noteEl.value)||cur.remindNote||"").trim().slice(0,200)});
     };}
     else if(a==="crm-quick"){el.onclick=()=>{
       const t=quickReplies(settings)[+el.dataset.i]; const ta=document.getElementById("crm-reply-chat"); if(!t||!ta)return;
@@ -31370,7 +31413,7 @@ function bind(){
     };}
     else if(a==="crm-stage"){el.onclick=()=>{
       const cid=el.dataset.cid,sid=el.dataset.sid;
-      crmClients=crmClients.map(function(c){return c.id===cid?Object.assign({},c,{stage:sid}):c;});
+      crmClients=crmClients.map(function(c){return c.id===cid?changeClient(c,{stage:sid},currentUser&&currentUser.name):c;});
       crmStagePickerOpen=false;
       fl();
     };}
@@ -31436,7 +31479,7 @@ function bind(){
         if(!cid)return false;
         const inp=document.getElementById("crm-notes-"+cid);
         const notes=inp?inp.value:"";
-        crmClients=crmClients.map(function(c){return c.id===cid?Object.assign({},c,{notes:notes}):c;});
+        crmClients=crmClients.map(function(c){return c.id===cid?salesEvent(Object.assign({},c,{notes:notes}),"note",notes,currentUser&&currentUser.name):c;});
         try{
           const toast=document.createElement("div");
           toast.textContent="💾 Заметка сохранена";

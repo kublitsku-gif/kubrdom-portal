@@ -1,3 +1,4 @@
+import { chatKeys, visibleClient, nextAt } from "./crm-sales.js";
 // ─── CRM как отдельное приложение (/crm) ───
 // Та же панель, но открытая по адресу /crm: свой манифест и иконка на рабочем столе,
 // только CRM без остальных вкладок, лента переписки Авито и пуши о новых сообщениях.
@@ -41,7 +42,7 @@ export const FEED_SOURCES = ["avito", "telegram"];
 // (последним писал клиент), ждущий черновик ИИ, объявление и привязанная карточка CRM.
 export function chatFeed(chats, clients) {
   const byKey = {};
-  (clients || []).forEach((c) => { if (c) [c.avitoKey, c.tgKey].filter(Boolean).forEach((k) => { byKey[k] = c; }); });
+  (clients || []).forEach((c) => { if (visibleClient(c)) chatKeys(c).forEach(k=>byKey[k]=c); });
   return Object.keys(chats || {})
     .filter((k) => chats[k] && FEED_SOURCES.includes(chats[k].source))
     .map((k) => {
@@ -138,15 +139,15 @@ export function waitReminders(chats, marks, now, mskHour) {
 
 // Напоминания «перезвонить» из карточек: время пришло и пуш по этому времени не уходил.
 export function dueReminders(clients, marks, now) {
-  return (clients || []).filter((c) => c && c.id && Number(c.remindAt) > 0 && Number(c.remindAt) <= now &&
-    !(marks && marks["r:" + c.id] === Number(c.remindAt)));
+  return (clients || []).filter((c) => visibleClient(c) && !["refused","closed"].includes(c.salesStatus) && c.id && nextAt(c) > 0 && nextAt(c) <= now &&
+    !(marks && marks["r:" + c.id] === nextAt(c)));
 }
 
 // Список «Сегодня»: напоминания до конца сегодняшнего дня (просроченные — тоже), по времени.
 export function todayReminders(clients, now) {
   const end = new Date(now); end.setHours(23, 59, 59, 999);
-  return (clients || []).filter((c) => c && Number(c.remindAt) > 0 && Number(c.remindAt) <= end.getTime())
-    .slice().sort((a, b) => a.remindAt - b.remindAt);
+  return (clients || []).filter((c) => visibleClient(c) && !["refused","closed"].includes(c.salesStatus) && nextAt(c) > 0 && nextAt(c) <= end.getTime())
+    .map(c=>({...c,remindAt:nextAt(c),remindNote:c.remindNote||c.salesNote})).sort((a,b)=>a.remindAt-b.remindAt);
 }
 
 // Ссылка из пуша-напоминания: открыть карточку клиента.
@@ -409,7 +410,7 @@ export function salesSummary(chats, clients, stages, now) {
   const WEEK = 7 * DAY;
   const isoDay = (t) => { const d = new Date(t); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
   const weekAgo = isoDay(now - WEEK), twoWeeksAgo = isoDay(now - 2 * WEEK);
-  const list = clients || [];
+  const list = (clients || []).filter(visibleClient);
   const leadsWeek = list.filter((c) => c && c.date && c.date > weekAgo).length;
   const leadsPrev = list.filter((c) => c && c.date && c.date > twoWeeksAgo && c.date <= weekAgo).length;
 
@@ -425,7 +426,7 @@ export function salesSummary(chats, clients, stages, now) {
   const funnel = order.map((sid, i) => ({ id: sid, reached: list.filter((c) => c && idx(c.stage) >= i).length }));
 
   const byClientKey = {};
-  list.forEach((c) => { if (c && c.avitoKey) byClientKey[c.avitoKey] = c; });
+  list.forEach((c) => { if (visibleClient(c)) chatKeys(c).forEach(k=>byClientKey[k]=c); });
   const meetIdx = idx("meeting"), contractIdx = idx("contract");
   const listings = {};
   avito.forEach((k) => {
@@ -434,7 +435,7 @@ export function salesSummary(chats, clients, stages, now) {
     const row = listings[title] || (listings[title] = { title, dialogs: 0, meetings: 0, contracts: 0 });
     row.dialogs++;
     const c = byClientKey[k];
-    if (c && meetIdx >= 0 && idx(c.stage) >= meetIdx) row.meetings++;
+    if (c && (c.stage === "meeting" || (c.history || []).some(h => h.type === "stage" && h.to === "meeting"))) row.meetings++;
     if (c && contractIdx >= 0 && idx(c.stage) >= contractIdx) row.contracts++;
   });
 
