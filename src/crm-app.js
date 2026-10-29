@@ -242,24 +242,26 @@ export function hasIncoming(msgs, avitoMsgId) {
 }
 
 // Какие реплики спрятать как старые повторы вебхука (записанные до avitoMsgId):
-// реплика клиента тем же текстом, что его предыдущая, без нашего ответа между ними.
-// Прячем повтор и черновики ИИ на предыдущий повтор — остаётся одна реплика и последний черновик.
+// реплика клиента тем же текстом, что уже была после нашего последнего ответа. Повторы
+// идут и вперемешку: клиент прислал два сообщения — Авито повторяет пару (А, Б, А, Б).
+// Прячем повтор и черновики ИИ на предыдущую реплику — остаётся по одной реплике и последний черновик.
 // Реплики с разными id Авито — настоящие (клиент сам написал то же) и остаются.
 export function dupHidden(msgs) {
   const list = msgs || [];
   const hide = new Array(list.length).fill(false);
-  let prev = null;
+  let seen = new Map();
   let drafts = [];
   list.forEach((raw, i) => {
     const m = raw || {};
     if (m.status === "draft") { if (!m.manual) drafts.push(i); return; }
-    if (m.role !== "user") { prev = null; drafts = []; return; }
+    if (m.role !== "user") { seen = new Map(); drafts = []; return; }
     const key = String(m.text || "").trim() + "|" + (m.image || "");
-    const sameId = !m.avitoMsgId || !prev || !prev.id || prev.id === m.avitoMsgId;
-    if (prev && prev.key === key && sameId) {
+    const was = seen.get(key);
+    const genuine = was !== undefined && was && m.avitoMsgId && was !== m.avitoMsgId;
+    if (was !== undefined && !genuine) {
       hide[i] = true;
       drafts.forEach((d) => { hide[d] = true; });
-    } else prev = { key, id: m.avitoMsgId || "" };
+    } else seen.set(key, m.avitoMsgId || "");
     drafts = [];
   });
   return hide;
@@ -295,10 +297,14 @@ export function avitoHistory(raw, ownUserId) {
     if (!text && !image) return;
     const mine = v.direction ? v.direction === "out" : String(v.author_id) === own;
     const m = { role: mine ? "assistant" : "user", text: text || "📷 Фото", status: mine ? "sent" : "in", ts: (Number(v.created) || 0) * 1000, avitoMsgId: String(v.id) };
+    // Наше, чего нет в нашей записи, набрано человеком прямо в Авито — подпись «🙋 Вы», не «🤖 ИИ».
+    if (mine) Object.assign(m, { manual: true, fromAvito: true });
     out.push(image ? { ...m, image } : m);
   });
   return out.sort((a, b) => a.ts - b.ts);
 }
+
+const HIST_SLACK_MS = 60000;   // наша отметка времени — момент приёма, чуть позже created в Авито
 
 // Сверка нашей записи диалога с историей Авито. Ничего своего не теряем:
 // повторы вебхука (dupHidden) выкидываем, реплику Авито узнаём по id или по тому же
@@ -322,12 +328,17 @@ export function mergeAvitoHistory(local, hist) {
     if (q && q.length) { const i = q.shift(); patched[i] = { ...patched[i], avitoMsgId: h.avitoMsgId }; return; }
     added.push(h);
   });
-  const removed = (local || []).length - base.length;
-  if (!added.length) return { messages: patched, added: 0, removed };
+  // Где история Авито есть, верим ей: наша реплика без пары в Авито за тот же период —
+  // повтор, удалённое в Авито или чужой формат текста (версия из Авито уже добавлена).
+  const lo = hist && hist.length ? hist[0].ts - HIST_SLACK_MS : Infinity;
+  const hi = hist && hist.length ? hist[hist.length - 1].ts : -Infinity;
+  const kept = patched.filter((m) => m.status === "draft" || m.avitoMsgId || !((Number(m.ts) || 0) >= lo && (Number(m.ts) || 0) <= hi));
+  const removed = (local || []).length - kept.length;
+  if (!added.length) return { messages: kept, added: 0, removed };
   // Слияние по времени, свои реплики сохраняют порядок между собой.
   const merged = [];
   let a = 0;
-  patched.forEach((m) => {
+  kept.forEach((m) => {
     while (a < added.length && added[a].ts < (Number(m.ts) || 0)) merged.push(added[a++]);
     merged.push(m);
   });

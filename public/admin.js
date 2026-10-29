@@ -25586,11 +25586,15 @@ function crmAutoLinkAvito(){
     else { var np=normPhone(x.phone); if(np && !byPhone[np]) byPhone[np]=x.id; }   // кандидаты для матча — без привязки
   });
   var changed=false; var today=todayISO();
-  // Номер, который клиент написал в чате, — в привязанную карточку без телефона.
+  // Номер, который клиент написал в чате, — в привязанную карточку без телефона;
+  // имя-заглушка «Avito · 123» (карточка заведена до имени из Авито) — на настоящее.
   crmClients=crmClients.map(function(x){
-    if(!x.avitoKey||normPhone(x.phone)||!crmChats[x.avitoKey]) return x;
-    var ph=extractPhoneFromChat(crmChats[x.avitoKey]); if(!ph) return x;
-    changed=true; return Object.assign({},x,{phone:"+7"+ph});
+    var ch=x.avitoKey&&crmChats[x.avitoKey]; if(!ch) return x;
+    var patch={};
+    if(!normPhone(x.phone)){ var ph=extractPhoneFromChat(ch); if(ph) patch.phone="+7"+ph; }
+    if(/^Avito · /.test(x.name||"")&&ch.name&&!/^Avito · /.test(ch.name)) patch.name=ch.name;
+    if(!Object.keys(patch).length) return x;
+    changed=true; return Object.assign({},x,patch);
   });
   Object.keys(crmChats).forEach(function(k){
     var ch=crmChats[k]; if(!ch||ch.source!=="avito"||linked[k]) return;

@@ -32,7 +32,7 @@ import { STATE_SECTIONS, emptySection, validateStateItems, MAX_STATE_BYTES } fro
 import { hashPin, checkPin, protectCredentials, credentialVersion } from "./credentials.js";
 import { commitState } from "./state-store.js";
 import { pushReady, pushSubscribe, pushUnsubscribe, pushToAll, avitoPushData } from "./push.js";
-import { avitoImageUrl, avitoChatInfo, hasIncoming, dupHidden, avitoHistory, mergeAvitoHistory, dupTelegram, draftForButton, waitReminders, dueReminders, waitLabel, chatDeepLink, clientDeepLink } from "./crm-app.js";
+import { avitoImageUrl, avitoChatInfo, hasIncoming, dupHidden, avitoHistory, mergeAvitoHistory, draftForButton, waitReminders, dueReminders, waitLabel, chatDeepLink, clientDeepLink } from "./crm-app.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
@@ -1717,54 +1717,73 @@ async function salesTgRetry(env, method, payload) {
   }
   return j;
 }
-// Убрать из ветки клиента посты старых повторов вебхука. Пост «👤 Клиент» удаляем, только
-// если его текст совпал: читаем его, переслав в ту же ветку (без звука) и сразу удалив копию.
-async function tgDropDups(env, c) {
-  const plan = dupTelegram(c.messages);
-  const chat = c.chatId || env.TG_SALES_CHAT_ID;
-  let deleted = 0;
-  for (const id of plan.drafts) {
-    const j = await salesTgRetry(env, "deleteMessage", { chat_id: chat, message_id: id });
-    if (j && j.ok) deleted++;
-  }
-  for (const p of plan.posts) {
-    for (let id = p.before - 1; id >= p.before - 4 && id > 0; id--) {
-      const f = await salesTgRetry(env, "forwardMessage", { chat_id: chat, message_thread_id: c.topicId, from_chat_id: chat, message_id: id, disable_notification: true });
-      if (!f || !f.ok || !f.result) continue;
-      await salesTgRetry(env, "deleteMessage", { chat_id: chat, message_id: f.result.message_id });
-      if (String(f.result.text || "") !== p.text) continue;
-      const d = await salesTgRetry(env, "deleteMessage", { chat_id: chat, message_id: id });
-      if (d && d.ok) deleted++;
-      break;
-    }
-  }
-  return deleted;
+async function crmMarkGet(env, id) {
+  const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind(CRM_MARKS.storage, id).first();
+  try { return row && row.data ? JSON.parse(row.data) || null : null; } catch (e) { return null; }
 }
-// Разовая чистка всех диалогов (крон, по 3 диалога за проход): повторы из Telegram,
-// сверка с Авито. Отметка — своя строка crm_marks/cleanup1, не трогает пуш-отметки.
-const CRM_CLEANUP = { id: "cleanup1", perTick: 3 };
+async function crmMarkSet(env, id, data) {
+  await env.DB.prepare("INSERT INTO work_states (storage_key, work_id, data, updated_at) VALUES (?,?,?,?) ON CONFLICT(storage_key, work_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at")
+    .bind(CRM_MARKS.storage, id, JSON.stringify(data), Date.now()).run();
+}
+// Разовая сверка всех диалогов с Авито (крон, по 3 диалога за проход). Отметка — своя строка
+// crm_marks/<id>, пуш-отметки не трогает. Worker на бесплатном тарифе даёт ~50 внешних запросов
+// за запуск крона, поэтому Telegram чистится отдельной очередью и только после сверки.
+const CRM_CLEANUP = { id: "cleanup2", perTick: 3 };
 async function crmCleanupOnce(env) {
-  const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind(CRM_MARKS.storage, CRM_CLEANUP.id).first();
-  let done = {}; try { done = row && row.data ? JSON.parse(row.data) || {} : {}; } catch (e) {}
-  if (done.__all) return;
+  const done = (await crmMarkGet(env, CRM_CLEANUP.id)) || {};
+  if (done.__all) return true;
   const first = await aiLoadChats(env);
   const keys = Object.keys(first).filter(function (k) { return first[k] && first[k].avitoChatId && !done[k]; });
+  const chats = first;
+  let changed = false;
   for (const key of keys.slice(0, CRM_CLEANUP.perTick)) {
-    let tg = 0;
-    if (env.TG_SALES_BOT_TOKEN) { try { tg = await tgDropDups(env, first[key]); } catch (e) { console.error("tg dups", key, String(e)); } }
-    const chats = await aiLoadChats(env);   // свежие: пока чистили Telegram, мог прийти вебхук
     const r = await aiSyncChat(env, chats, key);
-    if (r.added || r.removed) await aiSaveChats(env, chats);
-    done[key] = { tg: tg, added: r.added, removed: r.removed, error: r.error || "", at: Date.now() };
+    if (r.added || r.removed) changed = true;
+    done[key] = { added: r.added, removed: r.removed, error: r.error || "", at: Date.now() };
   }
+  if (changed) await aiSaveChats(env, chats);
   if (keys.length <= CRM_CLEANUP.perTick) done.__all = Date.now();
-  await env.DB.prepare("INSERT INTO work_states (storage_key, work_id, data, updated_at) VALUES (?,?,?,?) ON CONFLICT(storage_key, work_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at")
-    .bind(CRM_MARKS.storage, CRM_CLEANUP.id, JSON.stringify(done), Date.now()).run();
+  await crmMarkSet(env, CRM_CLEANUP.id, done);
+  return false;
+}
+// Очередь чистки Telegram: {ops:[{k:"del",chat,id} | {k:"probe",chat,topic,text,before}], i, log}.
+// Её кладут один раз (собрана dupTelegram по копии диалогов до сверки); крон проходит по
+// TG_BUDGET вызовов за раз. Пост «👤 Клиент» удаляем, только если его текст совпал: читаем,
+// переслав в ту же ветку без звука, и сразу удаляем копию.
+const TG_QUEUE = { id: "tgq", budget: 30 };
+async function crmTgQueue(env) {
+  const q = await crmMarkGet(env, TG_QUEUE.id);
+  if (!q || !Array.isArray(q.ops) || q.done || !env.TG_SALES_BOT_TOKEN) return;
+  q.i = q.i || 0; q.log = q.log || [];
+  let calls = 0;
+  const note = function (op, res) { if (q.log.length < 300) q.log.push((op.k === "del" ? "del " + op.id : "probe<" + op.before) + " " + res); };
+  while (q.i < q.ops.length && calls + 9 <= TG_QUEUE.budget) {
+    const op = Object.assign({}, q.ops[q.i], { chat: q.ops[q.i].chat || env.TG_SALES_CHAT_ID });
+    if (op.k === "del") {
+      const j = await salesTgRetry(env, "deleteMessage", { chat_id: op.chat, message_id: op.id }); calls++;
+      note(op, j && j.ok ? "ok" : String(j && j.description || "?").slice(0, 80));
+    } else {
+      let res = "not found";
+      for (let id = op.before - 1; id >= op.before - 4 && id > 0; id--) {
+        const f = await salesTgRetry(env, "forwardMessage", { chat_id: op.chat, message_thread_id: op.topic, from_chat_id: op.chat, message_id: id, disable_notification: true }); calls++;
+        if (!f || !f.ok || !f.result) continue;
+        await salesTgRetry(env, "deleteMessage", { chat_id: op.chat, message_id: f.result.message_id }); calls++;
+        if (String(f.result.text || "") !== op.text) continue;
+        const d = await salesTgRetry(env, "deleteMessage", { chat_id: op.chat, message_id: id }); calls++;
+        res = d && d.ok ? "ok " + id : String(d && d.description || "?").slice(0, 80);
+        break;
+      }
+      note(op, res);
+    }
+    q.i++;
+  }
+  if (q.i >= q.ops.length) q.done = Date.now();
+  await crmMarkSet(env, TG_QUEUE.id, q);
 }
 
 async function crmTick(env) {
-  // Разовая чистка повторов вебхука — пока не пройдёт все диалоги, потом сразу выходит.
-  try { await crmCleanupOnce(env); } catch (e) { console.error("crm cleanup", String(e)); }
+  // Разовая чистка повторов вебхука: сверка с Авито, затем очередь Telegram; пройдя всё — сразу выходит.
+  try { if (await crmCleanupOnce(env)) await crmTgQueue(env); } catch (e) { console.error("crm cleanup", String(e)); }
   if (!pushReady(env)) return;
   const row = await env.DB.prepare("SELECT data FROM work_states WHERE storage_key=? AND work_id=?").bind(CRM_MARKS.storage, CRM_MARKS.id).first();
   let marks = {}; try { marks = row && row.data ? JSON.parse(row.data) || {} : {}; } catch (e) {}

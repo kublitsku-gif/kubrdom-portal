@@ -181,7 +181,8 @@ const CLIENTS = [{ id: 'c3', name: 'Мария', stage: 'qualified', avitoKey: '
   t.ok('старые повторы вебхука прячем: одна реплика клиента и последний черновик', dupHidden(dupRun).join() === 'false,true,true,true,true,false', dupHidden(dupRun).join())
   t.ok('после нашего ответа тот же текст клиента — не повтор', dupHidden([U('да'), S('assistant', 'ок'), U('да')]).join() === 'false,false,false')
   t.ok('разные id Авито — клиент сам написал то же дважды, показываем оба', dupHidden([U('да', { avitoMsgId: 'a' }), U('да', { avitoMsgId: 'b' })]).join() === 'false,false')
-  t.ok('другой текст между повторами — не повтор', dupHidden([U('а'), U('б'), U('а')]).join() === 'false,false,false')
+  t.ok('повтор пары вперемешку (А, Б, А, Б) — прячем вторую пару', dupHidden([U('а'), D('d1'), U('б'), D('d2'), U('а'), D('d3'), U('б'), D('d4')]).join() === 'false,false,false,true,true,true,true,false', dupHidden([U('а'), D('d1'), U('б'), D('d2'), U('а'), D('d3'), U('б'), D('d4')]).join())
+  t.ok('после нашего ответа клиент может повторить старое — это уже не повтор вебхука', dupHidden([U('а'), U('б'), S('assistant', 'ок'), U('а')]).join() === 'false,false,false,false')
   const AV = [
     { id: 'm3', direction: 'out', author_id: 1, created: 300, type: 'text', content: { text: 'Пришлю расчёт вечером' } },
     { id: 'm2', direction: 'out', author_id: 1, created: 200, type: 'text', content: { text: 'Здравствуйте!' } },
@@ -191,11 +192,14 @@ const CLIENTS = [{ id: 'c3', name: 'Мария', stage: 'qualified', avitoKey: '
   ]
   const hist = avitoHistory({ messages: AV }, 1)
   t.ok('история Авито: по времени, системные без, наше — ответ, фото крупное', hist.map((m) => m.avitoMsgId + ':' + m.role).join() === 'm1:user,m2:assistant,m3:assistant,m4:user' && hist[0].ts === 100000 && hist[3].image === 'https://img.avito.st/b.jpg', hist.map((m) => m.avitoMsgId).join())
+  t.ok('наш ответ из истории Авито подписан как ваш, а не ИИ', hist[1].manual && hist[1].fromAvito && !hist[0].manual)
   t.ok('история Авито приходит и голым массивом', avitoHistory(AV, 1).length === 4)
   const local = [U('ТЗ пришлю', { ts: 100500 }), D('x1', { tgMsgId: 11 }), U('ТЗ пришлю', { ts: 160000 }), D('x2', { tgMsgId: 13 }), { role: 'assistant', text: 'Здравствуйте!', status: 'sent', auto: true, ts: 200500 }]
   const mg = mergeAvitoHistory(local, hist)
   t.ok('сверка: повторы ушли, свои реплики узнаны по тексту и получили id', mg.removed === 2 && mg.messages[0].avitoMsgId === 'm1' && mg.messages.find((m) => m.text === 'Здравствуйте!').avitoMsgId === 'm2' && mg.messages.find((m) => m.text === 'Здравствуйте!').auto, JSON.stringify(mg))
   t.ok('сверка: ответ, набранный прямо в Авито, и фото встали по времени', mg.added === 2 && mg.messages.map((m) => m.text).join('|') === 'ТЗ пришлю|x2|Здравствуйте!|Пришлю расчёт вечером|📷 Фото', mg.messages.map((m) => m.text).join('|'))
+  const ghost = mergeAvitoHistory([U('старое до истории', { ts: 10000 }), U('ТЗ пришлю', { ts: 100500 }), U('удалённое клиентом', { ts: 250000 })], hist)
+  t.ok('сверка: где есть история Авито, наша реплика без пары уходит, старше истории — остаётся', ghost.messages.map((m) => m.text).indexOf('удалённое клиентом') < 0 && ghost.messages[0].text === 'старое до истории' && ghost.removed === 1, ghost.messages.map((m) => m.text).join('|'))
   t.ok('сверка без Авито (не ответил) — только убирает повторы', mergeAvitoHistory(local, []).messages.length === 3)
   t.ok('повторная сверка ничего не меняет', mergeAvitoHistory(mg.messages, hist).added === 0 && mergeAvitoHistory(mg.messages, hist).removed === 0)
   const tg = dupTelegram([U('ТЗ пришлю'), D('x1', { tgMsgId: 11 }), U('ТЗ пришлю'), D('x2', { tgMsgId: 13 })])
@@ -297,6 +301,9 @@ function panel(pathname) {
   p.run('crmChatKey="avito:3"')
   const chat3 = p.run('tCRM()')
   t.ok('у привязанного — переход в карточку клиента', chat3.indexOf('data-a="crm-chat-card" data-cid="c3"') >= 0)
+  p.run('__keepClients=crmClients;__keepName=crmChats["avito:3"].name;crmClients=[{id:"c9",name:"Avito · 144160146",phone:"",stage:"new",avitoKey:"avito:3"}];crmChats["avito:3"].name="Маргарита";crmAutoLinkAvito()')
+  t.ok('карточка с именем-заглушкой «Avito · …» получает имя из Авито', p.q('crmClients[0].name') === 'Маргарита')
+  p.run('crmClients=__keepClients;crmChats["avito:3"].name=__keepName')
   p.run('crmChats["avito:3"].messages.push({role:"user",text:"📷 Фото",image:"https://img.avito.st/p.jpg",ts:2100});crmChats["avito:3"].item={title:"Баня 6 м",price:"890 000 ₽",url:"https://www.avito.ru/x",img:""}')
   const chat4 = p.run('tCRM()')
   t.ok('фото клиента видно в диалоге, объявление — в шапке', chat4.indexOf('<img src="https://img.avito.st/p.jpg"') >= 0 && chat4.indexOf('ПИШЕТ ПО ОБЪЯВЛЕНИЮ') >= 0 && chat4.indexOf('Баня 6 м') >= 0)
