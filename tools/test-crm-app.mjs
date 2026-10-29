@@ -133,6 +133,19 @@ function fakeDB() {
   const d = avitoPushData('avito:7', 'Avito · 123', 'Здравствуйте,\n  сколько   стоит?', [{ id: 'c1', name: 'Иван Петров', avitoKey: 'avito:7' }])
   t.ok('имя из карточки CRM, пробелы схлопнуты', d.title === '💬 Иван Петров' && d.body === 'Здравствуйте, сколько стоит?', JSON.stringify(d))
   t.ok('tag по диалогу (новое заменяет старое), ссылка на диалог', d.tag === 'avito:7' && d.url === chatDeepLink('avito:7'))
+  {
+    const pv = boot()
+    const calls = []
+    let oldUnsub = false, oldGone = false
+    const newSub = { endpoint: 'https://fcm/new', toJSON() { return { endpoint: 'https://fcm/new' } } }
+    pv.ctx.Notification = { permission: 'granted' }
+    pv.ctx.fetch = async (url, init) => { calls.push({ url, body: init && init.body }); return { json: async () => ({ success: true, key: 'AQAB' }) } }
+    pv.ctx.navigator = { serviceWorker: { getRegistration: async () => ({ scope: 'https://p/', unregister: async () => { oldGone = true }, pushManager: { getSubscription: async () => ({ endpoint: 'https://fcm/old', unsubscribe: async () => { oldUnsub = true } }) } }) } }
+    const reg = { scope: 'https://p/crm', pushManager: { getSubscription: async () => null, subscribe: async () => newSub } }
+    pv.ctx.__reg = reg
+    const got = await pv.run('crmPushMoveScope(__reg)')
+    t.ok('подписка со старой регистрации «/» переезжает в /crm: новая подписана, старая снята', got === newSub && oldUnsub && oldGone && calls.some((c) => /push\/unsubscribe/.test(c.url) && /fcm\/old/.test(c.body)), JSON.stringify(calls))
+  }
   t.ok('в пуше — цифра для иконки, без неё поля нет', avitoPushData('avito:9', 'А', 'б', [], 3).count === 3 && !('count' in avitoPushData('avito:9', 'А', 'б', [])))
   t.ok('цифра = диалоги Авито, где последним писал клиент; черновик ИИ не ответ; архив и спам не в счёт', unansweredCount({
     a: { source: 'avito', messages: [{ role: 'user', text: '1' }, { role: 'assistant', text: 'ч', status: 'draft' }] },

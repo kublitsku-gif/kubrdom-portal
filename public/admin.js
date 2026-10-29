@@ -26142,13 +26142,36 @@ function crmOpenFromUrl(url){
   }catch(e){}
 }
 function crmPushSupported(){ return typeof navigator!=="undefined"&&"serviceWorker" in navigator&&typeof window!=="undefined"&&"PushManager" in window&&"Notification" in window; }
+// Service worker — в области приложения /crm, а не всего сайта: только тогда Chrome на Android
+// показывает пуш от имени установленного приложения CRM (WebAPK со scope /crm), и цифра
+// непрочитанных горит на ЕГО иконке. Со scope «/» уведомления шли от Chrome, мимо иконки CRM.
+var CRM_SW_SCOPE="/crm";
+// Подписка жила на старой регистрации «/» — переносим на новую молча (разрешение уже дано):
+// подписываем новую, сообщаем серверу, старую отписываем и снимаем.
+async function crmPushMoveScope(reg){
+  var sub=await reg.pushManager.getSubscription();
+  if(sub||Notification.permission!=="granted") return sub;
+  var old=null; try{ old=await navigator.serviceWorker.getRegistration("/"); }catch(e){}
+  if(!old||old.scope===reg.scope) return sub;
+  var oldSub=await old.pushManager.getSubscription();
+  if(!oldSub) return sub;
+  try{
+    var kj=await (await fetch(API_BASE+"/api/push/key",{headers:authHeaders()})).json();
+    if(!kj||!kj.success||!kj.key) return null;
+    sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:unb64u(kj.key)});
+    await fetch(API_BASE+"/api/push/unsubscribe",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({endpoint:oldSub.endpoint})}).catch(function(){});
+    await oldSub.unsubscribe().catch(function(){});
+    await old.unregister().catch(function(){});
+  }catch(e){ console.error("push scope move",e); }
+  return sub;
+}
 // Старт приложения: регистрируем service worker и узнаём, включены ли пуши на этом телефоне.
 function crmAppInit(){
   if(!isCrmApp()||crmAppInit._on) return; crmAppInit._on=true;
   if(!crmPushSupported()){ crmPush={state:"unsupported",busy:false}; return; }
   navigator.serviceWorker.addEventListener("message",function(e){ if(e.data&&e.data.type==="crm-open") crmOpenFromUrl(e.data.url); });
   document.addEventListener("visibilitychange",function(){ if(!document.hidden) crmPollBadge(); });
-  navigator.serviceWorker.register("/sw.js").then(function(reg){ return reg.pushManager.getSubscription(); }).then(function(sub){
+  navigator.serviceWorker.register("/sw.js",{scope:CRM_SW_SCOPE}).then(function(reg){ return crmPushMoveScope(reg); }).then(function(sub){
     if(Notification.permission==="denied") crmPush={state:"denied",busy:false};
     else crmPush={state:sub?"on":"off",busy:false};
     // Подписка жива в браузере — освежаем её на сервере (вдруг там удалена или сменился сотрудник).

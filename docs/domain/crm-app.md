@@ -35,6 +35,7 @@
 
 ## Пуши
 
+- **Scope service worker — `/crm`** (`CRM_SW_SCOPE`), не `/`: Chrome на Android показывает пуш от имени WebAPK CRM (scope `/crm`) и ставит отметку на ЕГО иконку, только если воркер внутри области приложения; со scope `/` уведомление шло от Chrome (`pkg=com.android.chrome`), мимо иконки CRM. Старую подписку с регистрации `/` `crmPushMoveScope` переносит молча (подписка на новой, отписка и снятие старой). На Android ещё нужно разрешение уведомлений самому Chrome (`POST_NOTIFICATIONS`) — без него пуши не показываются вовсе (так было на POCO 29.10.2026).
 - `public/sw.js` — service worker **только для пушей, без обработчика fetch** (сеть и свежесть `admin.js` как раньше; не добавлять кэш). Регистрирует его лишь приложение `/crm` (`crmAppInit` из `_startLoops`).
 - Кнопка «🔔 Включить уведомления» (в ленте, только в `/crm`) → `Notification.requestPermission` → `GET /api/push/key` → `pushManager.subscribe` → `POST /api/push/subscribe`. «Проверить» — `POST /api/push/test` (только свои подписки), «Выкл» — `POST /api/push/unsubscribe`.
 - Подписки — `work_states` с `storage_key="push_subs"`, строка на телефон (`work_id` = хэш адреса). В снимок панели не попадают (читаются только `admin_panel` + `STATE_SECTIONS`), версию снимка не двигают.
