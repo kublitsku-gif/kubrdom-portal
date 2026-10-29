@@ -269,7 +269,8 @@ function panel(pathname) {
   const chat4 = p.run('tCRM()')
   t.ok('фото клиента видно в диалоге, объявление — в шапке', chat4.indexOf('<img src="https://img.avito.st/p.jpg"') >= 0 && chat4.indexOf('ПИШЕТ ПО ОБЪЯВЛЕНИЮ') >= 0 && chat4.indexOf('Баня 6 м') >= 0)
   p.run('crmChats["avito:3"].messages.push({role:"user",text:"мой номер +7 926 555-44-33",ts:2200})')
-  t.ok('телефон из переписки — кнопки звонка и WhatsApp', p.run('tCRM()').indexOf('href="tel:+79265554433"') >= 0 && p.run('tCRM()').indexOf('wa.me/79265554433') >= 0)
+  const withPhone = p.run('tCRM()')
+  t.ok('телефон из переписки — звонок, WhatsApp, Telegram и Max', withPhone.indexOf('href="tel:+79265554433"') >= 0 && withPhone.indexOf('href="https://wa.me/79265554433"') >= 0 && withPhone.indexOf('href="https://t.me/+79265554433"') >= 0 && withPhone.indexOf('href="https://max.ru/79265554433"') >= 0)
 
   p.run('crmView="chats";crmFeedMode="wait"')
   const waitFeed = p.run('tCRM()')

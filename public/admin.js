@@ -25836,9 +25836,15 @@ function crmPhoneBarHtml(f,ch){
   var raw=f.phone||(extractPhoneFromChat(ch)?"+7"+extractPhoneFromChat(ch):"");
   var d=String(raw).replace(/\D/g,""); if(d.length<10) return "";
   var tel="+7"+d.slice(-10), wa="7"+d.slice(-10);
-  return '<div style="display:flex;gap:6px;margin-bottom:10px">'+
-    '<a href="tel:'+tel+'" onclick="window._callPhone(\''+tel+'\',event)" style="flex:1;padding:9px;background:#27ae60;border-radius:9px;text-decoration:none;color:#fff;font-size:12px;font-weight:700;text-align:center">📞 '+esc(tel)+'</a>'+
-    '<a href="https://wa.me/'+wa+'" onclick="window._openExt(\'https://wa.me/'+wa+'\',event)" target="_blank" rel="noopener" style="padding:9px 14px;background:#25d366;border-radius:9px;text-decoration:none;color:#fff;font-size:12px;font-weight:700">WhatsApp</a>'+
+  // Мессенджеры — те же ссылки, что в карточке клиента: WhatsApp, Telegram, Max по номеру.
+  var ext=function(url,label,bg){ return '<a href="'+url+'" onclick="window._openExt(\''+url+'\',event)" target="_blank" rel="noopener" style="flex:1;padding:8px 4px;background:'+bg+';border-radius:9px;text-decoration:none;color:#fff;font-size:11.5px;font-weight:700;text-align:center;white-space:nowrap">'+label+'</a>'; };
+  return '<div style="margin-bottom:10px">'+
+    '<a href="tel:'+tel+'" onclick="window._callPhone(\''+tel+'\',event)" style="display:block;padding:9px;background:#27ae60;border-radius:9px;text-decoration:none;color:#fff;font-size:12px;font-weight:700;text-align:center;margin-bottom:6px">📞 '+esc(tel)+'</a>'+
+    '<div style="display:flex;gap:6px">'+
+      ext("https://wa.me/"+wa,"WhatsApp","#25d366")+
+      ext("https://t.me/+"+wa,"Telegram","#0088cc")+
+      ext("https://max.ru/"+wa,"Max","#5b3aff")+
+    '</div>'+
   '</div>';
 }
 function crmItemBarHtml(item){
