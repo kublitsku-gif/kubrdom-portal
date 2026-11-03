@@ -28,7 +28,7 @@ if (env.PROBE_PDF === 'true') {
     method: 'POST', headers, body: JSON.stringify({ type: 'file' }), signal: AbortSignal.timeout(15000),
   });
   const error = await validation.json().catch(() => ({}));
-  console.log('Avito file-type validation:', JSON.stringify({ status: validation.status, error: error.error || error.message || error.result || null }));
+  console.log('Avito file-type validation:', JSON.stringify({ status: validation.status, response: error }));
 }
 if (env.DRAFT_MODE === 'true') {
   const mode = await portalPost('/api/ai/draft-mode');
