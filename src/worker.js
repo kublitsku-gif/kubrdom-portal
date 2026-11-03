@@ -4,6 +4,7 @@ import { PLAN_IMAGES, PLAN_INSTRUCTION, normPlans, planUrl, planTitles, avitoUpl
 import { SITE_ORIGIN, sitemapUrls, htmlToText, knowledgeMessages, withSiteKnowledge, MAX_KNOWLEDGE_CHARS } from "./site-knowledge.js";
 import { upsertSalesCard, salesSetArchived, extractPhone, readableText, salesWebhook, salesTick, salesService, salesDestination, salesClosed, salesSetup } from "./sales-workspace.js";
 import { websiteLeadFetch, deliverWebsiteLeads } from "./website-leads.js";
+import { recoverAvito } from "./avito-recovery.js";
 // Cloudflare Worker: API для KUBRDOM-portal.
 //   GET  /api/state/:storageKey  → текущее состояние объекта (массив работ)
 //   POST /api/state/:storageKey  → сохранить состояние объекта
@@ -2002,6 +2003,7 @@ async function avitoImportChat(env, request) {
     added = merged.added;
     c.messages = merged.messages;
     c.source = "avito"; c.avitoChatId = chatId;
+    if (body.reopen === true) c.archived = false;
     if (info.item) c.item = info.item;
     c.updatedAt = Date.now();
     chats[key] = c;
@@ -2014,7 +2016,7 @@ async function avitoImportChat(env, request) {
     id: key, crmId: "avito-" + chatId, source: "avito", name: c.name,
     chatId: c.chatId, topicId: c.topicId,
     phone: extractPhone(incoming.map(m => m.text).join("\n")),
-    summary: incoming.at(-1).text, itemTitle: c.item?.title,
+    summary: incoming.at(-1).text, itemTitle: c.item?.title, archived: c.archived,
   });
   // Preserve messages received during Telegram delivery; only attach its topic.
   saved = false;
@@ -2380,6 +2382,7 @@ export default {
     if (event.cron === "*/5 * * * *") {
       ctx.waitUntil((async()=>{await deliverWebsiteLeads(env);await salesTick(env);})().catch(e=>console.error("sales tick",String(e))));
       ctx.waitUntil(crmTick(env).catch(e=>console.error("crm tick",String(e))));
+      ctx.waitUntil(recoverAvito(env, { token: avitoToken, loadChats: aiLoadChats, importChat: avitoImportChat }).catch(e=>console.error("avito recovery",String(e))));
       return;
     }
     // 0 6 — 09:00 МСК (дожим клиентов, утренние напоминания, удержание за вчерашний
@@ -2498,12 +2501,12 @@ export default {
       } catch (err) { console.error("carddav", String(err)); return new Response("Ошибка сервера", { status: 500 }); }
     }
 
-    // Вебхук Avito (входящие сообщения клиентов) — ДО авторизации. Защита: ?s=<ADMIN_TOKEN> в URL подписки.
+    // Вебхук Avito — ДО авторизации. Секрет URL: WEBHOOK_SECRET.
     if (url.pathname === "/api/avito/webhook" && request.method === "POST") {
       const ws = url.searchParams.get("s") || "";
       if (!env.WEBHOOK_SECRET || !safeEqual(ws, env.WEBHOOK_SECRET)) return unauthorized();
       try { return await avitoWebhook(env, request); }
-      catch (err) { return json({ ok: false, error: String(err) }, 200); }
+      catch (err) { console.error("avito webhook failed"); return json({ ok: false }, 503); }
     }
 
     // Голосовой робот: мозг (VoxEngine зовёт каждую реплику диалога). Секрет в ?s=.
