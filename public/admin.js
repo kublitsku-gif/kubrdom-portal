@@ -25982,6 +25982,10 @@ function crmQuickHtml(){
   '</div>';
 }
 function crmCatalogToolsHtml(cid,channel){
+  if(channel!=="telegram")return '<div style="margin-bottom:6px"><div style="display:flex;align-items:center;gap:8px">'+
+    '<a href="'+esc(HOUSE_CATALOG.path)+'?dl=KubrDom-Catalog.pdf" download style="flex:1;text-align:center;text-decoration:none;padding:7px;background:#edf3ee;border:1px solid #b9cebd;border-radius:8px;font-size:11.5px;color:#356347;font-weight:700">📎 Скачать каталог PDF</a>'+
+    '<a href="'+esc(HOUSE_CATALOG.path)+'" target="_blank" rel="noopener" style="padding:7px 5px;color:#356347;font-size:11.5px">Посмотреть PDF</a></div>'+
+    '<div style="font-size:10.5px;color:#647b69;padding:4px 2px">Прикрепите скачанный файл в чате приложения Авито. Отправка PDF из CRM пока недоступна.</div></div>';
   return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'+
     '<button data-a="crm-catalog-attach" data-cid="'+esc(cid)+'" data-channel="'+(channel==="telegram"?"telegram":"avito")+'" title="'+esc(HOUSE_CATALOG.title)+' · '+HOUSE_CATALOG.pages+' страниц · '+HOUSE_CATALOG.date+'" style="flex:1;padding:7px;background:#edf3ee;border:1px solid #b9cebd;border-radius:8px;cursor:pointer;font-size:11.5px;color:#356347;font-weight:700">'+(channel==="telegram"?(crmCatalogAttached[crmCatalogReplyKey(cid)]?'✓ PDF прикреплён · убрать':'📎 Прикрепить каталог PDF'):'📚 Ссылка на каталог PDF')+'</button>'+
     '<a href="'+esc(HOUSE_CATALOG.path)+'" target="_blank" rel="noopener" style="padding:7px 5px;color:#356347;font-size:11.5px;white-space:nowrap">Посмотреть PDF</a></div>';

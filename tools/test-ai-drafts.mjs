@@ -37,7 +37,7 @@ for (const newMessage of [{role:'user',text:'Уже другой вопрос',a
  const retried=await prepareMissingDraft(env,'avito:a',{reply:async()=>answer},{manual:true});assert.equal(retried.created,true);db.close();
 }
 {
- const {db,env}=envOf({...seed(),item:{title:'Дом'},topicId:42,chatId:'-100'});Object.assign(env,{ADMIN_TOKEN:'master',CLAUDE_API_KEY:'test',TG_SALES_BOT_TOKEN:'test',TG_SALES_CHAT_ID:'-100'});
+ const {db,env}=envOf({...seed(),name:'Янина',item:{title:'Дом'},topicId:42,chatId:'-100'});Object.assign(env,{ADMIN_TOKEN:'master',CLAUDE_API_KEY:'test',TG_SALES_BOT_TOKEN:'test',TG_SALES_CHAT_ID:'-100'});
  const realFetch=globalThis.fetch;let generated=0;
  globalThis.fetch=async(url,init)=>{
   if(String(url).includes('api.anthropic.com')){generated++;return Response.json({content:[{type:'text',text:JSON.stringify({...answer,reply:generated===1?answer.reply:'Здравствуйте! С радостью помогу выбрать дом.'})}],stop_reason:'end_turn'});}
@@ -47,7 +47,9 @@ for (const newMessage of [{role:'user',text:'Уже другой вопрос',a
  const post=(path,body)=>worker.fetch(new Request('https://portal.kubrdom.ru'+path,{method:'POST',headers:{'X-Admin-Token':'master','Content-Type':'application/json'},body:JSON.stringify(body||{})}),env,{waitUntil(){}});
  try{
   assert.equal((await(await post('/api/ai/prepare',{clientKey:'avito:a',manual:true})).json()).created,true);
+  assert.match(db.get('aiChats').data['avito:a'].messages[1].text,/^Здравствуйте, Янина!/u);
   assert.equal((await(await post('/api/ai/redraft',{clientKey:'avito:a',idx:1,hint:'Теплее и проще'})).json()).success,true);
+  assert.match(db.get('aiChats').data['avito:a'].messages[1].text,/^Здравствуйте, Янина!/u);
   assert.equal(db.get('aiChats').data['avito:a'].messages[1].rewritten,1);
   assert.equal(db.get('aiChats').data['avito:a'].messages[1].status,'draft');
   const mode=await(await post('/api/ai/draft-mode',{})).json();assert.equal(mode.enabled,true);assert.equal(mode.autoSend,false);

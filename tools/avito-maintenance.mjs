@@ -1,4 +1,5 @@
 // Existing deployment credentials stay in Actions; never print access-bearing URLs.
+import { clientFirstName } from '../src/client-name.js';
 const origin = 'https://portal.kubrdom.ru';
 const env = process.env;
 for (const name of ['AVITO_CLIENT_ID', 'AVITO_CLIENT_SECRET', 'WEBHOOK_SECRET', 'ADMIN_TOKEN']) {
@@ -71,13 +72,19 @@ if (env.PREPARE_DRAFT === 'true' && env.IMPORT_CHAT_ID) {
   console.log('AI draft preparation:', JSON.stringify({ success: prepared.success, created: prepared.created, pending: prepared.pending, providerStatus: prepared.providerStatus }));
   if (!prepared.success) throw new Error('AI draft preparation failed');
   const chats = await request(origin + '/api/ai/chats', { headers: { 'X-Admin-Token': env.ADMIN_TOKEN } });
-  const messages = chats.chats?.['avito:' + env.IMPORT_CHAT_ID]?.messages || [];
+  const chat = chats.chats?.['avito:' + env.IMPORT_CHAT_ID];
+  const messages = chat?.messages || [];
+  const name = clientFirstName(chat?.name);
   const draft = messages.at(-1);
   if (draft?.role !== 'assistant' || draft.status !== 'draft' || !draft.text?.trim()) throw new Error('A pending non-empty draft was not found');
   console.log('AI draft verified:', JSON.stringify({ pending: true, characters: draft.text.length, mentionsCatalog: /каталог/i.test(draft.text), rewritten: draft.rewritten || 0 }));
   if (env.REWRITE_HINT) {
     const refined = await portalPost('/api/ai/redraft', { clientKey: 'avito:' + env.IMPORT_CHAT_ID, idx: messages.length - 1, hint: env.REWRITE_HINT });
     if (!refined.success || !refined.reply?.trim()) throw new Error('AI draft refinement failed');
-    console.log('AI refinement verified:', JSON.stringify({ pending: true, characters: refined.reply.length }));
+    const saved = await request(origin + '/api/ai/chats', { headers: { 'X-Admin-Token': env.ADMIN_TOKEN } });
+    const savedDraft = saved.chats?.['avito:' + env.IMPORT_CHAT_ID]?.messages?.[messages.length - 1];
+    if (savedDraft?.status !== 'draft' || savedDraft.text !== refined.reply) throw new Error('Refinement was not saved as a draft');
+    if (name && !refined.reply.includes(name)) throw new Error('Client name missing from refined draft');
+    console.log('AI refinement verified:', JSON.stringify({ pending: true, characters: refined.reply.length, nameAddressed: name ? refined.reply.includes(name) : null }));
   }
 }
