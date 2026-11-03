@@ -27,7 +27,8 @@ if (env.PROBE_PDF === 'true') {
   const validation = await fetch('https://api.avito.ru/messenger/v1/accounts/401020763/chats/crm-validation-no-recipient/messages', {
     method: 'POST', headers, body: JSON.stringify({ type: 'file' }), signal: AbortSignal.timeout(15000),
   });
-  const error = await validation.json().catch(() => ({}));
+  const raw = await validation.text();
+  let error; try { error=JSON.parse(raw); } catch { error={body:raw.slice(0,1000),contentType:validation.headers.get('content-type')}; }
   console.log('Avito file-type validation:', JSON.stringify({ status: validation.status, response: error }));
 }
 if (env.DRAFT_MODE === 'true') {
