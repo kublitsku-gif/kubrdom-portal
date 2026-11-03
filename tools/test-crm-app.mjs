@@ -327,6 +327,7 @@ function panel(pathname) {
   t.ok('неотправленный старый черновик в переписке не показываем', staleHtml.indexOf('старый-черн') < 0 && staleHtml.indexOf('черновик') < 0)
   t.ok('ответ уходит в Авито тем же обработчиком', chat.indexOf('data-a="crm-send-avito" data-key="avito:2" data-cid="chat"') >= 0 && chat.indexOf('id="crm-reply-chat"') >= 0)
   t.ok('диалог: быстрые ответы, фото, планировка и «переписать» у черновика', chat.indexOf('data-a="crm-quick"') >= 0 && chat.indexOf('data-a="crm-photo-pick"') >= 0 && chat.indexOf('data-a="crm-plan-toggle"') >= 0 && chat.indexOf('data-a="crm-redraft" data-i="1"') >= 0)
+  t.ok('диалог: каталог можно добавить к ответу и открыть PDF перед отправкой', chat.indexOf('data-a="crm-catalog-attach" data-cid="chat"') >= 0 && chat.indexOf('href="/api/file/catalogs/dom-dlya-zhizni-20261103.pdf"') >= 0)
   p.run('crmRedraftIdx=1;crmPlanPicker=true')
   const chat2 = p.run('tCRM()')
   t.ok('«переписать» даёт подсказки, выбор планировки — картинки', chat2.indexOf('data-a="crm-redraft-go"') >= 0 && chat2.indexOf('data-a="crm-plan-send" data-v="kd29-1"') >= 0)

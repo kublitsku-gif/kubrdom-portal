@@ -89,6 +89,7 @@ import { installInPageCamera } from "../src/camera.js";
 import { assignClientCodes, clientCode } from "../src/crm-contacts.js";
 import { unansweredCount, isCrmPath, chatFeed, feedTime, draftKinds, dupHidden, isPlaceholderName, FEED_MODES, filterFeed, WAIT_ALERT_MIN, waitLabel, todayReminders, safeImageUrl, quickReplies, REDRAFT_HINTS, salesSummary } from "../src/crm-app.js";
 import { PLAN_IMAGES } from "../src/plan-images.js";
+import { HOUSE_CATALOG, appendHouseCatalog } from "../src/crm-catalogs.js";
 import { unb64u } from "../src/webpush.js";
 import { dayCloseState, dayFineCfg, underDayFine, fineSum, DAY_FINE_CAT, DAY_FINE_DEFAULT } from "../src/dayclose.js";
 
@@ -25887,6 +25888,7 @@ function crmTgCardHtml(c){
     return '<div style="'+box+'"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+title+
         '<button data-a="crm-tg-unlink" data-cid="'+esc(c.id)+'" style="padding:3px 9px;background:#fff;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;font-size:10px;color:#e74c3c;font-weight:700">Отвязать</button></div>'+
       '<div style="max-height:300px;overflow-y:auto;margin-bottom:8px">'+crmMsgsHtml(ch.messages||[],unans,false,"telegram")+'</div>'+
+      crmCatalogToolsHtml(c.id+"tg")+
       '<textarea id="crm-reply-'+esc(c.id)+'tg" placeholder="Ответить в Telegram..." style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;height:58px;resize:vertical;margin-bottom:6px"></textarea>'+
       '<button data-a="crm-send-avito" data-key="'+esc(c.tgKey)+'" data-cid="'+esc(c.id)+'tg" style="width:100%;padding:9px;background:#0088cc;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Отправить в Telegram</button></div>';
   }
@@ -25945,6 +25947,11 @@ function crmQuickHtml(){
     '<button data-a="crm-quick-edit" aria-label="Настроить быстрые ответы" style="flex-shrink:0;padding:6px 10px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:14px;cursor:pointer;font-size:11.5px;color:#7a9aaa">⚙</button>'+
   '</div>';
 }
+function crmCatalogToolsHtml(cid){
+  return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'+
+    '<button data-a="crm-catalog-attach" data-cid="'+esc(cid)+'" title="'+esc(HOUSE_CATALOG.title)+' · '+HOUSE_CATALOG.pages+' страниц · '+HOUSE_CATALOG.date+'" style="flex:1;padding:7px;background:#edf3ee;border:1px solid #b9cebd;border-radius:8px;cursor:pointer;font-size:11.5px;color:#356347;font-weight:700">📚 Каталог PDF</button>'+
+    '<a href="'+esc(HOUSE_CATALOG.path)+'" target="_blank" rel="noopener" style="padding:7px 5px;color:#356347;font-size:11.5px;white-space:nowrap">Посмотреть PDF</a></div>';
+}
 function crmPlanPickerHtml(){
   return '<div style="background:#fff;border:1px solid #d0dae8;border-radius:10px;padding:8px;margin-bottom:6px">'+
     '<div style="display:flex;align-items:center;margin-bottom:6px"><span style="flex:1;font-size:10.5px;color:#7a9aaa;font-weight:700">🖼 ОТПРАВИТЬ ПЛАНИРОВКУ В АВИТО</span>'+
@@ -25978,6 +25985,7 @@ function tCRMChat(key){
       (isTg?'':'<div style="display:flex;gap:6px;margin-bottom:6px">'+
         tool("crm-photo-pick",crmBusy==="photo"?"⏳ Отправляю…":"📷 Фото")+tool("crm-plan-toggle","🖼 Планировка",crmPlanPicker)+
       '</div>')+
+      crmCatalogToolsHtml("chat")+
       '<input id="crm-photo-file" type="file" accept="image/*" style="display:none">'+
       '<textarea id="crm-reply-chat" placeholder="'+(isTg?'Ответить в Telegram...':'Ответить клиенту в Авито...')+'" style="width:100%;padding:9px 11px;border-radius:10px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;height:64px;resize:vertical;margin-bottom:6px"></textarea>'+
       '<button data-a="crm-send-avito" data-key="'+esc(key)+'" data-cid="chat" style="width:100%;padding:11px;background:'+(isTg?'#0088cc':'#005bff')+';border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">'+(isTg?'Отправить в Telegram':'Отправить в Авито')+'</button>'+
@@ -26642,6 +26650,7 @@ function tCRMClient(cid){
       '<div style="max-height:300px;overflow-y:auto;margin-bottom:8px">'+
         crmMsgsHtml(_msgs,_unans,false)+
       '</div>'+
+      crmCatalogToolsHtml(c.id)+
       '<textarea id="crm-reply-'+c.id+'" placeholder="Ответить клиенту в Avito..." style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;height:58px;resize:vertical;margin-bottom:6px"></textarea>'+
       '<button data-a="crm-send-avito" data-key="'+esc(c.avitoKey||"")+'" data-cid="'+c.id+'" style="width:100%;padding:9px;background:#005bff;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Отправить клиенту в Avito</button>'+
     '</div>';
@@ -31379,6 +31388,15 @@ function bind(){
       crmBusy="redraft"; ui();
       const j=await crmChatPost("/api/ai/redraft",{clientKey:crmChatKey,idx:+el.dataset.i,hint:hint});
       crmBusy=""; if(j) crmRedraftIdx=null; render();
+    };}
+    else if(a==="crm-catalog-attach"){el.onclick=()=>{
+      const ta=document.getElementById("crm-reply-"+(el.dataset.cid||"chat")); if(!ta)return;
+      const result=appendHouseCatalog(ta.value);
+      if(result.error){alert(result.error);return;}
+      ta.value=result.text;
+      el.textContent="✓ Каталог добавлен";
+      ta.focus();
+      if(ta.setSelectionRange)ta.setSelectionRange(ta.value.length,ta.value.length);
     };}
     else if(a==="crm-plan-toggle"){el.onclick=()=>{ crmPlanPicker=!crmPlanPicker; ui(); };}
     else if(a==="crm-plan-send"){el.onclick=async()=>{

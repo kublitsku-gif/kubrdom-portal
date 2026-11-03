@@ -1,0 +1,42 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { HOUSE_CATALOG, appendHouseCatalog } from '../src/crm-catalogs.js';
+import { boot } from './harness/panel-vm.js';
+
+const original = 'Янина, добрый день!\nПосмотрите варианты для вашего участка.';
+const reply = appendHouseCatalog(original);
+assert.ok(reply.text.startsWith(original + '\n\n'));
+assert.ok(reply.text.includes(HOUSE_CATALOG.url));
+assert.equal(appendHouseCatalog(reply.text).text, reply.text);
+assert.equal(appendHouseCatalog(reply.text).already, true);
+assert.ok(appendHouseCatalog('').text.includes('5 планировок'));
+const tooLong = 'x'.repeat(1950);
+assert.equal(appendHouseCatalog(tooLong).text, tooLong);
+assert.ok(appendHouseCatalog(tooLong).error);
+// This R2 key is immutable. Replacing its contents requires a new dated edition.
+const pdf = readFileSync(new URL('../assets/crm-catalogs/dom-dlya-zhizni-20261103.pdf', import.meta.url));
+assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
+assert.equal(createHash('sha256').update(pdf).digest('hex'), 'b37e04a6a30fb91b63d3d3c59b094b27d5380ec2668da2d5ffe43c9ee19a69c3');
+
+let requests = 0;
+const p = boot({ net: async () => { requests++; return { json: async () => ({ success: true, chats: {} }) }; } });
+const chatButton = p.dom.node({ a: 'crm-catalog-attach', cid: 'chat' });
+const cardButton = p.dom.node({ a: 'crm-catalog-attach', cid: 'client1' });
+p.dom.field('crm-reply-chat', original);
+p.dom.field('crm-reply-client1', 'Отдельный ответ из карточки');
+for (const id of ['crm-reply-chat', 'crm-reply-client1']) p.ctx.document.getElementById(id).focus = () => {};
+p.run('bind()');
+const before = requests;
+chatButton.onclick();
+assert.equal(p.ctx.document.getElementById('crm-reply-chat').value, reply.text);
+assert.equal(p.ctx.document.getElementById('crm-reply-client1').value, 'Отдельный ответ из карточки');
+chatButton.onclick();
+assert.equal(p.ctx.document.getElementById('crm-reply-chat').value, reply.text);
+cardButton.onclick();
+assert.ok(p.ctx.document.getElementById('crm-reply-client1').value.startsWith('Отдельный ответ из карточки\n\n'));
+assert.equal(requests, before, 'Attaching must not send messages or save state');
+const html = p.run('crmCatalogToolsHtml("chat")');
+assert.ok(html.includes('data-a="crm-catalog-attach"'));
+assert.ok(html.includes('href="' + HOUSE_CATALOG.path + '"'));
+console.log('CRM catalog: correct PDF edition, preserved reply, no duplicates or immediate send, chat/card reply fields isolated');

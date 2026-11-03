@@ -41,6 +41,14 @@ jobs:
       - run: npm install
       - run: npm run build
 
+      # Publish the selected, versioned catalog before the CRM button becomes visible.
+      - name: Upload CRM house catalog to R2
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: r2 object put kubrdom-files/catalogs/dom-dlya-zhizni-20261103.pdf --file=assets/crm-catalogs/dom-dlya-zhizni-20261103.pdf --content-type=application/pdf --remote
+
       - uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
