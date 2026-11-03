@@ -50,8 +50,9 @@ globalThis.fetch = async (url, init) => {
   if (String(url).startsWith('https://api.telegram.org/')) {
     const method = String(url).split('/').pop(), body = JSON.parse(init.body || '{}')
     tgCalls.push({ method, body })
+    if (method === 'sendDocument') { const state=real.get('aiChats');state.data.concurrent={source:'telegram',name:'Keep',messages:[{role:'user',text:'Concurrent message'}]};real.set('aiChats',state.data,state.at+1); }
     if (method === 'getBusinessConnection') return new Response(JSON.stringify({ ok: true, result: { id: body.business_connection_id, user: { id: OWNER, first_name: 'Юрий' }, rights: { can_reply: canReply }, is_enabled: true } }))
-    if (method === 'sendMessage') return new Response(JSON.stringify({ ok: true, result: { message_id: 900 } }))
+    if (method === 'sendMessage' || method === 'sendDocument') return new Response(JSON.stringify({ ok: true, result: { message_id: 900 } }))
     return new Response(JSON.stringify({ ok: true, result: true }))
   }
   return realFetch(url, init)
@@ -73,6 +74,13 @@ const chatsNow = () => (real.get('aiChats') || {}).data || {}
   const call = tgCalls.find((x) => x.method === 'sendMessage')
   ok('ответ из CRM уходит в Telegram от вашего имени', sent.success && call && call.body.business_connection_id === 'bc1' && call.body.chat_id === CLIENT && call.body.text === 'Расчёт готов', JSON.stringify(sent))
   ok('ответ записан в диалог с id сообщения', chatsNow()['tg:' + CLIENT].messages.slice(-1)[0].tgMid === 900)
+  const pdf = await (await api('/api/ai/send', { clientKey: 'tg:' + CLIENT, text: 'Каталог для вас', catalog: true })).json()
+  const documentCall = tgCalls.find(x => x.method === 'sendDocument')
+  ok('каталог уходит PDF-документом с подписью от имени владельца', pdf.success && documentCall && documentCall.body.business_connection_id === 'bc1' && documentCall.body.document.endsWith('.pdf?dl=KubrDom-Catalog.pdf') && documentCall.body.caption === 'Каталог для вас')
+  ok('в истории остаётся именно PDF-файл', chatsNow()['tg:' + CLIENT].messages.at(-1).file?.mime === 'application/pdf')
+  ok('доставка PDF сохраняет параллельные входящие', chatsNow().concurrent?.messages[0].text === 'Concurrent message')
+  const overlong = await api('/api/ai/send', { clientKey: 'tg:' + CLIENT, text: 'x'.repeat(1100), catalog: true })
+  ok('длинная подпись не обрезается молча и файл не отправляется', overlong.status === 400 && tgCalls.filter(x => x.method === 'sendDocument').length === 1)
   await hook({ business_connection: { id: 'bc1', user: { id: OWNER }, rights: {}, is_enabled: true } })
   const denied = await api('/api/ai/send', { clientKey: 'tg:' + CLIENT, text: 'ещё' })
   ok('без права «отвечать» — понятная ошибка, а не тишина', denied.status === 409 && /Отвечать на сообщения/.test((await denied.json()).error))

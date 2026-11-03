@@ -319,6 +319,10 @@ function panel(pathname) {
   p.run('crmChatKey="avito:2";crmView="chat"')
   const chat = p.run('tCRM()')
   t.ok('диалог: черновик — карточка «не отправлено» с «Отправить» и «Править»', chat.indexOf('НЕ ОТПРАВЛЕНО') >= 0 && chat.indexOf('data-a="crm-draft-send" data-i="1"') >= 0 && chat.indexOf('data-a="crm-draft-use" data-i="1"') >= 0)
+  t.ok('у черновика сразу видны «Короче» и «Теплее»', chat.includes('data-v="Короче"') && chat.includes('data-v="Теплее и проще"'))
+  p.dom.field('crm-reply-chat','Мой набранный ответ');
+  p.run('__oldUi=ui;ui=function(){document.getElementById("crm-reply-chat").value="";};crmUiKeepReply();ui=__oldUi;');
+  t.ok('обновление черновика сохраняет набранный ответ',p.ctx.document.getElementById('crm-reply-chat').value==='Мой набранный ответ')
   const card = p.run('crmMsgsHtml(crmChats["avito:2"].messages,true,false)')
   t.ok('в карточке клиента черновик тоже выделен, но без кнопок отправки', card.indexOf('НЕ ОТПРАВЛЕНО') >= 0 && card.indexOf('crm-draft-send') < 0)
   const dupHtml = p.run('crmMsgsHtml([{role:"user",text:"ТЗ пришлю",ts:1},{role:"assistant",text:"черн-1",status:"draft",ts:2},{role:"user",text:"ТЗ пришлю",ts:3},{role:"assistant",text:"черн-2",status:"draft",ts:4}],true,true)')

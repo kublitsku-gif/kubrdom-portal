@@ -39,4 +39,14 @@ assert.equal(requests, before, 'Attaching must not send messages or save state')
 const html = p.run('crmCatalogToolsHtml("chat")');
 assert.ok(html.includes('data-a="crm-catalog-attach"'));
 assert.ok(html.includes('href="' + HOUSE_CATALOG.path + '"'));
+const tgButton=p.dom.node({a:'crm-catalog-attach',cid:'chat',channel:'telegram'});
+p.run('crmChatKey="tg:1";bind()');
+const beforeAttach=p.ctx.document.getElementById('crm-reply-chat').value;
+tgButton.onclick();
+assert.equal(p.ctx.document.getElementById('crm-reply-chat').value,beforeAttach);
+assert.equal(p.q('crmCatalogAttached["chat:tg:1"]'),true);
+p.run('crmChatKey="tg:2"');
+assert.ok(!p.run('crmCatalogToolsHtml("chat","telegram")').includes('PDF прикреплён'));
+p.run('crmChatKey="tg:1"');
+assert.ok(p.run('crmCatalogToolsHtml("chat","telegram")').includes('PDF прикреплён'));
 console.log('CRM catalog: correct PDF edition, preserved reply, no duplicates or immediate send, chat/card reply fields isolated');

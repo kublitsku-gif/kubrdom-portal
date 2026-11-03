@@ -90,6 +90,7 @@ import { assignClientCodes, clientCode } from "../src/crm-contacts.js";
 import { unansweredCount, isCrmPath, chatFeed, feedTime, draftKinds, dupHidden, isPlaceholderName, FEED_MODES, filterFeed, WAIT_ALERT_MIN, waitLabel, todayReminders, safeImageUrl, quickReplies, REDRAFT_HINTS, salesSummary } from "../src/crm-app.js";
 import { PLAN_IMAGES } from "../src/plan-images.js";
 import { HOUSE_CATALOG, appendHouseCatalog } from "../src/crm-catalogs.js";
+import { missingDraftTarget } from "../src/ai-drafts.js";
 import { unb64u } from "../src/webpush.js";
 import { dayCloseState, dayFineCfg, underDayFine, fineSum, DAY_FINE_CAT, DAY_FINE_DEFAULT } from "../src/dayclose.js";
 
@@ -25665,7 +25666,8 @@ function crmPollBadge(){
     crmAppBadge();
     var ae=document.activeElement; var typing=voiceRec||(ae&&(ae.tagName==="INPUT"||ae.tagName==="TEXTAREA"));   // и пока диктуют
     var inChats=tab==="crm"&&(crmView==="chats"||crmView==="chat");
-    if(!typing && (crmUnansweredCount()!==before || (inChats&&crmChatsSig()!==sigBefore))) render();
+    if(inChats&&crmView==="chat")crmEnsureDraftFor(crmChatKey);
+    if(!typing && (crmUnansweredCount()!==before || (inChats&&crmChatsSig()!==sigBefore))){if(crmView==="chat")crmUiKeepReply();else render();}
   }).catch(function(){});
 }
 // === CRM КАК ОТДЕЛЬНОЕ ПРИЛОЖЕНИЕ (/crm) ===
@@ -25689,8 +25691,40 @@ let crmTgPickerFor=null;       // карточка, к которой выбир
 let crmDav=null;              // книга контактов в телефоне: {connected,url,login,password?,busy,err}; экранное
 const crmInfoAsked={};        // по каким диалогам уже спрашивали объявление
 const crmSyncAsked={};        // какие диалоги уже сверяли с Авито в этой вкладке
+const crmDraftTasks={};       // подготовка по входящей реплике; только экранное состояние
+const crmCatalogAttached={};  // выбранное PDF-вложение по полю ответа; только экранное
+function crmCatalogReplyKey(cid){return cid==="chat"?"chat:"+crmChatKey:cid;}
+function crmUiKeepReply(){
+  const old=document.getElementById("crm-reply-chat"),value=old?old.value:null,focused=old&&document.activeElement===old;
+  const start=old&&old.selectionStart,end=old&&old.selectionEnd;
+  ui();
+  const next=document.getElementById("crm-reply-chat");
+  if(next&&value!==null){next.value=value;if(focused){next.focus();if(next.setSelectionRange&&typeof start==="number")next.setSelectionRange(start,end);}}
+}
+async function crmEnsureDraftFor(key,manual){
+  const ch=crmChats&&crmChats[key],target=missingDraftTarget(ch);if(!target||ch.source!=="avito")return;
+  const prior=crmDraftTasks[key];if(!manual&&prior&&prior.target===target.token&&prior.until>Date.now())return;
+  crmDraftTasks[key]={target:target.token,status:"thinking",inFlight:true,until:Date.now()+120000};
+  if(crmView==="chat"&&crmChatKey===key)crmUiKeepReply();
+  try{
+    const r=await fetch(API_BASE+"/api/ai/prepare",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({clientKey:key,manual:!!manual})});
+    const j=await r.json();
+    crmDraftTasks[key]={target:target.token,status:j.paused?"paused":j.pending?"thinking":j.success?"ready":"error",error:j.error||"",until:Date.now()+120000};
+    await crmRefreshChats();
+  }catch(e){crmDraftTasks[key]={target:target.token,status:"error",error:"Не удалось связаться с ИИ. Повторите попытку.",until:Date.now()+120000};}
+  if(crmView==="chat"&&crmChatKey===key)crmUiKeepReply();
+}
+function crmDraftStatusHtml(key,ch){
+  const target=missingDraftTarget(ch);if(!target||ch.source!=="avito")return "";
+  const local=crmDraftTasks[key],saved=ch.draftState;
+  const state=local&&local.target===target.token&&local.inFlight?local:saved&&saved.target===target.token&&saved.status==="error"?saved:local&&local.target===target.token?local:saved&&saved.target===target.token?saved:null;
+  const thinking=state&&state.status==="thinking"&&state.until>Date.now();
+  const label=thinking?"⏳ ИИ готовит черновик ответа…":state&&state.status==="error"?state.error:state&&state.status==="paused"?"ИИ на паузе. Можно подготовить ответ вручную.":"Черновик ещё не подготовлен.";
+  return '<div style="padding:10px 12px;background:#fff7d6;border:1px solid #f0b429;border-radius:10px;margin:9px 0;font-size:12px;color:#785b16">'+esc(label)+
+    (thinking?'':'<button data-a="crm-draft-prepare" data-key="'+esc(key)+'" style="display:block;margin-top:8px;padding:8px 12px;border:0;border-radius:8px;background:#f0b429;cursor:pointer;color:#463500;font-weight:700">'+(state&&state.status==="error"?'Повторить':'🤖 Подготовить ответ')+'</button>')+'</div>';
+}
 function isCrmApp(){ try{ return isCrmPath(location.pathname); }catch(e){ return false; } }
-function crmChatsSig(){ var n=0; if(crmChats)for(var k in crmChats){ var ch=crmChats[k]; n+=(ch&&ch.messages?ch.messages.length:0); } return n; }
+function crmChatsSig(){ return Object.keys(crmChats||{}).sort().map(function(k){var ch=crmChats[k];return k+":"+(ch.messages||[]).length+":"+(ch.draftState&&ch.draftState.status||"");}).join("|"); }
 // Счётчик на иконке приложения (Android показывает точку/число) — только в самом приложении.
 function crmAppBadge(){
   if(!isCrmApp()) return;
@@ -25715,7 +25749,7 @@ function crmDraftCardHtml(m,i,withBtns){
       '<button data-a="crm-draft-send" data-i="'+i+'" style="flex:1;padding:8px;background:#005bff;border:none;border-radius:8px;cursor:pointer;font-size:12px;color:#fff;font-weight:700">📤 Отправить как есть</button>'+
       '<button data-a="crm-draft-use" data-i="'+i+'" style="padding:8px 10px;background:#fff;border:1px solid #f0b429;border-radius:8px;cursor:pointer;font-size:12px;color:#8a5a00;font-weight:700">✏️ Править</button>'+
       '<button data-a="crm-redraft" data-i="'+i+'" style="padding:8px 10px;background:'+(crmRedraftIdx===i?"#f0b429":"#fff")+';border:1px solid #f0b429;border-radius:8px;cursor:pointer;font-size:12px;color:'+(crmRedraftIdx===i?"#fff":"#8a5a00")+';font-weight:700">🔄 ИИ</button>'+
-    '</div>':'<div style="font-size:10.5px;color:#8a5a00;margin-top:6px">Отправить или поправить — в «💬 Чатах».</div>')+
+    '</div><div style="display:flex;gap:6px;margin-top:7px;flex-wrap:wrap">'+['Короче','Теплее и проще'].map(function(h){return '<button data-a="crm-redraft-go" data-i="'+i+'" data-v="'+esc(h)+'" '+(crmBusy?'disabled':'')+' style="padding:6px 10px;border:1px solid #f0b429;border-radius:15px;background:white;color:#8a5a00;cursor:pointer">'+(h==='Короче'?'Короче':'Теплее')+'</button>';}).join('')+'</div>':'<div style="font-size:10.5px;color:#8a5a00;margin-top:6px">Отправить или поправить — в «💬 Чатах».</div>')+
   '</div>';
 }
 function crmMsgsHtml(msgs, unans, withDraftBtn, channel){
@@ -25734,7 +25768,7 @@ function crmMsgsHtml(msgs, unans, withDraftBtn, channel){
     var bd=failed?"border:1px dashed #e74c3c;":(hl?"border:1px solid #e74c3c55;":"");
     return '<div style="background:'+bg+';'+bd+'border-radius:9px;padding:7px 9px;margin-bottom:5px;'+(mine?"margin-left:20px":"margin-right:20px")+'">'+
       '<div style="font-size:9px;color:'+(failed?"#c0392b":"#7a9aaa")+';font-weight:700;margin-bottom:2px">'+who+crmMsgTimeHtml(m)+'</div>'+
-      crmMsgImgHtml(m)+
+      crmMsgImgHtml(m)+(m.file&&safeImageUrl(m.file.url)?'<a href="'+esc(safeImageUrl(m.file.url))+'" target="_blank" rel="noopener" style="display:block;padding:8px;color:#356347">📎 '+esc(m.file.name||'PDF-документ')+'</a>':'')+
       (crmMsgImgHtml(m)&&/^(📷 Фото)$/.test(m.text||"")?'':'<div style="font-size:12.5px;color:#1a2a3a;line-height:1.4;white-space:pre-wrap">'+esc(m.text||"")+'</div>')+
     '</div>';
   }).join("");
@@ -25888,7 +25922,7 @@ function crmTgCardHtml(c){
     return '<div style="'+box+'"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+title+
         '<button data-a="crm-tg-unlink" data-cid="'+esc(c.id)+'" style="padding:3px 9px;background:#fff;border:1px solid #e74c3c44;border-radius:6px;cursor:pointer;font-size:10px;color:#e74c3c;font-weight:700">Отвязать</button></div>'+
       '<div style="max-height:300px;overflow-y:auto;margin-bottom:8px">'+crmMsgsHtml(ch.messages||[],unans,false,"telegram")+'</div>'+
-      crmCatalogToolsHtml(c.id+"tg")+
+      crmCatalogToolsHtml(c.id+"tg","telegram")+
       '<textarea id="crm-reply-'+esc(c.id)+'tg" placeholder="Ответить в Telegram..." style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #d0dae8;font-size:12px;outline:none;box-sizing:border-box;height:58px;resize:vertical;margin-bottom:6px"></textarea>'+
       '<button data-a="crm-send-avito" data-key="'+esc(c.tgKey)+'" data-cid="'+esc(c.id)+'tg" style="width:100%;padding:9px;background:#0088cc;border:none;border-radius:8px;cursor:pointer;color:#fff;font-size:12px;font-weight:700">Отправить в Telegram</button></div>';
   }
@@ -25947,9 +25981,9 @@ function crmQuickHtml(){
     '<button data-a="crm-quick-edit" aria-label="Настроить быстрые ответы" style="flex-shrink:0;padding:6px 10px;background:#f0f4f8;border:1px solid #d0dae8;border-radius:14px;cursor:pointer;font-size:11.5px;color:#7a9aaa">⚙</button>'+
   '</div>';
 }
-function crmCatalogToolsHtml(cid){
+function crmCatalogToolsHtml(cid,channel){
   return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'+
-    '<button data-a="crm-catalog-attach" data-cid="'+esc(cid)+'" title="'+esc(HOUSE_CATALOG.title)+' · '+HOUSE_CATALOG.pages+' страниц · '+HOUSE_CATALOG.date+'" style="flex:1;padding:7px;background:#edf3ee;border:1px solid #b9cebd;border-radius:8px;cursor:pointer;font-size:11.5px;color:#356347;font-weight:700">📚 Каталог PDF</button>'+
+    '<button data-a="crm-catalog-attach" data-cid="'+esc(cid)+'" data-channel="'+(channel==="telegram"?"telegram":"avito")+'" title="'+esc(HOUSE_CATALOG.title)+' · '+HOUSE_CATALOG.pages+' страниц · '+HOUSE_CATALOG.date+'" style="flex:1;padding:7px;background:#edf3ee;border:1px solid #b9cebd;border-radius:8px;cursor:pointer;font-size:11.5px;color:#356347;font-weight:700">'+(channel==="telegram"?(crmCatalogAttached[crmCatalogReplyKey(cid)]?'✓ PDF прикреплён · убрать':'📎 Прикрепить каталог PDF'):'📚 Ссылка на каталог PDF')+'</button>'+
     '<a href="'+esc(HOUSE_CATALOG.path)+'" target="_blank" rel="noopener" style="padding:7px 5px;color:#356347;font-size:11.5px;white-space:nowrap">Посмотреть PDF</a></div>';
 }
 function crmPlanPickerHtml(){
@@ -25970,6 +26004,7 @@ function tCRMChat(key){
   var isTg=ch.source==="telegram";
   var msgs=ch.messages||[], kinds=draftKinds(msgs), pending=kinds.indexOf("pending");
   var msgsHtml=crmMsgsHtml(msgs, f.unanswered, true, ch.source);
+  msgsHtml+=crmDraftStatusHtml(key,ch);
   if(crmRedraftIdx!==null&&crmRedraftIdx===pending) msgsHtml+=crmRedraftHtml(pending);
   var tool=function(a,label,on){ return '<button data-a="'+a+'" '+(crmBusy?"disabled":"")+' style="flex:1;padding:7px;background:'+(on?"#eaf2fa":"#fff")+';border:1px solid #d0dae8;border-radius:8px;cursor:pointer;font-size:11.5px;color:#2c4a63;font-weight:700">'+label+'</button>'; };
   return '<div>'+
@@ -25985,7 +26020,7 @@ function tCRMChat(key){
       (isTg?'':'<div style="display:flex;gap:6px;margin-bottom:6px">'+
         tool("crm-photo-pick",crmBusy==="photo"?"⏳ Отправляю…":"📷 Фото")+tool("crm-plan-toggle","🖼 Планировка",crmPlanPicker)+
       '</div>')+
-      crmCatalogToolsHtml("chat")+
+      crmCatalogToolsHtml("chat",ch.source)+
       '<input id="crm-photo-file" type="file" accept="image/*" style="display:none">'+
       '<textarea id="crm-reply-chat" placeholder="'+(isTg?'Ответить в Telegram...':'Ответить клиенту в Авито...')+'" style="width:100%;padding:9px 11px;border-radius:10px;border:1px solid #d0dae8;font-size:13px;outline:none;box-sizing:border-box;height:64px;resize:vertical;margin-bottom:6px"></textarea>'+
       '<button data-a="crm-send-avito" data-key="'+esc(key)+'" data-cid="chat" style="width:100%;padding:11px;background:'+(isTg?'#0088cc':'#005bff')+';border:none;border-radius:10px;cursor:pointer;color:#fff;font-size:13px;font-weight:700">'+(isTg?'Отправить в Telegram':'Отправить в Авито')+'</button>'+
@@ -26105,6 +26140,7 @@ function crmOpenChat(key){
   crmAskChatInfo(key);
   crmSyncChat(key);
   render();
+  crmEnsureDraftFor(key);
   setTimeout(function(){ try{ window.scrollTo(0,document.body.scrollHeight); }catch(e){} },0);
 }
 // Объявление у старого диалога (до этой правки его не сохраняли) — спросить один раз.
@@ -26117,7 +26153,7 @@ function crmSyncChat(key){
     .then(function(r){return r.json();}).then(function(j){
       if(!j||!j.success||!j.chat||!(j.added||j.removed)||!crmChats) return;
       crmChats[key]=j.chat;
-      if(crmView==="chat"&&crmChatKey===key) ui();
+      if(crmView==="chat"&&crmChatKey===key){crmUiKeepReply();crmEnsureDraftFor(key);}
     }).catch(function(){});
 }
 function crmAskChatInfo(key){
@@ -31302,12 +31338,15 @@ function bind(){
     else if(a==="crm-send-avito"){el.onclick=async()=>{
       const cid=el.dataset.cid,key=el.dataset.key;
       const ta=document.getElementById("crm-reply-"+cid); const text=(ta&&ta.value||"").trim();
-      if(!text){ if(ta)ta.focus(); return; }
-      el.textContent="⏳ Отправка…";
-      try{ const r=await fetch(API_BASE+"/api/ai/send",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({clientKey:key,text:text})}); const j=await r.json(); if(!(j&&j.success))alert("Не отправлено: "+((j&&(j.note||j.error))||"ошибка")); }
+      const attachKey=crmCatalogReplyKey(cid),catalog=!!crmCatalogAttached[attachKey];
+      if(!text&&!catalog){ if(ta)ta.focus(); return; }
+      el.textContent="⏳ Отправка…";el.disabled=true;
+      try{ const r=await fetch(API_BASE+"/api/ai/send",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({clientKey:key,text:text,catalog:catalog})}); const j=await r.json(); if(!(j&&j.success))alert("Не отправлено: "+((j&&(j.note||j.error))||"ошибка"));else{delete crmCatalogAttached[attachKey];if(ta&&ta.value.trim()===text)ta.value="";} }
       catch(e){ alert("Ошибка: "+((e&&e.message)||e)); }
       try{ const r2=await fetch(API_BASE+"/api/ai/chats",{headers:authHeaders()}); const j2=await r2.json(); crmChats=(j2&&j2.success)?(j2.chats||{}):crmChats; }catch(e){}
+      const remaining=ta&&ta.value;
       render();
+      const next=document.getElementById("crm-reply-"+cid);if(next&&(cid!=="chat"||crmChatKey===key))next.value=remaining||"";
       if(cid==="chat") setTimeout(function(){ try{ window.scrollTo(0,document.body.scrollHeight); }catch(e){} },0);
     };}
     else if(a==="crm-app-nav"){el.onclick=()=>{
@@ -31385,11 +31424,16 @@ function bind(){
     else if(a==="crm-redraft-go"){el.onclick=async()=>{
       const own=document.getElementById("crm-redraft-own"); const hint=(el.dataset.v||(own&&own.value)||"").trim();
       if(!hint){ if(own)own.focus(); return; }
-      crmBusy="redraft"; ui();
+      crmBusy="redraft"; crmUiKeepReply();
       const j=await crmChatPost("/api/ai/redraft",{clientKey:crmChatKey,idx:+el.dataset.i,hint:hint});
-      crmBusy=""; if(j) crmRedraftIdx=null; render();
+      crmBusy=""; if(j) crmRedraftIdx=null; crmUiKeepReply();
     };}
+    else if(a==="crm-draft-prepare"){el.onclick=()=>{crmEnsureDraftFor(el.dataset.key,true);};}
     else if(a==="crm-catalog-attach"){el.onclick=()=>{
+      if(el.dataset.channel==="telegram"){
+        const cid=crmCatalogReplyKey(el.dataset.cid||"chat");crmCatalogAttached[cid]=!crmCatalogAttached[cid];
+        el.textContent=crmCatalogAttached[cid]?"✓ PDF прикреплён · убрать":"📎 Прикрепить каталог PDF";return;
+      }
       const ta=document.getElementById("crm-reply-"+(el.dataset.cid||"chat")); if(!ta)return;
       const result=appendHouseCatalog(ta.value);
       if(result.error){alert(result.error);return;}
@@ -31426,9 +31470,10 @@ function bind(){
     else if(a==="crm-draft-send"){el.onclick=async()=>{
       const key=crmChatKey; const ch=crmChats&&crmChats[key]; const m=ch&&(ch.messages||[])[+el.dataset.i];
       const text=(m&&m.text||"").trim(); if(!text)return;
-      if(!confirm("Отправить клиенту в Авито ответ ИИ как есть?\n\n"+(text.length>300?text.slice(0,300)+"…":text)))return;
+      if(!confirm("Отправить клиенту в "+(ch.source==="telegram"?"Telegram":"Авито")+" ответ ИИ как есть?\n\n"+(text.length>300?text.slice(0,300)+"…":text)))return;
       el.disabled=true; el.textContent="⏳ Отправка…";
-      try{ const r=await fetch(API_BASE+"/api/ai/send",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({clientKey:key,text:text})}); const j=await r.json(); if(!(j&&j.success))alert("Не отправлено: "+((j&&(j.note||j.error))||"ошибка")); }
+      const attachKey=crmCatalogReplyKey("chat");
+      try{ const r=await fetch(API_BASE+"/api/ai/send",{method:"POST",headers:authHeaders({"Content-Type":"application/json"}),body:JSON.stringify({clientKey:key,text:text,catalog:!!crmCatalogAttached[attachKey]})}); const j=await r.json(); if(!(j&&j.success))alert("Не отправлено: "+((j&&(j.note||j.error))||"ошибка"));else delete crmCatalogAttached[attachKey]; }
       catch(e){ alert("Ошибка: "+((e&&e.message)||e)); }
       await crmRefreshChats(); render();
       setTimeout(function(){ try{ window.scrollTo(0,document.body.scrollHeight); }catch(e){} },0);

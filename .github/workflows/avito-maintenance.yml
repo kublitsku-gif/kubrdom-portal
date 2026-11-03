@@ -11,6 +11,22 @@ on:
         description: Import this Avito chat into CRM and Telegram without replying
         type: string
         default: ''
+      prepare_draft:
+        description: Prepare an AI draft without sending it to the customer
+        type: boolean
+        default: false
+      draft_mode:
+        description: Enable AI draft preparation and disable automatic customer replies
+        type: boolean
+        default: false
+      rewrite_hint:
+        description: Optional instruction to refine the prepared draft
+        type: string
+        default: ''
+      probe_pdf:
+        description: Validate file-message support using a nonexistent recipient and no file
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -31,3 +47,7 @@ jobs:
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
           REPAIR_WEBHOOK: ${{ inputs.repair_webhook }}
           IMPORT_CHAT_ID: ${{ inputs.chat_id }}
+          PREPARE_DRAFT: ${{ inputs.prepare_draft }}
+          DRAFT_MODE: ${{ inputs.draft_mode }}
+          REWRITE_HINT: ${{ inputs.rewrite_hint }}
+          PROBE_PDF: ${{ inputs.probe_pdf }}

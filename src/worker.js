@@ -5,6 +5,8 @@ import { SITE_ORIGIN, sitemapUrls, htmlToText, knowledgeMessages, withSiteKnowle
 import { upsertSalesCard, salesSetArchived, extractPhone, readableText, salesWebhook, salesTick, salesService, salesDestination, salesClosed, salesSetup } from "./sales-workspace.js";
 import { websiteLeadFetch, deliverWebsiteLeads } from "./website-leads.js";
 import { recoverAvito } from "./avito-recovery.js";
+import { missingDraftTarget, prepareMissingDraft, saveDraftDelivery } from "./ai-drafts.js";
+import { HOUSE_CATALOG } from "./crm-catalogs.js";
 // Cloudflare Worker: API для KUBRDOM-portal.
 //   GET  /api/state/:storageKey  → текущее состояние объекта (массив работ)
 //   POST /api/state/:storageKey  → сохранить состояние объекта
@@ -1420,6 +1422,7 @@ async function aiProcessIncoming(env, opt) {
     c.updatedAt = Date.now(); await aiSaveChats(env, chats);
     return { success: true, paused: true };
   }
+  if (!(await aiAutoSendEnabled(env))) return aiEnsureDraft(env, clientKey, { cardMeta: { tgMsgId: cardId || undefined, card } });
   const dup = dupHidden(c.messages);
   const history = c.messages.filter(function (m, i) { return !dup[i] && (m.role === "user" || m.role === "assistant"); }).slice(-12)
     .map(function (m) { return { role: m.role === "assistant" ? "assistant" : "user", content: m.text }; });
@@ -1454,6 +1457,53 @@ async function aiProcessIncoming(env, opt) {
   c.updatedAt = Date.now();
   await aiSaveChats(env, chats);
   return { success: true, topicId: c.topicId, reply: ai.reply, needsApproval: ai.needsApproval };
+}
+// Prepare/recover a draft without replying to the customer, including imported chats.
+async function aiEnsureDraft(env, key, options = {}) {
+  const result = await prepareMissingDraft(env, key, {
+    enabled: () => aiEnabled(env),
+    reply: (history, chat) => aiSellerReply(env, history, { itemId: chat.itemId || chat.item?.id }),
+  }, options);
+  if (result.created && result.chat?.topicId) {
+    const c = result.chat, d = c.messages[result.index];
+    try {
+      if (!d.tgMsgId) {
+        const incoming = c.messages.filter(m => m.role === "user").at(-1);
+        const card = { label: dialogLabel({ source: c.source, itemTitle: c.item?.title }), name: c.name, clientText: incoming?.text || "" };
+        const j = await salesTg(env, "sendMessage", { chat_id: salesChatOf(env, c), message_thread_id: c.topicId,
+          text: dialogCardText({ ...card, draft: d.text, tag: cardTag(d) }),
+          reply_markup: dialogKeyboard({ idx: result.index, plans: d.plans, crmUrl: crmChatLink(env.PUBLIC_BASE_URL, key) }), link_preview_options: { is_disabled: true } });
+        if (j?.ok && j.result?.message_id) await saveDraftDelivery(env, key, d.id, j.result.message_id, card);
+      } else await tgCardRender(env, c, result.index, "", true, key);
+    } catch (e) { console.error("draft telegram delivery failed"); }
+  }
+  const { chat, index, ...publicResult } = result;
+  if (chat) publicResult.topicId = chat.topicId;
+  return publicResult;
+}
+async function aiPrepare(env, request) {
+  const body = await request.json().catch(() => ({}));
+  if (!body.clientKey) return json({ success: false, error: "clientKey required" }, 400);
+  const result = await aiEnsureDraft(env, String(body.clientKey), { manual: body.manual === true });
+  return json(result, result.success ? 200 : 502);
+}
+async function aiDraftMode(env, request) {
+  if (request.method === "POST") {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const row = await env.DB.prepare("SELECT data,updated_at FROM work_states WHERE storage_key='admin_panel' AND work_id='settings'").first();
+      const data = { ...JSON.parse(row?.data || "{}"), aiEnabled: true, aiAutoSend: false };
+      if ((await commitState(env, "admin_panel", [{ work_id: "settings", data }], { settings: Number(row?.updated_at) || 0 })).ok) break;
+      if (attempt === 3) return json({ success: false, error: "settings changed" }, 409);
+    }
+  }
+  return json({ success: true, enabled: await aiEnabled(env), autoSend: await aiAutoSendEnabled(env), provider: await aiProvider(env) });
+}
+async function repairAiDrafts(env) {
+  if (!(await aiEnabled(env)) || await aiAutoSendEnabled(env)) return;
+  const chats = await aiLoadChats(env);
+  const key = Object.keys(chats).filter(k => chats[k].source === "avito" && missingDraftTarget(chats[k])?.message.ts > Date.now() - 86400000)
+    .sort((a,b) => missingDraftTarget(chats[b]).message.ts - missingDraftTarget(chats[a]).message.ts)[0];
+  if (key) await aiEnsureDraft(env, key);
 }
 // POST /api/ai/incoming — тонкая обёртка симулятора над общим конвейером.
 async function aiIncoming(env, request) {
@@ -1614,11 +1664,13 @@ async function aiSend(env, request) {
   let body = {}; try { body = await request.json(); } catch (_) {}
   const key = (body.clientKey || "").toString();
   const text = (body.text || "").toString().slice(0, 2000);
-  if (!key || !text) return json({ success: false, error: "need clientKey+text" }, 400);
+  const catalog = body.catalog === true;
+  if (!key || (!text && !catalog)) return json({ success: false, error: "need clientKey+text" }, 400);
   const chats = await aiLoadChats(env);
   const c = chats[key];
   if (!c) return json({ success: false, error: "chat not found" }, 404);
-  if (c.source === "telegram") return tgBusinessSend(env, chats, key, text);
+  if (c.source === "telegram") return tgBusinessSend(env, chats, key, text, catalog);
+  if (catalog) return json({ success: false, error: "Отправка PDF-вложения в Авито через текущую интеграцию пока не настроена." }, 409);
   let ok = false, note = "(не Avito-чат)", sentId = "";
   if (c.avitoChatId) {
     try { const sr = await avitoSend(env, c.avitoChatId, text); ok = !!(sr && sr.id); if (ok) sentId = String(sr.id); else note = JSON.stringify(sr).slice(0, 140); }
@@ -1806,17 +1858,30 @@ async function tgBusinessWebhook(env, upd) {
   return true;
 }
 // Ответ клиенту из CRM в его Telegram — от имени владельца аккаунта.
-async function tgBusinessSend(env, chats, key, text) {
+async function tgBusinessSend(env, chats, key, text, catalog = false) {
   const c = chats[key];
   const conn = await tgBusinessConn(env, c.bcId);
   if (!conn || !conn.enabled) return json({ success: false, error: "Бот отключён от вашего Telegram — подключите его снова в «Telegram для бизнеса → Чат-боты»" }, 409);
   if (!conn.canReply) return json({ success: false, error: "Боту не разрешено отвечать: в «Telegram для бизнеса → Чат-боты» включите «Отвечать на сообщения»" }, 409);
-  const j = await salesTg(env, "sendMessage", { business_connection_id: c.bcId, chat_id: c.tgChatId, text: text });
+  if (catalog && text.length > 1024) return json({ success: false, error: "Подпись к PDF должна быть не длиннее 1024 символов." }, 400);
+  const j = await salesTg(env, catalog ? "sendDocument" : "sendMessage", catalog
+    ? { business_connection_id: c.bcId, chat_id: c.tgChatId, document: HOUSE_CATALOG.url + "?dl=KubrDom-Catalog.pdf", caption: text }
+    : { business_connection_id: c.bcId, chat_id: c.tgChatId, text: text });
   const ok = !!(j && j.ok);
-  c.messages.push(ok ? { role: "assistant", text: text, status: "sent", manual: true, tgMid: j.result.message_id, ts: Date.now() }
-    : { role: "assistant", text: text, status: "draft", manual: true, ts: Date.now() });
-  c.updatedAt = Date.now();
-  await aiSaveChats(env, chats);
+  const file = catalog ? { file: { url: HOUSE_CATALOG.url, name: "Каталог КубрДом.pdf", mime: "application/pdf" } } : {};
+  const message = ok ? { role: "assistant", text: text, status: "sent", manual: true, tgMid: j.result.message_id, ts: Date.now(), ...file }
+    : { role: "assistant", text: text, status: "draft", manual: true, ts: Date.now(), ...file };
+  // Sending a document can take time. Append to the latest snapshot, never the
+  // pre-send copy: messages arriving in the meantime must survive.
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const row = await env.DB.prepare("SELECT data,updated_at FROM work_states WHERE storage_key='admin_panel' AND work_id='aiChats'").first();
+    const latest = JSON.parse(row?.data || "{}"), target = latest[key];
+    if (!target || target.spam) break;
+    const echo = ok && target.messages.find(m => m.tgMid === message.tgMid);
+    if (echo) Object.assign(echo, file); else target.messages.push(message);
+    target.updatedAt = Date.now();
+    if ((await commitState(env, "admin_panel", [{ work_id: "aiChats", data: latest }], { aiChats: Number(row?.updated_at) || 0 })).ok) break;
+  }
   return json({ success: ok, sent: ok, note: ok ? "" : String((j && j.description) || "Telegram не принял").slice(0, 140) });
 }
 // Вебхук бота продаж должен получать business_*: если его ставили со списком allowed_updates,
@@ -2383,6 +2448,7 @@ export default {
       ctx.waitUntil((async()=>{await deliverWebsiteLeads(env);await salesTick(env);})().catch(e=>console.error("sales tick",String(e))));
       ctx.waitUntil(crmTick(env).catch(e=>console.error("crm tick",String(e))));
       ctx.waitUntil(recoverAvito(env, { token: avitoToken, loadChats: aiLoadChats, importChat: avitoImportChat }).catch(e=>console.error("avito recovery",String(e))));
+      ctx.waitUntil(repairAiDrafts(env).catch(e=>console.error("draft recovery failed")));
       return;
     }
     // 0 6 — 09:00 МСК (дожим клиентов, утренние напоминания, удержание за вчерашний
@@ -2620,6 +2686,14 @@ export default {
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
     // AI: входящее сообщение (симулятор/Avito) → черновик в Telegram-ветку (с токеном).
+    if (url.pathname === "/api/ai/prepare" && request.method === "POST") {
+      try { return await aiPrepare(env, request); }
+      catch (err) { return json({ success: false, error: "Не удалось подготовить черновик" }, 502); }
+    }
+    if (url.pathname === "/api/ai/draft-mode" && ["GET", "POST"].includes(request.method)) {
+      if (!auth.adm) return json({ success: false, error: "admin required" }, 403);
+      return aiDraftMode(env, request);
+    }
     if (url.pathname === "/api/ai/incoming" && request.method === "POST") {
       try { return await aiIncoming(env, request); }
       catch (err) { return json({ success: false, error: String(err) }, 500); }
