@@ -58,7 +58,7 @@ if (!Array.isArray(j.chats)) throw new Error('Unknown Avito chats response');
 const target = j.chats.filter(c => (c.users || []).some(u => /янина/i.test(u.name || '')));
 console.log('Recent Avito chat count:', j.chats.length);
 console.log('Matching lead:', JSON.stringify(target.map(c => ({ id: c.id, lastAt: c.last_message?.created, type: c.last_message?.type }))));
-if (env.IMPORT_CHAT_ID) {
+if (env.IMPORT_CHAT_ID && env.PREPARE_DRAFT !== 'true') {
   const result = await request(origin + '/api/avito/import-chat', {
     method: 'POST', headers: { 'X-Admin-Token': env.ADMIN_TOKEN, 'Content-Type': 'application/json' },
     body: JSON.stringify({ chatId: env.IMPORT_CHAT_ID }),
