@@ -45,9 +45,11 @@ jobs:
       - name: Upload CRM house catalog to R2
         uses: cloudflare/wrangler-action@v3
         with:
+          wranglerVersion: '3.90.0'
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: r2 object put kubrdom-files/catalogs/dom-dlya-zhizni-20261103.pdf --file=assets/crm-catalogs/dom-dlya-zhizni-20261103.pdf --content-type=application/pdf --remote
+          # Wrangler 3 (the action default) writes remotely unless --local is set.
+          command: r2 object put kubrdom-files/catalogs/dom-dlya-zhizni-20261103.pdf --file=assets/crm-catalogs/dom-dlya-zhizni-20261103.pdf --content-type=application/pdf
 
       - uses: cloudflare/wrangler-action@v3
         with:
