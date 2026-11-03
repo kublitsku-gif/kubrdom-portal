@@ -1,0 +1,33 @@
+name: Check Avito delivery
+
+on:
+  workflow_dispatch:
+    inputs:
+      repair_webhook:
+        description: Restore the portal webhook subscription
+        type: boolean
+        default: false
+      chat_id:
+        description: Import this Avito chat into CRM and Telegram without replying
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node tools/avito-maintenance.mjs
+        env:
+          AVITO_CLIENT_ID: ${{ secrets.AVITO_CLIENT_ID }}
+          AVITO_CLIENT_SECRET: ${{ secrets.AVITO_CLIENT_SECRET }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          REPAIR_WEBHOOK: ${{ inputs.repair_webhook }}
+          IMPORT_CHAT_ID: ${{ inputs.chat_id }}

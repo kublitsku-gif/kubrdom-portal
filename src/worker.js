@@ -1984,6 +1984,51 @@ async function avitoMessages(env, chatId) {
   }
   return avitoHistory(all, env.AVITO_USER_ID);
 }
+// Recovery is deliberately separate from aiProcessIncoming: importing history
+// must never generate or send a reply to the customer.
+async function avitoImportChat(env, request) {
+  const body = await request.json();
+  const chatId = typeof body.chatId === "string" ? body.chatId.trim() : "";
+  if (!chatId || chatId.length > 200) return json({ success: false, error: "invalid chatId" }, 400);
+  const [history, info] = await Promise.all([avitoMessages(env, chatId), avitoChatMeta(env, chatId)]);
+  if (!history.some(m => m.role === "user")) return json({ success: false, error: "no customer messages" }, 400);
+  const key = "avito:" + chatId;
+  let c, added = 0, saved = false;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const row = await env.DB.prepare("SELECT data,updated_at FROM work_states WHERE storage_key='admin_panel' AND work_id='aiChats'").first();
+    const chats = JSON.parse(row?.data || "{}");
+    c = chats[key] || { name: info.userName || "Новый клиент", messages: [] };
+    const merged = mergeAvitoHistory(c.messages, history);
+    added = merged.added;
+    c.messages = merged.messages;
+    c.source = "avito"; c.avitoChatId = chatId;
+    if (info.item) c.item = info.item;
+    c.updatedAt = Date.now();
+    chats[key] = c;
+    const result = await commitState(env, "admin_panel", [{ work_id: "aiChats", data: chats }], { aiChats: Number(row?.updated_at) || 0 });
+    if (result.ok) { saved = true; break; }
+  }
+  if (!saved) return json({ success: false, error: "chat changed; retry import" }, 409);
+  const incoming = c.messages.filter(m => m.role === "user");
+  const card = await upsertSalesCard(env, {
+    id: key, crmId: "avito-" + chatId, source: "avito", name: c.name,
+    chatId: c.chatId, topicId: c.topicId,
+    phone: extractPhone(incoming.map(m => m.text).join("\n")),
+    summary: incoming.at(-1).text, itemTitle: c.item?.title,
+  });
+  // Preserve messages received during Telegram delivery; only attach its topic.
+  saved = false;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const row = await env.DB.prepare("SELECT data,updated_at FROM work_states WHERE storage_key='admin_panel' AND work_id='aiChats'").first();
+    const chats = JSON.parse(row?.data || "{}");
+    if (!chats[key]) break;
+    Object.assign(chats[key], { chatId: card.chatId, topicId: card.topicId });
+    const result = await commitState(env, "admin_panel", [{ work_id: "aiChats", data: chats }], { aiChats: Number(row?.updated_at) || 0 });
+    if (result.ok) { saved = true; break; }
+  }
+  if (!saved) return json({ success: false, error: "chat changed; retry import" }, 409);
+  return json({ success: true, added, messages: c.messages.length, crmId: card.crmId, telegram: !!card.cardId });
+}
 // Сверить один диалог с Авито (в объекте chats). Авито не ответил — хотя бы убираем повторы.
 async function aiSyncChat(env, chats, key) {
   const c = chats[key];
@@ -2629,6 +2674,12 @@ export default {
       catch (err) { return json({ success: false, error: String(err) }, 500); }
     }
 
+    // Recovery imports existing messages, without sending anything to Avito.
+    if (url.pathname === "/api/avito/import-chat" && request.method === "POST") {
+      if (!auth.adm) return json({ success: false, error: "admin required" }, 403);
+      try { return await avitoImportChat(env, request); }
+      catch (err) { console.error("avito import failed"); return json({ success: false, error: "Avito import failed" }, 502); }
+    }
     // Avito: список объявлений (для привязки инструкций, с токеном).
     if (url.pathname === "/api/avito/listings" && request.method === "GET") {
       try { return await avitoListings(env); }

@@ -11,3 +11,9 @@ CRM linkage uses existing `avitoKey`, preventing duplicate clients. Updates use 
 Setup: in a private forum group with the sales bot as administrator, the owner (also administrator of the original TG_SALES_CHAT_ID) sends `/sales_bind website`, `/sales_bind avito` or `/sales_bind service`. Only future topics use changed destinations. The original group remains the home of Today and historical Avito topics. Telegram folders must be created using the user's client; Bot API cannot create groups or personal folders.
 
 Tests: `npm test -- sales-workspace website-leads`; full `npm test` before push.
+
+## Восстановление пропущенного чата Авито
+
+Workflow `Check Avito delivery` (`avito-maintenance.yml`, запуск вручную) сверяет подписки с текущими `PUBLIC_BASE_URL` и `WEBHOOK_SECRET`, не выводит секретную часть URL. `repair_webhook=true` добавляет актуальную подписку, сохраняя остальные. Сначала запускать диагностику без исправления.
+
+`POST /api/avito/import-chat {chatId}` доступен только администратору. Читает историю из Avito API, сохраняет её со стражем версии `aiChats`, создаёт/обновляет CRM и карточку Telegram, затем привязывает тему к диалогу. Повторный запуск не дублирует клиента, сообщения или тему. Не вызывает нейропродавца и ничего не отправляет клиенту. Workflow принимает `chat_id` для такого восстановления. Тест: `test-avito-import`.
