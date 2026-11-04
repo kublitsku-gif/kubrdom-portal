@@ -25,7 +25,7 @@ const api = (path, body) => request('https://api.avito.ru' + path, {
 const portalPost = (path, body) => request(origin + path, { method: 'POST', headers: { 'X-Admin-Token': env.ADMIN_TOKEN, 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
 if (env.DIAGNOSE_NAME) {
   const local = await request(origin + '/api/ai/chats', { headers: { 'X-Admin-Token': env.ADMIN_TOKEN } });
-  const matches = Object.values(local.chats || {}).filter(c => c.avitoChatId && String(c.name || '').toLowerCase().includes(env.DIAGNOSE_NAME.toLowerCase()));
+  const matches = Object.values(local.chats || {}).filter(c => c.avitoChatId && (String(c.name || '').toLowerCase().includes(env.DIAGNOSE_NAME.toLowerCase()) || (c.messages || []).some(m => m.manual && String(m.text || '').toLowerCase().includes(env.DIAGNOSE_NAME.toLowerCase()))));
   console.log('Delivery diagnosis matches:', matches.length);
   for (const chat of matches) {
     const base = '/messenger/v2/accounts/401020763/chats/' + encodeURIComponent(chat.avitoChatId);
@@ -36,6 +36,7 @@ if (env.DIAGNOSE_NAME) {
     const failed = (chat.messages || []).filter(m => m.manual && m.status === 'draft').slice(-5);
     console.log('Delivery diagnosis:', JSON.stringify({
       chatId: chat.avitoChatId, localFailed: failed.map(m => ({ ts: m.ts, characters: m.text?.length, note: m.deliveryError || null, foundInAvito: (history.messages || []).some(a => String(a.author_id) === '401020763' && a.content?.text === m.text) })),
+      recent: (chat.messages || []).slice(-6).map(m => ({ role: m.role, status: m.status, manual: m.manual, ts: m.ts, characters: m.text?.length })),
       metaKeys: Object.keys(meta), historyCount: history.messages?.length, lastType: meta.last_message?.type,
       users: (meta.users || []).map(u => ({ self: String(u.id) === '401020763', keys: Object.keys(u) })),
     }));
