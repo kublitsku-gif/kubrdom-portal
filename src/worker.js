@@ -1680,7 +1680,7 @@ async function aiSend(env, request) {
     try { const sr = await avitoSend(env, c.avitoChatId, text); ok = !!(sr && sr.id); if (ok) sentId = String(sr.id); else note = JSON.stringify(sr).slice(0, 140); }
     catch (e) { note = e.message || String(e); }
   }
-  c.messages.push({ role: "assistant", text: text, status: ok ? "sent" : "draft", manual: true, avitoMsgId: sentId, ts: Date.now() });
+  c.messages.push({ role: "assistant", text: text, status: ok ? "sent" : "draft", manual: true, avitoMsgId: sentId, ...(!ok ? { deliveryError: note } : {}), ts: Date.now() });
   c.updatedAt = Date.now();
   await aiSaveChats(env, chats);
   // Ушло — закрываем свежую карточку «✅ Отправлено · из CRM»; не ушло — говорим в ветке громко.
@@ -2281,7 +2281,14 @@ async function avitoSend(env, chatId, text) {
     method: "POST", headers: { Authorization: "Bearer " + t, "Content-Type": "application/json" },
     body: JSON.stringify({ message: { text: text }, type: "text" })
   });
-  return r.json();
+  const result = await r.json().catch(function () { return null; });
+  if (!r.ok) {
+    if (r.status === 402) throw new Error("Авито ограничил доступ к переписке через CRM (HTTP 402). Проверьте подписку Авито с доступом к API мессенджера. Пока ответьте клиенту в приложении или на сайте Авито.");
+    if (r.status === 401 || r.status === 403) throw new Error("Авито не разрешил отправку (HTTP " + r.status + "). Проверьте доступ интеграции к сообщениям.");
+    throw new Error("Авито не принял сообщение (HTTP " + r.status + "). " + (r.status === 429 ? "Слишком много запросов. Попробуйте позже." : "Попробуйте позже или ответьте в Авито."));
+  }
+  if (!result || !result.id) throw new Error("Авито не подтвердил отправку. Проверьте переписку в Авито перед повторной попыткой.");
+  return result;
 }
 // Картинка планировки в чат Авито: берём JPEG с портала, грузим в uploadImages, шлём messages/image.
 async function avitoSendImage(env, chatId, key) {

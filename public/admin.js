@@ -25768,6 +25768,7 @@ function crmMsgsHtml(msgs, unans, withDraftBtn, channel){
     var bd=failed?"border:1px dashed #e74c3c;":(hl?"border:1px solid #e74c3c55;":"");
     return '<div style="background:'+bg+';'+bd+'border-radius:9px;padding:7px 9px;margin-bottom:5px;'+(mine?"margin-left:20px":"margin-right:20px")+'">'+
       '<div style="font-size:9px;color:'+(failed?"#c0392b":"#7a9aaa")+';font-weight:700;margin-bottom:2px">'+who+crmMsgTimeHtml(m)+'</div>'+
+      (failed&&m.deliveryError?'<div style="font-size:11px;color:#a93226;margin:5px 0">'+esc(m.deliveryError)+'</div>':'')+
       crmMsgImgHtml(m)+(m.file&&safeImageUrl(m.file.url)?'<a href="'+esc(safeImageUrl(m.file.url))+'" target="_blank" rel="noopener" style="display:block;padding:8px;color:#356347">📎 '+esc(m.file.name||'PDF-документ')+'</a>':'')+
       (crmMsgImgHtml(m)&&/^(📷 Фото)$/.test(m.text||"")?'':'<div style="font-size:12.5px;color:#1a2a3a;line-height:1.4;white-space:pre-wrap">'+esc(m.text||"")+'</div>')+
     '</div>';

@@ -35,7 +35,7 @@ if (env.DIAGNOSE_NAME) {
     if (!historyResponse.ok) console.log('History API refusal:', JSON.stringify({ status: historyResponse.status, error: history }));
     const failed = (chat.messages || []).filter(m => m.manual && m.status === 'draft').slice(-5);
     console.log('Delivery diagnosis:', JSON.stringify({
-      chatId: chat.avitoChatId, localFailed: failed.map(m => ({ ts: m.ts, characters: m.text?.length, note: m.deliveryError || null, foundInAvito: (history.messages || []).some(a => String(a.author_id) === '401020763' && a.content?.text === m.text) })),
+      chatId: chat.avitoChatId, localFailed: failed.map(m => ({ ts: m.ts, characters: m.text?.length, note: m.deliveryError || null, foundInAvito: historyResponse.ok ? (Array.isArray(history) ? history : history.messages || []).some(a => String(a.author_id) === '401020763' && a.content?.text === m.text) : null })),
       recent: (chat.messages || []).slice(-6).map(m => ({ role: m.role, status: m.status, manual: m.manual, ts: m.ts, characters: m.text?.length })),
       metaKeys: Object.keys(meta), historyCount: history.messages?.length, lastType: meta.last_message?.type,
       users: (meta.users || []).map(u => ({ self: String(u.id) === '401020763', keys: Object.keys(u) })),

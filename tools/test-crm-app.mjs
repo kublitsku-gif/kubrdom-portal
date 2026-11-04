@@ -329,6 +329,8 @@ function panel(pathname) {
   t.ok('повтор вебхука в диалоге не дублируется, черновик — последний', (dupHtml.match(/ТЗ пришлю/g) || []).length === 1 && dupHtml.indexOf('черн-1') < 0 && dupHtml.indexOf('черн-2') >= 0 && dupHtml.indexOf('data-i="3"') >= 0)
   const staleHtml = p.run('crmMsgsHtml([{role:"user",text:"а",ts:1},{role:"assistant",text:"старый-черн",status:"draft",ts:2},{role:"user",text:"б",ts:3}],true,true)')
   t.ok('неотправленный старый черновик в переписке не показываем', staleHtml.indexOf('старый-черн') < 0 && staleHtml.indexOf('черновик') < 0)
+  const failedHtml = p.run('crmMsgsHtml([{role:"assistant",text:"Ответ",status:"draft",manual:true,deliveryError:"HTTP 402 <script>"}],false,false)')
+  t.ok('причина отказа остаётся в переписке и экранируется', failedHtml.includes('HTTP 402 &lt;script&gt;') && !failedHtml.includes('<script>'))
   t.ok('ответ уходит в Авито тем же обработчиком', chat.indexOf('data-a="crm-send-avito" data-key="avito:2" data-cid="chat"') >= 0 && chat.indexOf('id="crm-reply-chat"') >= 0)
   t.ok('диалог: быстрые ответы, фото, планировка и «переписать» у черновика', chat.indexOf('data-a="crm-quick"') >= 0 && chat.indexOf('data-a="crm-photo-pick"') >= 0 && chat.indexOf('data-a="crm-plan-toggle"') >= 0 && chat.indexOf('data-a="crm-redraft" data-i="1"') >= 0)
   t.ok('диалог Авито: настоящий PDF можно скачать и посмотреть, ограничение отправки видно', chat.includes('Скачать каталог PDF') && chat.includes('?dl=KubrDom-Catalog.pdf') && chat.includes('Отправка PDF из CRM пока недоступна') && chat.indexOf('href="/api/file/catalogs/dom-dlya-zhizni-20261103.pdf"') >= 0)
