@@ -30,7 +30,9 @@ if (env.DIAGNOSE_NAME) {
   for (const chat of matches) {
     const base = '/messenger/v2/accounts/401020763/chats/' + encodeURIComponent(chat.avitoChatId);
     const meta = await api(base);
-    const history = await api('/messenger/v3/accounts/401020763/chats/' + encodeURIComponent(chat.avitoChatId) + '/messages/?limit=100');
+    const historyResponse = await fetch('https://api.avito.ru/messenger/v3/accounts/401020763/chats/' + encodeURIComponent(chat.avitoChatId) + '/messages/?limit=100', { headers, signal: AbortSignal.timeout(15000) });
+    const history = await historyResponse.json().catch(() => ({}));
+    if (!historyResponse.ok) console.log('History API refusal:', JSON.stringify({ status: historyResponse.status, error: history }));
     const failed = (chat.messages || []).filter(m => m.manual && m.status === 'draft').slice(-5);
     console.log('Delivery diagnosis:', JSON.stringify({
       chatId: chat.avitoChatId, localFailed: failed.map(m => ({ ts: m.ts, characters: m.text?.length, note: m.deliveryError || null, foundInAvito: (history.messages || []).some(a => String(a.author_id) === '401020763' && a.content?.text === m.text) })),
