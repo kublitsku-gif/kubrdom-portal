@@ -23,6 +23,29 @@ const api = (path, body) => request('https://api.avito.ru' + path, {
   headers, ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) }),
 });
 const portalPost = (path, body) => request(origin + path, { method: 'POST', headers: { 'X-Admin-Token': env.ADMIN_TOKEN, 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+if (env.DIAGNOSE_NAME) {
+  const local = await request(origin + '/api/ai/chats', { headers: { 'X-Admin-Token': env.ADMIN_TOKEN } });
+  const matches = Object.values(local.chats || {}).filter(c => c.avitoChatId && String(c.name || '').toLowerCase().includes(env.DIAGNOSE_NAME.toLowerCase()));
+  console.log('Delivery diagnosis matches:', matches.length);
+  for (const chat of matches) {
+    const base = '/messenger/v2/accounts/401020763/chats/' + encodeURIComponent(chat.avitoChatId);
+    const meta = await api(base);
+    const history = await api('/messenger/v3/accounts/401020763/chats/' + encodeURIComponent(chat.avitoChatId) + '/messages/?limit=100');
+    const failed = (chat.messages || []).filter(m => m.manual && m.status === 'draft').slice(-5);
+    console.log('Delivery diagnosis:', JSON.stringify({
+      chatId: chat.avitoChatId, localFailed: failed.map(m => ({ ts: m.ts, characters: m.text?.length, note: m.deliveryError || null, foundInAvito: (history.messages || []).some(a => String(a.author_id) === '401020763' && a.content?.text === m.text) })),
+      metaKeys: Object.keys(meta), historyCount: history.messages?.length, lastType: meta.last_message?.type,
+      users: (meta.users || []).map(u => ({ self: String(u.id) === '401020763', keys: Object.keys(u) })),
+    }));
+    if (failed.length) {
+      // No real recipient: validates the rejected payload without contacting a customer.
+      const probe = await fetch('https://api.avito.ru/messenger/v1/accounts/401020763/chats/crm-validation-no-recipient/messages', {
+        method: 'POST', headers, body: JSON.stringify({ type: 'text', message: { text: failed.at(-1).text } }), signal: AbortSignal.timeout(15000),
+      });
+      console.log('Text payload validation:', JSON.stringify({ status: probe.status, response: await probe.json().catch(() => ({})) }));
+    }
+  }
+}
 if (env.PROBE_PDF === 'true') {
   // Deliberately invalid recipient and absent file: this cannot contact a customer.
   const validation = await fetch('https://api.avito.ru/messenger/v1/accounts/401020763/chats/crm-validation-no-recipient/messages', {

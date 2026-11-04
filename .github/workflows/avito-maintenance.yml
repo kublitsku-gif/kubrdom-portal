@@ -27,6 +27,10 @@ on:
         description: Validate file-message support using a nonexistent recipient and no file
         type: boolean
         default: false
+      diagnose_name:
+        description: Read-only delivery diagnosis for a matching CRM chat name
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -51,3 +55,4 @@ jobs:
           DRAFT_MODE: ${{ inputs.draft_mode }}
           REWRITE_HINT: ${{ inputs.rewrite_hint }}
           PROBE_PDF: ${{ inputs.probe_pdf }}
+          DIAGNOSE_NAME: ${{ inputs.diagnose_name }}
