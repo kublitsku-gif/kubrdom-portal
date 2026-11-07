@@ -5477,6 +5477,17 @@ function notifyPanel(){
       +'<div style="font-size:10.5px;color:#9aabbf;line-height:1.35;margin-top:1px">'+esc(meta.d)+'</div></div>'
     +'</div>';
   });
+  // Общий выключатель (для всех, не личная галочка): утренняя сводка «вопрос без ответа N раб. дн».
+  // Живёт в снимке settings.issueDigest, читает src/reminders.js. По умолчанию выключена.
+  if(currentUser&&currentUser.roles.includes("admin")){
+    const dg=!!(settings&&settings.issueDigest===true);
+    h+='<div style="font-size:10px;font-weight:800;color:#9aabbf;letter-spacing:0.5px;margin:12px 0 6px">ДЛЯ ВСЕХ (АДМИН)</div>'
+      +'<div data-a="issue-digest-toggle" data-v="'+(dg?"0":"1")+'" style="display:flex;align-items:center;gap:10px;padding:9px 10px;border:1px solid '+(dg?"#27ae6055":"#e6edf5")+';background:'+(dg?"#27ae600a":"#fff")+';border-radius:10px;cursor:pointer">'
+        +'<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:700;color:#1a2a3a">Сводка по вопросам без ответа</div>'
+        +'<div style="font-size:10.5px;color:#9aabbf;line-height:1.35;margin-top:1px">каждое утро в 09:00: «Вопрос без ответа N раб. дн» адресату, начальнику и автору. Новый вопрос приходит сразу независимо от этого</div></div>'
+        +'<div style="width:38px;height:22px;flex-shrink:0;border-radius:11px;background:'+(dg?"#27ae60":"#c0d0e0")+';position:relative"><div style="position:absolute;top:2px;left:'+(dg?"18":"2")+'px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,0.2)"></div></div>'
+      +'</div>';
+  }
   h+=(currentUser&&currentUser.roles.includes("admin"))
     ? '<button data-a="notify-run" title="Прогнать утренние напоминания прямо сейчас" style="width:100%;margin-top:8px;padding:8px;background:#fff;border:1px dashed #0088cc;border-radius:9px;cursor:pointer;font-size:11px;font-weight:700;color:#0088cc">▶️ Прогнать напоминания сейчас</button>'
     : '';
@@ -27070,6 +27081,7 @@ function bind(){
       }catch(e){ notifyMsg="Нет связи с сервером"; }
       render();
     };}
+    else if(a==="issue-digest-toggle"){el.onclick=()=>{ settings=Object.assign({},settings,{issueDigest:el.dataset.v==="1"}); fl(); };}
     else if(a==="notify-pref"){el.onclick=()=>{ notifySetPref(el.dataset.k, el.dataset.v==="1"); };}
     else if(a==="pwa-install-hdr"){el.onclick=_runInstallPrompt;}
     else if(a==="pin-change-open"){el.onclick=()=>{showPinChange=true;showNotify=false;render();};}

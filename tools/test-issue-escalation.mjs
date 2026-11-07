@@ -41,6 +41,7 @@ const store = {
         at: "2026-08-10 09:00", by: "u_valera", byName: "Валера", text: "Давно закрыт" },
     ],
     purchased: {}, arrived: {}, finTxns: [],
+    settings: { issueDigest: true },   // сводка по вопросам включена галочкой админа
   },
   tg_links: [
     { uid: "u_valera", chat_id: "111" },
@@ -154,6 +155,15 @@ sent.length = 0;
 store.notify_log.clear();
 await runReminders(env, "0 6 * * *");
 check("на следующий день клавиатуру заново не шлём", sent.length > 0 && !sent.some(m => kbTexts(m).length > 0), sent.map(m => kbTexts(m).length));
+
+console.log("\n8. Галочка админа выключена — сводки по вопросам нет вовсе");
+for (const st of [{}, { issueDigest: false }]) {
+  store.work_states.settings = st;
+  sent.length = 0;
+  store.notify_log.clear();
+  await runReminders(env, "0 6 * * *");
+  check("settings " + JSON.stringify(st) + ": про вопросы молчим", !sent.some(m => /Вопрос без ответа|Ваш вопрос ждёт/.test(m.text)), sent.map(m => m.text.slice(0, 40)));
+}
 
 Date.now = realNow;
 console.log("\n" + (fails ? "❌ ПРОВАЛЕНО: " + fails : "✅ Все проверки пройдены"));

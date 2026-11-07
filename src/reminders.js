@@ -440,7 +440,14 @@ const ISSUE_KIND_TO = { supply: "supply", change: "client_mgr", question: "briga
 const issueRole = (t) => (t && t.to) || ISSUE_KIND_TO[t && t.kind] || "admin";
 const issueOpen = (t) => t && t.status !== "done" && t.status !== "rejected";
 
+// Общий выключатель утренней сводки по вопросам — галочка админа в панели «Напоминания»
+// (settings.issueDigest). Включается явно: по умолчанию сводка НЕ идёт. Заказчик
+// (07.11.2026) попросил её остановить — по одному сообщению на каждый висящий вопрос
+// каждое утро забивали чат. Мгновенное «вам новый вопрос» (src/botissue.js) не трогаем.
+export const issueDigestOn = (settings) => !!(settings && settings.issueDigest === true);
+
 async function runIssues(env, st, today) {
+  if (!issueDigestOn(st.settings)) { DIAG.push("вопросы: утренняя сводка выключена в панели"); return 0; }
   const list = (st.issues || []).filter(issueOpen);
   if (!list.length) return 0;
   const people = await audience(env, st.users || [], "issues");
